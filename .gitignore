@@ -1,0 +1,25 @@
+# Fichiers compilés Python
+__pycache__/
+*.py[cod]
+
+# Dossiers temporaires / de travail
+temp/
+processed_videos/
+
+# Fichiers de configuration sensibles
+credentials.json
+token.json
+
+# Base de données locale (statut vidéos)
+database/videos_status.json
+
+# Fichiers de log, cache, et autres temporaires
+*.log
+
+# Environnement virtuel (si tu en as un)
+venv/
+.env
+
+# Fichiers systèmes
+.DS_Store
+Thumbs.db
