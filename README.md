@@ -100,10 +100,26 @@ TikTub/
 
 ### Step 1: Prepare Your URLs
 Edit `urls_input/batch1.txt` and add your TikTok URLs:
+
+#### Simple Format (Basic):
 ```
 https://www.tiktok.com/@username/video/1234567890
 https://www.tiktok.com/@username/video/0987654321
 ```
+
+#### Advanced Format (Recommended):
+```
+URL | Custom Title | Background | Priority | Description
+https://www.tiktok.com/@luccaspaniconafloresta/video/7521106895504018693 | Luccas Panico Content | random | normal | Amazing forest adventure content
+https://www.tiktok.com/@oberynedits/video/7464703118345866501 | Epic Movie Edits | blur | high | Cinematic movie compilation
+```
+
+**Advanced Format Fields:**
+- **URL**: TikTok video URL
+- **Custom Title**: Your custom YouTube title (AI will enhance it)
+- **Background**: `random`, `blur`, `gradient`, `solid`, `specific`
+- **Priority**: `high`, `normal`, `low` (processing order)
+- **Description**: Custom YouTube description
 
 ### Step 2: Configure Settings
 Edit `config.yaml` to customize:
@@ -167,6 +183,20 @@ python batch_processor.py
 ---
 
 ## 📊 Features Breakdown
+
+### 📝 URL Input Formats
+**Simple Format**: Just paste TikTok URLs (one per line)
+```
+https://www.tiktok.com/@user/video/123456789
+```
+
+**Advanced Format**: Full control with pipe-separated metadata
+```
+URL | Title | Background | Priority | Description
+```
+- **Background Options**: `random`, `blur`, `gradient`, `solid`, `specific`
+- **Priority Levels**: `high` (first), `normal`, `low` (last)
+- **Custom Titles & Descriptions**: Enhanced by AI for better YouTube SEO
 
 ### 🎨 Video Processing
 - Downloads TikTok videos in best quality

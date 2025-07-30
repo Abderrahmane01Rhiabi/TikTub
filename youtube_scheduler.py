@@ -104,9 +104,12 @@ class YouTubeScheduler:
         # Crée le planning complet
         schedule = []
         for i, (video, publish_time) in enumerate(zip(videos, publish_times)):
+            # Ensure we always have a valid title
+            title = video.get('custom_title') or video.get('title') or f'Video {i+1}'
+            
             schedule_item = {
                 'video_id': video.get('video_id', f'video_{i}'),
-                'title': video.get('custom_title', video.get('title', f'Video {i+1}')),
+                'title': title,
                 'scheduled_time': publish_time.isoformat(),
                 'scheduled_time_readable': publish_time.strftime('%A %d/%m/%Y à %H:%M'),
                 'status': 'scheduled',
@@ -183,8 +186,10 @@ class YouTubeScheduler:
         print("=" * 50)
         
         for i, item in enumerate(schedule, 1):
+            # Safely handle None titles
+            title = item.get('title') or 'Untitled Video'
             print(f"{i:2d}. {item['scheduled_time_readable']}")
-            print(f"    📹 {item['title'][:50]}...")
+            print(f"    📹 {title[:50]}...")
             print(f"    🏷️ Priorité: {item['priority']}")
             print()
         
