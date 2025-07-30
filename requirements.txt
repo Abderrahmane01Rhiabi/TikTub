@@ -3,3 +3,11 @@ moviepy>=1.0.3
 google-api-python-client>=2.108.0
 google-auth-oauthlib>=1.1.0
 Pillow>=10.1.0
+
+# Additional dependencies for AI features
+requests>=2.31.0
+PyYAML>=6.0
+python-dateutil>=2.8.0
+pytz>=2023.3
+opencv-python>=4.8.0
+numpy>=1.24.0

@@ -1,28 +1,31 @@
-# Configuration du système TikTok → YouTube
-general:
-  max_daily_uploads: 5
-  max_weekly_uploads: 20
-  default_publish_time: "09:00"
-  timezone: "Europe/Paris"
-
+ai:
+  gemini_api_key: AIzaSyBwJBtB0oRNkZf8uf8u4oCzdS-mG1s7Xmw
+ai_tags:
+  language: fr
+  max_tags: 10
+  provider: openai
 backgrounds:
   strategies:
-    - "same_for_all"      # Même fond pour toutes les vidéos
-    - "theme_based"       # Fond selon le thème (anime, gaming, etc.)
-    - "random_each"       # Fond aléatoire pour chaque vidéo
-    - "custom_each"       # Fond personnalisé pour chaque vidéo
-
-ai_tags:
-  provider: "openai"  # ou "local" pour un modèle local
-  max_tags: 10
-  language: "fr"      # ou "en" pour anglais
-  
-youtube:
-  default_category: "24"  # Entertainment
-  default_privacy: "private"  # "public", "private", "unlisted"
-  auto_publish: false
-  
+  - same_for_all
+  - theme_based
+  - random_each
+  - custom_each
+general:
+  default_publish_time: 09:00
+  max_daily_uploads: 5
+  max_weekly_uploads: 20
+  timezone: Europe/Paris
 scheduling:
-  spacing_hours: 48    # Espacement entre les publications
-  preferred_days: ["monday", "wednesday", "friday"]
-  preferred_hours: ["09:00", "17:00", "20:00"]
+  preferred_days:
+  - monday
+  - wednesday
+  - friday
+  preferred_hours:
+  - 09:00
+  - '17:00'
+  - '20:00'
+  spacing_hours: 48
+youtube:
+  auto_publish: false
+  default_category: '24'
+  default_privacy: private

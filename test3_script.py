@@ -15,6 +15,9 @@ from moviepy.editor import (
     ColorClip
 )
 
+# Import AI content generator
+from ai_tags_generator import AITagsGenerator
+
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -119,6 +122,25 @@ def crop_black_borders(video_path):
 
 def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None):
     try:
+        # Generate AI content for the video
+        print("🤖 Generating AI content...")
+        ai_generator = AITagsGenerator()
+        
+        # Prepare video data for AI analysis
+        video_data = {
+            'title': title,
+            'file_path': video_path,
+            'description': f"TikTok video: {title}"
+        }
+        
+        ai_content = ai_generator.generate_ai_content(video_data)
+        if ai_content:
+            print(f"📝 AI Title: {ai_content.get('title', 'N/A')}")
+            print(f"📄 AI Description: {ai_content.get('description', 'N/A')[:100]}...")
+            print(f"🏷️ AI Tags: {', '.join(ai_content.get('tags', []))}")
+        else:
+            print("⚠️ AI content generation failed, using defaults")
+        
         fix_pil_compatibility()
 
         video = VideoFileClip(video_path)
