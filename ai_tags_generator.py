@@ -29,31 +29,62 @@ try:
     GEMINI_AVAILABLE = True
 except ImportError:
     GEMINI_AVAILABLE = False
-    print("⚠️ Gemini AI not available, using basic AI")
+    print("⚠️ Gemini AI not available")
+
+try:
+    from openai_ai_generator import OpenAIGenerator
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+    print("⚠️ OpenAI not available")
 
 class AITagsGenerator:
-    def __init__(self, api_key: str = None):
-        """Initialize AI generator with Gemini API key"""
-        self.api_key = api_key or os.getenv('GEMINI_API_KEY')
+    def __init__(self, api_key: str = None, openai_key: str = None, preferred_provider: str = "gemini"):
+        """Initialize AI generator with multiple providers"""
+        self.gemini_key = api_key or os.getenv('GEMINI_API_KEY')
+        self.openai_key = openai_key or os.getenv('OPENAI_API_KEY')
+        self.preferred_provider = preferred_provider.lower()
+        
+        # Initialize providers
+        self.gemini_ai = None
+        self.openai_ai = None
+        self.use_gemini = False
+        self.use_openai = False
         
         # Try to initialize Gemini AI
-        if GEMINI_AVAILABLE and self.api_key:
+        if GEMINI_AVAILABLE and self.gemini_key:
             try:
-                self.gemini_ai = GeminiAIGenerator(self.api_key)
-                # Test connection
+                self.gemini_ai = GeminiAIGenerator(self.gemini_key)
                 if self.gemini_ai.test_api_connection():
                     self.use_gemini = True
                     print("✅ Gemini AI initialized successfully")
                 else:
-                    self.use_gemini = False
-                    print("⚠️ Gemini API connection failed, using basic AI")
+                    print("⚠️ Gemini API connection failed")
             except Exception as e:
-                self.use_gemini = False
                 print(f"⚠️ Gemini AI initialization failed: {e}")
-        else:
-            self.use_gemini = False
-            if not self.api_key:
-                print("⚠️ No Gemini API key found, using basic AI")
+        
+        # Try to initialize OpenAI
+        if OPENAI_AVAILABLE and self.openai_key:
+            try:
+                self.openai_ai = OpenAIGenerator(self.openai_key)
+                if self.openai_ai.test_api_connection():
+                    self.use_openai = True
+                    print("✅ OpenAI initialized successfully")
+                else:
+                    print("⚠️ OpenAI API connection failed")
+            except Exception as e:
+                print(f"⚠️ OpenAI initialization failed: {e}")
+        
+        # Show available providers
+        providers = []
+        if self.use_gemini: providers.append("Gemini")
+        if self.use_openai: providers.append("OpenAI") 
+        providers.append("Local AI")
+        
+        print(f"🤖 Available AI providers: {' → '.join(providers)}")
+        
+        if not self.use_gemini and not self.use_openai:
+            print("⚠️ No cloud AI providers available, using local AI only")
         
         # Fallback basic AI data
         self.basic_categories = {
@@ -95,28 +126,52 @@ class AITagsGenerator:
         ]
 
     def generate_ai_content(self, video_data: Dict) -> Dict:
-        """Generate AI-enhanced content using Gemini or basic AI"""
+        """Generate AI-enhanced content using multiple providers with fallback"""
         
         video_path = video_data.get('processed_video_path', '')
         original_title = video_data.get('title', '')
         
-        if self.use_gemini and os.path.exists(video_path):
-            try:
-                # Use Gemini AI for advanced analysis
-                print(f"🤖 Using Gemini AI for video analysis...")
-                result = self.gemini_ai.generate_ai_data(video_path, original_title)
-                
-                # Add usage info
-                result['ai_provider'] = 'gemini-flash'
-                result['cost_estimate'] = 'Very low (< $0.01)'
-                
-                print(f"✅ Gemini AI analysis complete with {result['confidence']*100:.0f}% confidence")
-                return result
-                
-            except Exception as e:
-                print(f"⚠️ Gemini AI failed, falling back to basic AI: {e}")
+        # Determine provider order based on preference
+        providers = []
+        if self.preferred_provider == "openai" and self.use_openai:
+            providers = ["openai", "gemini"]
+        elif self.preferred_provider == "gemini" and self.use_gemini:
+            providers = ["gemini", "openai"]
+        else:
+            # Default order: Gemini first (cheaper), then OpenAI
+            if self.use_gemini: providers.append("gemini")
+            if self.use_openai: providers.append("openai")
         
-        # Fallback to basic AI
+        # Try each provider in order
+        for provider in providers:
+            try:
+                if provider == "gemini" and self.use_gemini and os.path.exists(video_path):
+                    print(f"🤖 Using Gemini AI for video analysis...")
+                    result = self.gemini_ai.generate_ai_data(video_path, original_title)
+                    
+                    if "error" not in result:
+                        result['ai_provider'] = 'gemini-flash'
+                        result['cost_estimate'] = 'Very low (< $0.01)'
+                        print(f"✅ Gemini AI analysis complete with {result['confidence']*100:.0f}% confidence")
+                        return result
+                    else:
+                        print(f"⚠️ Gemini AI failed: {result.get('error', 'Unknown error')}")
+                
+                elif provider == "openai" and self.use_openai and os.path.exists(video_path):
+                    print(f"🤖 Using OpenAI for video analysis...")
+                    result = self.openai_ai.generate_ai_data(video_path, original_title)
+                    
+                    if "error" not in result:
+                        print(f"✅ OpenAI analysis complete with {result['confidence']*100:.0f}% confidence")
+                        return result
+                    else:
+                        print(f"⚠️ OpenAI failed: {result.get('error', 'Unknown error')}")
+                        
+            except Exception as e:
+                print(f"⚠️ {provider.title()} AI failed: {e}")
+        
+        # Final fallback to basic AI
+        print("🔄 Using local AI fallback")
         return self.generate_basic_ai_content(video_data)
     
     def generate_basic_ai_content(self, video_data: Dict) -> Dict:
