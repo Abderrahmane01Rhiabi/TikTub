@@ -1,0 +1,8 @@
+# Example batch file for TikTub
+# Replace these with actual TikTok URLs you want to process
+# One URL per line
+
+https://www.tiktok.com/@username/video/1234567890123456789
+https://www.tiktok.com/@another_user/video/9876543210987654321
+
+# Add more URLs here...

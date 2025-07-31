@@ -9,6 +9,7 @@
 - 🎨 **Smart Background Processing** - Converts vertical TikTok videos to YouTube Shorts 9:16 format
 - 🤖 **AI Content Generation** - **NEW!** Multi-provider AI system with advanced content detection
 - 🎯 **Smart Content Detection** - **NEW!** Detects anime, games, movies, artists, and brands
+- 📺 **Multi-Channel Support** - **NEW!** Upload to different YouTube channels with ease
 - ⏰ **Smart Scheduling** - Uploads at optimal times for maximum engagement
 - 📊 **Batch Processing** - Handle multiple videos at once with AI optimization
 - 🔄 **Quota Management** - Manages YouTube API limits intelligently
@@ -25,7 +26,45 @@
 - Content creators repurposing TikTok content
 - Social media managers seeking AI optimization
 - Anime, gaming, and entertainment channels
+- Multi-channel content creators and networks
 - Anyone wanting intelligent TikTok → YouTube automation
+
+---
+
+## 📺 Multi-Channel Support (NEW!)
+
+### **Upload to Multiple YouTube Channels**
+**TikTub now supports unlimited YouTube channels!** Perfect for:
+- 🎮 **Separate gaming channel** for gaming content
+- 📺 **Dedicated anime channel** for anime clips  
+- 🎵 **Music channel** for music-related videos
+- 🎭 **Main channel** for general entertainment
+
+### **Channel Management Features**
+```
+📺 Channel Selection Menu:
+├── 🏠 Main Channel (your original setup)
+├── 🎮 Gaming Channel  
+├── 📺 Anime Channel
+└── 🎵 Music Channel
+```
+
+### **Quick Setup**
+```bash
+# Setup multi-channel support
+python setup_channels.py
+
+# Add your channels
+1. Add new channel → Gaming Channel
+2. Download OAuth credentials for each channel
+3. Upload with channel selection
+```
+
+### **How It Works**
+- **Backward Compatible**: Your current setup keeps working
+- **Individual Credentials**: Each channel has separate OAuth
+- **Smart Selection**: Choose channel during upload
+- **Zero Conflicts**: No interference between channels
 
 ---
 
@@ -140,7 +179,15 @@ TikTub/
 │   ├── setup_gemini.py        # ⚙️ Gemini API setup assistant
 │   └── setup_openai.py        # ⚙️ OpenAI API setup assistant
 │
-├── 📊 Data Management
+├── � Multi-Channel System (NEW!)
+│   ├── channel_manager.py     # 🎛️ Channel management core
+│   ├── setup_channels.py      # 🏗️ Interactive channel setup wizard
+│   └── channels/              # 📁 Channel credentials storage
+│       ├── default/           # 🏠 Your main channel
+│       ├── gaming_channel/    # 🎮 Gaming content channel
+│       └── anime_channel/     # 📺 Anime content channel
+│
+├── �📊 Data Management
 │   ├── url_manager.py         # 📋 URL batch management
 │   ├── youtube_scheduler.py   # ⏰ Smart upload scheduling
 │   └── database/              # 💾 Processing databases

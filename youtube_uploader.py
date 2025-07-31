@@ -10,12 +10,56 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
+# Import multi-channel support
+try:
+    from channel_manager import ChannelManager
+    MULTI_CHANNEL_SUPPORT = True
+except ImportError:
+    MULTI_CHANNEL_SUPPORT = False
+    print("⚠️  Multi-channel support not available")
+
 # Configuration
 SCOPES = ['https://www.googleapis.com/auth/youtube.upload']
-CREDENTIALS_FILE = 'credentials.json'
-TOKEN_FILE = 'token.json'
+CREDENTIALS_FILE = 'credentials.json'  # Fallback for single-channel
+TOKEN_FILE = 'token.json'              # Fallback for single-channel
 STATUS_DB = 'database/videos_status.json'
 SCHEDULE_FILE = 'upload_schedule.json'
+
+def get_credentials_path(channel_name="default"):
+    """Get credentials path for specified channel (multi-channel support)"""
+    if MULTI_CHANNEL_SUPPORT:
+        manager = ChannelManager()
+        credentials_path, _ = manager.get_channel_paths(channel_name)
+        return credentials_path
+    return CREDENTIALS_FILE  # Fallback to single-channel
+
+def get_token_path(channel_name="default"):
+    """Get token path for specified channel (multi-channel support)"""
+    if MULTI_CHANNEL_SUPPORT:
+        manager = ChannelManager()
+        _, token_path = manager.get_channel_paths(channel_name)
+        return token_path
+    return TOKEN_FILE  # Fallback to single-channel
+
+def select_channel():
+    """Interactive channel selection (returns channel name)"""
+    if not MULTI_CHANNEL_SUPPORT:
+        return "default"  # Single-channel mode
+        
+    manager = ChannelManager()
+    channels = manager.list_channels()
+    
+    if not channels:
+        print("❌ No channels configured. Run: python setup_channels.py")
+        return None
+        
+    if len(channels) == 1:
+        channel = channels[0]
+        print(f"📺 Using channel: {channel['display_name']}")
+        return channel['name']
+        
+    # Multi-channel selection
+    return manager.select_channel_interactive()
 
 def load_video_database():
     """Charge la base de données des vidéos"""
@@ -146,30 +190,45 @@ def update_video_status(video_id, youtube_url, youtube_id, scheduled_time=None):
         return save_video_database(database)
     return False
 
-def authenticate_youtube():
-    """Authentification avec YouTube API"""
+def authenticate_youtube(channel_name="default"):
+    """Authentification avec YouTube API (Multi-channel support)"""
+    credentials_file = get_credentials_path(channel_name)
+    token_file = get_token_path(channel_name)
+    
+    # Check if credentials file exists
+    if not os.path.exists(credentials_file):
+        if channel_name != "default":
+            print(f"❌ Credentials not found for channel '{channel_name}': {credentials_file}")
+            print("Run: python setup_channels.py")
+        else:
+            print(f"❌ Credentials file not found: {credentials_file}")
+            print("Download OAuth credentials from Google Cloud Console")
+        return None
+        
     creds = None
 
     # Charge le token existant
-    if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+    if os.path.exists(token_file):
+        creds = Credentials.from_authorized_user_file(token_file, SCOPES)
 
     # Si pas de credentials valides, lance le flow OAuth
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(CREDENTIALS_FILE, SCOPES)
+            flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             # 👉 Force manual browser authorization (no GUI/browser popup)
             creds = flow.run_local_server(port=0, open_browser=False)
 
         # Sauvegarde le token
-        with open(TOKEN_FILE, 'w') as token:
+        # Create directory if it doesn't exist (for multi-channel)
+        os.makedirs(os.path.dirname(token_file), exist_ok=True)
+        with open(token_file, 'w') as token:
             token.write(creds.to_json())
 
     return build('youtube', 'v3', credentials=creds)
 
-def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False):
+def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name="default"):
     """Upload une vidéo sur YouTube avec données AI et scheduling optionnel"""
     if tags is None:
         tags = ['Shorts', 'TikTok', 'Viral']
@@ -269,9 +328,14 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
     return None
 
 def upload_scheduled_videos():
-    """Upload tous les vidéos programmées en une fois"""
+    """Upload tous les vidéos programmées en une fois (Multi-channel support)"""
     print("🎬 Upload Programmé de Toutes les Vidéos")
     print("======================================")
+    
+    # Select channel first
+    channel_name = select_channel()
+    if not channel_name:
+        return
     
     # Charge le planning
     schedule_data = load_schedule()
@@ -285,9 +349,54 @@ def upload_scheduled_videos():
         print("❌ Aucune vidéo dans le planning")
         return
     
+    print(f"📺 Channel: {channel_name}")
     print(f"📅 {len(scheduled_videos)} vidéo(s) dans le planning:")
+    
+    # Check which videos are already uploaded
+    database = load_video_database()
+    videos_to_upload = []
+    
     for i, video in enumerate(scheduled_videos, 1):
-        print(f"{i}. {video['title']} → {video['scheduled_time_readable']}")
+        video_id = video['video_id']
+        video_data = database.get('videos', {}).get(video_id, {})
+        status = video_data.get('status', 'unknown')
+        
+        # Check if video is already uploaded
+        if status in ['uploaded', 'scheduled_on_youtube']:
+            # Get channel info from video data
+            uploaded_channel = "Unknown"
+            if video_data.get('youtube_url'):
+                # Try to get channel from multi-channel info or assume current channel
+                uploaded_channel = video_data.get('uploaded_channel', channel_name)
+            
+            if status == 'uploaded':
+                status_icon = "✅"
+                status_text = f"Already uploaded to {uploaded_channel}"
+            else:
+                status_icon = "📅"  
+                status_text = f"Already scheduled on {uploaded_channel}"
+                
+            print(f"{i}. {status_icon} {video['title']} → {video['scheduled_time_readable']}")
+            print(f"   {status_text}")
+            
+            # Skip if already on target channel
+            if uploaded_channel.lower() == channel_name.lower():
+                print(f"   ⏭️  Skipping - already exists on target channel")
+                continue
+            else:
+                print(f"   🔄 Will re-upload to {channel_name}")
+                videos_to_upload.append(video)
+                
+        else:
+            # Video not uploaded yet
+            print(f"{i}. 📦 {video['title']} → {video['scheduled_time_readable']}")
+            print(f"   Status: {status} - Ready for upload")
+            videos_to_upload.append(video)
+    
+    if not videos_to_upload:
+        print(f"\n✅ All videos are already uploaded to {channel_name}!")
+        print("💡 Use option 3 to re-upload videos to different channels")
+        return
     
     print(f"\n🚀 MODE D'UPLOAD:")
     print("1. 🤖 Automatique (pas de confirmation)")
@@ -302,21 +411,26 @@ def upload_scheduled_videos():
     auto_confirm = mode_choice == "1"
     mode_text = "automatique" if auto_confirm else "manuel"
     
-    confirm = input(f"\n�🚀 Uploader TOUTES les vidéos (mode {mode_text})? (y/n): ")
+    print(f"\n📊 UPLOAD SUMMARY:")
+    print(f"📹 Videos to upload: {len(videos_to_upload)}")
+    print(f"📺 Target channel: {channel_name}")
+    print(f"🚀 Mode: {mode_text}")
+    
+    confirm = input(f"\n🚀 Uploader {len(videos_to_upload)} vidéo(s) (mode {mode_text})? (y/n): ")
     if confirm.lower() != 'y':
         print("❌ Upload annulé")
         return
         
     try:
-        youtube = authenticate_youtube()
-        print("✅ Authentification YouTube réussie\n")
+        youtube = authenticate_youtube(channel_name)
+        print(f"✅ Authentification YouTube réussie pour {channel_name}\n")
     except Exception as e:
         print(f"❌ Erreur d'authentification: {e}")
         return
     
     success_count = 0
-    for i, video in enumerate(scheduled_videos, 1):
-        print(f"\n📤 Upload {i}/{len(scheduled_videos)}: {video['title']}")
+    for i, video in enumerate(videos_to_upload, 1):
+        print(f"\n📤 Upload {i}/{len(videos_to_upload)}: {video['title']}")
         
         video_data = video['video_data']
         ai_data = video_data.get('ai_data', {})
@@ -343,7 +457,8 @@ def upload_scheduled_videos():
             tags=tags,
             video_id=video['video_id'],
             scheduled_time=video['scheduled_time'],
-            auto_confirm=auto_confirm
+            auto_confirm=auto_confirm,
+            channel_name=channel_name
         )
         
         if url:
@@ -353,26 +468,180 @@ def upload_scheduled_videos():
             print(f"❌ Échec: {video['title']}")
         
         # Pause entre uploads
-        if i < len(scheduled_videos):
+        if i < len(videos_to_upload):
             print("⏳ Pause 3 secondes...")
             import time
             time.sleep(3)
     
     print(f"\n🎉 RÉSUMÉ:")
-    print(f"✅ {success_count}/{len(scheduled_videos)} vidéos uploadées")
+    print(f"✅ {success_count}/{len(videos_to_upload)} vidéos uploadées")
     print(f"📅 Toutes les vidéos sont maintenant dans YouTube Studio → Scheduled")
     print(f"🤖 YouTube publiera automatiquement aux heures programmées")
+
+def reupload_to_different_channel():
+    """Re-upload a previously uploaded video to a different channel"""
+    print("\n🔄 RE-UPLOAD TO DIFFERENT CHANNEL")
+    print("=" * 50)
+    
+    # Select target channel first
+    channel_name = select_channel()
+    if not channel_name:
+        return
+    
+    # Load database to find uploaded videos
+    database = load_video_database()
+    uploaded_videos = []
+    
+    for video_id, video_data in database.get("videos", {}).items():
+        status = video_data.get("status", "")
+        if status in ["uploaded", "scheduled_on_youtube"]:
+            title = video_data.get("ai_data", {}).get("optimized_title") or video_data.get("original_title", "Unknown")
+            video_path = video_data.get("video_path", "")
+            uploaded_videos.append({
+                "id": video_id,
+                "title": title,
+                "path": video_path,
+                "status": status,
+                "data": video_data
+            })
+    
+    if not uploaded_videos:
+        print("❌ No uploaded videos found")
+        print("💡 Upload some videos first, then use this feature")
+        return
+    
+    print(f"📺 Target Channel: {channel_name}")
+    print(f"📹 Found {len(uploaded_videos)} uploaded videos:")
+    print()
+    
+    for i, video in enumerate(uploaded_videos, 1):
+        print(f"{i}. {video['title'][:60]}{'...' if len(video['title']) > 60 else ''}")
+        print(f"   Status: {video['status']} | File: {Path(video['path']).name}")
+        print()
+    
+    try:
+        choice = input("Select video to re-upload (number): ").strip()
+        if not choice.isdigit():
+            print("❌ Invalid selection")
+            return
+            
+        idx = int(choice) - 1
+        if not (0 <= idx < len(uploaded_videos)):
+            print("❌ Invalid selection")
+            return
+            
+        selected_video = uploaded_videos[idx]
+        video_data = selected_video["data"]
+        
+        print(f"\n🔄 Re-uploading: {selected_video['title']}")
+        print(f"📺 To channel: {channel_name}")
+        
+        # Check if video file exists
+        video_path = find_matching_video_file(video_data["video_path"], video_data)
+        if not video_path:
+            print(f"❌ Video file not found: {video_data['video_path']}")
+            return
+        
+        # Authenticate
+        try:
+            youtube = authenticate_youtube(channel_name)
+            print(f"✅ Authentication successful for {channel_name}")
+        except Exception as e:
+            print(f"❌ Authentication error: {e}")
+            return
+        
+        # Use existing AI data but allow editing
+        ai_data = video_data.get("ai_data", {})
+        original_title = ai_data.get("optimized_title") or video_data.get("original_title", "Untitled")
+        original_description = ai_data.get("description_suggestions", [""])[0] if ai_data.get("description_suggestions") else "Viral content!"
+        original_tags = ai_data.get("tags", ['Shorts', 'TikTok', 'Viral'])
+        
+        print(f"\n� EDIT CONTENT FOR {channel_name}")
+        print("=" * 40)
+        
+        # Edit title
+        print(f"\n🤖 IA - Titre suggéré: {original_title}")
+        title = input("Titre (Enter pour utiliser IA): ").strip()
+        if not title:
+            title = original_title
+        
+        # Edit description  
+        print(f"\n🤖 IA - Description suggérée: {original_description}")
+        description = input("Description (Enter pour utiliser IA): ").strip()
+        if not description:
+            description = original_description
+        
+        # Edit tags
+        print(f"\n🤖 IA - Tags: {', '.join(original_tags[:10])}")
+        use_ai_tags = input("Utiliser les tags IA? (y/n, défaut: y): ").strip().lower()
+        if use_ai_tags in ['', 'y', 'yes', 'oui']:
+            tags = original_tags
+        else:
+            manual_tags = input("Tags manuels (séparés par virgules): ").strip()
+            tags = [tag.strip() for tag in manual_tags.split(',')] if manual_tags else original_tags
+        
+        print(f"\n📋 RÉSUMÉ:")
+        print(f"📺 Channel: {channel_name}")
+        print(f"📺 Titre: {title}")
+        print(f"📝 Description: {description[:100]}{'...' if len(description) > 100 else ''}")
+        print(f"🏷️ Tags: {', '.join(tags[:5])}{'...' if len(tags) > 5 else ''}")
+        
+        # Mode de confirmation
+        print(f"\n🚀 MODE D'UPLOAD:")
+        print("1. 🤖 Upload automatique")
+        print("2. 🛡️ Demander confirmation")
+        
+        try:
+            mode_choice = input("Choisir le mode (1-2, défaut: 2): ").strip()
+        except KeyboardInterrupt:
+            print("\n👋 Re-upload cancelled")
+            return
+            
+        auto_confirm = mode_choice == "1"
+        
+        confirm = input(f"\n🚀 Upload to {channel_name}? (y/n): ").lower().strip()
+        if confirm != 'y':
+            print("❌ Upload cancelled")
+            return
+        
+        # Upload video
+        url = upload_video(
+            youtube=youtube,
+            video_path=video_path,
+            title=title,
+            description=description,
+            tags=tags,
+            video_id=selected_video["id"] + "_reupload",
+            auto_confirm=auto_confirm,
+            channel_name=channel_name
+        )
+        
+        if url:
+            print(f"\n🎉 Video re-uploaded successfully to {channel_name}!")
+            print(f"🔗 URL: {url}")
+        else:
+            print(f"\n❌ Re-upload failed")
+            
+    except KeyboardInterrupt:
+        print("\n👋 Re-upload cancelled")
 
 def main():
     print("🎥 YouTube Uploader avec IA et Programmation")
     print("============================================")
     
+    # Multi-channel support check
+    if MULTI_CHANNEL_SUPPORT:
+        print("📺 Multi-Channel Support: ✅ Enabled")
+    
     print("\n📋 OPTIONS:")
     print("1. 📤 Upload vidéo individuelle")
     print("2. 📅 Upload TOUTES les vidéos programmées")
+    print("3. 🔄 Re-upload video to different channel")
+    if MULTI_CHANNEL_SUPPORT:
+        print("4. ⚙️  Manage channels")
     
     try:
-        choice = input("\nChoix (1-2): ").strip()
+        choice = input(f"\nChoix (1-{4 if MULTI_CHANNEL_SUPPORT else 3}): ").strip()
     except KeyboardInterrupt:
         print("\n👋 Au revoir!")
         return
@@ -380,18 +649,34 @@ def main():
     if choice == "2":
         upload_scheduled_videos()
         return
+    elif choice == "3":
+        reupload_to_different_channel()
+        return
+    elif MULTI_CHANNEL_SUPPORT and choice == "4":
+        print("🔧 Pour gérer les channels, lance: python setup_channels.py")
+        return
     elif choice != "1":
         print("❌ Choix invalide")
         return
 
-    if not os.path.exists(CREDENTIALS_FILE):
-        print(f"❌ Fichier {CREDENTIALS_FILE} introuvable!")
-        print("Assure-toi d'avoir téléchargé le fichier OAuth de Google Cloud Console")
+    # Select channel for individual upload
+    channel_name = select_channel()
+    if not channel_name:
+        return
+
+    # Check credentials for selected channel
+    credentials_file = get_credentials_path(channel_name)
+    if not os.path.exists(credentials_file):
+        print(f"❌ Fichier credentials introuvable pour {channel_name}: {credentials_file}")
+        if MULTI_CHANNEL_SUPPORT:
+            print("Lance: python setup_channels.py pour configurer tes channels")
+        else:
+            print("Assure-toi d'avoir téléchargé le fichier OAuth de Google Cloud Console")
         return
 
     try:
-        youtube = authenticate_youtube()
-        print("✅ Authentification YouTube réussie")
+        youtube = authenticate_youtube(channel_name)
+        print(f"✅ Authentification YouTube réussie pour {channel_name}")
     except Exception as e:
         print(f"❌ Erreur d'authentification: {e}")
         return
@@ -488,7 +773,7 @@ def main():
         
     auto_confirm = mode_choice == "1"
 
-    url = upload_video(youtube, selected_video_path, title, description, tags, video_id, auto_confirm=auto_confirm)
+    url = upload_video(youtube, selected_video_path, title, description, tags, video_id, auto_confirm=auto_confirm, channel_name=channel_name)
 
     if url:
         print(f"\n🎉 Vidéo uploadée avec succès!")

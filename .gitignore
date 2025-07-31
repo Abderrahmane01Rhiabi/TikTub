@@ -1,25 +1,123 @@
 # Fichiers compilés Python
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
 # Dossiers temporaires / de travail
 temp/
 processed_videos/
 
-# Fichiers de configuration sensibles
+# URLs input files (but allow examples)
+urls_input/*.txt
+!urls_input/*.example
+
+# Fichiers de configuration sensibles (API keys, tokens, credentials)
 credentials.json
 token.json
+.env
+.env.local
+.env.production
+.env.staging
+config.yaml
+*.key
+*.pem
+*.p12
+
+# Multi-channel credentials
+channels/*/credentials.json
+channels/*/token.json
 
 # Base de données locale (statut vidéos)
-database/videos_status.json
+database/
+upload_schedule.json
+
+# Fichiers contenant des URLs ou données sensibles
+urls_input/*.txt
+!urls_input/*.example
+
+# JSON files (except examples and samples)
+*.json
+!*example*.json
+!*sample*.json
+!requirements*.json
+!package*.json
 
 # Fichiers de log, cache, et autres temporaires
 *.log
+*.tmp
+*.temp
+*.cache
 
-# Environnement virtuel (si tu en as un)
+# Environnement virtuel
 venv/
-.env
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE et éditeurs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
 
 # Fichiers systèmes
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
 Thumbs.db
+
+# Fichiers média sensibles ou volumineux
+*.mp4
+*.avi
+*.mov
+*.wmv
+*.flv
+*.webm
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.bmp
+*.tiff
+*.webp
+
+# Sauf les exemples
+!*example*
+!*sample*
+!*.example.*
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json

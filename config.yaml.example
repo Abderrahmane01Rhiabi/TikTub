@@ -1,9 +1,10 @@
 ai:
-  gemini_api_key: AIzaSyBwJBtB0oRNkZf8uf8u4oCzdS-mG1s7Xmw
+  gemini_api_key: YOUR_GEMINI_API_KEY_HERE
+  openai_api_key: YOUR_OPENAI_API_KEY_HERE
 ai_tags:
   language: fr
   max_tags: 10
-  provider: openai
+  provider: gemini  # or openai
 backgrounds:
   strategies:
   - same_for_all
