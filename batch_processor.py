@@ -333,7 +333,7 @@ class BatchProcessor:
                 ]
             }
 
-    def create_upload_schedule(self, max_videos: int = None, use_analytics: bool = None) -> List[Dict]:
+    def create_upload_schedule(self, max_videos: int = None, use_analytics: bool = None, target_channel: str = None) -> List[Dict]:
         """Crée un planning d'upload pour les vidéos prêtes"""
         
         # Récupère les vidéos prêtes
@@ -342,6 +342,9 @@ class BatchProcessor:
         
         for video in db['videos'].values():
             if video['status'] == 'ready_for_upload':
+                # Add target channel to video data
+                if target_channel:
+                    video['target_channel'] = target_channel
                 ready_videos.append(video)
         
         if not ready_videos:
@@ -357,10 +360,14 @@ class BatchProcessor:
             use_analytics = ANALYTICS_SUPPORT and self.ask_user_analytics_preference()
         
         if use_analytics and ANALYTICS_SUPPORT:
-            print(f"� Création du planning ANALYTICS pour {len(ready_videos)} vidéos")
+            print(f"🧠 Création du planning ANALYTICS pour {len(ready_videos)} vidéos")
+            if target_channel:
+                print(f"📺 Channel de destination: {target_channel}")
             schedule = self.smart_scheduler.create_analytics_based_schedule(ready_videos)
         else:
             print(f"📅 Création du planning STANDARD pour {len(ready_videos)} vidéos")
+            if target_channel:
+                print(f"📺 Channel de destination: {target_channel}")
             schedule = self.scheduler.create_upload_schedule(ready_videos)
         
         # Sauvegarde
@@ -402,9 +409,10 @@ class BatchProcessor:
             if ANALYTICS_SUPPORT:
                 print("8. 📈 Comparer Analytics vs Statique")
             print("9. 📋 Gérer planning d'upload")
+            print("10. 🔄 Gérer statut des vidéos")
             print("7. ❌ Quitter")
             
-            choice = input("\nChoix (1-7): ").strip()
+            choice = input("\nChoix (1-10): ").strip()
             
             if choice == '1':
                 self.menu_process_urls()
@@ -425,6 +433,8 @@ class BatchProcessor:
                 self.menu_compare_scheduling()
             elif choice == '9':
                 self.menu_manage_schedule()
+            elif choice == '10':
+                self.menu_manage_video_status()
             else:
                 print("❌ Choix invalide")
     
@@ -512,7 +522,40 @@ class BatchProcessor:
         """Menu création planning"""
         print("\n📅 CRÉATION PLANNING D'UPLOAD")
         
-        max_videos = input("Nombre max de vidéos (ou Enter pour toutes): ").strip()
+        # Check if we have videos ready
+        db = self.url_manager.load_database()
+        ready_videos = [v for v in db['videos'].values() if v['status'] == 'ready_for_upload']
+        
+        if not ready_videos:
+            print("❌ Aucune vidéo prête pour l'upload")
+            print("💡 Utilisez l'option 2 pour traiter des vidéos d'abord")
+            return
+        
+        print(f"📦 {len(ready_videos)} vidéo(s) prête(s) pour le planning")
+        
+        # Select target channel for scheduling
+        target_channel = None
+        if MULTI_CHANNEL_SUPPORT:
+            try:
+                from channel_manager import ChannelManager
+                manager = ChannelManager()
+                channels = manager.list_channels()
+                
+                if channels:
+                    print("\n📺 Sélectionnez le channel de destination:")
+                    for i, channel in enumerate(channels, 1):
+                        print(f"{i}. {channel.get('display_name', channel.get('name', 'Unknown'))}")
+                    
+                    choice = int(input(f"Choix (1-{len(channels)}): "))
+                    selected_channel = channels[choice - 1]
+                    target_channel = selected_channel.get('name')
+                    print(f"✅ Channel sélectionné: {selected_channel.get('display_name', target_channel)}")
+            except (ValueError, IndexError):
+                print("❌ Choix invalide, utilisation du channel par défaut")
+            except Exception as e:
+                print(f"⚠️  Erreur sélection channel: {e}")
+        
+        max_videos = input("\nNombre max de vidéos (ou Enter pour toutes): ").strip()
         max_videos = int(max_videos) if max_videos.isdigit() else None
         
         # Ask about analytics if available
@@ -521,7 +564,7 @@ class BatchProcessor:
             print("\n🧠 Analytics-based scheduling available!")
             use_analytics = self.ask_user_analytics_preference()
         
-        schedule = self.create_upload_schedule(max_videos, use_analytics)
+        schedule = self.create_upload_schedule(max_videos, use_analytics, target_channel)
         
         if schedule:
             self.scheduler.print_schedule_summary(schedule)
@@ -659,6 +702,61 @@ class BatchProcessor:
             print(f"   🔄 Échouées (retry): {len(failed_videos)} vidéos")
         print()
         
+        # Show scheduled videos by channel if schedule exists
+        if os.path.exists('upload_schedule.json'):
+            try:
+                with open('upload_schedule.json', 'r', encoding='utf-8') as f:
+                    schedule_data = json.load(f)
+                
+                scheduled_videos = schedule_data.get('schedule', [])
+                if scheduled_videos:
+                    print("📅 VIDÉOS PROGRAMMÉES PAR CHANNEL:")
+                    print("-" * 40)
+                    
+                    # Group by channel
+                    channel_schedules = {}
+                    for video in scheduled_videos:
+                        # Get channel from video data or default
+                        channel = video.get('channel', 'default')
+                        if hasattr(video, 'get') and video.get('video_data', {}).get('target_channel'):
+                            channel = video['video_data']['target_channel']
+                        
+                        if channel not in channel_schedules:
+                            channel_schedules[channel] = []
+                        channel_schedules[channel].append(video)
+                    
+                    # Show channels with and without scheduled videos
+                    if MULTI_CHANNEL_SUPPORT:
+                        try:
+                            from channel_manager import ChannelManager
+                            manager = ChannelManager()
+                            all_channels = manager.list_channels()
+                            
+                            for channel_info in all_channels:
+                                channel_name = channel_info.get('name')
+                                display_name = channel_info.get('display_name', channel_name)
+                                
+                                if channel_name in channel_schedules:
+                                    count = len(channel_schedules[channel_name])
+                                    print(f"   ✅ {display_name}: {count} vidéo(s) programmée(s)")
+                                else:
+                                    print(f"   ❌ {display_name}: Aucune vidéo programmée")
+                        except:
+                            # Fallback to showing what we have in schedule
+                            for channel, videos in channel_schedules.items():
+                                print(f"   ✅ {channel}: {len(videos)} vidéo(s) programmée(s)")
+                    else:
+                        for channel, videos in channel_schedules.items():
+                            print(f"   ✅ {channel}: {len(videos)} vidéo(s) programmée(s)")
+                    
+                    print()
+            except Exception as e:
+                print(f"⚠️  Erreur lecture planning: {e}")
+        else:
+            print("📅 Aucun planning trouvé")
+            print("💡 Créez un planning avec l'option 3")
+            print()
+        
         # Multi-channel info
         if MULTI_CHANNEL_SUPPORT:
             print("📺 Multi-Channel Support: ✅ Enabled")
@@ -748,7 +846,7 @@ class BatchProcessor:
                 # Ici tu peux implémenter l'upload automatique
                 print("💡 Lance youtube_uploader.py pour uploader manuellement")
             else:
-                self.create_upload_schedule()
+                self.menu_create_schedule()
         else:
             print("Aucun planning trouvé, création...")
             self.menu_create_schedule()
@@ -1020,6 +1118,260 @@ class BatchProcessor:
             print(f"   🗓️  Au: {upload_times[-1].strftime('%d/%m/%Y %H:%M')}")
         
         print(f"\n📈 Total: {len(scheduled_videos)} vidéos dans le planning")
+    
+    def menu_manage_video_status(self):
+        """Menu gestion du statut des vidéos"""
+        print("\n🔄 GESTION DU STATUT DES VIDÉOS")
+        print("=" * 50)
+        print("💡 Permet de réutiliser des vidéos pour d'autres channels")
+        
+        db = self.url_manager.load_database()
+        videos = db.get('videos', {})
+        
+        if not videos:
+            print("❌ Aucune vidéo trouvée")
+            return
+        
+        # Filter videos that can be re-used (uploaded, scheduled, or failed)
+        reusable_videos = {}
+        for video_id, video_data in videos.items():
+            status = video_data.get('status')
+            if status in ['uploaded', 'scheduled_on_youtube', 'upload_failed', 'ready_for_upload']:
+                reusable_videos[video_id] = video_data
+        
+        if not reusable_videos:
+            print("❌ Aucune vidéo réutilisable trouvée")
+            return
+        
+        print(f"📦 {len(reusable_videos)} vidéo(s) disponible(s) pour modification:")
+        print()
+        
+        # Group by status for better display
+        status_groups = {}
+        for video_id, video_data in reusable_videos.items():
+            status = video_data.get('status')
+            if status not in status_groups:
+                status_groups[status] = []
+            status_groups[status].append((video_id, video_data))
+        
+        # Display videos by status
+        all_videos = []
+        counter = 1
+        
+        status_display = {
+            'uploaded': '✅ UPLOADÉES',
+            'scheduled_on_youtube': '📅 PROGRAMMÉES', 
+            'ready_for_upload': '📦 PRÊTES',
+            'upload_failed': '❌ ÉCHOUÉES'
+        }
+        
+        for status, display_name in status_display.items():
+            if status in status_groups:
+                print(f"\n{display_name} ({len(status_groups[status])} vidéos):")
+                print("-" * 40)
+                
+                for video_id, video_data in status_groups[status]:
+                    title = video_data.get('original_title', 'Unknown')[:50]
+                    if len(video_data.get('original_title', '')) > 50:
+                        title += "..."
+                    
+                    # Show channel info
+                    channel_info = self.get_video_channel_info(video_data)
+                    
+                    print(f"{counter}. 📺 {title}")
+                    print(f"   📺 {channel_info}")
+                    
+                    if video_data.get('youtube_url'):
+                        print(f"   🔗 {video_data['youtube_url']}")
+                    
+                    all_videos.append((video_id, video_data))
+                    counter += 1
+                    print()
+        
+        if not all_videos:
+            return
+        
+        print("\n🔄 ACTIONS DISPONIBLES:")
+        print("1. 🔄 Remettre vidéo(s) en 'ready_for_upload' (pour re-scheduling)")
+        print("2. 📺 Changer le channel de destination")
+        print("3. 🗑️  Supprimer l'historique d'upload (reset complet)")
+        print("4. 🔙 Retour au menu principal")
+        
+        action = input("\nChoix (1-4): ").strip()
+        
+        if action == '1':
+            self.reset_video_status_for_rescheduling(all_videos)
+        elif action == '2':
+            self.change_video_target_channel(all_videos)
+        elif action == '3':
+            self.reset_video_upload_history(all_videos)
+        elif action == '4':
+            return
+        else:
+            print("❌ Choix invalide")
+    
+    def reset_video_status_for_rescheduling(self, all_videos):
+        """Remet des vidéos en ready_for_upload pour re-scheduling"""
+        print("\n🔄 REMETTRE EN 'READY_FOR_UPLOAD'")
+        print("=" * 40)
+        print("💡 Les vidéos seront disponibles pour nouveau planning")
+        
+        selection = input(f"Sélectionner vidéos (1-{len(all_videos)}, ex: 1,2,3 ou 'all'): ").strip()
+        
+        try:
+            if selection.lower() == 'all':
+                selected_videos = all_videos
+            else:
+                indices = [int(x.strip())-1 for x in selection.split(',')]
+                selected_videos = [all_videos[i] for i in indices if 0 <= i < len(all_videos)]
+            
+            if not selected_videos:
+                print("❌ Aucune vidéo sélectionnée")
+                return
+            
+            print(f"\n📋 Vidéos à remettre en 'ready_for_upload' ({len(selected_videos)}):")
+            for video_id, video_data in selected_videos:
+                title = video_data.get('original_title', 'Unknown')[:50]
+                print(f"- {title}")
+            
+            confirm = input(f"\nConfirmer? Les vidéos seront disponibles pour nouveau planning (y/n): ").lower()
+            
+            if confirm == 'y':
+                for video_id, video_data in selected_videos:
+                    # Keep upload history but change status
+                    self.url_manager.update_video_status(
+                        video_id, 
+                        'ready_for_upload',
+                        # Keep existing data
+                        video_path=video_data.get('video_path'),
+                        original_title=video_data.get('original_title'),
+                        ai_data=video_data.get('ai_data')
+                    )
+                
+                print(f"✅ {len(selected_videos)} vidéo(s) remise(s) en 'ready_for_upload'!")
+                print("💡 Utilisez l'option 3 pour créer un nouveau planning")
+            else:
+                print("❌ Opération annulée")
+                
+        except (ValueError, IndexError):
+            print("❌ Format invalide")
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
+    
+    def change_video_target_channel(self, all_videos):
+        """Change le channel de destination d'une vidéo"""
+        print("\n📺 CHANGER LE CHANNEL DE DESTINATION")
+        print("=" * 40)
+        
+        if not MULTI_CHANNEL_SUPPORT:
+            print("❌ Multi-channel support non disponible")
+            return
+        
+        try:
+            from channel_manager import ChannelManager
+            manager = ChannelManager()
+            channels = manager.list_channels()
+            
+            if not channels:
+                print("❌ Aucun channel configuré")
+                return
+            
+            print("📺 Channels disponibles:")
+            for i, channel in enumerate(channels, 1):
+                print(f"{i}. {channel.get('display_name', channel.get('name', 'Unknown'))}")
+            
+            channel_choice = int(input(f"Choisir nouveau channel (1-{len(channels)}): "))
+            selected_channel = channels[channel_choice - 1]
+            target_channel = selected_channel.get('name')
+            
+            selection = input(f"\nSélectionner vidéos (1-{len(all_videos)}, ex: 1,2,3): ").strip()
+            indices = [int(x.strip())-1 for x in selection.split(',')]
+            selected_videos = [all_videos[i] for i in indices if 0 <= i < len(all_videos)]
+            
+            if not selected_videos:
+                print("❌ Aucune vidéo sélectionnée")
+                return
+            
+            print(f"\n📋 Changer le channel pour {len(selected_videos)} vidéo(s) vers: {selected_channel.get('display_name', target_channel)}")
+            confirm = input("Confirmer? (y/n): ").lower()
+            
+            if confirm == 'y':
+                db = self.url_manager.load_database()
+                for video_id, video_data in selected_videos:
+                    # Update target channel
+                    db['videos'][video_id]['target_channel'] = target_channel
+                    # Reset status to ready for new channel
+                    db['videos'][video_id]['status'] = 'ready_for_upload'
+                
+                # Save database
+                with open('database/videos_status.json', 'w', encoding='utf-8') as f:
+                    json.dump(db, f, indent=2, ensure_ascii=False)
+                
+                print(f"✅ Channel changé pour {len(selected_videos)} vidéo(s)!")
+            else:
+                print("❌ Opération annulée")
+                
+        except (ValueError, IndexError):
+            print("❌ Choix invalide")
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
+    
+    def reset_video_upload_history(self, all_videos):
+        """Reset complet de l'historique d'upload"""
+        print("\n🗑️  RESET COMPLET DE L'HISTORIQUE")
+        print("=" * 40)
+        print("⚠️  ATTENTION: Ceci supprimera tout l'historique d'upload!")
+        print("💡 Utiliser seulement si vous voulez complètement reset une vidéo")
+        
+        selection = input(f"Sélectionner vidéos (1-{len(all_videos)}, ex: 1,2,3): ").strip()
+        
+        try:
+            indices = [int(x.strip())-1 for x in selection.split(',')]
+            selected_videos = [all_videos[i] for i in indices if 0 <= i < len(all_videos)]
+            
+            if not selected_videos:
+                print("❌ Aucune vidéo sélectionnée")
+                return
+            
+            print(f"\n⚠️  RESET COMPLET pour {len(selected_videos)} vidéo(s):")
+            for video_id, video_data in selected_videos:
+                title = video_data.get('original_title', 'Unknown')[:50]
+                print(f"- {title}")
+            
+            print("\nCeci supprimera:")
+            print("• Liens YouTube")
+            print("• Historique d'upload")
+            print("• Channel de destination")
+            print("• Statut programmé")
+            
+            confirm = input("\nÊtes-vous sûr? Tapez 'RESET' pour confirmer: ").strip()
+            
+            if confirm == 'RESET':
+                db = self.url_manager.load_database()
+                for video_id, video_data in selected_videos:
+                    # Remove upload-related data
+                    video_ref = db['videos'][video_id]
+                    video_ref.pop('youtube_url', None)
+                    video_ref.pop('uploaded_channel', None)
+                    video_ref.pop('scheduled_publish_time', None)
+                    video_ref.pop('target_channel', None)
+                    video_ref.pop('upload_history', None)
+                    
+                    # Reset status
+                    video_ref['status'] = 'ready_for_upload'
+                
+                # Save database
+                with open('database/videos_status.json', 'w', encoding='utf-8') as f:
+                    json.dump(db, f, indent=2, ensure_ascii=False)
+                
+                print(f"✅ Reset complet effectué pour {len(selected_videos)} vidéo(s)!")
+            else:
+                print("❌ Reset annulé")
+                
+        except (ValueError, IndexError):
+            print("❌ Format invalide")
+        except Exception as e:
+            print(f"❌ Erreur: {e}")
 
 if __name__ == "__main__":
     processor = BatchProcessor()
