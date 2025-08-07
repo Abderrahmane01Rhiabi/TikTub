@@ -159,10 +159,24 @@ def convert_to_utc(local_time_str):
         print(f"⚠️ Erreur conversion UTC: {e}")
         return None
 
-def load_schedule():
-    """Charge le planning d'upload"""
+def load_schedule(channel_name="default"):
+    """Charge le planning d'upload (multi-channel support)"""
     try:
+        # First try channel-specific schedule files (new format)
+        if channel_name != "default":
+            import glob
+            pattern = f"schedule_{channel_name}_*.json"
+            schedule_files = glob.glob(pattern)
+            if schedule_files:
+                # Use the most recent schedule file
+                latest_file = max(schedule_files, key=os.path.getmtime)
+                print(f"📅 Using schedule file: {latest_file}")
+                with open(latest_file, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        
+        # Fallback to original schedule file
         if os.path.exists(SCHEDULE_FILE):
+            print(f"📅 Using fallback schedule file: {SCHEDULE_FILE}")
             with open(SCHEDULE_FILE, 'r', encoding='utf-8') as f:
                 return json.load(f)
     except Exception as e:
@@ -338,7 +352,7 @@ def upload_scheduled_videos():
         return
     
     # Charge le planning
-    schedule_data = load_schedule()
+    schedule_data = load_schedule(channel_name)
     if not schedule_data:
         print("❌ Aucun planning trouvé")
         print("💡 Lance d'abord batch_processor.py → option 3 pour créer un planning")

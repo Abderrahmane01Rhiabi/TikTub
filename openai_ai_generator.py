@@ -1,475 +1,349 @@
 #!/usr/bin/env python3
 """
-OpenAI AI Generator - Cloud-based AI for TikTok video analysis
-============================================================
-Uses OpenAI GPT-4 Vision for intelligent content analysis and optimization
+OpenAI Generator - Advanced AI content analysis using OpenAI GPT models
+======================================================================
+Provides enhanced video analysis, title generation, and content optimization
 """
 
 import os
 import json
-import random
-import cv2
-import tempfile
 from typing import Dict, List, Optional
-from datetime import datetime
-import base64
-import requests
-from PIL import Image
-import numpy as np
+import logging
+
+try:
+    import openai
+    OPENAI_INSTALLED = True
+except ImportError:
+    OPENAI_INSTALLED = False
+    print("⚠️ OpenAI library not installed. Run: pip install openai")
 
 class OpenAIGenerator:
-    def __init__(self, api_key: str = None):
-        """Initialize OpenAI with API key"""
-        self.api_key = api_key or os.getenv('OPENAI_API_KEY')
-        if not self.api_key:
-            raise ValueError("❌ OpenAI API key required! Set OPENAI_API_KEY environment variable or pass api_key parameter")
+    """Advanced AI content generator using OpenAI GPT models"""
+    
+    def __init__(self, api_key: str):
+        if not OPENAI_INSTALLED:
+            raise ImportError("OpenAI library not installed")
         
-        self.base_url = "https://api.openai.com/v1/chat/completions"
-        self.model_name = "gpt-4o-mini"  # More cost-effective than gpt-4-vision-preview
+        self.api_key = api_key
+        self.client = openai.OpenAI(api_key=api_key)
+        self.model = "gpt-3.5-turbo"  # Use GPT-3.5-turbo for better cost efficiency
         
-        # Content analysis prompts
-        self.analysis_prompt = """
-Analyze this TikTok video content and identify specific details. Provide a JSON response with:
-
-1. **Category**: Choose from [anime, gaming, entertainment, comedy, dance, music, lifestyle, food, tech, fitness, viral]
-2. **Emotion/Vibe**: Choose from [exciting, funny, dramatic, energetic, calm, mysterious, inspiring]
-3. **Key_Elements**: List 3-5 main visual elements you see
-4. **Content_Type**: What type of content is this? (dance, comedy skit, tutorial, etc.)
-5. **Target_Audience**: Who would enjoy this? (teens, gamers, anime fans, etc.)
-6. **Viral_Potential**: Rate 1-10 based on engagement potential
-7. **Specific_Content**: Try to identify any of these if visible:
-   - Anime series name (e.g., "Naruto", "Attack on Titan", "One Piece")
-   - Movie title (e.g., "Spider-Man", "Avengers", "Fast & Furious")
-   - Game name (e.g., "Fortnite", "Minecraft", "GTA", "Valorant")
-   - Artist/Celebrity (e.g., "BTS", "Taylor Swift", "The Rock")
-   - Character names (e.g., "Goku", "Batman", "Pikachu")
-   - Brand/Logo (e.g., "Nike", "Apple", "McDonald's")
-8. **Text_Detected**: Any visible text, captions, or subtitles in the video
-9. **Audio_Cues**: If you can infer from visuals what music/sound might be playing
-
-Respond ONLY with valid JSON in this format:
-{
-  "category": "anime",
-  "emotion": "exciting", 
-  "key_elements": ["anime character", "fighting scene", "special effects"],
-  "content_type": "anime clip",
-  "target_audience": "anime fans, teens",
-  "viral_potential": 8,
-  "specific_content": {
-    "anime_series": "Dragon Ball Z",
-    "character": "Goku",
-    "movie": null,
-    "game": null,
-    "artist": null,
-    "brand": null
-  },
-  "text_detected": ["KAMEHAMEHA!", "Episode 154"],
-  "audio_cues": "intense battle music"
-}
-"""
-
-        self.title_prompt = """
-Create 3 viral YouTube Shorts titles for this TikTok content. Use any detected specific content (movies, anime, games, artists) in the titles.
-
-Content analysis: {analysis}
-
-Guidelines:
-- If specific content detected (anime/movie/game/artist), USE IT in titles
-- YouTube algorithm optimization  
-- Click-worthy but not clickbait
-- Under 60 characters
-- Include trending elements like "POV:", "This...", "You won't believe..."
-- Add relevant emojis
-- If anime detected, use anime terminology
-- If game detected, use gaming terms  
-- If movie detected, reference the franchise
-
-Examples:
-- Anime: "POV: Goku Goes Ultra Instinct 🔥" 
-- Gaming: "This Fortnite Play Broke The Game 🎮"
-- Movie: "Spider-Man Did WHAT?! 🕷️"
-- Music: "When BTS Drops This Beat 🎵"
-
-Respond with JSON:
-{
-  "titles": [
-    "Title 1 with specific content 🔥",
-    "Title 2 with specific content ✨", 
-    "Title 3 with specific content 💯"
-  ]
-}
-"""
-
-        self.description_prompt = """
-Create an engaging YouTube Shorts description for this content using any detected specific content:
-
-Content: {analysis}
-Title: {title}
-
-Guidelines:
-- If specific anime/movie/game/artist detected, mention it naturally
-- Hook opening line
-- Call-to-action for subscribe/like  
-- Relevant hashtags (max 10) including specific content
-- Under 125 characters total
-- Engaging but professional tone
-
-Examples:
-- Anime: "Goku's power is unreal! 🔥 #DragonBall #Anime #Goku"
-- Game: "This Fortnite play hit different 🎮 #Fortnite #Gaming #Epic" 
-- Movie: "Spider-Man physics don't make sense 🕷️ #SpiderMan #Marvel #MCU"
-
-Respond with JSON:
-{
-  "description": "Your description with specific content here..."
-}
-"""
-
-        self.tags_prompt = """
-Generate 15-20 SEO-optimized YouTube tags for this content. PRIORITIZE specific detected content:
-
-Content: {analysis}
-Title: {title}
-
-Tag Strategy:
-1. **Specific Content First**: If anime/movie/game/artist detected, include those as primary tags
-2. **YouTube Shorts optimization**: Always include "shorts", "viral", "trending"  
-3. **Category tags**: Based on detected category
-4. **Trending keywords**: Current viral terms
-5. **Audience tags**: Target demographic terms
-
-Examples:
-- Anime detected: ["naruto", "anime shorts", "sasuke", "ninja", "manga", "otaku"]
-- Game detected: ["fortnite", "gaming", "epic moments", "battle royale", "gamer"]  
-- Movie detected: ["marvel", "spider-man", "superhero", "mcu", "comic"]
-- Artist detected: ["bts", "kpop", "korean music", "army", "music video"]
-
-Focus on:
-- Specific names/titles found in analysis
-- Category-specific tags  
-- Mix of broad and specific terms
-- No banned or sensitive words
-- Character names if detected
-
-Respond with JSON:
-{
-  "tags": ["specific_content_tag", "category_tag", "viral_tag", ...]
-}
-"""
-
-    def extract_video_frame(self, video_path: str) -> Optional[str]:
-        """Extract a representative frame from video and encode as base64"""
-        try:
-            cap = cv2.VideoCapture(video_path)
-            if not cap.isOpened():
-                return None
-            
-            # Get middle frame
-            total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            middle_frame = total_frames // 2
-            
-            cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame)
-            ret, frame = cap.read()
-            cap.release()
-            
-            if not ret:
-                return None
-            
-            # Convert to RGB and resize for API efficiency
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(frame_rgb)
-            
-            # Resize to reduce API costs
-            pil_image.thumbnail((800, 600), Image.Resampling.LANCZOS)
-            
-            # Save to temporary file and encode
-            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                pil_image.save(tmp.name, 'JPEG', quality=85)
-                with open(tmp.name, 'rb') as img_file:
-                    encoded = base64.b64encode(img_file.read()).decode('utf-8')
-                os.unlink(tmp.name)
-                return encoded
-                
-        except Exception as e:
-            print(f"⚠️ Frame extraction error: {e}")
-            return None
-
-    def call_openai_api(self, prompt: str, image_base64: str = None) -> Dict:
-        """Make API call to OpenAI"""
-        try:
-            headers = {
-                'Authorization': f'Bearer {self.api_key}',
-                'Content-Type': 'application/json'
-            }
-            
-            # Prepare messages
-            if image_base64:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_base64}",
-                                    "detail": "low"  # Use low detail to save costs
-                                }
-                            }
-                        ]
-                    }
-                ]
-            else:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            
-            payload = {
-                "model": self.model_name,
-                "messages": messages,
-                "max_tokens": 1000,
-                "temperature": 0.7
-            }
-            
-            response = requests.post(self.base_url, headers=headers, json=payload, timeout=30)
-            
-            if response.status_code == 200:
-                data = response.json()
-                content = data['choices'][0]['message']['content']
-                
-                try:
-                    # Try to parse as JSON
-                    return json.loads(content)
-                except json.JSONDecodeError as e:
-                    # If JSON parsing fails, try to extract JSON from the text
-                    import re
-                    json_match = re.search(r'\{.*\}', content, re.DOTALL)
-                    if json_match:
-                        try:
-                            return json.loads(json_match.group(0))
-                        except:
-                            pass
-                    
-                    # If it's a connection test, handle specially
-                    if "test" in content.lower() and "success" in content.lower():
-                        return {"test": "success"}
-                    
-                    print(f"⚠️ JSON parsing failed: {str(e)}")
-                    print(f"Raw response: {content[:200]}...")
-                    return {"raw_response": content, "parsing_error": True}
-            else:
-                print(f"❌ OpenAI API error: {response.status_code} - {response.text}")
-                return {"error": f"API error: {response.status_code}"}
-                
-        except Exception as e:
-            print(f"❌ OpenAI API call failed: {e}")
-            return {"error": str(e)}
-
+        # Setup logging
+        self.logger = logging.getLogger(__name__)
+    
     def test_api_connection(self) -> bool:
-        """Test OpenAI API connection"""
+        """Test if the OpenAI API connection works"""
         try:
-            result = self.call_openai_api("Respond with JSON: {'test': 'success', 'status': 'connected'}")
-            return "test" in result and result["test"] == "success"
-        except:
+            # Real API test
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "Hello"}],
+                max_tokens=5
+            )
+            print("✅ OpenAI API connection successful!")
+            return True
+        except Exception as e:
+            self.logger.error(f"OpenAI API test failed: {e}")
+            print("⚠️ OpenAI API failed, using local AI fallback")
             return False
-
-    def analyze_video_content(self, video_path: str) -> Dict:
-        """Analyze video content using OpenAI Vision"""
-        print(f"🔍 Analyzing video with OpenAI: {os.path.basename(video_path)}")
-        
-        # Extract frame for analysis
-        frame_base64 = self.extract_video_frame(video_path)
-        if not frame_base64:
-            return {"error": "Failed to extract video frame"}
-        
-        # Analyze content
-        analysis = self.call_openai_api(self.analysis_prompt, frame_base64)
-        
-        if "error" in analysis:
-            print(f"⚠️ Content analysis failed: {analysis['error']}")
-            return self.get_fallback_analysis()
-        
-        print(f"✅ Content analyzed - Category: {analysis.get('category', 'unknown')}")
-        return analysis
-
-    def generate_titles(self, analysis: Dict) -> List[str]:
-        """Generate optimized titles using OpenAI"""
-        print("📝 Generating viral titles...")
-        
-        prompt = self.title_prompt.format(analysis=json.dumps(analysis, indent=2))
-        result = self.call_openai_api(prompt)
-        
-        if "error" in result or "titles" not in result:
-            print("⚠️ Title generation failed, using fallback")
-            return self.get_fallback_titles(analysis.get('category', 'entertainment'))
-        
-        titles = result["titles"]
-        print(f"✅ Generated {len(titles)} viral titles")
-        return titles
-
-    def generate_description(self, analysis: Dict, title: str) -> str:
-        """Generate optimized description using OpenAI"""
-        print("📄 Generating SEO description...")
-        
-        prompt = self.description_prompt.format(
-            analysis=json.dumps(analysis, indent=2),
-            title=title
-        )
-        result = self.call_openai_api(prompt)
-        
-        if "error" in result or "description" not in result:
-            print("⚠️ Description generation failed, using fallback")
-            return self.get_fallback_description(title, analysis.get('category', 'entertainment'))
-        
-        description = result["description"]
-        print("✅ SEO description generated")
-        return description
-
-    def generate_tags(self, analysis: Dict, title: str) -> List[str]:
-        """Generate optimized tags using OpenAI"""
-        print("🏷️ Generating SEO tags...")
-        
-        prompt = self.tags_prompt.format(
-            analysis=json.dumps(analysis, indent=2),
-            title=title
-        )
-        result = self.call_openai_api(prompt)
-        
-        if "error" in result or "tags" not in result:
-            print("⚠️ Tag generation failed, using fallback")
-            return self.get_fallback_tags(analysis.get('category', 'entertainment'))
-        
-        tags = result["tags"]
-        print(f"✅ Generated {len(tags)} SEO tags")
-        return tags[:20]  # Limit to 20 tags
-
-    def generate_ai_data(self, video_path: str, original_title: str = "") -> Dict:
-        """Main function to generate complete AI data for video"""
+    
+    def analyze_video_content(self, title: str, description: str = "", metadata: Dict = None) -> Dict:
+        """Analyze video content using OpenAI for advanced insights"""
         try:
-            print(f"🤖 Starting OpenAI analysis for: {os.path.basename(video_path)}")
+            # Create comprehensive prompt for analysis
+            prompt = f"""
+            Analyze this social media video content and provide detailed insights:
             
-            # Step 1: Analyze video content
-            analysis = self.analyze_video_content(video_path)
-            if "error" in analysis:
-                return self.get_complete_fallback(original_title)
+            Title: "{title}"
+            Description: "{description}"
+            Metadata: {json.dumps(metadata or {}, indent=2)}
             
-            # Step 2: Generate titles
-            titles = self.generate_titles(analysis)
-            best_title = titles[0] if titles else f"Amazing {analysis.get('category', 'Viral')} Video! 🔥"
+            Please provide a JSON response with:
+            1. content_type: (anime, gaming, comedy, dance, beauty, motivation, educational, entertainment, or general)
+            2. target_audience: (age group and interests)
+            3. engagement_potential: (high, medium, low) with reasoning
+            4. recommended_tags: (array of 10-15 relevant tags)
+            5. youtube_title: (optimized for YouTube, 60 chars max)
+            6. youtube_description: (engaging description, 150 chars max)
+            7. content_themes: (array of main themes/topics)
+            8. viral_potential: (score 1-10 with explanation)
             
-            # Step 3: Generate description
-            description = self.generate_description(analysis, best_title)
+            Respond only with valid JSON.
+            """
             
-            # Step 4: Generate tags
-            tags = self.generate_tags(analysis, best_title)
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=800,
+                temperature=0.7
+            )
             
-            result = {
-                'title': best_title,
-                'description': description,
-                'tags': tags,
-                'category': analysis.get('category', 'entertainment'),
-                'confidence': 0.85,  # High confidence for OpenAI
-                'analysis_timestamp': datetime.now().isoformat(),
-                'optimization_score': analysis.get('viral_potential', 8) * 10,
-                'openai_analysis': analysis,
-                'alternative_titles': titles[1:] if len(titles) > 1 else [],
-                'ai_provider': 'openai-gpt4-mini',
-                'cost_estimate': 'Low ($0.01-0.05 per video)'
+            # Parse JSON response
+            content = response.choices[0].message.content.strip()
+            
+            # Clean up response if it has markdown formatting
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.endswith("```"):
+                content = content[:-3]
+            
+            result = json.loads(content)
+            
+            # Ensure all required fields exist
+            default_result = {
+                "content_type": "general",
+                "target_audience": "General audience",
+                "engagement_potential": "medium",
+                "recommended_tags": ["shorts", "viral", "trending"],
+                "youtube_title": title[:60],
+                "youtube_description": f"🔥 {title[:100]}...",
+                "content_themes": ["entertainment"],
+                "viral_potential": 5
             }
             
-            print(f"✅ OpenAI analysis complete! Optimization score: {result['optimization_score']}%")
+            # Merge with defaults
+            for key, default_value in default_result.items():
+                if key not in result:
+                    result[key] = default_value
+            
             return result
             
         except Exception as e:
-            print(f"❌ OpenAI analysis failed: {e}")
-            return self.get_complete_fallback(original_title)
-
-    def get_fallback_analysis(self) -> Dict:
-        """Fallback analysis when API fails"""
-        return {
-            "category": "entertainment",
-            "emotion": "exciting",
-            "key_elements": ["viral content", "engaging visuals"],
-            "content_type": "viral video",
-            "target_audience": "general audience",
-            "viral_potential": 7
-        }
-
-    def get_fallback_titles(self, category: str) -> List[str]:
-        """Fallback titles when API fails"""
-        templates = {
-            'anime': [
-                'This Anime Moment Hit Different 🔥',
-                'POV: You See This Anime Scene ✨',
-                'Anime Fans Will Understand This 💯'
-            ],
-            'gaming': [
-                'This Gaming Play Was Insane 🎮',
-                'POV: You Pull Off This Move 🔥',
-                'Gamers Will Know This Feeling ✨'
-            ],
-            'entertainment': [
-                'You Won\'t Believe What Happens Next 🤯',
-                'This Will Make Your Day Better 😂',
-                'Everyone Needs To See This ✨'
-            ]
-        }
-        return templates.get(category, templates['entertainment'])
-
-    def get_fallback_description(self, title: str, category: str) -> str:
-        """Fallback description when API fails"""
-        return f"""🔥 {title}
-
-📱 From TikTok to YouTube - bringing you the best viral content!
-
-🔔 SUBSCRIBE for more amazing videos!
-👍 LIKE if you enjoyed this!
-💬 COMMENT your thoughts!
-
-#{category} #viral #trending #shorts #tiktok"""
-
-    def get_fallback_tags(self, category: str) -> List[str]:
-        """Fallback tags when API fails"""
-        base_tags = ['shorts', 'viral', 'trending', 'tiktok', 'entertainment']
-        category_tags = {
-            'anime': ['anime', 'manga', 'otaku', 'anime shorts'],
-            'gaming': ['gaming', 'gamer', 'gameplay', 'gaming moments'],
-            'entertainment': ['funny', 'comedy', 'amazing', 'must watch']
-        }
-        return base_tags + category_tags.get(category, category_tags['entertainment'])
-
-    def get_complete_fallback(self, original_title: str) -> Dict:
-        """Complete fallback when everything fails"""
-        return {
-            'title': f"Amazing Viral Content! 🔥",
-            'description': self.get_fallback_description("Amazing Viral Content! 🔥", "entertainment"),
-            'tags': self.get_fallback_tags("entertainment"),
-            'category': 'entertainment',
-            'confidence': 0.5,
-            'analysis_timestamp': datetime.now().isoformat(),
-            'optimization_score': 70,
-            'ai_provider': 'openai-fallback',
-            'note': 'Generated using fallback system'
-        }
-
-if __name__ == "__main__":
-    # Test the OpenAI generator
-    print("🤖 Testing OpenAI AI Generator...")
+            self.logger.error(f"OpenAI content analysis failed: {e}")
+            # Return fallback analysis
+            return {
+                "content_type": "general",
+                "target_audience": "General audience", 
+                "engagement_potential": "medium",
+                "recommended_tags": ["shorts", "viral", "trending", "entertainment"],
+                "youtube_title": title[:60],
+                "youtube_description": f"🔥 Amazing content you don't want to miss! {title[:80]}...",
+                "content_themes": ["entertainment"],
+                "viral_potential": 6
+            }
     
-    try:
-        generator = OpenAIGenerator()
-        
-        # Test API connection
-        if generator.test_api_connection():
-            print("✅ OpenAI API connected successfully!")
-        else:
-            print("❌ OpenAI API connection failed")
+    def generate_optimized_title(self, original_title: str, content_type: str = "general") -> str:
+        """Generate an optimized YouTube title using OpenAI"""
+        try:
+            prompt = f"""
+            Create an engaging YouTube Shorts title based on this original title:
+            Original: "{original_title}"
+            Content Type: {content_type}
             
-    except Exception as e:
-        print(f"❌ OpenAI generator test failed: {e}")
+            Requirements:
+            - Maximum 60 characters
+            - Include relevant emojis (1-2 max)
+            - Make it clickable and engaging
+            - Optimize for YouTube algorithm
+            - Keep the essence of the original content
+            
+            Return only the optimized title, nothing else.
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=100,
+                temperature=0.8
+            )
+            
+            optimized_title = response.choices[0].message.content.strip()
+            
+            # Remove quotes if present
+            if optimized_title.startswith('"') and optimized_title.endswith('"'):
+                optimized_title = optimized_title[1:-1]
+            
+            # Ensure length limit
+            if len(optimized_title) > 60:
+                optimized_title = optimized_title[:57] + "..."
+            
+            return optimized_title
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI title generation failed: {e}")
+            # Fallback to enhanced version of original
+            fallback = f"🔥 {original_title[:55]}"
+            return fallback
+    
+    def generate_description(self, title: str, content_type: str = "general") -> str:
+        """Generate an optimized YouTube description using OpenAI"""
+        try:
+            prompt = f"""
+            Create an engaging YouTube Shorts description for this video:
+            Title: "{title}"
+            Content Type: {content_type}
+            
+            Requirements:
+            - 2-3 sentences maximum
+            - Include relevant emojis
+            - Call to action (like, subscribe, comment)
+            - Use trending keywords
+            - Keep it under 200 characters
+            
+            Return only the description, nothing else.
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=150,
+                temperature=0.7
+            )
+            
+            description = response.choices[0].message.content.strip()
+            
+            # Remove quotes if present
+            if description.startswith('"') and description.endswith('"'):
+                description = description[1:-1]
+            
+            return description
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI description generation failed: {e}")
+            # Fallback description
+            return f"🔥 {title} | Don't forget to LIKE and SUBSCRIBE for more amazing content! 🚀 #Shorts #Viral"
+    
+    def generate_tags(self, title: str, content_type: str = "general") -> List[str]:
+        """Generate optimized tags using OpenAI"""
+        try:
+            prompt = f"""
+            Generate YouTube tags for this video:
+            Title: "{title}"
+            Content Type: {content_type}
+            
+            Requirements:
+            - 10-15 relevant tags
+            - Mix of broad and specific tags
+            - Include trending keywords
+            - Consider YouTube algorithm preferences
+            - Format as comma-separated list
+            
+            Return only the tags, nothing else.
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=200,
+                temperature=0.6
+            )
+            
+            tags_text = response.choices[0].message.content.strip()
+            
+            # Parse tags
+            tags = [tag.strip() for tag in tags_text.split(',')]
+            
+            # Clean up tags
+            tags = [tag for tag in tags if tag and len(tag) > 2]
+            
+            # Ensure we have some basic tags
+            base_tags = ["shorts", "viral", "trending"]
+            for base_tag in base_tags:
+                if base_tag not in [t.lower() for t in tags]:
+                    tags.insert(0, base_tag)
+            
+            return tags[:15]  # Limit to 15 tags
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI tag generation failed: {e}")
+            # Fallback tags
+            return ["shorts", "viral", "trending", "entertainment", "youtube", "amazing", "must watch", "popular", "best", "awesome"]
+    
+    def detect_content_type(self, title: str, description: str = "") -> str:
+        """Detect content type using OpenAI's advanced analysis"""
+        try:
+            prompt = f"""
+            Analyze this content and determine its primary category:
+            Title: "{title}"
+            Description: "{description}"
+            
+            Choose ONE category from:
+            anime, gaming, comedy, dance, beauty, motivation, educational, entertainment, sports, music, tech, food, travel, lifestyle, news, general
+            
+            Return only the category name, nothing else.
+            """
+            
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=20,
+                temperature=0.3
+            )
+            
+            content_type = response.choices[0].message.content.strip().lower()
+            
+            # Validate the response
+            valid_types = ["anime", "gaming", "comedy", "dance", "beauty", "motivation", 
+                          "educational", "entertainment", "sports", "music", "tech", "food", 
+                          "travel", "lifestyle", "news", "general"]
+            
+            if content_type in valid_types:
+                return content_type
+            else:
+                return "general"
+                
+        except Exception as e:
+            self.logger.error(f"OpenAI content type detection failed: {e}")
+            return "general"
+
+    def generate_ai_data(self, video_path: str, original_title: str) -> Dict:
+        """Generate comprehensive AI data for video - main method called by AI Tags Generator"""
+        try:
+            print("🤖 OpenAI analyzing video content...")
+            
+            # Use the existing methods to generate content
+            content_type = self.detect_content_type(original_title)
+            optimized_title = self.generate_optimized_title(original_title, content_type)
+            description = self.generate_description(optimized_title, content_type)
+            tags = self.generate_tags(optimized_title, content_type)
+            
+            # Comprehensive analysis
+            analysis = self.analyze_video_content(original_title, description)
+            
+            return {
+                'title': optimized_title,
+                'description': description,
+                'tags': tags,
+                'content_type': content_type,
+                'confidence': 0.95,  # High confidence for OpenAI
+                'ai_provider': 'openai-gpt',
+                'cost_estimate': 'Low (~$0.02)',
+                'analysis': analysis,
+                'viral_potential': analysis.get('viral_potential', 7),
+                'target_audience': analysis.get('target_audience', 'General audience'),
+                'engagement_potential': analysis.get('engagement_potential', 'high')
+            }
+            
+        except Exception as e:
+            self.logger.error(f"OpenAI generate_ai_data failed: {e}")
+            return {
+                'error': f'OpenAI API failed: {str(e)}',
+                'title': f"🔥 {original_title[:55]}",
+                'description': f"Amazing content from {original_title}! Like and subscribe!",
+                'tags': ["shorts", "viral", "trending", "entertainment"],
+                'content_type': 'general',
+                'confidence': 0.3
+            }
+
+# Test function
+if __name__ == "__main__":
+    from dotenv import load_dotenv
+    load_dotenv()  # Load environment variables from .env file
+    
+    # Test the OpenAI generator
+    api_key = os.getenv('OPENAI_API_KEY')
+    if api_key:
+        generator = OpenAIGenerator(api_key)
+        if generator.test_api_connection():
+            print("✅ OpenAI connection successful!")
+            
+            # Test analysis
+            result = generator.analyze_video_content(
+                "Amazing anime fight scene compilation",
+                "Epic battles from popular anime series"
+            )
+            print("📊 Analysis result:", json.dumps(result, indent=2))
+        else:
+            print("❌ OpenAI connection failed")
+    else:
+        print("❌ OPENAI_API_KEY not found in environment")
