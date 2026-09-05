@@ -124,6 +124,7 @@ class SmartScheduler:
                             'video_id': video['video_id'],
                             'title': video.get('title', 'Unknown'),
                             'channel': channel,
+                            'priority': video.get('priority', 'normal'),
                             'scheduled_time': slot['datetime'].strftime('%Y-%m-%d %H:%M:%S'),
                             'scheduled_time_readable': self.format_readable_time(slot['datetime']),
                             'analytics_optimized': True,

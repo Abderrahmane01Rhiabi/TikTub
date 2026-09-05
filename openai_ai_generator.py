@@ -26,7 +26,11 @@ class OpenAIGenerator:
         
         self.base_url = "https://api.openai.com/v1/chat/completions"
         self.model_name = "gpt-4o-mini"  # More cost-effective than gpt-4-vision-preview
-        
+
+        # Tracks degraded/failed calls so a silent fallback to generic
+        # content isn't mistaken for a genuine success by the caller.
+        self._api_error_count = 0
+
         # Content analysis prompts
         self.analysis_prompt = """
 Analyze this TikTok video content and identify specific details. Provide a JSON response with:
@@ -157,71 +161,70 @@ Respond with JSON:
 }
 """
 
-    def extract_video_frame(self, video_path: str) -> Optional[str]:
-        """Extract a representative frame from video and encode as base64"""
+    def extract_video_frames(self, video_path: str, n: int = 3) -> List[str]:
+        """Extract n frames spread across the video as base64 JPEGs"""
+        frames = []
         try:
             cap = cv2.VideoCapture(video_path)
             if not cap.isOpened():
-                return None
-            
-            # Get middle frame
+                return frames
+
             total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-            middle_frame = total_frames // 2
-            
-            cap.set(cv2.CAP_PROP_POS_FRAMES, middle_frame)
-            ret, frame = cap.read()
+            if total_frames <= 0:
+                cap.release()
+                return frames
+
+            n = max(1, n)
+            positions = [int(total_frames * (i + 1) / (n + 1)) for i in range(n)]
+
+            for pos in positions:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, pos)
+                ret, frame = cap.read()
+                if not ret:
+                    continue
+
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                pil_image.thumbnail((800, 600), Image.Resampling.LANCZOS)
+
+                with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+                    pil_image.save(tmp.name, 'JPEG', quality=85)
+                    with open(tmp.name, 'rb') as img_file:
+                        frames.append(base64.b64encode(img_file.read()).decode('utf-8'))
+                    os.unlink(tmp.name)
+
             cap.release()
-            
-            if not ret:
-                return None
-            
-            # Convert to RGB and resize for API efficiency
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(frame_rgb)
-            
-            # Resize to reduce API costs
-            pil_image.thumbnail((800, 600), Image.Resampling.LANCZOS)
-            
-            # Save to temporary file and encode
-            with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
-                pil_image.save(tmp.name, 'JPEG', quality=85)
-                with open(tmp.name, 'rb') as img_file:
-                    encoded = base64.b64encode(img_file.read()).decode('utf-8')
-                os.unlink(tmp.name)
-                return encoded
-                
+            return frames
+
         except Exception as e:
             print(f"⚠️ Frame extraction error: {e}")
-            return None
+            return frames
 
-    def call_openai_api(self, prompt: str, image_base64: str = None) -> Dict:
-        """Make API call to OpenAI"""
+    def extract_video_frame(self, video_path: str) -> Optional[str]:
+        """Backward-compatible single-frame extraction (middle frame)"""
+        frames = self.extract_video_frames(video_path, n=1)
+        return frames[0] if frames else None
+
+    def call_openai_api(self, prompt: str, images: List[str] = None, max_tokens: int = 1000) -> Dict:
+        """Make API call to OpenAI. `images` is a list of base64-encoded JPEGs."""
         try:
             headers = {
                 'Authorization': f'Bearer {self.api_key}',
                 'Content-Type': 'application/json'
             }
-            
+
             # Prepare messages
-            if image_base64:
-                messages = [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": prompt
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_base64}",
-                                    "detail": "low"  # Use low detail to save costs
-                                }
-                            }
-                        ]
-                    }
-                ]
+            if images:
+                content = [{"type": "text", "text": prompt}]
+                for image_base64 in images:
+                    content.append({
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:image/jpeg;base64,{image_base64}",
+                            "detail": "low"  # Use low detail to save costs
+                        }
+                    })
+                messages = [{"role": "user", "content": content}]
             else:
                 messages = [
                     {
@@ -233,7 +236,7 @@ Respond with JSON:
             payload = {
                 "model": self.model_name,
                 "messages": messages,
-                "max_tokens": 1000,
+                "max_tokens": max_tokens,
                 "temperature": 0.7
             }
             
@@ -262,13 +265,16 @@ Respond with JSON:
                     
                     print(f"⚠️ JSON parsing failed: {str(e)}")
                     print(f"Raw response: {content[:200]}...")
+                    self._api_error_count += 1
                     return {"raw_response": content, "parsing_error": True}
             else:
                 print(f"❌ OpenAI API error: {response.status_code} - {response.text}")
+                self._api_error_count += 1
                 return {"error": f"API error: {response.status_code}"}
-                
+
         except Exception as e:
             print(f"❌ OpenAI API call failed: {e}")
+            self._api_error_count += 1
             return {"error": str(e)}
 
     def test_api_connection(self) -> bool:
@@ -279,18 +285,27 @@ Respond with JSON:
         except:
             return False
 
-    def analyze_video_content(self, video_path: str) -> Dict:
-        """Analyze video content using OpenAI Vision"""
+    def analyze_video_content(self, video_path: str, custom_prompt: str = None,
+                               transcript: str = None, use_frames: bool = True,
+                               tiktok_caption: str = None) -> Dict:
+        """Analyze video content using OpenAI Vision (and optionally an audio transcript)"""
         print(f"🔍 Analyzing video with OpenAI: {os.path.basename(video_path)}")
-        
-        # Extract frame for analysis
-        frame_base64 = self.extract_video_frame(video_path)
-        if not frame_base64:
-            return {"error": "Failed to extract video frame"}
-        
+
+        prompt = self.analysis_prompt
+        if custom_prompt:
+            prompt += f"\n\nChannel-specific style instructions:\n{custom_prompt}"
+        if tiktok_caption:
+            prompt += f"\n\nOriginal TikTok caption (use for context, don't just copy it):\n\"\"\"{tiktok_caption}\"\"\""
+        if transcript:
+            prompt += f"\n\nAudio transcript of this video:\n\"\"\"{transcript}\"\"\""
+
+        frames = self.extract_video_frames(video_path, n=3) if use_frames else []
+        if use_frames and not frames and not transcript:
+            return {"error": "Failed to extract video frames"}
+
         # Analyze content
-        analysis = self.call_openai_api(self.analysis_prompt, frame_base64)
-        
+        analysis = self.call_openai_api(prompt, frames)
+
         if "error" in analysis:
             print(f"⚠️ Content analysis failed: {analysis['error']}")
             return self.get_fallback_analysis()
@@ -298,11 +313,15 @@ Respond with JSON:
         print(f"✅ Content analyzed - Category: {analysis.get('category', 'unknown')}")
         return analysis
 
-    def generate_titles(self, analysis: Dict) -> List[str]:
+    def generate_titles(self, analysis: Dict, custom_prompt: str = None) -> List[str]:
         """Generate optimized titles using OpenAI"""
         print("📝 Generating viral titles...")
-        
-        prompt = self.title_prompt.format(analysis=json.dumps(analysis, indent=2))
+
+        # Plain .replace(), not .format(): the prompt templates contain literal JSON
+        # example braces that .format() would misparse as extra replacement fields.
+        prompt = self.title_prompt.replace('{analysis}', json.dumps(analysis, indent=2))
+        if custom_prompt:
+            prompt += f"\n\nChannel-specific style instructions (these override the generic guidelines/examples above — follow them exactly, including language):\n{custom_prompt}"
         result = self.call_openai_api(prompt)
         
         if "error" in result or "titles" not in result:
@@ -313,14 +332,15 @@ Respond with JSON:
         print(f"✅ Generated {len(titles)} viral titles")
         return titles
 
-    def generate_description(self, analysis: Dict, title: str) -> str:
+    def generate_description(self, analysis: Dict, title: str, custom_prompt: str = None) -> str:
         """Generate optimized description using OpenAI"""
         print("📄 Generating SEO description...")
-        
-        prompt = self.description_prompt.format(
-            analysis=json.dumps(analysis, indent=2),
-            title=title
-        )
+
+        prompt = self.description_prompt.replace(
+            '{analysis}', json.dumps(analysis, indent=2)
+        ).replace('{title}', title)
+        if custom_prompt:
+            prompt += f"\n\nChannel-specific style instructions (these override the generic guidelines/examples above — follow them exactly, including language):\n{custom_prompt}"
         result = self.call_openai_api(prompt)
         
         if "error" in result or "description" not in result:
@@ -331,14 +351,15 @@ Respond with JSON:
         print("✅ SEO description generated")
         return description
 
-    def generate_tags(self, analysis: Dict, title: str) -> List[str]:
+    def generate_tags(self, analysis: Dict, title: str, custom_prompt: str = None) -> List[str]:
         """Generate optimized tags using OpenAI"""
         print("🏷️ Generating SEO tags...")
-        
-        prompt = self.tags_prompt.format(
-            analysis=json.dumps(analysis, indent=2),
-            title=title
-        )
+
+        prompt = self.tags_prompt.replace(
+            '{analysis}', json.dumps(analysis, indent=2)
+        ).replace('{title}', title)
+        if custom_prompt:
+            prompt += f"\n\nChannel-specific style instructions (these override the generic guidelines/examples above — follow them exactly, including language):\n{custom_prompt}"
         result = self.call_openai_api(prompt)
         
         if "error" in result or "tags" not in result:
@@ -349,26 +370,36 @@ Respond with JSON:
         print(f"✅ Generated {len(tags)} SEO tags")
         return tags[:20]  # Limit to 20 tags
 
-    def generate_ai_data(self, video_path: str, original_title: str = "") -> Dict:
+    def generate_ai_data(self, video_path: str, original_title: str = "",
+                          custom_prompt: str = None, transcript: str = None,
+                          use_frames: bool = True, tiktok_caption: str = None) -> Dict:
         """Main function to generate complete AI data for video"""
         try:
             print(f"🤖 Starting OpenAI analysis for: {os.path.basename(video_path)}")
-            
-            # Step 1: Analyze video content
-            analysis = self.analyze_video_content(video_path)
+            self._api_error_count = 0
+
+            # Step 1: Analyze video content (channel-aware prompt / transcript)
+            analysis = self.analyze_video_content(
+                video_path, custom_prompt=custom_prompt,
+                transcript=transcript, use_frames=use_frames, tiktok_caption=tiktok_caption
+            )
             if "error" in analysis:
                 return self.get_complete_fallback(original_title)
-            
+
             # Step 2: Generate titles
-            titles = self.generate_titles(analysis)
+            titles = self.generate_titles(analysis, custom_prompt=custom_prompt)
             best_title = titles[0] if titles else f"Amazing {analysis.get('category', 'Viral')} Video! 🔥"
-            
+
             # Step 3: Generate description
-            description = self.generate_description(analysis, best_title)
-            
+            description = self.generate_description(analysis, best_title, custom_prompt=custom_prompt)
+
             # Step 4: Generate tags
-            tags = self.generate_tags(analysis, best_title)
-            
+            tags = self.generate_tags(analysis, best_title, custom_prompt=custom_prompt)
+
+            if self._api_error_count > 0:
+                print(f"⚠️ OpenAI degraded ({self._api_error_count} failed sub-call(s)) — deferring to next provider")
+                return self.get_complete_fallback(original_title)
+
             result = {
                 'title': best_title,
                 'description': description,
@@ -445,8 +476,11 @@ Respond with JSON:
         return base_tags + category_tags.get(category, category_tags['entertainment'])
 
     def get_complete_fallback(self, original_title: str) -> Dict:
-        """Complete fallback when everything fails"""
+        """Complete fallback when everything fails. Carries an 'error' key on
+        purpose so the caller doesn't mistake this degraded content for a
+        genuine success."""
         return {
+            'error': 'openai_unavailable_or_degraded',
             'title': f"Amazing Viral Content! 🔥",
             'description': self.get_fallback_description("Amazing Viral Content! 🔥", "entertainment"),
             'tags': self.get_fallback_tags("entertainment"),

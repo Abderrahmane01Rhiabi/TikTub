@@ -23,16 +23,22 @@ class YouTubeScheduler:
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
     
-    def get_optimal_publish_times(self, num_videos: int, start_date: Optional[datetime] = None) -> List[datetime]:
-        """Calcule les meilleurs créneaux de publication"""
+    def get_optimal_publish_times(self, num_videos: int, start_date: Optional[datetime] = None,
+                                   preferred_days: Optional[List[str]] = None,
+                                   preferred_hours: Optional[List[str]] = None) -> List[datetime]:
+        """Calcule les meilleurs créneaux de publication.
+
+        preferred_days/preferred_hours: override propre à une chaîne (depuis son
+        profile.json) ; si absent, retombe sur les valeurs globales de config.yaml.
+        """
         if not start_date:
             start_date = datetime.now(self.timezone)
-        
+
         # Configuration du scheduling
         spacing_hours = self.config['scheduling']['spacing_hours']
-        preferred_days = self.config['scheduling']['preferred_days']
-        preferred_hours = self.config['scheduling']['preferred_hours']
-        
+        preferred_days = preferred_days or self.config['scheduling']['preferred_days']
+        preferred_hours = preferred_hours or self.config['scheduling']['preferred_hours']
+
         # Convertit les jours en indices (lundi=0, dimanche=6)
         day_map = {
             'monday': 0, 'tuesday': 1, 'wednesday': 2, 'thursday': 3,
@@ -87,37 +93,50 @@ class YouTubeScheduler:
         hour, minute = map(int, preferred_hours[0].split(':'))
         return next_day.replace(hour=hour, minute=minute, second=0, microsecond=0)
     
-    def create_upload_schedule(self, videos: List[Dict], start_date: Optional[datetime] = None) -> List[Dict]:
-        """Crée un planning d'upload complet"""
-        
-        # Limite selon la config
-        max_daily = self.config['general']['max_daily_uploads']
+    def create_upload_schedule(self, videos: List[Dict], start_date: Optional[datetime] = None,
+                                channel_manager=None) -> List[Dict]:
+        """Crée un planning d'upload complet.
+
+        Chaque chaîne obtient sa PROPRE séquence de créneaux, indépendante des
+        autres : si la chaîne X prend les dates a/b/c, la chaîne Z prend AUSSI
+        a/b/c (ses propres premiers créneaux disponibles), jamais d/e/f à la
+        suite de X. Sans ça, une seule file globale ferait hériter les chaînes
+        traitées en dernier des dates les plus tardives.
+        """
         max_weekly = self.config['general']['max_weekly_uploads']
-        
-        if len(videos) > max_weekly:
-            print(f"⚠️ Attention: {len(videos)} vidéos > limite hebdomadaire ({max_weekly})")
-            videos = videos[:max_weekly]
-        
-        # Calcule les créneaux optimaux
-        publish_times = self.get_optimal_publish_times(len(videos), start_date)
-        
-        # Crée le planning complet
+
+        by_channel: Dict[str, List[Dict]] = {}
+        for video in videos:
+            channel = video.get('channel') or video.get('target_channel', 'default')
+            by_channel.setdefault(channel, []).append(video)
+
         schedule = []
-        for i, (video, publish_time) in enumerate(zip(videos, publish_times)):
-            # Ensure we always have a valid title
-            title = video.get('custom_title') or video.get('title') or f'Video {i+1}'
-            
-            schedule_item = {
-                'video_id': video.get('video_id', f'video_{i}'),
-                'title': title,
-                'scheduled_time': publish_time.isoformat(),
-                'scheduled_time_readable': publish_time.strftime('%A %d/%m/%Y à %H:%M'),
-                'status': 'scheduled',
-                'priority': video.get('priority', 'normal'),
-                'video_data': video
-            }
-            schedule.append(schedule_item)
-        
+        for channel, channel_videos in by_channel.items():
+            if len(channel_videos) > max_weekly:
+                print(f"⚠️ {channel}: {len(channel_videos)} vidéos > limite hebdomadaire ({max_weekly})")
+                channel_videos = channel_videos[:max_weekly]
+
+            profile = channel_manager.get_channel_profile(channel) if channel_manager else {}
+            publish_times = self.get_optimal_publish_times(
+                len(channel_videos), start_date,
+                preferred_days=profile.get('preferred_days') or None,
+                preferred_hours=profile.get('preferred_hours') or None
+            )
+
+            for i, (video, publish_time) in enumerate(zip(channel_videos, publish_times)):
+                title = video.get('custom_title') or video.get('title') or f'Video {i+1}'
+                schedule.append({
+                    'video_id': video.get('video_id', f'video_{i}'),
+                    'title': title,
+                    'channel': channel,
+                    'scheduled_time': publish_time.isoformat(),
+                    'scheduled_time_readable': publish_time.strftime('%A %d/%m/%Y à %H:%M'),
+                    'status': 'scheduled',
+                    'priority': video.get('priority', 'normal'),
+                    'video_data': video
+                })
+
+        schedule.sort(key=lambda e: e['scheduled_time'])
         return schedule
     
     def validate_schedule(self, schedule: List[Dict]) -> Dict:

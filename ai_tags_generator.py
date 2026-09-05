@@ -2,7 +2,7 @@
 """
 AI Tags Generator - Intelligent content analysis for TikTok videos
 ================================================================
-Uses cloud AI (Gemini) for advanced video analysis and optimization
+Uses cloud AI (Gemini, OpenAI) for advanced video analysis and optimization
 """
 
 import os
@@ -38,20 +38,28 @@ except ImportError:
     OPENAI_AVAILABLE = False
     print("⚠️ OpenAI not available")
 
+try:
+    from audio_transcriber import AudioTranscriber
+    TRANSCRIPTION_AVAILABLE = True
+except ImportError:
+    TRANSCRIPTION_AVAILABLE = False
+    print("⚠️ Audio transcription not available")
+
 class AITagsGenerator:
     def __init__(self, api_key: str = None, openai_key: str = None, preferred_provider: str = "gemini"):
         """Initialize AI generator with multiple providers"""
         self.gemini_key = api_key or os.getenv('GEMINI_API_KEY')
         self.openai_key = openai_key or os.getenv('OPENAI_API_KEY')
         self.preferred_provider = preferred_provider.lower()
-        
+
         # Initialize providers
         self.gemini_ai = None
         self.openai_ai = None
         self.use_gemini = False
         self.use_openai = False
-        
-        # Try to initialize Gemini AI
+
+        # Try to initialize Gemini AI first — it's the free-tier provider, so it's
+        # the default first choice regardless of whether OpenAI also has credits.
         if GEMINI_AVAILABLE and self.gemini_key:
             try:
                 self.gemini_ai = GeminiAIGenerator(self.gemini_key)
@@ -62,7 +70,7 @@ class AITagsGenerator:
                     print("⚠️ Gemini API connection failed")
             except Exception as e:
                 print(f"⚠️ Gemini AI initialization failed: {e}")
-        
+
         # Try to initialize OpenAI
         if OPENAI_AVAILABLE and self.openai_key:
             try:
@@ -74,15 +82,15 @@ class AITagsGenerator:
                     print("⚠️ OpenAI API connection failed")
             except Exception as e:
                 print(f"⚠️ OpenAI initialization failed: {e}")
-        
+
         # Show available providers
         providers = []
         if self.use_gemini: providers.append("Gemini")
-        if self.use_openai: providers.append("OpenAI") 
+        if self.use_openai: providers.append("OpenAI")
         providers.append("Local AI")
-        
+
         print(f"🤖 Available AI providers: {' → '.join(providers)}")
-        
+
         if not self.use_gemini and not self.use_openai:
             print("⚠️ No cloud AI providers available, using local AI only")
         
@@ -125,54 +133,111 @@ class AITagsGenerator:
             'amazing', 'must watch', 'viral video', 'short video', 'youtube shorts'
         ]
 
-    def generate_ai_content(self, video_data: Dict) -> Dict:
-        """Generate AI-enhanced content using multiple providers with fallback"""
-        
-        video_path = video_data.get('processed_video_path', '')
-        original_title = video_data.get('title', '')
-        
-        # Determine provider order based on preference
+    def generate_ai_content(self, video_data: Dict, channel_profile: Dict = None) -> Dict:
+        """Generate AI-enhanced content using multiple providers with fallback.
+
+        channel_profile (from ChannelManager.get_channel_profile): controls the
+        channel-specific style instructions and whether to analyze video frames,
+        an audio transcript, or both (analysis_mode: "vision" | "audio" | "vision+audio").
+        """
+
+        video_path = (
+            video_data.get('processed_video_path')
+            or video_data.get('video_path')
+            or video_data.get('video')
+            or ''
+        )
+        original_title = (
+            video_data.get('title')
+            or video_data.get('original_title')
+            or video_data.get('custom_title')
+            or ''
+        )
+
+        channel_profile = channel_profile or {}
+        analysis_mode = channel_profile.get('analysis_mode', 'vision')
+        custom_prompt = channel_profile.get('ai_style_prompt') or None
+        use_frames = analysis_mode in ('vision', 'vision+audio')
+        needs_transcript = analysis_mode in ('audio', 'vision+audio')
+
+        # The original TikTok caption (untruncated, hashtags included) — yt-dlp
+        # already extracts it and it was being thrown away after download.
+        # Real context for the AI (e.g. "#Asta #BlackClover" identifies the
+        # anime/character far more reliably than a single guessed frame).
+        tiktok_caption = video_data.get('tiktok_description') or None
+
+        transcript = None
+        if needs_transcript and TRANSCRIPTION_AVAILABLE and os.path.exists(video_path):
+            print("🎙️ Transcribing audio for channel-specific analysis...")
+            transcript = AudioTranscriber().transcribe(video_path)
+            if transcript:
+                print(f"✅ Transcript ({len(transcript)} chars): {transcript[:80]}...")
+            else:
+                print("⚠️ No transcript obtained, falling back to visual frames")
+                use_frames = True
+
+        # Determine provider order: Gemini first (free) unless the channel/call
+        # explicitly prefers OpenAI, falling back to the other cloud provider
+        # before finally dropping to the local template generator.
         providers = []
         if self.preferred_provider == "openai" and self.use_openai:
-            providers = ["openai", "gemini"]
-        elif self.preferred_provider == "gemini" and self.use_gemini:
-            providers = ["gemini", "openai"]
+            providers = ["openai"]
+            if self.use_gemini: providers.append("gemini")
         else:
-            # Default order: Gemini first (cheaper), then OpenAI
             if self.use_gemini: providers.append("gemini")
             if self.use_openai: providers.append("openai")
-        
-        # Try each provider in order
+
         for provider in providers:
+            if not os.path.exists(video_path):
+                break
             try:
-                if provider == "gemini" and self.use_gemini and os.path.exists(video_path):
+                if provider == "gemini":
                     print(f"🤖 Using Gemini AI for video analysis...")
-                    result = self.gemini_ai.generate_ai_data(video_path, original_title)
-                    
+                    result = self.gemini_ai.generate_ai_data(
+                        video_path, original_title,
+                        custom_prompt=custom_prompt, transcript=transcript, use_frames=use_frames,
+                        tiktok_caption=tiktok_caption
+                    )
                     if "error" not in result:
-                        result['ai_provider'] = 'gemini-flash'
-                        result['cost_estimate'] = 'Very low (< $0.01)'
                         print(f"✅ Gemini AI analysis complete with {result['confidence']*100:.0f}% confidence")
-                        return result
+                        return self._normalize_ai_result(result, title_key='title', description_key='description', tags_key='tags')
                     else:
                         print(f"⚠️ Gemini AI failed: {result.get('error', 'Unknown error')}")
-                
-                elif provider == "openai" and self.use_openai and os.path.exists(video_path):
+
+                elif provider == "openai":
                     print(f"🤖 Using OpenAI for video analysis...")
-                    result = self.openai_ai.generate_ai_data(video_path, original_title)
-                    
+                    result = self.openai_ai.generate_ai_data(
+                        video_path, original_title,
+                        custom_prompt=custom_prompt, transcript=transcript, use_frames=use_frames,
+                        tiktok_caption=tiktok_caption
+                    )
                     if "error" not in result:
                         print(f"✅ OpenAI analysis complete with {result['confidence']*100:.0f}% confidence")
-                        return result
+                        return self._normalize_ai_result(result, title_key='title', description_key='description', tags_key='tags')
                     else:
                         print(f"⚠️ OpenAI failed: {result.get('error', 'Unknown error')}")
-                        
             except Exception as e:
                 print(f"⚠️ {provider.title()} AI failed: {e}")
-        
+
         # Final fallback to basic AI
         print("🔄 Using local AI fallback")
         return self.generate_basic_ai_content(video_data)
+
+    def _normalize_ai_result(self, result: Dict, title_key: str, description_key: str, tags_key: str) -> Dict:
+        """Normalize an OpenAI vision result into the common shape the rest of the
+        pipeline (youtube_uploader.py) expects: optimized_title, description_suggestions,
+        tags, content_type, hashtags. Keeps the original fields too for reference."""
+        title = result.get(title_key, '') or 'Amazing Viral Video! 🔥'
+        description = result.get(description_key, '') or ''
+        tags = result.get(tags_key, []) or []
+        category = result.get('category', 'entertainment')
+
+        result['optimized_title'] = title
+        result['description_suggestions'] = [description] if description else self.generate_description_suggestions(category)
+        result['tags'] = tags
+        result['content_type'] = category
+        result['hashtags'] = [f"#{t}" for t in tags[:3]] or ['#Shorts', '#Viral']
+        return result
     
     def generate_basic_ai_content(self, video_data: Dict) -> Dict:
         """Basic AI content generation (fallback)"""
@@ -206,7 +271,7 @@ class AITagsGenerator:
         tags = self.viral_tags + category_data['tags']
         tags = list(dict.fromkeys(tags))[:20]  # Remove duplicates, limit to 20
         
-        return {
+        result = {
             'title': ai_title,
             'description': description,
             'tags': tags,
@@ -217,37 +282,41 @@ class AITagsGenerator:
             'ai_provider': 'basic',
             'cost_estimate': 'Free'
         }
+        return self._normalize_ai_result(result, title_key='title', description_key='description', tags_key='tags')
 
     def set_api_key(self, api_key: str):
-        """Update Gemini API key and reinitialize"""
-        self.api_key = api_key
-        if GEMINI_AVAILABLE:
+        """Update OpenAI API key and reinitialize"""
+        self.openai_key = api_key
+        if OPENAI_AVAILABLE:
             try:
-                self.gemini_ai = GeminiAIGenerator(api_key)
-                if self.gemini_ai.test_api_connection():
-                    self.use_gemini = True
-                    print("✅ Gemini AI updated and connected")
+                self.openai_ai = OpenAIGenerator(api_key)
+                if self.openai_ai.test_api_connection():
+                    self.use_openai = True
+                    print("✅ OpenAI updated and connected")
                     return True
                 else:
                     print("❌ Invalid API key or connection failed")
                     return False
             except Exception as e:
-                print(f"❌ Failed to update Gemini AI: {e}")
+                print(f"❌ Failed to update OpenAI: {e}")
                 return False
         return False
 
     def get_api_status(self) -> Dict:
         """Get current API status and usage info"""
+        active = self.use_gemini or self.use_openai
         return {
             'gemini_available': GEMINI_AVAILABLE,
             'gemini_active': self.use_gemini,
-            'api_key_set': bool(self.api_key),
-            'provider': 'gemini-flash' if self.use_gemini else 'basic',
-            'cost_per_video': '< $0.01' if self.use_gemini else 'Free',
+            'openai_available': OPENAI_AVAILABLE,
+            'openai_active': self.use_openai,
+            'api_key_set': bool(self.gemini_key or self.openai_key),
+            'provider': 'gemini' if self.use_gemini else ('openai' if self.use_openai else 'basic'),
+            'cost_per_video': 'Free' if self.use_gemini else ('< $0.01' if self.use_openai else 'Free'),
             'features': {
-                'video_analysis': self.use_gemini,
-                'visual_recognition': self.use_gemini,
-                'advanced_optimization': self.use_gemini,
+                'video_analysis': active,
+                'visual_recognition': active,
+                'advanced_optimization': active,
                 'basic_content_generation': True
             }
         }

@@ -150,8 +150,7 @@ def show_usage_tips():
     print("• Monitor costs regularly")
     print("• OpenAI is more expensive but very accurate")
     print("• Use for important content when quality matters")
-    print("• Gemini is cheaper for bulk processing")
-    
+
     print("\n🔧 Integration Info:")
     print("• OpenAI integrates automatically with your existing system")
     print("• Fallback order: Gemini → OpenAI → Local AI")

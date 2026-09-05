@@ -67,6 +67,7 @@ urls_input/*.txt
 
 # Environnement virtuel
 venv/
+.venv/
 env/
 ENV/
 env.bak/

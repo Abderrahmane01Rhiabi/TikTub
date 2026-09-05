@@ -1,5 +1,13 @@
-yt-dlp>=2023.12.30
-moviepy>=1.0.3
+yt-dlp>=2023.12.30  # if TikTok downloads start failing with "Unexpected response from webpage
+                    # request", TikTok changed something yt-dlp's stable release hasn't caught up
+                    # with yet — try `pip install --pre -U yt-dlp` for the nightly build first.
+curl_cffi==0.15.0  # PINNED, not just >=: lets yt-dlp impersonate a real browser for TikTok downloads.
+                   # 0.16.x adds a "chrome-150:macos-26" impersonation target that yt-dlp's TikTok
+                   # extractor always prefers (ignores --impersonate overrides) and that TikTok's
+                   # WAF blocks outright (confirmed: raw requests with it get a CDN error page, not
+                   # TikTok's real page). 0.15.0 doesn't offer that target, so yt-dlp falls back to
+                   # chrome-146, which works. Re-verify with a real TikTok download before bumping.
+moviepy>=1.0.3,<2.0  # moviepy 2.x removed the moviepy.editor module this codebase relies on
 google-api-python-client>=2.108.0
 google-auth-oauthlib>=1.1.0
 Pillow>=10.1.0
@@ -15,3 +23,10 @@ numpy>=1.24.0
 # AI Providers
 openai>=1.0.0
 python-dotenv>=1.0.0
+elevenlabs>=2.66.0  # generative pipeline: script -> voice (TTS + word timestamps)
+
+# Local web UI
+fastapi>=0.110.0
+uvicorn>=0.29.0
+python-multipart>=0.0.9
+pydantic>=2.0.0

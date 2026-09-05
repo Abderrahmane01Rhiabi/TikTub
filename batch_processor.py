@@ -35,6 +35,14 @@ except ImportError:
     ANALYTICS_SUPPORT = False
     print("⚠️  Analytics scheduling not available")
 
+# Import AI-suggested scheduling (per-video, content/channel-aware)
+try:
+    from ai_scheduler import AIScheduler
+    AI_SCHEDULING_SUPPORT = True
+except ImportError:
+    AI_SCHEDULING_SUPPORT = False
+    print("⚠️  AI-suggested scheduling not available")
+
 from typing import Dict, List, Optional  # add any other needed types here
 
 
@@ -64,31 +72,52 @@ class BatchProcessor:
             self.smart_scheduler = SmartScheduler()
             self.smart_scheduler.load_analytics_cache()
             print("📊 Analytics-based scheduling initialized")
+
+        # Initialize AI-suggested scheduling (per-video, channel/content-aware)
+        if AI_SCHEDULING_SUPPORT:
+            self.ai_scheduler = AIScheduler(self.ai_generator)
         
     def load_config(self, config_path: str):
         """Charge la configuration"""
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
     
-    def process_url_file(self, file_path: str, batch_name: str = None) -> str:
-        """Traite un fichier d'URLs et crée un batch"""
+    def process_url_file(self, file_path: str, batch_name: str = None, channel_name: str = "default") -> str:
+        """Traite un fichier d'URLs et crée un batch, tagué avec la chaîne cible"""
         if not batch_name:
             batch_name = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
+
         print(f"📋 Traitement du fichier: {file_path}")
-        
+
         # Parse le fichier d'URLs
         videos = self.url_manager.parse_url_file(file_path)
         if not videos:
             print("❌ Aucune URL valide trouvée")
             return None
-        
+
         print(f"✅ {len(videos)} URLs trouvées")
-        
+
+        # Tague chaque vidéo avec sa chaîne de destination
+        for video in videos:
+            video['channel'] = channel_name
+
         # Ajoute le batch à la base
         batch_id = self.url_manager.add_batch(batch_name, videos)
-        
+
         return batch_id
+
+    def process_channel_url_file(self, channel_name: str, filename: str, batch_name: str = None) -> str:
+        """Traite un fichier d'URLs situé dans channels/<channel_name>/urls_input/"""
+        if not MULTI_CHANNEL_SUPPORT:
+            raise RuntimeError("Multi-channel support not available")
+
+        urls_dir = self.channel_manager.get_urls_input_dir(channel_name)
+        file_path = os.path.join(urls_dir, filename)
+        if not os.path.exists(file_path):
+            print(f"❌ Fichier introuvable: {file_path}")
+            return None
+
+        return self.process_url_file(file_path, batch_name=batch_name, channel_name=channel_name)
     
     def download_and_process_batch(self, batch_id: str, background_strategy: str = "random"):
         """Télécharge et traite toutes les vidéos d'un batch"""
@@ -139,13 +168,15 @@ class BatchProcessor:
                     'downloading'
                 )
                 
-                video_path, title = self.download_tiktok_video(video['url'])
+                video_path, title, tiktok_meta = self.download_tiktok_video(video['url'], video_id=video['video_id'])
                 if not video_path:
                     self.url_manager.update_video_status(
-                        video['video_id'], 
+                        video['video_id'],
                         'download_failed'
                     )
                     continue
+
+                video.update(tiktok_meta)  # so generate_ai_content() below can use the real TikTok caption
                 
                 # Étape 2: Traitement vidéo
                 self.url_manager.update_video_status(
@@ -175,15 +206,16 @@ class BatchProcessor:
                     'generating_tags'
                 )
                 
-                ai_data = self.generate_ai_content(video, title)
+                ai_data = self.generate_ai_content(video, title, video_path=processed_path)
                 
                 # Étape 4: Mise à jour des données
                 self.url_manager.update_video_status(
-                    video['video_id'], 
+                    video['video_id'],
                     'ready_for_upload',
                     video_path=processed_path,
                     original_title=title,
-                    ai_data=ai_data
+                    ai_data=ai_data,
+                    **tiktok_meta
                 )
                 
                 processed_count += 1
@@ -198,6 +230,156 @@ class BatchProcessor:
                 )
         
         print(f"\n🎉 Batch traité: {processed_count}/{len(batch_videos)} vidéos")
+
+    def download_batch(self, batch_id: str) -> List[Dict]:
+        """Télécharge uniquement les vidéos d'un batch (pas d'IA, pas de background).
+
+        Les vidéos téléchargées sont marquées 'selected' par défaut (l'UI affiche
+        leurs cases cochées d'emblée) — décocher une case dans l'étape suivante la
+        repasse à 'rejected'.
+        """
+        db = self.url_manager.load_database()
+        batch_videos = [v for v in db['videos'].values() if v['batch_id'] == batch_id]
+
+        if not batch_videos:
+            print("❌ Batch introuvable")
+            return []
+
+        downloaded = []
+        skipped_duplicates = 0
+        for video in batch_videos:
+            if video['status'] != 'pending':
+                continue
+
+            duplicate = self.url_manager.find_duplicate(video['url'], exclude_video_id=video['video_id'])
+            if duplicate:
+                self.url_manager.update_video_status(
+                    video['video_id'], 'duplicate',
+                    duplicate_of=duplicate['video_id'],
+                    duplicate_channel=duplicate.get('channel', 'default'),
+                    duplicate_status=duplicate['status']
+                )
+                print(f"⏭️ Déjà traité (chaîne {duplicate.get('channel', 'default')}, statut {duplicate['status']}) — ignoré: {video['url']}")
+                skipped_duplicates += 1
+                continue
+
+            self.url_manager.update_video_status(video['video_id'], 'downloading')
+            video_path, title, tiktok_meta = self.download_tiktok_video(video['url'], video_id=video['video_id'])
+
+            if not video_path:
+                self.url_manager.update_video_status(video['video_id'], 'download_failed')
+                continue
+
+            self.url_manager.update_video_status(
+                video['video_id'], 'selected',
+                raw_video_path=video_path, original_title=title,
+                **tiktok_meta
+            )
+            downloaded.append(video)
+
+        print(f"✅ {len(downloaded)}/{len(batch_videos)} vidéos téléchargées"
+              f"{f', {skipped_duplicates} doublon(s) ignoré(s)' if skipped_duplicates else ''}")
+        return self.list_batch_videos(batch_id, status='selected')
+
+    def list_batch_videos(self, batch_id: str, status: str = None) -> List[Dict]:
+        """Liste les vidéos d'un batch, filtrées par statut si fourni (requête
+        indexée — ne charge que les lignes concernées)"""
+        return self.url_manager.list_videos(status=status, batch_id=batch_id)
+
+    def list_all_videos(self, status: str = None, channel: str = None) -> List[Dict]:
+        """Liste toutes les vidéos de la base, tous batches/chaînes confondus
+        (requête indexée)"""
+        return self.url_manager.list_videos(status=status, channel=channel)
+
+    def set_video_selection(self, video_id: str, selected: bool):
+        """Marque une vidéo téléchargée comme sélectionnée (ou rejetée) pour l'étape IA"""
+        self.url_manager.update_video_status(video_id, 'selected' if selected else 'rejected')
+
+    def process_selected_videos(self, batch_id: str = None) -> int:
+        """Traite (background + IA channel-aware) les vidéos marquées 'selected'.
+
+        Sans batch_id : traite TOUTES les vidéos sélectionnées, toutes chaînes/batches
+        confondus (c'est le mode utilisé par l'assistant web, qui travaille sur les 6
+        chaînes en une seule fois plutôt que chaîne par chaîne)."""
+        selected_videos = (
+            self.list_batch_videos(batch_id, status='selected') if batch_id
+            else self.list_all_videos(status='selected')
+        )
+        if not selected_videos:
+            print("❌ Aucune vidéo sélectionnée à traiter")
+            return 0
+
+        processed_count = 0
+        for video in selected_videos:
+            channel_name = video.get('channel', 'default')
+            print(f"\n🔄 Traitement (chaîne: {channel_name}): {video['url']}")
+
+            try:
+                self.url_manager.update_video_status(video['video_id'], 'processing')
+
+                raw_path = video.get('raw_video_path')
+                title = video.get('original_title', 'video')
+                if not raw_path or not os.path.exists(raw_path):
+                    self.url_manager.update_video_status(video['video_id'], 'processing_failed')
+                    continue
+
+                bg_mode, specific_bg = self.get_background_for_video(video)
+                frame_mode = video.get('frame_mode')
+                rounded_corners = video.get('rounded_corners', False)
+                processed_path = self.process_tiktok_video(raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners)
+
+                if not processed_path:
+                    self.url_manager.update_video_status(video['video_id'], 'processing_failed')
+                    continue
+
+                self.url_manager.update_video_status(video['video_id'], 'generating_tags')
+                ai_data = self.generate_ai_content(video, title, video_path=processed_path)
+
+                self.url_manager.update_video_status(
+                    video['video_id'], 'ready_for_upload',
+                    video_path=processed_path, ai_data=ai_data
+                )
+                processed_count += 1
+                print(f"✅ Traité: {ai_data.get('optimized_title', title)}")
+
+            except Exception as e:
+                logger.error(f"Erreur traitement {video['url']}: {e}")
+                self.url_manager.update_video_status(video['video_id'], 'error', error_message=str(e))
+
+        print(f"\n🎉 {processed_count}/{len(selected_videos)} vidéos sélectionnées traitées")
+        return processed_count
+
+    def regenerate_ai_content(self, video_id: str, instruction: str) -> Optional[Dict]:
+        """Régénère les métadonnées IA d'UNE vidéo déjà traitée, en tenant compte
+        d'une instruction libre de l'utilisateur (ex: 'rends le titre plus drôle'),
+        sans toucher au profil de la chaîne (l'instruction ne vaut que pour cette
+        vidéo)."""
+        db = self.url_manager.load_database()
+        video = db['videos'].get(video_id)
+        if not video:
+            return None
+
+        channel_name = video.get('channel', 'default')
+        channel_profile = {}
+        if MULTI_CHANNEL_SUPPORT:
+            channel_profile = dict(self.channel_manager.get_channel_profile(channel_name))
+
+        base_style = channel_profile.get('ai_style_prompt', '') or ''
+        channel_profile['ai_style_prompt'] = (
+            f"{base_style}\n\nAdditional one-off instruction for this specific video: {instruction}"
+        ).strip()
+
+        video_path = video.get('video_path') or video.get('raw_video_path', '')
+        title = video.get('original_title', 'video')
+
+        video_data = {
+            'processed_video_path': video_path, 'title': title,
+            'tiktok_description': video.get('tiktok_description', ''),
+        }
+        ai_data = self.ai_generator.generate_ai_content(video_data, channel_profile)
+
+        self.url_manager.update_video_status(video_id, video['status'], ai_data=ai_data)
+        return self.url_manager.load_database()['videos'][video_id]
 
     def choose_global_background(self) -> str:
         """Permet de choisir un background global"""
@@ -219,6 +401,21 @@ class BatchProcessor:
         
         return mode_map.get(choice, 'random')
     
+    def get_background_for_video(self, video: Dict) -> tuple:
+        """Retourne (bg_mode, specific_bg_path) pour une vidéo, en priorisant
+        l'image de fond par défaut de sa chaîne si elle existe.
+
+        Tant qu'une chaîne n'a pas sa propre image, on ne pioche JAMAIS une image
+        au hasard dans le pool générique backgrounds/ (comportement non désiré) —
+        on retombe sur un fond noir uni, prévisible, en attendant que la chaîne
+        ait sa propre image."""
+        channel_name = video.get('channel', 'default')
+        if MULTI_CHANNEL_SUPPORT:
+            bg_path = self.channel_manager.get_background_path(channel_name)
+            if bg_path:
+                return 'specific', bg_path
+        return 'none', None  # unrecognized mode -> test3_script falls back to plain black, no randomness
+
     def determine_background_mode(self, video: Dict, strategy: str, global_bg: str = None) -> str:
         """Détermine le mode background pour une vidéo"""
         if strategy == "same_for_all":
@@ -249,73 +446,145 @@ class BatchProcessor:
         else:
             return 'random'
     
-    def download_tiktok_video(self, url: str) -> tuple:
-        """Interface avec le script de téléchargement existant"""
+    def download_tiktok_video(self, url: str, video_id: str = None) -> tuple:
+        """Downloads a TikTok, Facebook (reel) or Instagram (post/reel) video —
+        yt-dlp handles all three the same way, only the format filter differs
+        (TikTok's own height-capped format string 404s on Facebook/Instagram,
+        which don't expose a height on their formats the same way).
+
+        Downloads into a per-video subfolder of temp/ (named after video_id when
+        provided) so that downloading several videos of the same batch before
+        processing them (the new download -> select -> process flow) never lets
+        one download overwrite/collide with another still waiting to be processed.
+
+        Also captures the caption/uploader/music info yt-dlp already extracts
+        (it was being written to a .info.json on disk and then never read) —
+        returned as a 3rd dict, so callers can store it and feed the full,
+        untruncated caption to the AI as extra context. `description` is used
+        as the real caption on all three platforms: TikTok's `title` is just a
+        72-char-truncated copy of it, Facebook's `title` is polluted with
+        view/reaction counts, and Instagram's `title` is a generic
+        "Video by <user>" placeholder — `description` is the reliable field
+        everywhere.
+        """
         try:
             import yt_dlp
             import re
             from pathlib import Path
-            import shutil
-            
-            # CLEAR TEMP FOLDER FIRST to avoid conflicts
-            temp_path = Path('temp/')
-            if temp_path.exists():
-                for file in temp_path.glob('*.mp4'):
-                    file.unlink()  # Delete old mp4 files
-            
+            import uuid
+
+            subfolder = video_id or uuid.uuid4().hex
+            temp_path = Path('temp') / subfolder
+            temp_path.mkdir(parents=True, exist_ok=True)
+
+            # TikTok's height-capped format works only on TikTok; Facebook/Instagram
+            # need the plain "best" — their formats 404 against the height filter.
+            video_format = 'best[height<=1920]' if 'tiktok.com' in url else 'best'
+
             ydl_opts = {
-                'outtmpl': f"temp/%(title)s.%(ext)s",
-                'format': 'best[height<=1920]',
+                'outtmpl': f"{temp_path}/%(id)s.%(ext)s",
+                'format': video_format,
                 'writeinfojson': True,
             }
-            
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
-                safe_title = re.sub(r'[^\w\s-]', '', info.get('title', 'video'))[:30]
+                caption = info.get('description') or info.get('title') or 'video'
+                # Collapse newlines/tabs/repeated spaces BEFORE stripping symbols — \s in the
+                # regex below matches newlines too, so a multi-line caption (common on
+                # Instagram/Facebook) would otherwise leave a literal newline inside the
+                # title, which becomes part of the output filename and breaks both writing
+                # it and (confirmed) serving it back over HTTP (static file serving rejects
+                # paths containing control characters).
+                caption = re.sub(r'\s+', ' ', caption).strip()
+                safe_title = re.sub(r'[^\w\s-]', '', caption)[:30].strip()
                 ydl.download([url])
-                
-                # Now we can safely get the only mp4 file
-                temp_files = list(Path('temp/').glob('*.mp4'))
+
+                tiktok_meta = {
+                    'tiktok_description': info.get('description') or '',
+                    'tiktok_uploader': info.get('uploader') or '',
+                    'tiktok_track': info.get('track') or '',
+                    'tiktok_artists': info.get('artists') or [],
+                }
+
+                temp_files = list(temp_path.glob('*.mp4'))
                 if temp_files:
-                    return str(temp_files[0]), safe_title  # Should be only one file now
-                    
+                    return str(temp_files[0]), safe_title, tiktok_meta
+
         except Exception as e:
             logger.error(f"Erreur téléchargement: {e}")
-        
-        return None, None
-    
-    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str) -> str:
+
+        return None, None, {}
+
+    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False) -> str:
         """Interface avec le traitement vidéo existant"""
         # Réutilise la fonction de test3_script.py
         try:
-            # Ici tu peux appeler directement process_video_with_background_options
-            # ou réimplémenter la logique selon tes besoins
             from test3_script import process_video_with_background_options
-            
+
             return process_video_with_background_options(
-                video_path, title, bg_mode
+                video_path, title, bg_mode, specific_bg, frame_mode, rounded_corners
             )
-            
+
         except Exception as e:
             logger.error(f"Erreur traitement vidéo: {e}")
             return None
+
+    def get_frame_suggestion(self, video_id: str) -> Optional[Dict]:
+        """Cadrage suggéré pour une vidéo 'selected' (avant traitement), basé
+        sur son ratio natif — voir test3_script.suggest_frame_mode."""
+        db = self.url_manager.load_database()
+        video = db['videos'].get(video_id)
+        if not video:
+            return None
+
+        raw_path = video.get('raw_video_path')
+        if not raw_path or not os.path.exists(raw_path):
+            return None
+
+        from test3_script import get_video_dimensions, suggest_frame_mode
+        width, height = get_video_dimensions(raw_path)
+        return {
+            'video_id': video_id,
+            'width': width,
+            'height': height,
+            'video_ratio': (width / height) if width and height else None,
+            'suggested_frame_mode': suggest_frame_mode(raw_path),
+            'current_frame_mode': video.get('frame_mode'),
+        }
+
+    def set_video_frame_mode(self, video_id: str, frame_mode: str, rounded_corners: bool = None):
+        """Enregistre le mode de cadrage (et, indépendamment, les coins
+        arrondis) choisi/confirmé pour une vidéo, sans toucher à son statut."""
+        db = self.url_manager.load_database()
+        video = db['videos'].get(video_id)
+        if not video:
+            return None
+        updates = {'frame_mode': frame_mode}
+        if rounded_corners is not None:
+            updates['rounded_corners'] = rounded_corners
+        self.url_manager.update_video_status(video_id, video['status'], **updates)
+        return self.url_manager.load_database()['videos'][video_id]
     
-    def generate_ai_content(self, video: Dict, title: str) -> Dict:
-        """Génère le contenu AI pour une vidéo avec gestion d'erreurs"""
+    def generate_ai_content(self, video: Dict, title: str, video_path: str = None) -> Dict:
+        """Génère le contenu AI pour une vidéo (analyse vision/audio selon le profil de
+        la chaîne), avec repli sur la génération locale en cas d'erreur."""
         try:
-            description = video.get('custom_description', '') or ''  # Handle None values
-            custom_title = video.get('custom_title', title) or title  # Handle None values
-            
-            # Ensure we have strings, not None
-            if not isinstance(custom_title, str):
-                custom_title = str(custom_title) if custom_title else title
-            if not isinstance(description, str):
-                description = str(description) if description else ''
-            
-            return self.ai_generator.generate_tags(custom_title, description)
-            
+            channel_name = video.get('channel', 'default')
+            channel_profile = None
+            if MULTI_CHANNEL_SUPPORT:
+                channel_profile = self.channel_manager.get_channel_profile(channel_name)
+
+            video_data = {
+                'processed_video_path': video_path or video.get('video_path', ''),
+                'title': title,
+                'tiktok_description': video.get('tiktok_description', ''),
+            }
+
+            return self.ai_generator.generate_ai_content(video_data, channel_profile)
+
         except Exception as e:
-            logger.error(f"Erreur génération AI tags: {e}")
+            logger.error(f"Erreur génération AI: {e}")
             # Return default AI data structure
             return {
                 "tags": [
@@ -333,48 +602,94 @@ class BatchProcessor:
                 ]
             }
 
-    def create_upload_schedule(self, max_videos: int = None, use_analytics: bool = None, target_channel: str = None) -> List[Dict]:
-        """Crée un planning d'upload pour les vidéos prêtes"""
-        
+    def create_upload_schedule(self, max_videos: int = None, use_analytics: bool = None,
+                                target_channel: str = None, schedule_method: str = None) -> List[Dict]:
+        """Crée un planning d'upload pour les vidéos prêtes.
+
+        schedule_method: "static", "analytics", or "ai" (per-video, content/channel-aware
+        via AIScheduler). Takes precedence over the legacy use_analytics bool if given.
+        """
+
         # Récupère les vidéos prêtes
         ready_videos = []
         db = self.url_manager.load_database()
-        
+
         for video in db['videos'].values():
             if video['status'] == 'ready_for_upload':
                 # Add target channel to video data
                 if target_channel:
                     video['target_channel'] = target_channel
                 ready_videos.append(video)
-        
+
         if not ready_videos:
             print("❌ Aucune vidéo prête pour l'upload")
             return []
-        
+
         # Limite le nombre si spécifié
         if max_videos:
             ready_videos = ready_videos[:max_videos]
-        
+
         # Determine scheduling method
-        if use_analytics is None:
-            use_analytics = ANALYTICS_SUPPORT and self.ask_user_analytics_preference()
-        
-        if use_analytics and ANALYTICS_SUPPORT:
+        if schedule_method is None:
+            if use_analytics is None:
+                use_analytics = ANALYTICS_SUPPORT and self.ask_user_analytics_preference()
+            schedule_method = "analytics" if use_analytics else "static"
+
+        if schedule_method == "ai" and AI_SCHEDULING_SUPPORT:
+            print(f"🤖 Création du planning IA (par vidéo) pour {len(ready_videos)} vidéos")
+            channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
+            result = self.ai_scheduler.create_ai_suggested_schedule(ready_videos, self.config, channel_manager)
+            schedule = result['schedule']
+        elif schedule_method == "analytics" and ANALYTICS_SUPPORT:
             print(f"🧠 Création du planning ANALYTICS pour {len(ready_videos)} vidéos")
             if target_channel:
                 print(f"📺 Channel de destination: {target_channel}")
-            schedule = self.smart_scheduler.create_analytics_based_schedule(ready_videos)
+            schedule = self.smart_scheduler.create_analytics_based_schedule(ready_videos)['schedule']
         else:
             print(f"📅 Création du planning STANDARD pour {len(ready_videos)} vidéos")
             if target_channel:
                 print(f"📺 Channel de destination: {target_channel}")
-            schedule = self.scheduler.create_upload_schedule(ready_videos)
-        
-        # Sauvegarde
+            channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
+            schedule = self.scheduler.create_upload_schedule(ready_videos, channel_manager=channel_manager)
+
+        # Sauvegarde (save_schedule attend une liste de dicts, pas le wrapper avec métadonnées)
         self.scheduler.save_schedule(schedule)
-        
+
         return schedule
-    
+
+    def ensure_schedule_includes_all_ready(self, schedule_method: str = 'static') -> List[Dict]:
+        """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
+        publie que ce qui est dans upload_schedule.json, donc une vidéo passée à
+        'ready_for_upload' APRÈS la dernière génération du planning serait sinon
+        ignorée en silence (200 OK, mais rien publié pour elle). Ajoute au planning
+        existant toute vidéo prête qui n'y figure pas encore, sans toucher aux
+        entrées déjà présentes (y compris une date modifiée à la main)."""
+        existing = self.scheduler.load_schedule() or {}
+        existing_schedule = existing.get('schedule', [])
+        existing_ids = {e.get('video_id') for e in existing_schedule}
+
+        db = self.url_manager.load_database()
+        missing = [
+            v for v in db['videos'].values()
+            if v.get('status') == 'ready_for_upload' and v.get('video_id') not in existing_ids
+        ]
+        if not missing:
+            return existing_schedule
+
+        print(f"⚠️ {len(missing)} vidéo(s) prête(s) manquaient du planning — ajout automatique avant publication")
+        channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
+
+        if schedule_method == 'ai' and AI_SCHEDULING_SUPPORT:
+            new_entries = self.ai_scheduler.create_ai_suggested_schedule(missing, self.config, channel_manager)['schedule']
+        elif schedule_method == 'analytics' and ANALYTICS_SUPPORT:
+            new_entries = self.smart_scheduler.create_analytics_based_schedule(missing)['schedule']
+        else:
+            new_entries = self.scheduler.create_upload_schedule(missing, channel_manager=channel_manager)
+
+        combined = existing_schedule + new_entries
+        self.scheduler.save_schedule(combined)
+        return combined
+
     def ask_user_analytics_preference(self) -> bool:
         """Ask user if they want to use analytics-based scheduling"""
         if not ANALYTICS_SUPPORT:
@@ -1302,11 +1617,9 @@ class BatchProcessor:
                     db['videos'][video_id]['target_channel'] = target_channel
                     # Reset status to ready for new channel
                     db['videos'][video_id]['status'] = 'ready_for_upload'
-                
-                # Save database
-                with open('database/videos_status.json', 'w', encoding='utf-8') as f:
-                    json.dump(db, f, indent=2, ensure_ascii=False)
-                
+
+                self.url_manager.save_database(db)
+
                 print(f"✅ Channel changé pour {len(selected_videos)} vidéo(s)!")
             else:
                 print("❌ Opération annulée")
@@ -1359,11 +1672,9 @@ class BatchProcessor:
                     
                     # Reset status
                     video_ref['status'] = 'ready_for_upload'
-                
-                # Save database
-                with open('database/videos_status.json', 'w', encoding='utf-8') as f:
-                    json.dump(db, f, indent=2, ensure_ascii=False)
-                
+
+                self.url_manager.save_database(db)
+
                 print(f"✅ Reset complet effectué pour {len(selected_videos)} vidéo(s)!")
             else:
                 print("❌ Reset annulé")

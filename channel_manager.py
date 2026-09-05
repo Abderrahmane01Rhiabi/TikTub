@@ -69,15 +69,16 @@ class ChannelManager:
         if not channel_name.replace("_", "").replace("-", "").isalnum():
             print("❌ Channel name must contain only letters, numbers, hyphens, and underscores")
             return False
-            
+
         channel_dir = os.path.join(self.channels_dir, channel_name)
         if os.path.exists(channel_dir):
             print(f"❌ Channel '{channel_name}' already exists")
             return False
-            
-        # Create channel directory
+
+        # Create channel directory + per-channel URLs folder
         os.makedirs(channel_dir, exist_ok=True)
-        
+        os.makedirs(os.path.join(channel_dir, "urls_input"), exist_ok=True)
+
         # Update config
         config = self.get_config()
         config[channel_name] = {
@@ -87,11 +88,75 @@ class ChannelManager:
             "active": True
         }
         self.save_config(config)
-        
+
+        # Create a default AI/scheduling profile for this channel
+        self.save_channel_profile(channel_name, self.get_default_profile(display_name))
+
         print(f"✅ Channel '{display_name}' created successfully!")
         print(f"📁 Directory: {channel_dir}")
         print(f"🔑 Place your credentials.json and token.json in this directory")
+        print(f"🧠 Edit {os.path.join(channel_dir, 'profile.json')} to customize AI style")
         return True
+
+    def get_default_profile(self, display_name: str) -> Dict:
+        """Default profile.json content for a freshly created channel"""
+        return {
+            "display_name": display_name,
+            "analysis_mode": "vision",  # "vision", "audio", or "vision+audio"
+            "ai_style_prompt": "",
+            "language_hint": "en",
+            "preferred_days": [],
+            "preferred_hours": [],
+            # Purely informational — which Google account to log into when
+            # connecting this channel. Never used to authenticate anything.
+            "google_account_email": ""
+        }
+
+    def get_profile_path(self, channel_name: str) -> str:
+        return os.path.join(self.channels_dir, channel_name, "profile.json")
+
+    def get_background_path(self, channel_name: str) -> Optional[str]:
+        """Path to the channel's default background image, if one exists"""
+        for ext in ("jpg", "jpeg", "png"):
+            path = os.path.join(self.channels_dir, channel_name, f"background.{ext}")
+            if os.path.exists(path):
+                return path
+        return None
+
+    def get_channel_profile(self, channel_name: str) -> Dict:
+        """Load a channel's AI/scheduling profile, creating a default one if missing"""
+        profile_path = self.get_profile_path(channel_name)
+        if not os.path.exists(profile_path):
+            info = self.get_config().get(channel_name, {})
+            default_profile = self.get_default_profile(info.get("display_name", channel_name))
+            self.save_channel_profile(channel_name, default_profile)
+            return default_profile
+
+        with open(profile_path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+
+    def save_channel_profile(self, channel_name: str, profile: Dict):
+        """Save a channel's AI/scheduling profile"""
+        channel_dir = os.path.join(self.channels_dir, channel_name)
+        os.makedirs(channel_dir, exist_ok=True)
+        with open(self.get_profile_path(channel_name), 'w', encoding='utf-8') as f:
+            json.dump(profile, f, indent=2, ensure_ascii=False)
+
+    def get_urls_input_dir(self, channel_name: str) -> str:
+        """Path to a channel's own urls_input/ folder, created on demand"""
+        path = os.path.join(self.channels_dir, channel_name, "urls_input")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def get_assets_dirs(self, channel_name: str) -> Dict[str, str]:
+        """Paths to a channel's generative-pipeline asset pools (background loop
+        videos and background music), created on demand. The user drops files
+        into these folders manually — nothing here is fetched from an API."""
+        backgrounds = os.path.join(self.channels_dir, channel_name, "assets", "backgrounds")
+        music = os.path.join(self.channels_dir, channel_name, "assets", "music")
+        os.makedirs(backgrounds, exist_ok=True)
+        os.makedirs(music, exist_ok=True)
+        return {"backgrounds": backgrounds, "music": music}
 
     def list_channels(self) -> List[Dict]:
         """List all available channels"""
@@ -102,7 +167,8 @@ class ChannelManager:
             channel_dir = os.path.join(self.channels_dir, channel_name)
             has_credentials = os.path.exists(os.path.join(channel_dir, "credentials.json"))
             has_token = os.path.exists(os.path.join(channel_dir, "token.json"))
-            
+            profile = self.get_channel_profile(channel_name)
+
             channels.append({
                 "name": channel_name,
                 "display_name": channel_info.get("display_name", channel_name),
@@ -110,7 +176,12 @@ class ChannelManager:
                 "active": channel_info.get("active", True),
                 "has_credentials": has_credentials,
                 "has_token": has_token,
-                "ready": has_credentials  # Ready if has credentials (token can be generated)
+                "ready": has_credentials,  # Ready if has credentials (token can be generated)
+                "analysis_mode": profile.get("analysis_mode", "vision"),
+                "has_ai_style": bool(profile.get("ai_style_prompt")),
+                "has_background": self.get_background_path(channel_name) is not None,
+                "google_account_email": profile.get("google_account_email", ""),
+                "generation_mode": profile.get("generation_mode", False)
             })
             
         return channels

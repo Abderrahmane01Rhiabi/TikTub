@@ -1,0 +1,1664 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>TikTub</title>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#0d0f14; --border:#2a2f3a; --border-soft:#21252f;
+    --text:#e8e9ec; --muted:#9aa1ac; --dim:#565d6b;
+    --accent:#6d8dfd; --accent-ink:#0f1115; --danger:#f87171; --ok:#4ade80;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,sans-serif;}
+  a{color:var(--accent);} a:hover{color:#8ea3ff;}
+
+  .app{max-width:1180px;margin:0 auto;padding:24px 24px 60px;display:flex;flex-direction:column;gap:18px;}
+  .topbar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px;position:sticky;top:0;background:var(--bg);padding:6px 0 14px;z-index:5;}
+  .brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;}
+  .mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#6d8dfd,#4ade80);flex:none;}
+  .steps{display:flex;gap:8px;flex-wrap:wrap;}
+  .step{padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;border:none;cursor:pointer;font-family:inherit;}
+  .step.current{background:var(--accent);color:#fff;}
+  .step.done{background:rgba(109,141,253,.16);color:var(--accent);}
+  .step.todo{background:var(--panel);color:var(--muted);border:1px solid var(--border);}
+
+  .screen{display:none;flex-direction:column;gap:16px;}
+  .screen.active{display:flex;}
+
+  .h1{font-size:19px;font-weight:700;margin:0;}
+  .sub{font-size:13px;color:var(--muted);margin:4px 0 0;}
+
+  .navbar{display:flex;align-items:center;justify-content:space-between;padding-top:14px;border-top:1px solid var(--border);}
+  .progress-text{font-size:12px;color:var(--muted);}
+  .btn{border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;}
+  .btn.primary{background:var(--accent);color:#fff;}
+  .btn.secondary{background:#232838;color:#c7cbd4;}
+  .btn:disabled{opacity:.4;cursor:default;}
+  .btn.small{padding:7px 12px;font-size:12px;}
+  .btn.publish{background:linear-gradient(135deg,#6d8dfd,#4ade80);color:var(--accent-ink);padding:13px 28px;font-size:14px;}
+  .btn.full{width:100%;justify-content:center;}
+
+  .card{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .dot{width:10px;height:10px;border-radius:50%;flex:none;}
+  .ch-name{font-size:13px;font-weight:700;}
+
+  /* dashboard */
+  .dvcard{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:10px;display:flex;flex-direction:column;gap:8px;}
+  .dvthumb{width:100%;aspect-ratio:16/9;border-radius:6px;background:var(--panel);background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;}
+  .dvtitle{font-size:12.5px;font-weight:600;line-height:1.3;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .dvstats{display:flex;gap:10px;font-size:11px;color:var(--muted);flex-wrap:wrap;}
+  .dvstats b{color:var(--text);font-variant-numeric:tabular-nums;}
+  .dvmeta{font-size:10.5px;color:var(--dim);}
+  .dvtags{display:flex;flex-wrap:wrap;gap:4px;}
+  .dvtags span{background:#232838;color:var(--muted);font-size:10px;padding:2px 7px;border-radius:999px;}
+  .dv-analytics-panel{border-top:1px dashed var(--border);padding-top:8px;margin-top:2px;display:flex;flex-direction:column;gap:10px;}
+  .analytics-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;}
+  .astat{display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border-soft);border-radius:6px;padding:6px 8px;}
+  .astat .alabel{font-size:9.5px;color:var(--dim);}
+  .astat .aval{font-size:12.5px;font-weight:600;color:var(--text);font-variant-numeric:tabular-nums;}
+  .atitle{font-size:10.5px;color:var(--muted);font-weight:600;margin-bottom:4px;}
+  .aline{display:flex;justify-content:space-between;font-size:11px;color:#c7cbd4;padding:2px 0;}
+  .aline span:last-child{color:var(--accent);font-variant-numeric:tabular-nums;}
+
+  /* step 0 : connect */
+  .ccard{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;align-items:center;gap:12px;}
+  .cbadge{font-size:11px;padding:4px 10px;border-radius:999px;font-weight:600;white-space:nowrap;}
+  .cbadge.connected{background:rgba(74,222,128,.14);color:var(--ok);}
+  .cbadge.pending{background:rgba(245,197,109,.14);color:#f5c56d;}
+  .cbadge.missing{background:rgba(248,113,113,.14);color:var(--danger);}
+  .ctitle{font-size:11.5px;color:var(--muted);margin-top:2px;}
+
+  /* step 1 : urls */
+  .grid-channels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;}
+  .ch-head{display:flex;align-items:center;gap:8px;margin-bottom:10px;}
+  textarea.urls{width:100%;min-height:72px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px 10px;font-family:inherit;resize:vertical;}
+  textarea.urls::placeholder{color:var(--dim);}
+  .status-line{font-size:11px;color:var(--muted);margin-top:6px;}
+  .divider{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.04em;}
+  .divider .line{flex:1;height:1px;background:var(--border);}
+  .dl-row{display:flex;gap:14px;overflow-x:auto;padding-bottom:4px;}
+  .dl-channel{flex:none;width:230px;}
+  .thumbs{display:flex;gap:8px;flex-wrap:wrap;}
+  .thumb{position:relative;width:64px;aspect-ratio:9/16;border-radius:6px;flex:none;display:flex;align-items:center;justify-content:center;background-size:cover;background-position:center;overflow:hidden;}
+  .thumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  .thumb svg{width:16px;height:16px;position:relative;z-index:1;pointer-events:none;}
+  .empty-note{font-size:11px;color:var(--dim);font-style:italic;}
+
+  /* step 2 : selection */
+  .section{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;}
+  .sec-head{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+  .sec-left{display:flex;align-items:center;gap:8px;}
+  .count{font-size:11px;color:var(--muted);font-weight:500;}
+  .selall{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;}
+  .vgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:12px;}
+  .vcard{background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px;}
+  .vthumb{position:relative;width:100%;aspect-ratio:9/16;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden;background-size:cover;background-position:center;}
+  .vthumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  .check{position:absolute;top:6px;right:6px;width:18px;height:18px;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;z-index:2;}
+  .check.off{background:rgba(13,15,20,.55);border:1.5px solid rgba(255,255,255,.5);}
+  .check svg{width:12px;height:12px;}
+  .vtitle{font-size:11px;line-height:1.3;color:#c7cbd4;margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+
+  /* step 3 : results */
+  .rcard{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px;display:flex;gap:16px;}
+  .rthumb{position:relative;width:84px;aspect-ratio:9/16;border-radius:8px;flex:none;overflow:hidden;background-size:cover;background-position:center;}
+  .rthumb video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  .rbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:10px;}
+  .rhead{display:flex;align-items:center;gap:8px;}
+  .ch-tag{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;}
+  label.f{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;}
+  input.f,textarea.f{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;padding:8px 10px;font-family:inherit;}
+  textarea.f{min-height:44px;resize:vertical;}
+  .tags-input{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px 10px;font-family:inherit;}
+  .askrow{display:flex;gap:8px;align-items:center;border-top:1px dashed var(--border);padding-top:10px;}
+  .askrow input{flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px 10px;font-family:inherit;}
+  .askrow input::placeholder{color:var(--dim);}
+
+  /* step 4 : backgrounds */
+  .bgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;}
+  .bcard{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:10px;}
+  .bhead{display:flex;align-items:center;gap:8px;}
+  .preview{width:100%;aspect-ratio:16/10;border-radius:8px;display:flex;align-items:center;justify-content:center;background-size:cover;background-position:center;}
+  .preview.empty{background:var(--panel2)!important;border:1.5px dashed var(--border);}
+  .fpreview-box{position:relative;width:100%;max-width:180px;aspect-ratio:9/16;overflow:hidden;background:#000;align-self:center;}
+  .fpreview-spinner{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:#000;}
+  .fpreview-img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;opacity:0;transition:opacity .2s ease;}
+  .fpreview-img.loaded{opacity:1;}
+  .preview svg{width:22px;height:22px;opacity:.6;}
+  .empty-txt{font-size:11px;color:var(--dim);text-align:center;}
+
+  /* step 5 : schedule */
+  .seg{display:inline-flex;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:3px;gap:3px;align-self:flex-start;}
+  .seg-opt{padding:7px 16px;border-radius:6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;border:none;font-family:inherit;background:none;}
+  .seg-opt.active{background:var(--accent);color:#fff;}
+  .vrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap;}
+  .vrow:first-of-type{border-top:none;}
+  .mthumb{width:32px;height:44px;border-radius:5px;flex:none;background-size:cover;background-position:center;}
+  .vname{flex:1;font-size:12.5px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:120px;}
+  .datebadge{display:flex;align-items:center;gap:6px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11.5px;color:#c7cbd4;white-space:nowrap;}
+  .datebadge svg{width:13px;height:13px;flex:none;}
+  .editbtn{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--dim);flex:none;border:none;background:none;cursor:pointer;}
+  .editbtn svg{width:14px;height:14px;}
+  .dtinput{background:var(--panel2);border:1px solid var(--accent);border-radius:6px;color:var(--text);font-size:11.5px;padding:5px 8px;font-family:inherit;}
+
+  /* génération : décor -> script -> audio -> assemblage stepper */
+  .gen-steps{display:flex;gap:6px;}
+  .gen-step{flex:1;display:flex;flex-direction:column;gap:6px;}
+  .gen-step .bar{height:3px;border-radius:99px;background:var(--border);}
+  .gen-step.done .bar{background:var(--ok);}
+  .gen-step.active .bar{background:#f5c56d;}
+  .gen-step .lbl{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;}
+  .gen-step.active .lbl{color:#f5c56d;font-weight:700;}
+  .gen-step.done .lbl{color:var(--ok);}
+  .recap{background:var(--panel2);border:1px solid var(--border-soft);border-radius:9px;padding:12px 14px;display:flex;flex-direction:column;gap:6px;font-size:12.5px;}
+  .recap .line{display:flex;justify-content:space-between;gap:10px;}
+  .recap .k{color:var(--dim);}
+  .recap .v{color:var(--text);text-align:right;}
+
+  /* step 6 : summary */
+  .vline{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12px;border-top:1px solid var(--border-soft);}
+  .vline:first-of-type{border-top:none;}
+  .vline .name{flex:1;color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .vline .when{color:var(--dim);flex:none;font-variant-numeric:tabular-nums;}
+  .totalbar{display:flex;align-items:center;justify-content:space-between;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px 20px;flex-wrap:wrap;gap:14px;}
+  .totalbar .big{font-size:22px;font-weight:800;}
+  .totalbar .lbl{font-size:12px;color:var(--muted);}
+  .result-line{font-size:12px;padding:6px 0;border-top:1px solid var(--border-soft);}
+  .result-line:first-of-type{border-top:none;}
+  .result-line.ok{color:var(--ok);}
+  .result-line.fail{color:var(--danger);}
+
+  #log{font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:110px;overflow:auto;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;}
+  #log div.error{color:var(--danger);}
+  #log div.success{color:var(--ok);}
+  input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;}
+
+  @keyframes tt-spin{to{transform:rotate(360deg);}}
+  .spinner{display:inline-block;width:13px;height:13px;border:2px solid rgba(255,255,255,.2);border-top-color:var(--accent);border-radius:50%;animation:tt-spin .7s linear infinite;vertical-align:-2px;flex:none;}
+  .spinner.lg{width:34px;height:34px;border-width:3px;}
+  .spinner-row{display:inline-flex;align-items:center;gap:8px;color:var(--dim);font-size:11px;font-style:italic;}
+  #bootOverlay{position:fixed;inset:0;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:999;transition:opacity .3s ease;}
+  #bootOverlay.hidden{opacity:0;pointer-events:none;}
+  #bootOverlay .bootbrand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;color:var(--text);}
+  #bootOverlay .bootnote{font-size:12px;color:var(--muted);}
+
+  @media (max-width:820px){
+    .grid-channels,.bgrid{grid-template-columns:repeat(2,minmax(0,1fr));}
+  }
+</style>
+</head>
+<body>
+<div id="bootOverlay">
+  <div class="bootbrand"><div class="mark"></div>TikTub</div>
+  <div class="spinner lg"></div>
+  <div class="bootnote">Chargement de l'application...</div>
+</div>
+<div class="app">
+  <div class="topbar">
+    <div class="brand"><div class="mark"></div>TikTub</div>
+    <div class="steps" id="stepnav">
+      <button class="step" data-i="0">1 · Connexion</button>
+      <button class="step" data-i="1">2 · Fonds</button>
+      <button class="step" data-i="2">3 · URLs</button>
+      <button class="step" data-i="3">4 · Sélection</button>
+      <button class="step" data-i="4">5 · Cadrage</button>
+      <button class="step" data-i="5">6 · Résultats IA</button>
+      <button class="step" data-i="6">7 · Planning</button>
+      <button class="step" data-i="7">8 · Publier</button>
+    </div>
+    <button class="btn secondary" id="dashboardBtn" style="margin-left:10px">📊 Dashboard</button>
+    <button class="btn secondary" id="generationBtn">🪄 Génération</button>
+  </div>
+
+  <!-- Dashboard : per-channel published videos + live YouTube stats -->
+  <section class="screen" id="dashboardScreen">
+    <div>
+      <h1 class="h1">Tes vidéos publiées, par chaîne</h1>
+      <p class="sub">Ce que TikTub a publié sur chaque chaîne. Vues/likes réels, chargés à chaque ouverture — reclique "Actualiser" pour les chiffres les plus récents.</p>
+    </div>
+    <div class="seg" id="dashChannelSeg"></div>
+    <div id="channelOverview"></div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn secondary small" id="dashRefreshBtn">🔄 Actualiser les stats</button>
+      <div class="seg" id="dashFilterSeg">
+        <button class="seg-opt active" data-f="all">Toutes</button>
+        <button class="seg-opt" data-f="scheduled">Programmées</button>
+        <button class="seg-opt" data-f="private">Privées</button>
+        <button class="seg-opt" data-f="public">Publiques</button>
+      </div>
+      <span class="progress-text" id="dashNote"></span>
+    </div>
+    <div id="dashGrid" class="vgrid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))"></div>
+    <div class="navbar">
+      <button class="btn secondary" id="dashBackBtn">← Retour au wizard</button>
+      <span></span><span></span>
+    </div>
+  </section>
+
+  <!-- Génération : décor -> script -> audio -> assemblage, un seul brouillon à la fois -->
+  <section class="screen" id="generationScreen">
+    <div>
+      <h1 class="h1">Génération de vidéos</h1>
+      <p class="sub">Un brouillon à la fois : décor, puis script, puis audio, puis assemblage — à toi de lancer chaque étape. Une fois assemblée, la vidéo passe par l'étape 6 · Résultats IA comme n'importe quelle vidéo, et cette page repart à zéro.</p>
+    </div>
+    <div class="seg" id="genChannelSeg"></div>
+    <div class="gen-steps" id="genStepsBar"></div>
+    <div id="genStage"></div>
+    <div class="navbar">
+      <button class="btn secondary" id="genBackBtn">← Retour au wizard</button>
+      <span></span><span></span>
+    </div>
+  </section>
+
+  <!-- Screen 0 : Connect channels -->
+  <section class="screen" data-idx="0">
+    <div>
+      <h1 class="h1">Connecte tes chaînes YouTube</h1>
+      <p class="sub">Une seule fois par chaîne. Après connexion, le vrai nom de la chaîne YouTube liée s'affiche — pratique pour vérifier que c'est la bonne, quand un compte Google gère plusieurs chaînes.</p>
+    </div>
+    <div class="grid-channels" id="connectGrid"></div>
+    <div class="navbar">
+      <button class="btn secondary" disabled>← Précédent</button>
+      <span class="progress-text">Étape 1 sur 8</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 1 : Backgrounds (set up before anything gets processed with them) -->
+  <section class="screen" data-idx="1">
+    <div>
+      <h1 class="h1">Fond par défaut de chaque chaîne</h1>
+      <p class="sub">Remplit les bordures noires des vidéos verticales. Une chaîne sans image utilise un fond aléatoire. À régler avant de traiter des vidéos, pas après.</p>
+    </div>
+    <div class="bgrid" id="backgroundsGrid"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Étape 2 sur 8</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 2 : URLs & Download -->
+  <section class="screen" data-idx="2">
+    <div>
+      <h1 class="h1">Colle les liens TikTok, par chaîne</h1>
+      <p class="sub">Une chaîne vide n'est pas bloquante — laisse-la de côté et passe directement à la suivante.</p>
+    </div>
+    <div class="grid-channels" id="urlsGrid"></div>
+    <div style="display:flex;justify-content:center">
+      <button class="btn primary" id="downloadAllBtn" style="padding:11px 26px">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v13"/><path d="M6 11l6 6 6-6"/><path d="M5 21h14"/></svg>
+        Télécharger toutes les chaînes
+      </button>
+    </div>
+    <div class="divider"><span class="line"></span>Vidéos téléchargées<span class="line"></span></div>
+    <div class="dl-row" id="downloadedRow"><span class="empty-note">Rien téléchargé pour l'instant.</span></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Étape 3 sur 8</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 3 : Selection -->
+  <section class="screen" data-idx="3">
+    <div>
+      <h1 class="h1">Choisis les vidéos à traiter</h1>
+      <p class="sub">Décoche celles que tu ne veux pas garder — le reste part à l'étape IA.</p>
+    </div>
+    <div id="selectionSections"><span class="empty-note">Aucune vidéo téléchargée pour l'instant.</span></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text" id="selCountText">Étape 4 sur 8</span>
+      <button class="btn primary next">Suivant (cadrage) →</button>
+    </div>
+  </section>
+
+  <!-- Screen 4 : Frame positioning (how each video sits inside the 9:16 canvas) -->
+  <section class="screen" data-idx="4">
+    <div>
+      <h1 class="h1">Comment cadrer chaque vidéo ?</h1>
+      <p class="sub">Une suggestion est déjà choisie selon le format natif de la vidéo — clique un autre mode si tu préfères.</p>
+    </div>
+    <div id="frameGrid" class="bgrid"><span class="empty-note">Chargement...</span></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Étape 5 sur 8</span>
+      <button class="btn primary next" id="toResultsBtn">Suivant (lancer l'IA) →</button>
+    </div>
+  </section>
+
+  <!-- Screen 5 : AI Results -->
+  <section class="screen" data-idx="5">
+    <div>
+      <h1 class="h1">Vérifie ce que l'IA a généré</h1>
+      <p class="sub">Modifie directement les champs, ou explique à l'IA ce que tu veux changer pour cette vidéo précise.</p>
+    </div>
+    <div id="resultsList"><span class="empty-note">En attente du traitement...</span></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text" id="resultsCountText">Étape 6 sur 8</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 6 : Schedule -->
+  <section class="screen" data-idx="6">
+    <div>
+      <h1 class="h1">Quand publier chaque vidéo ?</h1>
+      <p class="sub">Choisis la méthode, puis ajuste une date au besoin avec le crayon.</p>
+    </div>
+    <div class="seg" id="scheduleMethodSeg">
+      <button class="seg-opt active" data-m="static">Statique (config)</button>
+      <button class="seg-opt" data-m="analytics">Analytics</button>
+      <button class="seg-opt" data-m="ai">IA — par vidéo</button>
+    </div>
+    <div>
+      <button class="btn secondary small" id="genScheduleBtn">Générer le planning</button>
+    </div>
+    <div id="scheduleSections"><span class="empty-note">Aucun planning généré pour l'instant.</span></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Étape 7 sur 8</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 7 : Summary -->
+  <section class="screen" data-idx="7">
+    <div>
+      <h1 class="h1">Prêt à publier</h1>
+      <p class="sub">Dernière vérification avant l'envoi réel sur YouTube.</p>
+    </div>
+    <div id="summarySections"><span class="empty-note">Génère d'abord un planning à l'étape précédente.</span></div>
+    <div class="totalbar">
+      <div><div class="big" id="summaryTotal">0 vidéo</div><div class="lbl" id="summaryLbl">rien à publier</div></div>
+      <button class="btn publish" id="publishAllBtn">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0f1115" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 5 2 7-6.5-4.5L5.5 21l2-7L2 9h7z"/></svg>
+        Publier tout sur YouTube
+      </button>
+    </div>
+    <div id="publishResults"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span></span><span></span>
+    </div>
+  </section>
+
+  <div id="log"></div>
+</div>
+
+<script>
+const CHANNEL_COLORS = {
+  meme_culture: '#6d8dfd', animeshorts: '#b18cfd', prince_moulay_hassan: '#f5c56d',
+  lungte888: '#6ddbf5', zit_bliss: '#fd8cc4', lungtemotivates: '#4ade80'
+};
+function channelColor(name){ return CHANNEL_COLORS[name] || '#9aa1ac'; }
+function esc(s){ return (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function spinnerHtml(text){ return `<span class="spinner-row"><span class="spinner"></span>${esc(text)}</span>`; }
+
+function log(msg, cls){
+  const el = document.getElementById('log');
+  const line = document.createElement('div');
+  if (cls) line.className = cls;
+  line.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
+  el.prepend(line);
+}
+async function api(path, options){
+  const res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, options));
+  if (!res.ok){ throw new Error(`${res.status}: ${await res.text()}`); }
+  return res.status === 204 ? null : res.json();
+}
+
+let channels = [];
+let current = 0;
+const screens = document.querySelectorAll('.screen');
+const stepBtns = document.querySelectorAll('#stepnav .step');
+
+function render(){
+  screens.forEach(el => el.classList.toggle('active', +el.dataset.idx === current));
+  stepBtns.forEach(btn => {
+    const i = +btn.dataset.i;
+    btn.classList.remove('current','done','todo');
+    btn.classList.add(i === current ? 'current' : (i < current ? 'done' : 'todo'));
+  });
+}
+function goTo(i){ current = i; render(); onEnterScreen(i); }
+
+stepBtns.forEach(btn => btn.addEventListener('click', () => goTo(+btn.dataset.i)));
+document.querySelectorAll('.next').forEach(btn => btn.addEventListener('click', () => goTo(Math.min(current+1, screens.length-1))));
+document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', () => goTo(Math.max(current-1, 0))));
+
+function onEnterScreen(i){
+  if (i === 0) loadConnectionScreen();
+  if (i === 1) loadBackgrounds();
+  if (i === 3) loadSelection();
+  if (i === 4) loadFrameStep();
+  if (i === 5) loadResultsScreen();
+  if (i === 6) loadPlanningScreen();
+  if (i === 7) loadSummaryFromSchedule();
+}
+
+// ---------- Step 0 : Connect channels ----------
+
+function connectionCardHtml(ch){
+  return `
+    <div class="card" data-channel="${ch.name}" style="border-color:${ch.has_credentials ? 'var(--border)' : 'var(--danger)'}">
+      <div class="ch-head"><span class="dot" style="background:${channelColor(ch.name)}"></span><span class="ch-name">${esc(ch.display_name)}</span></div>
+      ${ch.google_account_email ? `<div class="ctitle" style="margin-bottom:8px">${esc(ch.google_account_email)}</div>` : ''}
+      <div class="conn-body">
+
+        ${ch.has_credentials
+          ? '<span class="cbadge pending conn-badge">● Vérification...</span>'
+          : '<span class="cbadge missing">● Pas de credentials.json</span>'}
+      </div>
+    </div>`;
+}
+
+async function loadConnectionScreen(){
+  const grid = document.getElementById('connectGrid');
+  grid.innerHTML = channels.map(connectionCardHtml).join('');
+
+  for (const ch of channels){
+    const card = grid.querySelector(`[data-channel="${ch.name}"] .conn-body`);
+    if (!ch.has_credentials) continue;
+    try {
+      const status = await api(`/api/channels/${ch.name}/connection_status`);
+      renderConnectionBody(card, ch, status);
+    } catch (e){
+      card.innerHTML = `<span class="cbadge missing">Erreur</span>`;
+    }
+  }
+}
+
+function renderConnectionBody(card, ch, status){
+  const outer = card.closest('.card');
+  if (status.connected && status.can_edit){
+    card.innerHTML = `
+      <span class="cbadge connected">● Connectée</span>
+      <div class="ctitle">${esc(status.youtube_channel_title || '')}</div>
+      <button class="btn secondary small connect-btn" style="margin-top:8px">Reconnecter</button>`;
+    if (outer) outer.style.borderColor = 'var(--ok)';
+  } else if (status.connected && !status.can_edit){
+    card.innerHTML = `
+      <span class="cbadge pending">● Permissions limitées</span>
+      <div class="ctitle">${esc(status.youtube_channel_title || '')} — lecture/upload OK, édition dashboard indisponible</div>
+      <button class="btn primary small connect-btn" style="margin-top:8px">Reconnecter (activer l'édition)</button>`;
+    if (outer) outer.style.borderColor = '#f5c56d';
+  } else {
+    card.innerHTML = `
+      <span class="cbadge missing">● Non connectée</span>
+      <button class="btn primary small connect-btn" style="margin-top:8px">Se connecter</button>`;
+    if (outer) outer.style.borderColor = 'var(--danger)';
+  }
+  card.querySelector('.connect-btn').addEventListener('click', () => startConnect(ch, card));
+}
+
+async function startConnect(ch, card){
+  try {
+    const { auth_url } = await api(`/api/channels/${ch.name}/connect/start`, { method:'POST' });
+    const popup = window.open(auth_url, 'oauth_' + ch.name, 'width=520,height=650');
+    if (!popup){ log('Le navigateur a bloqué la popup — autorise les popups pour ce site.', 'error'); return; }
+
+    const poll = setInterval(async () => {
+      if (popup.closed){
+        clearInterval(poll);
+        try {
+          const status = await api(`/api/channels/${ch.name}/connection_status`);
+          renderConnectionBody(card, ch, status);
+          if (status.connected) log(`${ch.display_name} connectée : ${status.youtube_channel_title}`, 'success');
+        } catch (e){ log(e.message, 'error'); }
+      }
+    }, 1000);
+  } catch (e){ log(e.message, 'error'); }
+}
+
+// ---------- Step 1 : URLs & download ----------
+
+function renderUrlsGrid(){
+  const grid = document.getElementById('urlsGrid');
+  grid.innerHTML = channels.map(ch => `
+    <div class="card">
+      <div class="ch-head"><span class="dot" style="background:${channelColor(ch.name)}"></span><span class="ch-name">${esc(ch.display_name)}</span></div>
+      <textarea class="urls" data-channel="${ch.name}" placeholder="https://www.tiktok.com/@.../video/..."></textarea>
+      <div class="status-line" id="status-${ch.name}">${ch.ready ? '' : '⚠️ pas de credentials OAuth pour cette chaîne'}</div>
+    </div>
+  `).join('');
+}
+
+document.getElementById('downloadAllBtn').addEventListener('click', async () => {
+  const areas = Array.from(document.querySelectorAll('#urlsGrid textarea.urls')).filter(t => t.value.trim());
+  if (!areas.length){ log('Colle au moins un lien dans une chaîne.', 'error'); return; }
+
+  for (const area of areas){
+    const channelName = area.dataset.channel;
+    const statusEl = document.getElementById(`status-${channelName}`);
+    try {
+      statusEl.innerHTML = spinnerHtml('Envoi des liens...');
+      const { batch_id } = await api(`/api/channels/${channelName}/urls`, { method:'POST', body: JSON.stringify({ text: area.value }) });
+      statusEl.innerHTML = spinnerHtml('Téléchargement en cours...');
+      const { videos, duplicates_skipped } = await api(`/api/batches/${batch_id}/download`, { method:'POST' });
+      const dupNote = duplicates_skipped ? ` (+ ${duplicates_skipped} doublon(s) ignoré(s))` : '';
+      statusEl.textContent = `${videos.length} vidéo(s) téléchargée(s)${dupNote}`;
+      log(`${channelName}: ${videos.length} vidéo(s) téléchargée(s)${dupNote}`, 'success');
+    } catch (e){
+      statusEl.textContent = 'Échec du téléchargement';
+      log(`${channelName}: ${e.message}`, 'error');
+    }
+  }
+  refreshDownloadedRow();
+});
+
+async function refreshDownloadedRow(){
+  const videos = await api('/api/videos?status=selected');
+  const byChannel = {};
+  videos.forEach(v => { (byChannel[v.channel] ||= []).push(v); });
+
+  const row = document.getElementById('downloadedRow');
+  const withVideos = channels.filter(ch => byChannel[ch.name]?.length);
+  if (!withVideos.length){ row.innerHTML = '<span class="empty-note">Rien téléchargé pour l\'instant.</span>'; return; }
+
+  row.innerHTML = withVideos.map(ch => `
+    <div class="dl-channel">
+      <div class="ch-head"><span class="dot" style="background:${channelColor(ch.name)}"></span><span class="ch-name">${esc(ch.display_name)}</span></div>
+      <div class="thumbs">${byChannel[ch.name].map(v => `
+        <div class="thumb" style="background:linear-gradient(160deg,${channelColor(ch.name)},#171a21 120%)">
+          ${v.media_url ? `<video src="${v.media_url}" muted></video>` : ''}
+          <svg viewBox="0 0 24 24"><path d="M8 5v14l11-7-11-7z" fill="white" opacity=".9"/></svg>
+        </div>`).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+// ---------- Step 2 : Selection ----------
+
+async function loadSelection(){
+  const videos = await api('/api/videos');
+  const relevant = videos.filter(v => ['selected','rejected'].includes(v.status));
+  const byChannel = {};
+  relevant.forEach(v => { (byChannel[v.channel] ||= []).push(v); });
+
+  const wrap = document.getElementById('selectionSections');
+  const withVideos = channels.filter(ch => byChannel[ch.name]?.length);
+  if (!withVideos.length){ wrap.innerHTML = '<span class="empty-note">Aucune vidéo téléchargée pour l\'instant.</span>'; }
+  else {
+    wrap.innerHTML = withVideos.map(ch => {
+      const vids = byChannel[ch.name];
+      const allSelected = vids.every(v => v.status === 'selected');
+      return `
+      <div class="section">
+        <div class="sec-head">
+          <div class="sec-left"><span class="dot" style="background:${channelColor(ch.name)}"></span><span class="ch-name">${esc(ch.display_name)}</span><span class="count">${vids.length} vidéo(s)</span></div>
+          <label class="selall"><input type="checkbox" class="selall-cb" data-channel="${ch.name}" ${allSelected?'checked':''}> Tout sélectionner</label>
+        </div>
+        <div class="vgrid">${vids.map(v => `
+          <div class="vcard" data-video="${v.video_id}">
+            <div class="vthumb" style="background:linear-gradient(160deg,${channelColor(ch.name)},#171a21 120%)">
+              ${v.media_url ? `<video src="${v.media_url}" muted></video>` : ''}
+              <div class="check sel-check ${v.status==='selected'?'':'off'}" data-video="${v.video_id}">
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round"><path d="M5 13l4 4L19 7"/></svg>
+              </div>
+            </div>
+            <div class="vtitle">${esc(v.title)}</div>
+          </div>`).join('')}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  document.querySelectorAll('.sel-check').forEach(el => el.addEventListener('click', async () => {
+    const nowSelected = el.classList.contains('off');
+    el.classList.toggle('off', !nowSelected);
+    try { await api(`/api/videos/${el.dataset.video}/select`, { method:'POST', body: JSON.stringify({selected: nowSelected}) }); }
+    catch (e){ log(e.message, 'error'); }
+    updateSelCount();
+  }));
+  document.querySelectorAll('.selall-cb').forEach(cb => cb.addEventListener('change', async () => {
+    const cards = document.querySelectorAll(`.vcard`);
+    const targets = byChannel[cb.dataset.channel].map(v => v.video_id);
+    for (const vid of targets){
+      const check = document.querySelector(`.sel-check[data-video="${vid}"]`);
+      check.classList.toggle('off', !cb.checked);
+      await api(`/api/videos/${vid}/select`, { method:'POST', body: JSON.stringify({selected: cb.checked}) });
+    }
+    updateSelCount();
+  }));
+  updateSelCount();
+}
+function updateSelCount(){
+  const total = document.querySelectorAll('.sel-check').length;
+  const selected = document.querySelectorAll('.sel-check:not(.off)').length;
+  document.getElementById('selCountText').textContent = `Étape 4 sur 8 · ${selected}/${total} sélectionnées`;
+}
+
+document.getElementById('toResultsBtn').addEventListener('click', async () => {
+  goTo(5);
+  const list = document.getElementById('resultsList');
+  list.innerHTML = spinnerHtml('Traitement en cours (fond + IA)... peut prendre quelques minutes.');
+  try {
+    const result = await api('/api/process_selected', { method:'POST' });
+    log(`${result.processed} vidéo(s) traitée(s)`, 'success');
+    renderResults(result.videos);
+  } catch (e){
+    list.innerHTML = '<span class="empty-note">Échec du traitement.</span>';
+    log(e.message, 'error');
+  }
+});
+
+// ---------- Step 4 : Frame positioning (cadrage) ----------
+
+const FRAME_MODES = [
+  { key: 'letterbox', label: 'Haut/bas', title: 'Bordure en haut et en bas seulement — la vidéo garde toute sa largeur' },
+  { key: 'full_border', label: '4 côtés', title: 'Bordure sur les 4 côtés — la vidéo est centrée, légèrement réduite' },
+  { key: 'fill', label: 'Plein cadre', title: "La vidéo remplit tout le cadre — aucune bordure visible, quitte à rogner un peu les bords" }
+];
+
+async function loadFrameStep(){
+  const grid = document.getElementById('frameGrid');
+  grid.innerHTML = spinnerHtml('Chargement...');
+  const videos = await api('/api/videos?status=selected');
+  if (!videos.length){ grid.innerHTML = '<span class="empty-note">Aucune vidéo sélectionnée.</span>'; return; }
+
+  grid.innerHTML = videos.map(v => `
+    <div class="bcard" data-video="${v.video_id}">
+      <div class="bhead"><span class="dot" style="background:${channelColor(v.channel)}"></span><span class="ch-name" style="font-size:12px">${esc(v.title || '')}</span></div>
+      <div class="fpreview-box">
+        <div class="fpreview-spinner"><span class="spinner"></span></div>
+        <img class="fpreview-img" alt="Aperçu du cadrage">
+      </div>
+      <div class="seg fmode-seg" style="align-self:stretch;justify-content:center">
+        ${FRAME_MODES.map(m => `<button class="seg-opt" data-mode="${m.key}" title="${esc(m.title)}">${m.label}</button>`).join('')}
+      </div>
+      <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted);justify-content:center">
+        <input type="checkbox" class="rounded-check"> Coins arrondis (combinable avec n'importe quel cadrage ci-dessus)
+      </label>
+    </div>`).join('');
+
+  for (const v of videos){
+    const card = grid.querySelector(`[data-video="${v.video_id}"]`);
+    let mode = v.frame_mode;
+    try {
+      const s = await api(`/api/videos/${v.video_id}/frame_suggestion`);
+      if (!mode) mode = s.suggested_frame_mode;
+    } catch (e){ /* not downloaded / unreadable — fall back below */ }
+
+    renderFrameCard(card, v.video_id, mode || 'full_border', !!v.rounded_corners);
+
+    if (!v.frame_mode && mode){
+      // Persist the auto-suggestion right away so process_selected always has
+      // an explicit choice, even for videos the user never touches here.
+      api(`/api/videos/${v.video_id}/frame_mode`, { method:'PATCH', body: JSON.stringify({frame_mode: mode}) }).catch(()=>{});
+    }
+  }
+}
+
+function renderFrameCard(card, videoId, mode, rounded){
+  const img = card.querySelector('.fpreview-img');
+  const spinner = card.querySelector('.fpreview-spinner');
+  spinner.style.display = 'flex';
+  img.classList.remove('loaded');
+  img.onload = () => { spinner.style.display = 'none'; img.classList.add('loaded'); };
+  img.onerror = () => { spinner.style.display = 'none'; };
+  img.src = `/api/videos/${videoId}/frame_preview?frame_mode=${mode}&rounded_corners=${rounded}&t=${Date.now()}`;
+
+  card.querySelectorAll('.fmode-seg .seg-opt').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.mode === mode);
+    btn.onclick = async () => {
+      renderFrameCard(card, videoId, btn.dataset.mode, rounded);
+      try {
+        await api(`/api/videos/${videoId}/frame_mode`, { method:'PATCH', body: JSON.stringify({frame_mode: btn.dataset.mode, rounded_corners: rounded}) });
+      } catch (e){ log(e.message, 'error'); }
+    };
+  });
+
+  const checkbox = card.querySelector('.rounded-check');
+  checkbox.checked = rounded;
+  checkbox.onchange = async () => {
+    renderFrameCard(card, videoId, mode, checkbox.checked);
+    try {
+      await api(`/api/videos/${videoId}/frame_mode`, { method:'PATCH', body: JSON.stringify({frame_mode: mode, rounded_corners: checkbox.checked}) });
+    } catch (e){ log(e.message, 'error'); }
+  };
+}
+
+// ---------- Step 3 : AI results ----------
+
+async function loadResultsScreen(){
+  // Shows every video currently ready for review — curated ones just
+  // processed by the button below, AND generated ones assembled from the
+  // Génération tab (which never went through process_selected).
+  try {
+    const videos = await api('/api/videos?status=ready_for_upload');
+    renderResults(videos);
+  } catch (e){
+    document.getElementById('resultsList').innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
+    log(e.message, 'error');
+  }
+}
+
+function renderResults(videos){
+  const list = document.getElementById('resultsList');
+  document.getElementById('resultsCountText').textContent = `Étape 6 sur 8 · ${videos.length} vidéo(s) prêtes`;
+  if (!videos.length){ list.innerHTML = '<span class="empty-note">Aucune vidéo prête.</span>'; return; }
+
+  list.innerHTML = videos.map(v => {
+    const ai = v.ai_data || {};
+    const desc = (ai.description_suggestions || [''])[0] || '';
+    const tags = (ai.tags || []).join(', ');
+    return `
+    <div class="rcard" data-video="${v.video_id}">
+      <div class="rthumb" style="background:linear-gradient(160deg,${channelColor(v.channel)},#171a21 120%)">
+        ${v.media_url ? `<video src="${v.media_url}" muted></video>` : ''}
+      </div>
+      <div class="rbody">
+        <div class="rhead"><span class="dot" style="background:${channelColor(v.channel)}"></span><span class="ch-tag">${esc(v.channel)}</span></div>
+        <div><label class="f">Titre</label><input class="f r-title" value="${esc(ai.optimized_title)}"></div>
+        <div><label class="f">Description</label><textarea class="f r-desc">${esc(desc)}</textarea></div>
+        <div><label class="f">Tags (séparés par virgule)</label><input class="tags-input r-tags" value="${esc(tags)}"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn secondary small r-save">Enregistrer</button>
+        </div>
+        <div class="askrow">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#6d8dfd" stroke-width="1.8"><path d="M12 3l1.8 4.9L19 9.5l-4.9 1.8L12 16l-1.8-4.9L5 9.5l4.9-1.8L12 3z"/></svg>
+          <input class="r-ask" placeholder="ex: rends le titre plus drôle...">
+          <button class="btn secondary small r-redo">Envoyer à l'IA</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.rcard').forEach(card => {
+    const videoId = card.dataset.video;
+    card.querySelector('.r-save').addEventListener('click', async () => {
+      const title = card.querySelector('.r-title').value;
+      const desc = card.querySelector('.r-desc').value;
+      const tags = card.querySelector('.r-tags').value.split(',').map(t=>t.trim()).filter(Boolean);
+      try {
+        await api(`/api/videos/${videoId}/ai_data`, { method:'PATCH', body: JSON.stringify({optimized_title:title, description_suggestions:[desc], tags}) });
+        log('Métadonnées enregistrées', 'success');
+      } catch (e){ log(e.message, 'error'); }
+    });
+    card.querySelector('.r-redo').addEventListener('click', async () => {
+      const instruction = card.querySelector('.r-ask').value.trim();
+      if (!instruction){ return; }
+      const btn = card.querySelector('.r-redo');
+      btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> En cours...';
+      try {
+        const updated = await api(`/api/videos/${videoId}/ai_redo`, { method:'POST', body: JSON.stringify({instruction}) });
+        const ai = updated.ai_data || {};
+        card.querySelector('.r-title').value = ai.optimized_title || '';
+        card.querySelector('.r-desc').value = (ai.description_suggestions||[''])[0] || '';
+        card.querySelector('.r-tags').value = (ai.tags||[]).join(', ');
+        log('Vidéo régénérée par l\'IA', 'success');
+      } catch (e){ log(e.message, 'error'); }
+      finally { btn.disabled = false; btn.textContent = "Envoyer à l'IA"; }
+    });
+  });
+}
+
+// ---------- Step 4 : Backgrounds ----------
+
+async function loadBackgrounds(){
+  const grid = document.getElementById('backgroundsGrid');
+  grid.innerHTML = channels.map(ch => `
+    <div class="bcard" data-channel="${ch.name}">
+      <div class="bhead"><span class="dot" style="background:${channelColor(ch.name)}"></span><span class="ch-name">${esc(ch.display_name)}</span></div>
+      <div class="preview ${ch.has_background ? '' : 'empty'}" style="${ch.has_background ? `background-image:url('/api/channels/${ch.name}/background?t=${Date.now()}')` : ''}">
+        ${ch.has_background ? '' : '<svg viewBox="0 0 24 24" fill="none" stroke="#565d6b" stroke-width="1.6"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="9.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>'}
+      </div>
+      ${ch.has_background ? '' : '<div class="empty-txt">Aucune image — fond noir uni utilisé</div>'}
+      <input type="file" accept="image/*" class="bg-file" style="display:none">
+      <div style="display:flex;gap:8px">
+        <button class="btn secondary full bg-pick">${ch.has_background ? "Changer l'image" : 'Ajouter une image'}</button>
+        ${ch.has_background ? '<button class="btn secondary bg-remove" style="flex:none">Retirer</button>' : ''}
+      </div>
+    </div>
+  `).join('');
+
+  grid.querySelectorAll('.bcard').forEach(card => {
+    const channelName = card.dataset.channel;
+    const fileInput = card.querySelector('.bg-file');
+    card.querySelector('.bg-pick').addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      const form = new FormData();
+      form.append('file', file);
+      try {
+        await fetch(`/api/channels/${channelName}/background`, { method:'POST', body: form });
+        log(`Fond mis à jour pour ${channelName}`, 'success');
+        const chObj = channels.find(c => c.name === channelName);
+        if (chObj) chObj.has_background = true;
+        loadBackgrounds();
+      } catch (e){ log(e.message, 'error'); }
+    });
+    const removeBtn = card.querySelector('.bg-remove');
+    if (removeBtn) removeBtn.addEventListener('click', async () => {
+      try {
+        await api(`/api/channels/${channelName}/background`, { method: 'DELETE' });
+        log(`Fond retiré pour ${channelName}`, 'success');
+        const chObj = channels.find(c => c.name === channelName);
+        if (chObj) chObj.has_background = false;
+        loadBackgrounds();
+      } catch (e){ log(e.message, 'error'); }
+    });
+  });
+}
+
+// ---------- Step 5 : Schedule ----------
+
+let scheduleMethod = 'static';
+document.querySelectorAll('#scheduleMethodSeg .seg-opt').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('#scheduleMethodSeg .seg-opt').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  scheduleMethod = btn.dataset.m;
+}));
+
+async function loadPlanningScreen(){
+  // Re-fetch the real, currently-pending schedule every time this screen is
+  // entered — otherwise it keeps showing whatever was rendered by the last
+  // "Générer le planning" click, even for videos already published since.
+  const wrap = document.getElementById('scheduleSections');
+  wrap.innerHTML = spinnerHtml('Chargement...');
+  try {
+    const data = await api('/api/schedule');
+    renderSchedule(data.schedule || []);
+  } catch (e){
+    wrap.innerHTML = '<span class="empty-note">Aucun planning généré pour l\'instant.</span>';
+  }
+}
+
+document.getElementById('genScheduleBtn').addEventListener('click', async () => {
+  const wrap = document.getElementById('scheduleSections');
+  wrap.innerHTML = spinnerHtml('Génération du planning...');
+  try {
+    const schedule = await api('/api/schedule', { method:'POST', body: JSON.stringify({ method: scheduleMethod }) });
+    log(`Planning généré : ${schedule.length} vidéo(s)`, 'success');
+    renderSchedule(schedule);
+  } catch (e){
+    wrap.innerHTML = '<span class="empty-note">Échec de la génération.</span>';
+    log(e.message, 'error');
+  }
+});
+
+function renderSchedule(schedule){
+  const byChannel = {};
+  schedule.forEach(e => {
+    const ch = e.channel || (e.video_data && e.video_data.channel) || 'default';
+    (byChannel[ch] ||= []).push(e);
+  });
+  const wrap = document.getElementById('scheduleSections');
+  const names = Object.keys(byChannel);
+  if (!names.length){ wrap.innerHTML = '<span class="empty-note">Aucun planning généré pour l\'instant.</span>'; return; }
+
+  wrap.innerHTML = names.map(name => {
+    const chObj = channels.find(c => c.name === name);
+    return `
+    <div class="section">
+      <div class="sec-head"><div class="sec-left"><span class="dot" style="background:${channelColor(name)}"></span><span class="ch-name">${esc(chObj ? chObj.display_name : name)}</span></div></div>
+      ${byChannel[name].map(e => `
+        <div class="vrow" data-video="${e.video_id}" data-publish-now="${e.publish_now ? '1' : '0'}">
+          <div class="mthumb" style="background:linear-gradient(160deg,${channelColor(name)},#171a21 120%)"></div>
+          <div class="vname">${esc(e.title)}</div>
+          ${e.publish_now ? `
+          <div class="datebadge" style="border-color:var(--ok);color:var(--ok)">🌍 Publication immédiate (publique)</div>
+          ` : `
+          <div class="datebadge" data-raw="${esc(e.scheduled_time)}"><svg viewBox="0 0 24 24" fill="none" stroke="#6d8dfd" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>${esc(e.scheduled_time_readable || e.scheduled_time)}</div>
+          <button class="editbtn edit-date"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg></button>
+          `}
+          <button class="btn secondary small publish-now-toggle">${e.publish_now ? '📅 Programmer plutôt' : '🌍 Publier maintenant'}</button>
+        </div>`).join('')}
+    </div>`;
+  }).join('');
+
+  wrap.querySelectorAll('.publish-now-toggle').forEach(btn => btn.addEventListener('click', async () => {
+    const row = btn.closest('.vrow');
+    const current = row.dataset.publishNow === '1';
+    btn.disabled = true;
+    try {
+      await api(`/api/schedule/${row.dataset.video}`, { method:'PATCH', body: JSON.stringify({ publish_now: !current }) });
+      log(!current ? 'Vidéo marquée pour publication immédiate' : 'Vidéo remise en planning programmé', 'success');
+      await loadPlanningScreen();
+    } catch (e){ log(e.message, 'error'); btn.disabled = false; }
+  }));
+
+  wrap.querySelectorAll('.edit-date').forEach(btn => btn.addEventListener('click', () => {
+    const row = btn.closest('.vrow');
+    const badge = row.querySelector('.datebadge');
+    const raw = badge.dataset.raw; // "YYYY-MM-DD HH:MM:SS"
+    const localValue = raw.replace(' ', 'T').slice(0,16);
+    badge.outerHTML = `<input type="datetime-local" class="dtinput" value="${localValue}">`;
+    const input = row.querySelector('.dtinput');
+    input.focus();
+    input.addEventListener('blur', async () => {
+      const scheduled_time = input.value.replace('T',' ') + ':00';
+      try {
+        const entry = await api(`/api/schedule/${row.dataset.video}`, { method:'PATCH', body: JSON.stringify({scheduled_time}) });
+        input.outerHTML = `<div class="datebadge" data-raw="${esc(entry.scheduled_time)}"><svg viewBox="0 0 24 24" fill="none" stroke="#6d8dfd" stroke-width="1.8"><rect x="3" y="4" width="18" height="17" rx="2"/><path d="M3 9h18M8 3v4M16 3v4"/></svg>${esc(entry.scheduled_time_readable)}</div>`;
+        log('Date mise à jour', 'success');
+      } catch (e){ log(e.message, 'error'); }
+    }, { once:true });
+  }));
+}
+
+// ---------- Step 6 : Summary & publish ----------
+
+async function loadSummaryFromSchedule(){
+  const data = await api('/api/schedule');
+  const schedule = data.schedule || [];
+  const byChannel = {};
+  schedule.forEach(e => {
+    const ch = e.channel || (e.video_data && e.video_data.channel) || 'default';
+    (byChannel[ch] ||= []).push(e);
+  });
+  const wrap = document.getElementById('summarySections');
+  const names = Object.keys(byChannel);
+  if (!names.length){
+    wrap.innerHTML = '<span class="empty-note">Aucune vidéo en attente de publication.</span>';
+    document.getElementById('summaryTotal').textContent = '0 vidéo';
+    document.getElementById('summaryLbl').textContent = 'rien à publier';
+    return;
+  }
+  wrap.innerHTML = names.map(name => {
+    const chObj = channels.find(c => c.name === name);
+    return `
+    <div class="section">
+      <div class="sec-head"><div class="sec-left"><span class="dot" style="background:${channelColor(name)}"></span><span class="ch-name">${esc(chObj ? chObj.display_name : name)}</span></div><span class="count">${byChannel[name].length} vidéo(s)</span></div>
+      ${byChannel[name].map(e => `<div class="vline"><span class="name">${esc(e.title)}</span><span class="when">${esc(e.scheduled_time_readable || e.scheduled_time)}</span></div>`).join('')}
+    </div>`;
+  }).join('');
+  document.getElementById('summaryTotal').textContent = `${schedule.length} vidéo${schedule.length>1?'s':''}`;
+  document.getElementById('summaryLbl').textContent = `sur ${names.length} chaîne${names.length>1?'s':''}`;
+}
+
+document.getElementById('publishAllBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('publishAllBtn');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Publication en cours...';
+  try {
+    const { results } = await api('/api/publish_all', { method:'POST' });
+    const box = document.getElementById('publishResults');
+    box.innerHTML = results.length ? results.map(r => `
+      <div class="result-line ${r.success ? 'ok' : 'fail'}">
+        ${r.success ? '✅' : '❌'} [${esc(r.channel||'')}] ${esc(r.title||'')} ${r.url ? `→ <a href="${r.url}" target="_blank" style="color:inherit">${r.url}</a>` : esc(r.error||'')}
+      </div>`).join('') : '<span class="empty-note">Rien à publier.</span>';
+    log('Publication terminée', 'success');
+    await loadSummaryFromSchedule(); // videos just published must disappear from "Prêt à publier"
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = originalHtml; }
+});
+
+// ---------- Dashboard : published videos + live YouTube stats ----------
+
+const dashboardScreen = document.getElementById('dashboardScreen');
+let dashboardChannel = null;
+let dashVideos = [];
+let dashFilter = 'all';
+
+document.getElementById('dashboardBtn').addEventListener('click', openDashboard);
+document.getElementById('dashBackBtn').addEventListener('click', closeDashboard);
+document.getElementById('dashRefreshBtn').addEventListener('click', () => {
+  if (dashboardChannel) loadDashboard(dashboardChannel, true);
+});
+document.querySelectorAll('#dashFilterSeg .seg-opt').forEach(btn => btn.addEventListener('click', () => {
+  document.querySelectorAll('#dashFilterSeg .seg-opt').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  dashFilter = btn.dataset.f;
+  renderDashGrid();
+}));
+
+function dashCategory(v){
+  const ps = v.privacy_status || (v.local_status === 'scheduled_on_youtube' ? 'private' : v.local_status === 'uploaded' ? 'public' : null);
+  if (ps === 'public') return 'public';
+  if (ps === 'private') return v.publish_at ? 'scheduled' : 'private';
+  return 'unknown';
+}
+function openDashboard(){
+  screens.forEach(el => el.classList.remove('active'));
+  dashboardScreen.classList.add('active');
+  if (!dashboardChannel && channels.length) dashboardChannel = channels[0].name;
+  renderDashChannelChips();
+  if (dashboardChannel) loadDashboard(dashboardChannel, true);
+}
+function closeDashboard(){
+  dashboardScreen.classList.remove('active');
+  render();
+}
+
+function renderDashChannelChips(){
+  const seg = document.getElementById('dashChannelSeg');
+  seg.innerHTML = channels.map(ch => `
+    <button class="seg-opt ${ch.name === dashboardChannel ? 'active' : ''}" data-ch="${ch.name}">
+      <span class="dot" style="background:${channelColor(ch.name)};display:inline-block;margin-right:5px"></span>${esc(ch.display_name)}
+    </button>`).join('');
+  seg.querySelectorAll('.seg-opt').forEach(btn => btn.addEventListener('click', () => {
+    dashboardChannel = btn.dataset.ch;
+    renderDashChannelChips();
+    loadDashboard(dashboardChannel, true);
+  }));
+}
+
+let dashAnalyticsAvailable = false;
+
+async function loadDashboard(channelName, refresh){
+  const grid = document.getElementById('dashGrid');
+  const note = document.getElementById('dashNote');
+  grid.innerHTML = spinnerHtml('Chargement...');
+  try {
+    const data = await api(`/api/channels/${channelName}/dashboard${refresh ? '?refresh=true' : ''}`);
+    dashVideos = data.videos;
+    dashAnalyticsAvailable = !!data.analytics_available;
+    renderDashGrid();
+    note.textContent = refresh
+      ? (data.stats_available ? 'Stats à jour ✅' : 'Chaîne non connectée — stats indisponibles')
+      : (data.videos.length ? 'Clique "Actualiser les stats" pour charger vues/likes réels' : '');
+    loadChannelOverview(channelName);
+  } catch (e){
+    grid.innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
+    log(e.message, 'error');
+  }
+}
+
+async function loadChannelOverview(channelName){
+  const box = document.getElementById('channelOverview');
+  box.innerHTML = '';
+  try {
+    const data = await api(`/api/channels/${channelName}/channel_analytics?days=30`);
+    box.innerHTML = renderChannelOverview(data);
+  } catch (e){
+    // 403 (scope not granted yet) or not connected — just hide the section
+    box.innerHTML = '';
+  }
+}
+
+function renderDailyViewsSvg(daily){
+  if (!daily.length) return '<span class="empty-note">Pas de données.</span>';
+  const w = 560, h = 90, pad = 6;
+  const maxY = Math.max(1, ...daily.map(p => p.views));
+  const stepX = (w - pad * 2) / Math.max(1, daily.length - 1);
+  const pts = daily.map((p, i) => {
+    const x = pad + i * stepX;
+    const y = h - pad - (p.views / maxY) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%">
+    <polyline points="${pts}" fill="none" stroke="#6d8dfd" stroke-width="1.8"/>
+  </svg>`;
+}
+
+function renderChannelOverview(data){
+  const t = data.totals || {};
+  const tiles = [
+    ['👥 Abonnés', data.subscriber_count ?? '—'],
+    ['👁 Vues (30j)', t.views ?? '—'],
+    ['⏱ Minutes regardées', t.estimated_minutes_watched ?? '—'],
+    ['📈 % moyen regardé', t.average_view_percentage != null ? t.average_view_percentage.toFixed(1) + '%' : '—'],
+    ['➕ Abonnés gagnés', t.subscribers_gained ?? '—'],
+    ['➖ Abonnés perdus', t.subscribers_lost ?? '—'],
+  ];
+  const traffic = (data.traffic_sources || []).slice().sort((a, b) => b.views - a.views).slice(0, 6);
+  const topVideos = data.top_videos || [];
+
+  return `
+  <div class="card" style="margin:12px 0">
+    <div class="ctitle" style="margin-bottom:10px">Vue d'ensemble de la chaîne — 30 derniers jours</div>
+    <div class="analytics-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      ${tiles.map(([label, val]) => `<div class="astat"><span class="alabel">${label}</span><span class="aval">${esc(val)}</span></div>`).join('')}
+    </div>
+    <div class="asection" style="margin-top:12px">
+      <div class="atitle">Vues par jour</div>
+      ${renderDailyViewsSvg(data.daily_views || [])}
+    </div>
+    <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">
+      <div class="asection" style="flex:1;min-width:180px">
+        <div class="atitle">Sources de trafic</div>
+        ${traffic.length ? traffic.map(s => `<div class="aline"><span>${esc(s.type)}</span><span>${s.views}</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
+      </div>
+      <div class="asection" style="flex:2;min-width:240px">
+        <div class="atitle">Meilleures vidéos (30j)</div>
+        ${topVideos.length ? topVideos.map(v => `<div class="aline"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px">${esc(v.title)}</span><span>${v.views} vues</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderDashGrid(){
+  const grid = document.getElementById('dashGrid');
+  const channelName = dashboardChannel;
+  const videos = dashFilter === 'all' ? dashVideos : dashVideos.filter(v => dashCategory(v) === dashFilter);
+
+  if (!dashVideos.length){ grid.innerHTML = '<span class="empty-note">Aucune vidéo publiée sur cette chaîne pour l\'instant.</span>'; return; }
+  if (!videos.length){ grid.innerHTML = '<span class="empty-note">Aucune vidéo dans ce filtre.</span>'; return; }
+
+  grid.innerHTML = videos.map(v => {
+    const cat = dashCategory(v);
+    const statusLabel = cat === 'public' ? '🟢 Publique' : cat === 'scheduled' ? '📅 Programmée' : cat === 'private' ? '🔒 Privée' : (v.local_status || '');
+    const thumbStyle = v.thumbnail_url
+      ? `background-image:url('${v.thumbnail_url}')`
+      : `background:linear-gradient(160deg,${channelColor(channelName)},#171a21 120%)`;
+    const currentPrivacy = v.privacy_status || (cat === 'scheduled' ? 'private' : cat === 'public' ? 'public' : 'private');
+    // No re-scheduling here — YouTube's API refuses a new publishAt on a video
+    // that already went through a publish cycle once (confirmed by testing).
+    // Only immediate private ⇄ public is offered; real scheduling happens once,
+    // at upload time, in the wizard's Planning/Publier steps.
+    const toggleLabel = currentPrivacy === 'public' ? '🔒 Rendre privée' : '🌍 Rendre publique';
+    const toggleTarget = currentPrivacy === 'public' ? 'private' : 'public';
+
+    return `
+    <div class="dvcard" data-yid="${v.youtube_id}">
+      <div class="dvthumb" style="${thumbStyle}"></div>
+      <div class="dvtitle">${esc(v.title)}</div>
+      <div class="dvstats">
+        ${v.view_count != null ? `<span>👁 <b>${v.view_count.toLocaleString()}</b></span>` : ''}
+        ${v.like_count != null ? `<span>👍 <b>${v.like_count.toLocaleString()}</b></span>` : ''}
+        ${v.comment_count != null ? `<span>💬 <b>${v.comment_count.toLocaleString()}</b></span>` : ''}
+      </div>
+      <div class="dvmeta">${statusLabel} · ${esc(v.scheduled_time || v.published_at || '')}</div>
+      <div class="dvtags">${(v.tags || []).slice(0, 5).map(t => `<span>${esc(t)}</span>`).join('')}</div>
+      ${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank">Voir sur YouTube →</a>` : ''}
+      <div class="dvedit" style="border-top:1px dashed var(--border);padding-top:8px;margin-top:2px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn secondary small dv-toggle" data-target="${toggleTarget}">${toggleLabel}</button>
+        ${dashAnalyticsAvailable ? `<button class="btn secondary small dv-analytics-toggle">📊 Stats détaillées</button>` : ''}
+      </div>
+      ${dashAnalyticsAvailable ? `<div class="dv-analytics-panel" style="display:none"></div>` : ''}
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('.dvcard').forEach(card => {
+    const yid = card.dataset.yid;
+    card.querySelector('.dv-toggle').addEventListener('click', async (e) => {
+      const btn = e.target;
+      const privacy_status = btn.dataset.target;
+      btn.disabled = true; btn.textContent = '...';
+      try {
+        await api(`/api/channels/${dashboardChannel}/videos/${yid}/visibility`, {
+          method: 'PATCH', body: JSON.stringify({ privacy_status, publish_at: null })
+        });
+        log('Vidéo mise à jour', 'success');
+        loadDashboard(dashboardChannel, true);
+      } catch (e2){
+        log(e2.message, 'error');
+        btn.disabled = false; btn.textContent = privacy_status === 'public' ? '🌍 Rendre publique' : '🔒 Rendre privée';
+      }
+    });
+
+    const analyticsBtn = card.querySelector('.dv-analytics-toggle');
+    if (analyticsBtn) analyticsBtn.addEventListener('click', async () => {
+      const panel = card.querySelector('.dv-analytics-panel');
+      if (panel.dataset.loaded === '1'){
+        const showing = panel.style.display !== 'none';
+        panel.style.display = showing ? 'none' : 'block';
+        analyticsBtn.textContent = showing ? '📊 Stats détaillées' : '📊 Masquer les stats';
+        return;
+      }
+      analyticsBtn.disabled = true;
+      analyticsBtn.innerHTML = '<span class="spinner"></span> Chargement...';
+      try {
+        const data = await api(`/api/channels/${dashboardChannel}/videos/${yid}/analytics`);
+        panel.innerHTML = renderAnalyticsPanel(data);
+        panel.dataset.loaded = '1';
+        panel.style.display = 'block';
+        analyticsBtn.textContent = '📊 Masquer les stats';
+      } catch (e2){
+        log(e2.message, 'error');
+        analyticsBtn.textContent = '📊 Stats détaillées';
+      } finally {
+        analyticsBtn.disabled = false;
+      }
+    });
+  });
+}
+
+function renderRetentionSvg(curve){
+  if (!curve.length) return '<span class="empty-note">Pas de données de rétention.</span>';
+  const w = 260, h = 80, pad = 4;
+  const maxY = Math.max(1, ...curve.map(p => p.watch_ratio));
+  const pts = curve.map(p => {
+    const x = pad + p.elapsed_ratio * (w - pad * 2);
+    const y = h - pad - (p.watch_ratio / maxY) * (h - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%">
+    <polyline points="${pts}" fill="none" stroke="#6d8dfd" stroke-width="1.6"/>
+  </svg>`;
+}
+
+function renderAnalyticsPanel(data){
+  const t = data.totals || {};
+  const rows = [
+    ['👁 Vues', t.views ?? '—'],
+    ['⏱ Minutes regardées', t.estimated_minutes_watched ?? '—'],
+    ['⏳ Durée moy. de visionnage', (t.average_view_duration ?? '—') + 's'],
+    ['📈 % moyen regardé', t.average_view_percentage != null ? t.average_view_percentage.toFixed(1) + '%' : '—'],
+    ['👍 Likes', t.likes ?? '—'],
+    ['💬 Commentaires', t.comments ?? '—'],
+    ['➕ Abonnés gagnés', t.subscribers_gained ?? '—'],
+    ['➖ Abonnés perdus', t.subscribers_lost ?? '—'],
+  ];
+  const traffic = (data.traffic_sources || []).slice().sort((a, b) => b.views - a.views).slice(0, 6);
+  const terms = (data.search_terms || []).slice(0, 8);
+
+  return `
+    <div class="analytics-grid">
+      ${rows.map(([label, val]) => `<div class="astat"><span class="alabel">${label}</span><span class="aval">${esc(val)}</span></div>`).join('')}
+    </div>
+    <div class="asection">
+      <div class="atitle">Sources de trafic</div>
+      ${traffic.length ? traffic.map(s => `<div class="aline"><span>${esc(s.type)}</span><span>${s.views}</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
+    </div>
+    <div class="asection">
+      <div class="atitle">Termes de recherche réels</div>
+      ${terms.length ? terms.map(s => `<div class="aline"><span>${esc(s.term)}</span><span>${s.views}</span></div>`).join('') : '<span class="empty-note">Aucune donnée (pas assez de trafic recherche).</span>'}
+    </div>
+    <div class="asection">
+      <div class="atitle">Courbe de rétention</div>
+      ${renderRetentionSvg(data.retention_curve || [])}
+    </div>
+  `;
+}
+
+// ---------- Génération : décor -> script -> audio -> assemblage ----------
+// Un seul brouillon actif à la fois. Une fois assemblée (ready_for_upload),
+// la vidéo n'est plus renvoyée par /generated_videos — cette page repart à
+// zéro, la vidéo se termine à l'étape 6 · Résultats IA.
+
+const generationScreen = document.getElementById('generationScreen');
+let genChannel = null;
+let genAssets = { backgrounds: [], music: [] };
+let genDraft = null;      // the current in-progress draft, or null
+let genJustAssembled = null; // holds the video right after assemble(), for the success screen
+
+const GEN_STEPS = ['Décor', 'Script', 'Audio', 'Assemblage'];
+const FRAME_MODE_LABELS = { fill: 'Plein cadre', letterbox: 'Haut/bas', full_border: '4 côtés' };
+function spin(text){ return `<span class="spinner"></span> ${esc(text)}`; }
+
+// status -> which step index is "active" (in progress / to do next)
+const STATUS_STEP = { awaiting_script: 0, script_generated: 1, audio_generated: 2, rendering_failed: 3 };
+
+document.getElementById('generationBtn').addEventListener('click', openGeneration);
+document.getElementById('genBackBtn').addEventListener('click', closeGeneration);
+
+function generationChannels(){ return channels.filter(ch => ch.generation_mode); }
+function assetFilename(path){ return path ? path.split('/').pop() : null; }
+
+function openGeneration(){
+  screens.forEach(el => el.classList.remove('active'));
+  generationScreen.classList.add('active');
+  const gchs = generationChannels();
+  if (!genChannel && gchs.length) genChannel = gchs[0].name;
+  renderGenChannelChips();
+  if (genChannel) loadGeneration(genChannel);
+}
+function closeGeneration(){
+  generationScreen.classList.remove('active');
+  render();
+}
+
+function renderGenChannelChips(){
+  const seg = document.getElementById('genChannelSeg');
+  const gchs = generationChannels();
+  if (!gchs.length){
+    seg.innerHTML = '<span class="empty-note">Aucune chaîne en mode génération (generation_mode) pour l\'instant.</span>';
+    return;
+  }
+  seg.innerHTML = gchs.map(ch => `
+    <button class="seg-opt ${ch.name === genChannel ? 'active' : ''}" data-ch="${ch.name}">
+      <span class="dot" style="background:${channelColor(ch.name)};display:inline-block;margin-right:5px"></span>${esc(ch.display_name)}
+    </button>`).join('');
+  seg.querySelectorAll('.seg-opt').forEach(btn => btn.addEventListener('click', () => {
+    genChannel = btn.dataset.ch;
+    genJustAssembled = null;
+    renderGenChannelChips();
+    loadGeneration(genChannel);
+  }));
+}
+
+async function loadGeneration(channelName){
+  const stage = document.getElementById('genStage');
+  stage.innerHTML = spinnerHtml('Chargement...');
+  try {
+    const [videos, assets] = await Promise.all([
+      api(`/api/channels/${channelName}/generated_videos`),
+      api(`/api/channels/${channelName}/assets`)
+    ]);
+    genAssets = assets;
+    genDraft = videos.length ? videos[0] : null;
+    renderGenStage();
+  } catch (e){
+    stage.innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
+    log(e.message, 'error');
+  }
+}
+
+function renderGenSteps(activeIdx){
+  document.getElementById('genStepsBar').innerHTML = GEN_STEPS.map((s,i) => `
+    <div class="gen-step ${i < activeIdx ? 'done' : i === activeIdx ? 'active' : ''}">
+      <div class="bar"></div><div class="lbl">${i+1} · ${s}</div>
+    </div>`).join('');
+}
+
+function decorRecapHtml(v){
+  return `
+    <div class="recap">
+      <div class="line"><span class="k">Fond vidéo</span><span class="v">${esc(assetFilename(v.bg_video_path))}</span></div>
+      <div class="line"><span class="k">Musique</span><span class="v">${esc(assetFilename(v.bg_music_path))}</span></div>
+      <div class="line"><span class="k">Cadrage</span><span class="v">${esc(FRAME_MODE_LABELS[v.frame_mode] || v.frame_mode)}${v.rounded_corners ? ' + coins arrondis' : ''}</span></div>
+    </div>`;
+}
+
+function renderGenStage(){
+  // Just-assembled takes priority: show the success screen once, even
+  // though /generated_videos will no longer return this video afterward.
+  if (genJustAssembled){
+    renderSteps4Success(genJustAssembled);
+    return;
+  }
+  if (!genDraft){
+    renderStepDecor();
+    return;
+  }
+  if (genDraft.status === 'rendering_failed'){
+    renderStepFailed(genDraft);
+    return;
+  }
+  const idx = STATUS_STEP[genDraft.status] ?? 0;
+  renderGenSteps(idx);
+  if (genDraft.status === 'awaiting_script') renderStepScript(genDraft);
+  else if (genDraft.status === 'script_generated') renderStepAudio(genDraft);
+  else if (genDraft.status === 'audio_generated') renderStepAssemble(genDraft);
+}
+
+// ---- Step 1 : décor ----
+
+function renderStepDecor(){
+  renderGenSteps(0);
+  const stage = document.getElementById('genStage');
+  const bgOptions = genAssets.backgrounds.length
+    ? genAssets.backgrounds.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
+    : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/backgrounds/</option>`;
+  const muOptions = genAssets.music.length
+    ? genAssets.music.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
+    : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/music/</option>`;
+
+  stage.innerHTML = `
+    <div class="card">
+      <div style="font-size:13px;font-weight:600">Choisis le décor de cette vidéo</div>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:10px">
+          <div><label class="f">Fond vidéo</label><select class="f" id="draftBgSelect">${bgOptions}</select></div>
+          <div><label class="f">Musique</label><select class="f" id="draftMusicSelect">${muOptions}</select></div>
+          <div><label class="f">Cadrage</label>
+            <select class="f" id="draftFrameModeSelect">
+              <option value="fill">Plein cadre</option>
+              <option value="letterbox">Haut/bas</option>
+              <option value="full_border">4 côtés</option>
+            </select>
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)">
+            <input type="checkbox" id="draftRoundedCheck"> Coins arrondis (combinable avec n'importe quel cadrage ci-dessus)
+          </label>
+        </div>
+        <div class="fpreview-box" style="width:140px;flex:none">
+          <div class="fpreview-spinner"><span class="spinner"></span></div>
+          <img class="fpreview-img" id="draftPreviewImg" alt="Aperçu du décor">
+        </div>
+      </div>
+      <div class="actions" style="display:flex;gap:10px;align-items:center">
+        <button class="btn primary small" id="createDraftBtn">Créer ce brouillon →</button>
+        <span class="progress-text" id="genNote"></span>
+      </div>
+    </div>`;
+
+  document.getElementById('createDraftBtn').addEventListener('click', createDraft);
+  ['draftBgSelect', 'draftFrameModeSelect'].forEach(id =>
+    document.getElementById(id).addEventListener('change', updateDecorPreview));
+  document.getElementById('draftRoundedCheck').addEventListener('change', updateDecorPreview);
+  if (genAssets.backgrounds.length) updateDecorPreview();
+}
+
+function updateDecorPreview(){
+  const bg = document.getElementById('draftBgSelect').value;
+  if (!bg) return;
+  const frameMode = document.getElementById('draftFrameModeSelect').value;
+  const rounded = document.getElementById('draftRoundedCheck').checked;
+  const img = document.getElementById('draftPreviewImg');
+  const spinner = img.parentElement.querySelector('.fpreview-spinner');
+  spinner.style.display = 'flex';
+  img.classList.remove('loaded');
+  img.onload = () => { spinner.style.display = 'none'; img.classList.add('loaded'); };
+  img.onerror = () => { spinner.style.display = 'none'; };
+  const url = `/api/channels/${genChannel}/asset_frame_preview?bg_video_filename=${encodeURIComponent(bg)}&frame_mode=${frameMode}&rounded_corners=${rounded}&t=${Date.now()}`;
+  img.src = url;
+}
+
+async function createDraft(){
+  const bg = document.getElementById('draftBgSelect').value;
+  const mu = document.getElementById('draftMusicSelect').value;
+  const frameMode = document.getElementById('draftFrameModeSelect').value;
+  const roundedCorners = document.getElementById('draftRoundedCheck').checked;
+  const note = document.getElementById('genNote');
+  if (!bg || !mu){ note.textContent = 'Choisis un fond vidéo ET une musique.'; return; }
+
+  const btn = document.getElementById('createDraftBtn');
+  const originalLabel = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = spin('Création...');
+  note.textContent = '';
+  try {
+    await api(`/api/channels/${genChannel}/generation_draft`, {
+      method: 'POST',
+      body: JSON.stringify({ bg_video_filename: bg, bg_music_filename: mu, frame_mode: frameMode, rounded_corners: roundedCorners }),
+    });
+    await loadGeneration(genChannel);
+  } catch (e){
+    log(e.message, 'error');
+    btn.disabled = false;
+    btn.innerHTML = originalLabel;
+  }
+}
+
+// ---- Step 2 : script ----
+
+function renderStepScript(v){
+  document.getElementById('genStage').innerHTML = `
+    <div class="card">
+      ${decorRecapHtml(v)}
+      <div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn primary small" id="genScriptBtn">✨ Générer le script</button>
+        <span class="progress-text" id="genNote">Gratuit — rien n'est encore rendu.</span>
+      </div>
+    </div>`;
+  document.getElementById('genScriptBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('genScriptBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = spin('Écriture en cours...');
+    try {
+      await api(`/api/videos/${v.video_id}/generate_script`, { method: 'POST' });
+      await loadGeneration(genChannel);
+    } catch (e){
+      log(e.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  });
+}
+
+// ---- Step 3 : audio ----
+
+function renderStepAudio(v){
+  document.getElementById('genStage').innerHTML = `
+    <div class="card">
+      ${decorRecapHtml(v)}
+      <div><label class="f">Titre</label><input class="f" value="${esc(v.title || '')}" disabled></div>
+      <div><label class="f">Script</label><textarea class="f" id="scriptEdit" style="min-height:130px">${esc(v.script_text)}</textarea></div>
+      <div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn secondary small" id="saveScriptBtn">Sauver le script</button>
+        <button class="btn secondary small" id="regenScriptBtn">🔄 Régénérer</button>
+        <button class="btn primary small" id="genAudioBtn">🎙️ Générer l'audio</button>
+        <span class="progress-text" id="genNote">Coûte des crédits ElevenLabs</span>
+      </div>
+    </div>`;
+
+  document.getElementById('saveScriptBtn').addEventListener('click', async () => {
+    const note = document.getElementById('genNote');
+    try {
+      await api(`/api/videos/${v.video_id}/script`, { method: 'PATCH', body: JSON.stringify({ script_text: document.getElementById('scriptEdit').value }) });
+      note.textContent = 'Script sauvé ✅';
+    } catch (e){ log(e.message, 'error'); }
+  });
+
+  document.getElementById('regenScriptBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('regenScriptBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = spin('Écriture en cours...');
+    try {
+      await api(`/api/videos/${v.video_id}/generate_script`, { method: 'POST' });
+      await loadGeneration(genChannel);
+    } catch (e){
+      log(e.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  });
+
+  document.getElementById('genAudioBtn').addEventListener('click', async () => {
+    if (!confirm('Générer la voix maintenant ? Ceci consomme des crédits ElevenLabs.')) return;
+    const btn = document.getElementById('genAudioBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = spin('Synthèse en cours (1-2 min)...');
+    try {
+      await api(`/api/videos/${v.video_id}/generate_audio`, { method: 'POST' });
+      await loadGeneration(genChannel);
+    } catch (e){
+      log(e.message, 'error');
+      document.getElementById('genNote').textContent = 'Échec de la génération audio.';
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  });
+}
+
+// ---- Step 4 : assemblage ----
+
+function renderStepAssemble(v){
+  document.getElementById('genStage').innerHTML = `
+    <div class="card">
+      ${decorRecapHtml(v)}
+      <div><label class="f">Script (verrouillé pour cette vidéo)</label><textarea class="f" disabled style="min-height:110px">${esc(v.script_text)}</textarea></div>
+      <div><label class="f">Voix générée</label><audio src="/api/videos/${v.video_id}/narration" controls></audio></div>
+      <div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+        <button class="btn secondary small" id="regenAudioBtn">🔄 Régénérer l'audio</button>
+        <button class="btn primary small" id="assembleBtn">🎬 Assembler la vidéo</button>
+        <span class="progress-text" id="genNote"></span>
+      </div>
+    </div>`;
+
+  document.getElementById('regenAudioBtn').addEventListener('click', async () => {
+    if (!confirm('Regénérer la voix ? Ceci consomme à nouveau des crédits ElevenLabs.')) return;
+    const btn = document.getElementById('regenAudioBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = spin('Synthèse en cours (1-2 min)...');
+    try {
+      await api(`/api/videos/${v.video_id}/generate_audio`, { method: 'POST' });
+      await loadGeneration(genChannel);
+    } catch (e){
+      log(e.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  });
+
+  document.getElementById('assembleBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('assembleBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = spin('Assemblage en cours (1-2 min)...');
+    try {
+      const result = await api(`/api/videos/${v.video_id}/assemble`, { method: 'POST' });
+      genJustAssembled = result;
+      genDraft = null;
+      renderGenStage();
+    } catch (e){
+      log(e.message, 'error');
+      document.getElementById('genNote').textContent = 'Échec de l\'assemblage.';
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  });
+}
+
+// ---- Échec (à n'importe quelle étape payante) ----
+
+function renderStepFailed(v){
+  renderGenSteps(3);
+  const retryAudio = !v.script_text ? false : true;
+  document.getElementById('genStage').innerHTML = `
+    <div class="card">
+      ${decorRecapHtml(v)}
+      <div class="empty-note" style="color:var(--danger)">${esc(v.render_error || 'Échec inconnu.')}</div>
+      <div class="actions">
+        <button class="btn primary small" id="retryBtn">🔄 Réessayer</button>
+      </div>
+    </div>`;
+  document.getElementById('retryBtn').addEventListener('click', async () => {
+    const btn = document.getElementById('retryBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = spin('Nouvelle tentative...');
+    try {
+      // words_path survives from any earlier successful audio generation —
+      // if it's there, only assembly failed; otherwise retry audio itself.
+      const endpoint = v.bg_video_path && v.words_path ? 'assemble' : 'generate_audio';
+      await api(`/api/videos/${v.video_id}/${endpoint}`, { method: 'POST' });
+      await loadGeneration(genChannel);
+    } catch (e){
+      log(e.message, 'error');
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  });
+}
+
+// ---- Succès ----
+
+function renderSteps4Success(v){
+  renderGenSteps(4);
+  document.getElementById('genStage').innerHTML = `
+    <div class="card">
+      <span class="cbadge connected" style="align-self:flex-start">✅ Vidéo assemblée</span>
+      <video src="${v.media_url || ''}" controls style="max-width:220px;aspect-ratio:9/16"></video>
+      <p style="font-size:13px;color:#c7cbd4;margin:0">Le mp4 est enregistré comme n'importe quelle vidéo du pipeline.</p>
+      <div class="recap">Passe à <b>l'étape 6 · Résultats IA</b> du wizard pour finaliser titre / description / tags avant de publier.</div>
+      <div class="actions">
+        <button class="btn primary small" id="newDraftBtn">➕ Créer une nouvelle vidéo</button>
+      </div>
+    </div>`;
+  document.getElementById('newDraftBtn').addEventListener('click', () => {
+    genJustAssembled = null;
+    loadGeneration(genChannel);
+  });
+}
+
+// ---------- Boot ----------
+
+async function boot(){
+  channels = await api('/api/channels');
+  if (!channels.some(ch => ch.generation_mode)) document.getElementById('generationBtn').style.display = 'none';
+  renderUrlsGrid();
+  await refreshDownloadedRow();
+  render();
+  loadConnectionScreen();
+}
+boot()
+  .catch(e => log(e.message, 'error'))
+  .finally(() => document.getElementById('bootOverlay').classList.add('hidden'));
+</script>
+</body>
+</html>
