@@ -325,7 +325,7 @@
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
       <span class="progress-text">Étape 5 sur 8</span>
-      <button class="btn primary next" id="toResultsBtn">Suivant (lancer l'IA) →</button>
+      <button class="btn primary" id="toResultsBtn">Suivant (lancer l'IA) →</button>
     </div>
   </section>
 
@@ -633,7 +633,11 @@ function updateSelCount(){
   document.getElementById('selCountText').textContent = `Étape 4 sur 8 · ${selected}/${total} sélectionnées`;
 }
 
+let resultsScreenBusy = false;
+
 document.getElementById('toResultsBtn').addEventListener('click', async () => {
+  resultsScreenBusy = true; // tells loadResultsScreen() (fired by goTo below) to stand down —
+                             // this handler owns the screen until process_selected finishes
   goTo(5);
   const list = document.getElementById('resultsList');
   list.innerHTML = spinnerHtml('Traitement en cours (fond + IA)... peut prendre quelques minutes.');
@@ -644,6 +648,8 @@ document.getElementById('toResultsBtn').addEventListener('click', async () => {
   } catch (e){
     list.innerHTML = '<span class="empty-note">Échec du traitement.</span>';
     log(e.message, 'error');
+  } finally {
+    resultsScreenBusy = false;
   }
 });
 
@@ -728,7 +734,12 @@ function renderFrameCard(card, videoId, mode, rounded){
 async function loadResultsScreen(){
   // Shows every video currently ready for review — curated ones just
   // processed by the button below, AND generated ones assembled from the
-  // Génération tab (which never went through process_selected).
+  // Génération tab (which never went through process_selected). Backs off
+  // if toResultsBtn's own processing flow is already running, so the two
+  // don't race to overwrite #resultsList (the fast local read here would
+  // otherwise clobber the real "Traitement en cours..." spinner).
+  if (resultsScreenBusy) return;
+  document.getElementById('resultsList').innerHTML = spinnerHtml('Chargement...');
   try {
     const videos = await api('/api/videos?status=ready_for_upload');
     renderResults(videos);
