@@ -252,7 +252,9 @@ class BatchProcessor:
             if video['status'] != 'pending':
                 continue
 
-            duplicate = self.url_manager.find_duplicate(video['url'], exclude_video_id=video['video_id'])
+            duplicate = self.url_manager.find_duplicate(
+                video['url'], exclude_video_id=video['video_id'], channel=video.get('channel')
+            )
             if duplicate:
                 self.url_manager.update_video_status(
                     video['video_id'], 'duplicate',

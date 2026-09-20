@@ -224,16 +224,23 @@ def query_videos(status: str = None, channel: str = None, batch_id: str = None,
 
 
 def find_duplicate_by_url(url: str, exclude_video_id: str, ignorable_statuses: tuple,
-                           db_path: str = DB_PATH) -> Optional[Dict]:
-    """Indexed on url — no linear scan through every video regardless of table size."""
+                           channel: str = None, db_path: str = DB_PATH) -> Optional[Dict]:
+    """Indexed on url — no linear scan through every video regardless of table size.
+    channel, when given, scopes the check to that one channel — the same URL
+    is a legitimate, separate download for a different channel, only a
+    duplicate within the SAME channel."""
     conn = get_connection(db_path)
     try:
         placeholders = ",".join("?" * len(ignorable_statuses))
+        channel_clause = "AND channel = ?" if channel is not None else ""
+        params = [url, exclude_video_id or "", *ignorable_statuses]
+        if channel is not None:
+            params.append(channel)
         row = conn.execute(
             f"""SELECT * FROM videos
-                WHERE url = ? AND video_id != ? AND status NOT IN ({placeholders})
+                WHERE url = ? AND video_id != ? AND status NOT IN ({placeholders}) {channel_clause}
                 LIMIT 1""",
-            (url, exclude_video_id or "", *ignorable_statuses)
+            params
         ).fetchone()
         return _video_row_to_dict(row) if row else None
     finally:

@@ -210,13 +210,19 @@ https://www.tiktok.com/@user/video/999
         """Which named checkpoints already have a snapshot for this video."""
         return _db.get_captured_checkpoints(video_id, self.db_path)
 
-    def find_duplicate(self, url: str, exclude_video_id: str = None) -> Optional[Dict]:
-        """Cherche une vidéo déjà connue avec la même URL (toutes chaînes/batches
-        confondus) qui a réellement avancé — pas juste une tentative en attente,
-        échouée ou rejetée, qui ne compte pas comme "déjà traitée". Requête
-        indexée sur url, pas un scan de toute la base."""
+    def find_duplicate(self, url: str, exclude_video_id: str = None, channel: str = None) -> Optional[Dict]:
+        """Cherche une vidéo déjà connue avec la même URL qui a réellement
+        avancé — pas juste une tentative en attente, échouée ou rejetée, qui
+        ne compte pas comme "déjà traitée". Requête indexée sur url, pas un
+        scan de toute la base.
+
+        channel, si fourni, limite la recherche à CETTE chaîne — la même URL
+        téléchargée pour une AUTRE chaîne n'est pas un doublon, c'est un
+        second usage légitime de la même vidéo source sur un compte
+        différent. Sans channel, la recherche reste globale (comportement
+        historique, utile pour un contrôle volontairement large)."""
         ignorable_statuses = ('pending', 'download_failed', 'error', 'rejected', 'duplicate')
-        return _db.find_duplicate_by_url(url, exclude_video_id, ignorable_statuses, self.db_path)
+        return _db.find_duplicate_by_url(url, exclude_video_id, ignorable_statuses, channel, self.db_path)
 
     def get_status_summary(self) -> Dict:
         """Résumé des statuts"""
