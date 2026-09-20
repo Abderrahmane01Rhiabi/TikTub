@@ -53,9 +53,31 @@ STYLE_EXAMPLES: List[str] = [
 ]
 
 
-def _build_prompt(channel_profile: Dict, style_examples: List[str]) -> str:
+def _build_prompt(
+    channel_profile: Dict, style_examples: List[str],
+    recent_titles: Optional[List[str]] = None, recent_formats: Optional[List[str]] = None,
+) -> str:
     style_prompt = channel_profile.get("script_style_prompt", "")
     examples_block = "\n\n---\n\n".join(style_examples)
+
+    history_block = ""
+    if recent_titles:
+        titles_list = "\n".join(f"- {t}" for t in recent_titles)
+        history_block = f"""
+
+Sujets/angles DÉJÀ traités récemment sur cette chaîne — n'en refais AUCUN, ni le même angle
+reformulé différemment (ex: ne refais pas "3 signes que X" si la liste ci-dessous en contient déjà
+plusieurs, ne refais pas "j'ai testé X pendant Nh" si déjà présent) :
+{titles_list}"""
+        if recent_formats:
+            counts = {f: recent_formats.count(f) for f in ("A", "B", "D")}
+            least_used = min(counts, key=counts.get)
+            history_block += (
+                f"\n\nFormats récemment utilisés (A/B/D) : {', '.join(recent_formats)}. "
+                f"Le format \"{least_used}\" est sous-représenté — privilégie-le cette fois, "
+                f"sauf si un autre format sert clairement mieux le nouvel angle choisi."
+            )
+
     return f"""{style_prompt}
 
 Voici des exemples de scripts déjà publiés sur cette chaîne, à titre de référence de STYLE UNIQUEMENT
@@ -65,6 +87,7 @@ Voici des exemples de scripts déjà publiés sur cette chaîne, à titre de ré
 ---
 {examples_block}
 ---
+{history_block}
 
 Réponds UNIQUEMENT avec un objet JSON valide de cette forme exacte, rien d'autre avant ou après :
 {{
@@ -85,20 +108,36 @@ def _is_usable(result: Dict) -> bool:
     )
 
 
-def generate_script(channel_profile: Dict, style_examples: Optional[List[str]] = None) -> Dict:
+SCRIPT_TEMPERATURE = 0.95  # higher than the app's shared 0.7 default — this call
+                            # is pure creative writing, not extraction/analysis,
+                            # and needs more spread across topics/wording to
+                            # actually vary run to run, on top of the recent-
+                            # topics list telling it what NOT to repeat.
+
+
+def generate_script(
+    channel_profile: Dict, style_examples: Optional[List[str]] = None,
+    recent_titles: Optional[List[str]] = None, recent_formats: Optional[List[str]] = None,
+) -> Dict:
     """Generate one new script + title/description/tags in the channel's style.
+
+    recent_titles/recent_formats (this channel's own generation history) are
+    threaded into the prompt so the model has something concrete to diverge
+    from, instead of just a vague "be original" instruction repeated
+    identically on every call — without them, the same fixed style examples
+    on every call made outputs converge to the same handful of angles.
 
     Tries Gemini first (free tier), falls back to OpenAI — same provider
     order as ai_tags_generator.AITagsGenerator.generate_ai_content, but
     calling call_gemini_api/call_openai_api directly with images=None since
     there is no video to analyze yet at this stage.
     """
-    prompt = _build_prompt(channel_profile, style_examples or STYLE_EXAMPLES)
+    prompt = _build_prompt(channel_profile, style_examples or STYLE_EXAMPLES, recent_titles, recent_formats)
 
     gemini_key = os.getenv("GEMINI_API_KEY")
     if gemini_key:
         try:
-            result = GeminiAIGenerator(gemini_key).call_gemini_api(prompt, max_tokens=3500)
+            result = GeminiAIGenerator(gemini_key).call_gemini_api(prompt, max_tokens=3500, temperature=SCRIPT_TEMPERATURE)
             if _is_usable(result):
                 return result
             print(f"⚠️ Gemini script generation returned an unusable result: {result}")
@@ -108,7 +147,7 @@ def generate_script(channel_profile: Dict, style_examples: Optional[List[str]] =
     openai_key = os.getenv("OPENAI_API_KEY")
     if openai_key:
         try:
-            result = OpenAIGenerator(openai_key).call_openai_api(prompt, max_tokens=3500)
+            result = OpenAIGenerator(openai_key).call_openai_api(prompt, max_tokens=3500, temperature=SCRIPT_TEMPERATURE)
             if _is_usable(result):
                 return result
             print(f"⚠️ OpenAI script generation returned an unusable result: {result}")

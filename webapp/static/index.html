@@ -10,6 +10,11 @@
     --accent:#6d8dfd; --accent-ink:#0f1115; --danger:#f87171; --ok:#4ade80;
   }
   *{box-sizing:border-box;}
+  /* Tells the browser to render native controls (select popups, the audio
+     player, date pickers, scrollbars) in dark mode by itself — the correct
+     fix for "native form control looks like a light-mode fallback", instead
+     of hand-restyling every element that happens to use one. */
+  :root{color-scheme:dark;}
   body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI",Roboto,sans-serif;}
   a{color:var(--accent);} a:hover{color:#8ea3ff;}
 
@@ -18,10 +23,11 @@
   .brand{display:flex;align-items:center;gap:10px;font-size:16px;font-weight:700;}
   .mark{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,#6d8dfd,#4ade80);flex:none;}
   .steps{display:flex;gap:8px;flex-wrap:wrap;}
-  .step{padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;border:none;cursor:pointer;font-family:inherit;}
+  .step{padding:6px 14px;border-radius:999px;font-size:12px;font-weight:600;white-space:nowrap;border:none;cursor:pointer;font-family:inherit;transition:background .12s ease,color .12s ease;}
   .step.current{background:var(--accent);color:#fff;}
   .step.done{background:rgba(109,141,253,.16);color:var(--accent);}
   .step.todo{background:var(--panel);color:var(--muted);border:1px solid var(--border);}
+  .step.todo:hover,.step.done:hover{background:var(--border);color:var(--text);}
 
   .screen{display:none;flex-direction:column;gap:16px;}
   .screen.active{display:flex;}
@@ -31,10 +37,14 @@
 
   .navbar{display:flex;align-items:center;justify-content:space-between;padding-top:14px;border-top:1px solid var(--border);}
   .progress-text{font-size:12px;color:var(--muted);}
-  .btn{border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;}
+  .btn{border:none;border-radius:6px;padding:10px 20px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;display:inline-flex;align-items:center;gap:8px;transition:filter .12s ease,background .12s ease;}
   .btn.primary{background:var(--accent);color:#fff;}
+  .btn.primary:not(:disabled):hover{background:#8098ff;}
   .btn.secondary{background:#232838;color:#c7cbd4;}
+  .btn.secondary:not(:disabled):hover{background:#2b3145;}
+  .btn:not(:disabled):active{filter:brightness(.92);}
   .btn:disabled{opacity:.4;cursor:default;}
+  .btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px;}
   .btn.small{padding:7px 12px;font-size:12px;}
   .btn.publish{background:linear-gradient(135deg,#6d8dfd,#4ade80);color:var(--accent-ink);padding:13px 28px;font-size:14px;}
   .btn.full{width:100%;justify-content:center;}
@@ -108,8 +118,10 @@
   .rhead{display:flex;align-items:center;gap:8px;}
   .ch-tag{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;}
   label.f{font-size:11px;color:var(--muted);display:block;margin-bottom:4px;}
-  input.f,textarea.f{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;padding:8px 10px;font-family:inherit;}
+  input.f,textarea.f,select.f{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;padding:8px 10px;font-family:inherit;}
   textarea.f{min-height:44px;resize:vertical;}
+  input.f:focus-visible,textarea.f:focus-visible,select.f:focus-visible{outline:none;border-color:var(--accent);}
+  audio{width:100%;}
   .tags-input{width:100%;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px 10px;font-family:inherit;}
   .askrow{display:flex;gap:8px;align-items:center;border-top:1px dashed var(--border);padding-top:10px;}
   .askrow input{flex:1;background:var(--panel2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:8px 10px;font-family:inherit;}
@@ -130,7 +142,8 @@
 
   /* step 5 : schedule */
   .seg{display:inline-flex;background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:3px;gap:3px;align-self:flex-start;}
-  .seg-opt{padding:7px 16px;border-radius:6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;border:none;font-family:inherit;background:none;}
+  .seg-opt{padding:7px 16px;border-radius:6px;font-size:12px;font-weight:600;color:var(--muted);cursor:pointer;border:none;font-family:inherit;background:none;transition:background .12s ease,color .12s ease;}
+  .seg-opt:not(.active):hover{background:var(--panel2);color:var(--text);}
   .seg-opt.active{background:var(--accent);color:#fff;}
   .vrow{display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap;}
   .vrow:first-of-type{border-top:none;}
@@ -240,13 +253,13 @@
   <section class="screen" id="generationScreen">
     <div>
       <h1 class="h1">Génération de vidéos</h1>
-      <p class="sub">Un brouillon à la fois : décor, puis script, puis audio, puis assemblage — à toi de lancer chaque étape. Une fois assemblée, la vidéo passe par l'étape 6 · Résultats IA comme n'importe quelle vidéo, et cette page repart à zéro.</p>
+      <p class="sub">Un lot à la fois : les scripts d'abord (relecture possible), puis les audios pour tout le lot, puis pour chaque vidéo tu choisis son décor et tu lances sa création. Une fois créée, la vidéo passe par l'étape 6 · Résultats IA comme n'importe quelle vidéo.</p>
     </div>
     <div class="seg" id="genChannelSeg"></div>
     <div class="gen-steps" id="genStepsBar"></div>
     <div id="genStage"></div>
     <div class="navbar">
-      <button class="btn secondary" id="genBackBtn">← Retour au wizard</button>
+      <button class="btn secondary" id="genBackBtn">← Nouveau lot</button>
       <span></span><span></span>
     </div>
   </section>
@@ -1279,21 +1292,22 @@ function renderAnalyticsPanel(data){
 const generationScreen = document.getElementById('generationScreen');
 let genChannel = null;
 let genAssets = { backgrounds: [], music: [] };
-let genDraft = null;      // the current in-progress draft, or null
-let genJustAssembled = null; // holds the video right after assemble(), for the success screen
-
-const GEN_STEPS = ['Décor', 'Script', 'Audio', 'Assemblage'];
-const FRAME_MODE_LABELS = { fill: 'Plein cadre', letterbox: 'Haut/bas', full_border: '4 côtés' };
+let genBatchId = null;      // the batch currently shown, or null = show the "how many videos" starter
+let genBatchPollTimer = null;
+let genCardStatus = {};     // video_id -> last-rendered status, so a card whose status hasn't
+                             // changed (e.g. mid-edit, or a decor pick in progress) is never
+                             // blindly re-rendered just because a sibling in the same batch changed
+const MAX_BATCH_COUNT = 20;
+// Mirrors generative.caption_styles.CUSTOMIZABLE_COLOR_STYLES — only these
+// styles have an accent color worth exposing a picker for.
+const CAPTION_COLOR_STYLES = new Set(['karaoke', 'bounce', 'typewriter']);
+const CAPTION_STYLE_DEFAULT_COLOR = { karaoke: '#ffe000', bounce: '#6d8dfd', typewriter: '#ffe000' };
 function spin(text){ return `<span class="spinner"></span> ${esc(text)}`; }
 
-// status -> which step index is "active" (in progress / to do next)
-const STATUS_STEP = { awaiting_script: 0, script_generated: 1, audio_generated: 2, rendering_failed: 3 };
-
 document.getElementById('generationBtn').addEventListener('click', openGeneration);
-document.getElementById('genBackBtn').addEventListener('click', closeGeneration);
+document.getElementById('genBackBtn').addEventListener('click', startNewBatch);
 
 function generationChannels(){ return channels.filter(ch => ch.generation_mode); }
-function assetFilename(path){ return path ? path.split('/').pop() : null; }
 
 function openGeneration(){
   screens.forEach(el => el.classList.remove('active'));
@@ -1303,9 +1317,12 @@ function openGeneration(){
   renderGenChannelChips();
   if (genChannel) loadGeneration(genChannel);
 }
-function closeGeneration(){
-  generationScreen.classList.remove('active');
-  render();
+
+function startNewBatch(){
+  clearTimeout(genBatchPollTimer);
+  genBatchId = null;
+  genCardStatus = {};
+  renderStarter();
 }
 
 function renderGenChannelChips(){
@@ -1321,7 +1338,9 @@ function renderGenChannelChips(){
     </button>`).join('');
   seg.querySelectorAll('.seg-opt').forEach(btn => btn.addEventListener('click', () => {
     genChannel = btn.dataset.ch;
-    genJustAssembled = null;
+    clearTimeout(genBatchPollTimer);
+    genBatchId = null;
+    genCardStatus = {};
     renderGenChannelChips();
     loadGeneration(genChannel);
   }));
@@ -1336,134 +1355,71 @@ async function loadGeneration(channelName){
       api(`/api/channels/${channelName}/assets`)
     ]);
     genAssets = assets;
-    genDraft = videos.length ? videos[0] : null;
-    renderGenStage();
+    if (videos.length){
+      // Some draft(s) from before a page reload/channel switch are still
+      // mid-flow — resume that batch's view (pollBatchProgress re-fetches
+      // with batch_id, which also picks up any sibling already finished).
+      genCardStatus = {};
+      genBatchId = videos[0].batch_id;
+      pollBatchProgress(genBatchId);
+    } else {
+      genBatchId = null;
+      renderStarter();
+    }
   } catch (e){
     stage.innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
     log(e.message, 'error');
   }
 }
 
-function renderGenSteps(activeIdx){
-  document.getElementById('genStepsBar').innerHTML = GEN_STEPS.map((s,i) => `
-    <div class="gen-step ${i < activeIdx ? 'done' : i === activeIdx ? 'active' : ''}">
-      <div class="bar"></div><div class="lbl">${i+1} · ${s}</div>
-    </div>`).join('');
-}
+// ---- Starter : combien de vidéos ----
 
-function decorRecapHtml(v){
-  return `
-    <div class="recap">
-      <div class="line"><span class="k">Fond vidéo</span><span class="v">${esc(assetFilename(v.bg_video_path))}</span></div>
-      <div class="line"><span class="k">Musique</span><span class="v">${esc(assetFilename(v.bg_music_path))}</span></div>
-      <div class="line"><span class="k">Cadrage</span><span class="v">${esc(FRAME_MODE_LABELS[v.frame_mode] || v.frame_mode)}${v.rounded_corners ? ' + coins arrondis' : ''}</span></div>
-    </div>`;
-}
-
-function renderGenStage(){
-  // Just-assembled takes priority: show the success screen once, even
-  // though /generated_videos will no longer return this video afterward.
-  if (genJustAssembled){
-    renderSteps4Success(genJustAssembled);
-    return;
-  }
-  if (!genDraft){
-    renderStepDecor();
-    return;
-  }
-  if (genDraft.status === 'rendering_failed'){
-    renderStepFailed(genDraft);
-    return;
-  }
-  const idx = STATUS_STEP[genDraft.status] ?? 0;
-  renderGenSteps(idx);
-  if (genDraft.status === 'awaiting_script') renderStepScript(genDraft);
-  else if (genDraft.status === 'script_generated') renderStepAudio(genDraft);
-  else if (genDraft.status === 'audio_generated') renderStepAssemble(genDraft);
-}
-
-// ---- Step 1 : décor ----
-
-function renderStepDecor(){
-  renderGenSteps(0);
+function renderStarter(){
   const stage = document.getElementById('genStage');
-  const bgOptions = genAssets.backgrounds.length
-    ? genAssets.backgrounds.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
-    : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/backgrounds/</option>`;
-  const muOptions = genAssets.music.length
-    ? genAssets.music.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
-    : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/music/</option>`;
-
   stage.innerHTML = `
     <div class="card">
-      <div style="font-size:13px;font-weight:600">Choisis le décor de cette vidéo</div>
-      <div style="display:flex;gap:16px;flex-wrap:wrap">
-        <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:10px">
-          <div><label class="f">Fond vidéo</label><select class="f" id="draftBgSelect">${bgOptions}</select></div>
-          <div><label class="f">Musique</label><select class="f" id="draftMusicSelect">${muOptions}</select></div>
-          <div><label class="f">Cadrage</label>
-            <select class="f" id="draftFrameModeSelect">
-              <option value="fill">Plein cadre</option>
-              <option value="letterbox">Haut/bas</option>
-              <option value="full_border">4 côtés</option>
-            </select>
-          </div>
-          <label style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--muted)">
-            <input type="checkbox" id="draftRoundedCheck"> Coins arrondis (combinable avec n'importe quel cadrage ci-dessus)
-          </label>
-        </div>
-        <div class="fpreview-box" style="width:140px;flex:none">
-          <div class="fpreview-spinner"><span class="spinner"></span></div>
-          <img class="fpreview-img" id="draftPreviewImg" alt="Aperçu du décor">
-        </div>
+      <div style="font-size:13px;font-weight:600">Combien de vidéos veux-tu générer ?</div>
+      <div>
+        <label class="f">Nombre de vidéos</label>
+        <input class="f" type="number" id="draftCountInput" value="1" min="1" max="${MAX_BATCH_COUNT}" style="width:80px">
+      </div>
+      <div style="font-size:11px;color:var(--muted)">
+        Les scripts sont générés d'abord (gratuit) — tu pourras les relire/corriger avant de lancer les
+        audios (payant), puis choisir le décor de chaque vidéo une par une, à la toute fin. Max ${MAX_BATCH_COUNT}.
       </div>
       <div class="actions" style="display:flex;gap:10px;align-items:center">
-        <button class="btn primary small" id="createDraftBtn">Créer ce brouillon →</button>
+        <button class="btn primary small" id="startBatchBtn">Générer le script →</button>
         <span class="progress-text" id="genNote"></span>
       </div>
     </div>`;
-
-  document.getElementById('createDraftBtn').addEventListener('click', createDraft);
-  ['draftBgSelect', 'draftFrameModeSelect'].forEach(id =>
-    document.getElementById(id).addEventListener('change', updateDecorPreview));
-  document.getElementById('draftRoundedCheck').addEventListener('change', updateDecorPreview);
-  if (genAssets.backgrounds.length) updateDecorPreview();
+  document.getElementById('draftCountInput').addEventListener('input', updateStartBatchLabel);
+  document.getElementById('startBatchBtn').addEventListener('click', startBatch);
 }
 
-function updateDecorPreview(){
-  const bg = document.getElementById('draftBgSelect').value;
-  if (!bg) return;
-  const frameMode = document.getElementById('draftFrameModeSelect').value;
-  const rounded = document.getElementById('draftRoundedCheck').checked;
-  const img = document.getElementById('draftPreviewImg');
-  const spinner = img.parentElement.querySelector('.fpreview-spinner');
-  spinner.style.display = 'flex';
-  img.classList.remove('loaded');
-  img.onload = () => { spinner.style.display = 'none'; img.classList.add('loaded'); };
-  img.onerror = () => { spinner.style.display = 'none'; };
-  const url = `/api/channels/${genChannel}/asset_frame_preview?bg_video_filename=${encodeURIComponent(bg)}&frame_mode=${frameMode}&rounded_corners=${rounded}&t=${Date.now()}`;
-  img.src = url;
+function readCountInput(){
+  return Math.max(1, Math.min(MAX_BATCH_COUNT, parseInt(document.getElementById('draftCountInput').value, 10) || 1));
 }
 
-async function createDraft(){
-  const bg = document.getElementById('draftBgSelect').value;
-  const mu = document.getElementById('draftMusicSelect').value;
-  const frameMode = document.getElementById('draftFrameModeSelect').value;
-  const roundedCorners = document.getElementById('draftRoundedCheck').checked;
-  const note = document.getElementById('genNote');
-  if (!bg || !mu){ note.textContent = 'Choisis un fond vidéo ET une musique.'; return; }
+function updateStartBatchLabel(){
+  const count = readCountInput();
+  document.getElementById('startBatchBtn').textContent =
+    count > 1 ? `Générer les ${count} scripts →` : 'Générer le script →';
+}
 
-  const btn = document.getElementById('createDraftBtn');
+async function startBatch(){
+  const count = readCountInput();
+  const btn = document.getElementById('startBatchBtn');
   const originalLabel = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = spin('Création...');
-  note.textContent = '';
+  btn.innerHTML = spin('Lancement...');
   try {
-    await api(`/api/channels/${genChannel}/generation_draft`, {
+    const result = await api(`/api/channels/${genChannel}/generation_draft`, {
       method: 'POST',
-      body: JSON.stringify({ bg_video_filename: bg, bg_music_filename: mu, frame_mode: frameMode, rounded_corners: roundedCorners }),
+      body: JSON.stringify({ count }),
     });
-    await loadGeneration(genChannel);
+    genCardStatus = {};
+    genBatchId = result.batch_id;
+    pollBatchProgress(genBatchId);
   } catch (e){
     log(e.message, 'error');
     btn.disabled = false;
@@ -1471,190 +1427,360 @@ async function createDraft(){
   }
 }
 
-// ---- Step 2 : script ----
+// ---- Batch view (scripts -> audio -> decor/assemble, all per-video cards) ----
 
-function renderStepScript(v){
-  document.getElementById('genStage').innerHTML = `
-    <div class="card">
-      ${decorRecapHtml(v)}
-      <div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn primary small" id="genScriptBtn">✨ Générer le script</button>
-        <span class="progress-text" id="genNote">Gratuit — rien n'est encore rendu.</span>
-      </div>
-    </div>`;
-  document.getElementById('genScriptBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('genScriptBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = spin('Écriture en cours...');
-    try {
-      await api(`/api/videos/${v.video_id}/generate_script`, { method: 'POST' });
-      await loadGeneration(genChannel);
-    } catch (e){
-      log(e.message, 'error');
-      btn.disabled = false;
-      btn.innerHTML = originalLabel;
+async function pollBatchProgress(batchId){
+  clearTimeout(genBatchPollTimer);
+  let videos, activeResp;
+  try {
+    [videos, activeResp] = await Promise.all([
+      api(`/api/channels/${genChannel}/generated_videos?batch_id=${encodeURIComponent(batchId)}`),
+      api(`/api/batches/${encodeURIComponent(batchId)}/active`),
+    ]);
+  } catch (e){
+    log(e.message, 'error');
+    genBatchPollTimer = setTimeout(() => pollBatchProgress(batchId), 5000);
+    return;
+  }
+
+  if (!videos.length){
+    // Every draft in this batch was individually abandoned — nothing left
+    // to show, back to the starter.
+    genBatchId = null;
+    renderStarter();
+    return;
+  }
+
+  renderBatchGrid(batchId, videos, activeResp.active);
+  if (activeResp.active){
+    genBatchPollTimer = setTimeout(() => pollBatchProgress(batchId), 3000);
+  }
+}
+
+function renderBatchGrid(batchId, videos, active){
+  const stage = document.getElementById('genStage');
+  let cards = document.getElementById('genBatchCards');
+  if (!cards){
+    stage.innerHTML = `
+      <div id="genBatchSummary" class="card"></div>
+      <div id="genBatchCards" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px"></div>`;
+    cards = document.getElementById('genBatchCards');
+  }
+
+  renderBatchSummary(batchId, videos, active);
+
+  const seen = new Set();
+  videos.forEach((v, i) => {
+    seen.add(v.video_id);
+    let card = cards.querySelector(`[data-video="${v.video_id}"]`);
+    if (!card){
+      card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.video = v.video_id;
+      card.style.cssText = 'flex:1;min-width:260px';
+      cards.appendChild(card);
+    }
+    // A card whose status hasn't changed since the last poll is left alone —
+    // it may hold an in-progress script edit or a decor pick that a blind
+    // refresh would wipe out, since sibling videos can still be generating.
+    if (genCardStatus[v.video_id] !== v.status){
+      // The décor card carries a full-size WYSIWYG preview (background +
+      // caption style together) — give it more room than the other, purely
+      // textual card states.
+      card.style.cssText = v.status === 'audio_generated' ? 'flex:1;min-width:420px' : 'flex:1;min-width:260px';
+      card.innerHTML = cardBodyHtml(v, i);
+      wireCardEvents(card, v, batchId);
+      genCardStatus[v.video_id] = v.status;
+    }
+  });
+
+  cards.querySelectorAll('[data-video]').forEach(card => {
+    if (!seen.has(card.dataset.video)){
+      card.remove();
+      delete genCardStatus[card.dataset.video];
     }
   });
 }
 
-// ---- Step 3 : audio ----
+function renderBatchSummary(batchId, videos, active){
+  const scripting = videos.filter(v => v.status === 'awaiting_script').length;
+  const readyForAudio = videos.filter(v => v.status === 'script_generated').length;
+  const readyForDecor = videos.filter(v => v.status === 'audio_generated').length;
+  const done = videos.filter(v => v.status === 'ready_for_upload').length;
+  const failed = videos.filter(v => v.status === 'rendering_failed').length;
+  // active + no video left awaiting_script means phase 2 (audio) is the one
+  // running — script_generated is ambiguous on its own (it's both "phase 1
+  // done, waiting for you" and "phase 2 hasn't reached this one yet").
+  const audioRunning = active && scripting === 0 && readyForAudio > 0;
 
-function renderStepAudio(v){
-  document.getElementById('genStage').innerHTML = `
-    <div class="card">
-      ${decorRecapHtml(v)}
-      <div><label class="f">Titre</label><input class="f" value="${esc(v.title || '')}" disabled></div>
-      <div><label class="f">Script</label><textarea class="f" id="scriptEdit" style="min-height:130px">${esc(v.script_text)}</textarea></div>
-      <div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn secondary small" id="saveScriptBtn">Sauver le script</button>
-        <button class="btn secondary small" id="regenScriptBtn">🔄 Régénérer</button>
-        <button class="btn primary small" id="genAudioBtn">🎙️ Générer l'audio</button>
-        <span class="progress-text" id="genNote">Coûte des crédits ElevenLabs</span>
+  let phaseLine;
+  if (scripting > 0){
+    phaseLine = `✍️ Écriture des scripts en cours (${videos.length - scripting}/${videos.length})...`;
+  } else if (audioRunning){
+    phaseLine = `🎙️ Génération audio en cours (${videos.length - scripting - readyForAudio}/${videos.length - scripting})...`;
+  } else if (readyForAudio > 0){
+    phaseLine = `${readyForAudio} script${readyForAudio > 1 ? 's' : ''} prêt${readyForAudio > 1 ? 's' : ''} à relire — corrige-les si besoin, puis lance ${readyForAudio > 1 ? 'les audios' : "l'audio"}.`;
+  } else if (readyForDecor > 0 && done + failed < videos.length){
+    phaseLine = `${readyForDecor} vidéo${readyForDecor > 1 ? 's' : ''} prête${readyForDecor > 1 ? 's' : ''} pour le décor.`;
+  } else {
+    phaseLine = `${done} prête${done > 1 ? 's' : ''}, ${failed} échec${failed > 1 ? 's' : ''} sur ${videos.length}.`;
+  }
+
+  const summary = document.getElementById('genBatchSummary');
+  summary.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="font-size:13px;font-weight:600;flex:1">${active && (scripting > 0 || audioRunning) ? spin(phaseLine) : esc(phaseLine)}</div>
+      ${readyForAudio > 0 && scripting === 0 && !audioRunning
+        ? `<button class="btn primary small" id="genAudioAllBtn">🎙️ Générer ${readyForAudio > 1 ? `les ${readyForAudio} audios` : "l'audio"} →</button>`
+        : ''}
+    </div>
+    ${done + failed === videos.length
+      ? `<div class="progress-text" style="margin-top:6px">Terminé — les vidéos prêtes t'attendent dans 6 · Résultats IA.</div>`
+      : ''}`;
+
+  const audioBtn = document.getElementById('genAudioAllBtn');
+  if (audioBtn){
+    audioBtn.addEventListener('click', async () => {
+      if (!confirm(`Générer ${readyForAudio > 1 ? `les ${readyForAudio} audios` : "l'audio"} maintenant ? Ceci consomme des crédits ElevenLabs.`)) return;
+      audioBtn.disabled = true;
+      audioBtn.innerHTML = spin('Lancement...');
+      try {
+        await api(`/api/batches/${batchId}/generate_audio`, { method: 'POST' });
+      } catch (e){ log(e.message, 'error'); }
+      pollBatchProgress(batchId);
+    });
+  }
+}
+
+function cardBodyHtml(v, i){
+  const label = `Vidéo ${i + 1}`;
+
+  if (v.status === 'awaiting_script'){
+    return `<div style="font-size:12px;color:var(--muted)">${label}</div>
+      <div style="font-size:13px;margin-top:6px">${spin('Écriture du script...')}</div>`;
+  }
+
+  if (v.status === 'script_generated'){
+    return `<div style="font-size:12px;color:var(--muted)">${label}${v.title ? ' — ' + esc(v.title) : ''}</div>
+      <textarea class="f" data-role="script" style="min-height:110px;margin-top:6px">${esc(v.script_text || '')}</textarea>
+      <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn secondary small" data-action="save-script">Sauver</button>
+        <button class="btn secondary small" data-action="regen-script">🔄 Régénérer</button>
+        <button class="btn secondary small" data-action="drop" style="color:var(--danger)">🗑️ Abandonner</button>
+        <span class="progress-text" data-role="note"></span>
+      </div>`;
+  }
+
+  if (v.status === 'audio_generated'){
+    const bgOptions = genAssets.backgrounds.length
+      ? genAssets.backgrounds.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
+      : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/backgrounds/</option>`;
+    const muOptions = genAssets.music.length
+      ? genAssets.music.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
+      : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/music/</option>`;
+    return `<div style="font-size:12px;color:var(--muted)">${label}${v.title ? ' — ' + esc(v.title) : ''}</div>
+      <audio src="/api/videos/${v.video_id}/narration" controls style="width:100%;margin-top:6px"></audio>
+      <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap-reverse;align-items:flex-start">
+        <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px">
+          <div><label class="f">Fond vidéo</label><select class="f" data-role="bg">${bgOptions}</select></div>
+          <div>
+            <label class="f">Musique</label><select class="f" data-role="music">${muOptions}</select>
+            <audio data-role="music-preview" controls style="width:100%;margin-top:6px;height:32px" ${genAssets.music.length ? `src="/api/channels/${genChannel}/assets/music/${encodeURIComponent(genAssets.music[0])}"` : ''}></audio>
+          </div>
+          <div><label class="f">Cadrage</label>
+            <select class="f" data-role="frame">
+              <option value="fill">Plein cadre</option>
+              <option value="letterbox">Haut/bas</option>
+              <option value="full_border">4 côtés</option>
+            </select>
+          </div>
+          <div><label class="f">Style de sous-titres</label>
+            <select class="f" data-role="caption-style">
+              <option value="karaoke">★ Karaoke (actuel)</option>
+              <option value="mrbeast">MrBeast</option>
+              <option value="hormozi">Hormozi</option>
+              <option value="bounce">★ Spring / Bounce</option>
+              <option value="typewriter">★ Typewriter</option>
+              <option value="minimal">★ Minimaliste / Cinéma</option>
+            </select>
+          </div>
+          <div data-role="caption-color-row" hidden style="display:flex;align-items:center;gap:8px">
+            <label class="f" style="margin:0">Couleur</label>
+            <input type="color" data-role="caption-color" value="${CAPTION_STYLE_DEFAULT_COLOR.karaoke}" style="width:40px;height:28px;padding:2px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;cursor:pointer">
+          </div>
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)">
+            <input type="checkbox" data-role="rounded"> Coins arrondis
+          </label>
+        </div>
+        <div class="fpreview-box" style="width:100%;max-width:260px;flex:none;margin:0 auto">
+          <div class="fpreview-spinner"><span class="spinner"></span></div>
+          <img class="fpreview-img" data-role="preview" alt="Aperçu du décor">
+        </div>
       </div>
-    </div>`;
+      <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn primary small" data-action="finalize">🎬 Lancer la création</button>
+        <button class="btn secondary small" data-action="regen-audio">🔄 Régénérer l'audio</button>
+        <span class="progress-text" data-role="note"></span>
+      </div>`;
+  }
 
-  document.getElementById('saveScriptBtn').addEventListener('click', async () => {
-    const note = document.getElementById('genNote');
+  if (v.status === 'ready_for_upload'){
+    return `<div style="font-size:12px;color:var(--muted)">${label}</div>
+      <span class="cbadge connected" style="margin-top:6px;align-self:flex-start">✅ Prête</span>
+      <video src="${v.media_url || ''}" controls style="max-width:160px;aspect-ratio:9/16;margin-top:6px"></video>`;
+  }
+
+  if (v.status === 'rendering_failed'){
+    return `<div style="font-size:12px;color:var(--muted)">${label}</div>
+      <div class="empty-note" style="color:var(--danger);margin-top:6px">${esc(v.render_error || 'Échec inconnu.')}</div>
+      <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+        <button class="btn primary small" data-action="retry">🔄 Réessayer</button>
+        <button class="btn secondary small" data-action="drop" style="color:var(--danger)">🗑️ Abandonner</button>
+      </div>`;
+  }
+
+  return `<div style="font-size:12px;color:var(--muted)">${label} — ${esc(v.status)}</div>`;
+}
+
+function wireCardEvents(card, v, batchId){
+  const note = card.querySelector('[data-role="note"]');
+  const refresh = () => { delete genCardStatus[v.video_id]; pollBatchProgress(batchId); };
+
+  const saveBtn = card.querySelector('[data-action="save-script"]');
+  if (saveBtn) saveBtn.addEventListener('click', async () => {
     try {
-      await api(`/api/videos/${v.video_id}/script`, { method: 'PATCH', body: JSON.stringify({ script_text: document.getElementById('scriptEdit').value }) });
-      note.textContent = 'Script sauvé ✅';
+      await api(`/api/videos/${v.video_id}/script`, {
+        method: 'PATCH',
+        body: JSON.stringify({ script_text: card.querySelector('[data-role="script"]').value }),
+      });
+      if (note) note.textContent = 'Sauvé ✅';
     } catch (e){ log(e.message, 'error'); }
   });
 
-  document.getElementById('regenScriptBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('regenScriptBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = spin('Écriture en cours...');
+  const regenScriptBtn = card.querySelector('[data-action="regen-script"]');
+  if (regenScriptBtn) regenScriptBtn.addEventListener('click', async () => {
+    const originalLabel = regenScriptBtn.innerHTML;
+    regenScriptBtn.disabled = true;
+    regenScriptBtn.innerHTML = spin('Écriture...');
     try {
       await api(`/api/videos/${v.video_id}/generate_script`, { method: 'POST' });
-      await loadGeneration(genChannel);
+      refresh();
     } catch (e){
       log(e.message, 'error');
-      btn.disabled = false;
-      btn.innerHTML = originalLabel;
+      regenScriptBtn.disabled = false;
+      regenScriptBtn.innerHTML = originalLabel;
     }
   });
 
-  document.getElementById('genAudioBtn').addEventListener('click', async () => {
-    if (!confirm('Générer la voix maintenant ? Ceci consomme des crédits ElevenLabs.')) return;
-    const btn = document.getElementById('genAudioBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = spin('Synthèse en cours (1-2 min)...');
-    try {
-      await api(`/api/videos/${v.video_id}/generate_audio`, { method: 'POST' });
-      await loadGeneration(genChannel);
-    } catch (e){
-      log(e.message, 'error');
-      document.getElementById('genNote').textContent = 'Échec de la génération audio.';
-      btn.disabled = false;
-      btn.innerHTML = originalLabel;
-    }
-  });
-}
-
-// ---- Step 4 : assemblage ----
-
-function renderStepAssemble(v){
-  document.getElementById('genStage').innerHTML = `
-    <div class="card">
-      ${decorRecapHtml(v)}
-      <div><label class="f">Script (verrouillé pour cette vidéo)</label><textarea class="f" disabled style="min-height:110px">${esc(v.script_text)}</textarea></div>
-      <div><label class="f">Voix générée</label><audio src="/api/videos/${v.video_id}/narration" controls></audio></div>
-      <div class="actions" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-        <button class="btn secondary small" id="regenAudioBtn">🔄 Régénérer l'audio</button>
-        <button class="btn primary small" id="assembleBtn">🎬 Assembler la vidéo</button>
-        <span class="progress-text" id="genNote"></span>
-      </div>
-    </div>`;
-
-  document.getElementById('regenAudioBtn').addEventListener('click', async () => {
+  const regenAudioBtn = card.querySelector('[data-action="regen-audio"]');
+  if (regenAudioBtn) regenAudioBtn.addEventListener('click', async () => {
     if (!confirm('Regénérer la voix ? Ceci consomme à nouveau des crédits ElevenLabs.')) return;
-    const btn = document.getElementById('regenAudioBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = spin('Synthèse en cours (1-2 min)...');
+    const originalLabel = regenAudioBtn.innerHTML;
+    regenAudioBtn.disabled = true;
+    regenAudioBtn.innerHTML = spin('Synthèse en cours (1-2 min)...');
     try {
       await api(`/api/videos/${v.video_id}/generate_audio`, { method: 'POST' });
-      await loadGeneration(genChannel);
+      refresh();
     } catch (e){
       log(e.message, 'error');
-      btn.disabled = false;
-      btn.innerHTML = originalLabel;
+      regenAudioBtn.disabled = false;
+      regenAudioBtn.innerHTML = originalLabel;
     }
   });
 
-  document.getElementById('assembleBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('assembleBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = spin('Assemblage en cours (1-2 min)...');
+  const dropBtn = card.querySelector('[data-action="drop"]');
+  if (dropBtn) dropBtn.addEventListener('click', async () => {
+    if (!confirm('Abandonner cette vidéo ?')) return;
     try {
-      const result = await api(`/api/videos/${v.video_id}/assemble`, { method: 'POST' });
-      genJustAssembled = result;
-      genDraft = null;
-      renderGenStage();
-    } catch (e){
-      log(e.message, 'error');
-      document.getElementById('genNote').textContent = 'Échec de l\'assemblage.';
-      btn.disabled = false;
-      btn.innerHTML = originalLabel;
-    }
+      await api(`/api/videos/${v.video_id}/generation_draft`, { method: 'DELETE' });
+    } catch (e){ log(e.message, 'error'); return; }
+    refresh();
   });
-}
 
-// ---- Échec (à n'importe quelle étape payante) ----
-
-function renderStepFailed(v){
-  renderGenSteps(3);
-  const retryAudio = !v.script_text ? false : true;
-  document.getElementById('genStage').innerHTML = `
-    <div class="card">
-      ${decorRecapHtml(v)}
-      <div class="empty-note" style="color:var(--danger)">${esc(v.render_error || 'Échec inconnu.')}</div>
-      <div class="actions">
-        <button class="btn primary small" id="retryBtn">🔄 Réessayer</button>
-      </div>
-    </div>`;
-  document.getElementById('retryBtn').addEventListener('click', async () => {
-    const btn = document.getElementById('retryBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = spin('Nouvelle tentative...');
+  const finalizeBtn = card.querySelector('[data-action="finalize"]');
+  if (finalizeBtn) finalizeBtn.addEventListener('click', async () => {
+    const bg = card.querySelector('[data-role="bg"]').value;
+    const mu = card.querySelector('[data-role="music"]').value;
+    const frameMode = card.querySelector('[data-role="frame"]').value;
+    const rounded = card.querySelector('[data-role="rounded"]').checked;
+    const captionStyle = card.querySelector('[data-role="caption-style"]').value;
+    const captionColor = CAPTION_COLOR_STYLES.has(captionStyle)
+      ? card.querySelector('[data-role="caption-color"]').value
+      : null;
+    if (!bg || !mu){ if (note) note.textContent = 'Choisis un fond vidéo ET une musique.'; return; }
+    const originalLabel = finalizeBtn.innerHTML;
+    finalizeBtn.disabled = true;
+    finalizeBtn.innerHTML = spin('Création en cours (1-2 min)...');
     try {
-      // words_path survives from any earlier successful audio generation —
-      // if it's there, only assembly failed; otherwise retry audio itself.
-      const endpoint = v.bg_video_path && v.words_path ? 'assemble' : 'generate_audio';
-      await api(`/api/videos/${v.video_id}/${endpoint}`, { method: 'POST' });
-      await loadGeneration(genChannel);
+      await api(`/api/videos/${v.video_id}/finalize`, {
+        method: 'POST',
+        body: JSON.stringify({
+          bg_video_filename: bg, bg_music_filename: mu, frame_mode: frameMode, rounded_corners: rounded,
+          caption_style: captionStyle, caption_color: captionColor,
+        }),
+      });
+      refresh();
     } catch (e){
       log(e.message, 'error');
-      btn.disabled = false;
-      btn.innerHTML = originalLabel;
+      if (note) note.textContent = 'Échec de la création.';
+      finalizeBtn.disabled = false;
+      finalizeBtn.innerHTML = originalLabel;
     }
   });
-}
 
-// ---- Succès ----
-
-function renderSteps4Success(v){
-  renderGenSteps(4);
-  document.getElementById('genStage').innerHTML = `
-    <div class="card">
-      <span class="cbadge connected" style="align-self:flex-start">✅ Vidéo assemblée</span>
-      <video src="${v.media_url || ''}" controls style="max-width:220px;aspect-ratio:9/16"></video>
-      <p style="font-size:13px;color:#c7cbd4;margin:0">Le mp4 est enregistré comme n'importe quelle vidéo du pipeline.</p>
-      <div class="recap">Passe à <b>l'étape 6 · Résultats IA</b> du wizard pour finaliser titre / description / tags avant de publier.</div>
-      <div class="actions">
-        <button class="btn primary small" id="newDraftBtn">➕ Créer une nouvelle vidéo</button>
-      </div>
-    </div>`;
-  document.getElementById('newDraftBtn').addEventListener('click', () => {
-    genJustAssembled = null;
-    loadGeneration(genChannel);
+  const retryBtn = card.querySelector('[data-action="retry"]');
+  if (retryBtn) retryBtn.addEventListener('click', async () => {
+    retryBtn.disabled = true;
+    retryBtn.innerHTML = spin('Nouvelle tentative...');
+    try {
+      await api(`/api/videos/${v.video_id}/advance`, { method: 'POST' });
+    } catch (e){ log(e.message, 'error'); }
+    refresh();
   });
+
+  // Live decor preview, only relevant on the audio_generated (décor) card —
+  // background AND caption style together, so picking a style shows right
+  // away what it'll actually look like, not just its name in a dropdown.
+  const bgSelect = card.querySelector('[data-role="bg"]');
+  if (bgSelect){
+    const frameSelect = card.querySelector('[data-role="frame"]');
+    const roundedCheck = card.querySelector('[data-role="rounded"]');
+    const captionSelect = card.querySelector('[data-role="caption-style"]');
+    const colorRow = card.querySelector('[data-role="caption-color-row"]');
+    const colorInput = card.querySelector('[data-role="caption-color"]');
+    const updatePreview = () => {
+      const bg = bgSelect.value;
+      const img = card.querySelector('[data-role="preview"]');
+      if (!bg || !img) return;
+      const spinner = img.parentElement.querySelector('.fpreview-spinner');
+      spinner.style.display = 'flex';
+      img.classList.remove('loaded');
+      img.onload = () => { spinner.style.display = 'none'; img.classList.add('loaded'); };
+      img.onerror = () => { spinner.style.display = 'none'; };
+      const colorParam = CAPTION_COLOR_STYLES.has(captionSelect.value) ? `&caption_color=${encodeURIComponent(colorInput.value)}` : '';
+      img.src = `/api/channels/${genChannel}/asset_frame_preview?bg_video_filename=${encodeURIComponent(bg)}&frame_mode=${frameSelect.value}&rounded_corners=${roundedCheck.checked}&caption_style=${captionSelect.value}${colorParam}&t=${Date.now()}`;
+    };
+    const updateColorVisibility = () => {
+      const customizable = CAPTION_COLOR_STYLES.has(captionSelect.value);
+      colorRow.hidden = !customizable;
+      if (customizable) colorInput.value = CAPTION_STYLE_DEFAULT_COLOR[captionSelect.value];
+    };
+    captionSelect.addEventListener('change', updateColorVisibility);
+    [bgSelect, frameSelect, roundedCheck, captionSelect, colorInput].forEach(el => el.addEventListener('change', updatePreview));
+    updateColorVisibility();
+    if (genAssets.backgrounds.length) updatePreview();
+  }
+
+  const musicSelect = card.querySelector('[data-role="music"]');
+  const musicPreview = card.querySelector('[data-role="music-preview"]');
+  if (musicSelect && musicPreview){
+    musicSelect.addEventListener('change', () => {
+      if (!musicSelect.value) return;
+      musicPreview.pause();
+      musicPreview.src = `/api/channels/${genChannel}/assets/music/${encodeURIComponent(musicSelect.value)}`;
+      musicPreview.play().catch(() => {}); // autoplay can be blocked — controls are there regardless
+    });
+  }
 }
 
 // ---------- Boot ----------

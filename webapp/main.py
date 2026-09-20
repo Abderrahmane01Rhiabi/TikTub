@@ -15,7 +15,7 @@ import shutil
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 from urllib.parse import quote
 
 # Make sure the project root (parent of webapp/) is importable regardless of
@@ -28,7 +28,7 @@ os.chdir(PROJECT_ROOT)  # all existing modules use relative paths (channels/, da
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from channel_manager import ChannelManager
 
@@ -579,10 +579,38 @@ def get_generative_pipeline():
     return _generative_pipeline
 
 
+# Tracks the background thread (if any) currently running a batch's script
+# or audio phase, so the UI can tell "still generating" apart from "done, or
+# paused waiting on the user" after a page reload — a plain video-status scan
+# can't distinguish those (script_generated is both "phase 1 finished, ready
+# for review" and "phase 2 hasn't reached this one yet").
+_batch_threads: Dict[str, threading.Thread] = {}
+_batch_threads_lock = threading.Lock()
+
+
+def _start_batch_thread(batch_id: str, target):
+    thread = threading.Thread(target=target, args=(batch_id,), daemon=True)
+    with _batch_threads_lock:
+        _batch_threads[batch_id] = thread
+    thread.start()
+
+
+@app.get("/api/batches/{batch_id}/active")
+def is_batch_active(batch_id: str):
+    """Whether a background phase (script or audio generation) is currently
+    running for this batch. Polled by the UI so it keeps refreshing across a
+    page reload instead of only trusting an in-memory 'I just clicked go'
+    flag, which a reload would lose."""
+    with _batch_threads_lock:
+        thread = _batch_threads.get(batch_id)
+    return {"active": bool(thread and thread.is_alive())}
+
+
 def serialize_generated_video(video: dict) -> dict:
     ai = video.get("ai_data") or {}
     return {
         "video_id": video.get("video_id"),
+        "batch_id": video.get("batch_id"),
         "channel": video.get("channel"),
         "status": video.get("status"),
         "script_text": video.get("script_text"),
@@ -594,6 +622,8 @@ def serialize_generated_video(video: dict) -> dict:
         "bg_music_path": video.get("bg_music_path"),
         "frame_mode": video.get("frame_mode", "fill"),
         "rounded_corners": video.get("rounded_corners", False),
+        "caption_style": video.get("caption_style", "karaoke"),
+        "caption_color": video.get("caption_color"),
         "words_path": video.get("words_path"),
         "media_url": video_media_url(video),
         "render_error": video.get("render_error"),
@@ -616,32 +646,32 @@ def _safe_asset_path(channel_name: str, subfolder: str, filename: str) -> Path:
     return path
 
 
+MAX_BATCH_COUNT = 20
+
+
 class CreateDraftRequest(BaseModel):
-    bg_video_filename: str
-    bg_music_filename: str
-    frame_mode: str = "fill"  # "fill" | "letterbox" | "full_border"
-    rounded_corners: bool = False  # independent of frame_mode — combines with any of them
+    count: int = Field(default=1, ge=1, le=MAX_BATCH_COUNT)
 
 
 @app.post("/api/channels/{channel_name}/generation_draft")
 def create_generation_draft(channel_name: str, req: CreateDraftRequest):
-    """Step 1 of the generative flow: register the user's chosen background
-    video + music + frame style — nothing is written or generated yet, so
-    nothing is imposed on them before they've made these choices."""
-    bg_video_path = str(_safe_asset_path(channel_name, "backgrounds", req.bg_video_filename))
-    bg_music_path = str(_safe_asset_path(channel_name, "music", req.bg_music_filename))
-
+    """Phase 1 kickoff: registers `count` draft rows (no decor — that's
+    chosen later, per-video, in phase 3) and immediately starts writing their
+    scripts in a background thread. The request returns right away; the UI
+    polls generated_videos?batch_id=... to watch scripts land. Audio (phase 2)
+    and decor+assembly (phase 3) are separate, user-triggered steps."""
     gp = get_generative_pipeline()
-    batch_id = gp.create_draft(channel_name, bg_video_path, bg_music_path, req.frame_mode, req.rounded_corners)
+    batch_id = gp.create_draft(channel_name, count=req.count)
+    _start_batch_thread(batch_id, gp.run_batch_scripts)
     videos = gp.url_manager.list_videos(batch_id=batch_id)
     return {"batch_id": batch_id, "videos": [serialize_generated_video(v) for v in videos]}
 
 
 @app.post("/api/videos/{video_id}/generate_script")
 def generate_script_for_draft(video_id: str):
-    """Step 2: writes ONE script (+ title/description/tags) for an existing
-    draft, via the LLM cascade — no ElevenLabs call here, so this step is
-    cheap to retry/reject."""
+    """Writes ONE script (+ title/description/tags) for an existing draft —
+    also used to regenerate a script the user doesn't like during review, no
+    ElevenLabs call here, so this is cheap to retry/reject."""
     gp = get_generative_pipeline()
     try:
         video = gp.generate_script_for(video_id)
@@ -652,17 +682,51 @@ def generate_script_for_draft(video_id: str):
     return serialize_generated_video(video)
 
 
+@app.post("/api/batches/{batch_id}/generate_audio")
+def generate_batch_audio(batch_id: str):
+    """Phase 2 kickoff: once scripts have been reviewed/edited, synthesizes
+    narration (ElevenLabs, real credits) for every draft in this batch that
+    has a script but no audio yet — a background thread, same polling
+    pattern as phase 1's script generation."""
+    gp = get_generative_pipeline()
+    _start_batch_thread(batch_id, gp.run_batch_audio)
+    return {"started": True}
+
+
+@app.post("/api/videos/{video_id}/advance")
+def advance_generation_draft(video_id: str):
+    """Retries exactly the step that failed on this draft (script, audio, or
+    assemble) — single retry endpoint used by the UI instead of it having to
+    guess which specific step to re-fire. A no-op if the draft isn't
+    currently in rendering_failed."""
+    gp = get_generative_pipeline()
+    try:
+        video = gp.advance_draft(video_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return serialize_generated_video(video)
+
+
+GENERATION_DRAFT_STATUSES = {"awaiting_script", "script_generated", "audio_generated", "rendering_failed"}
+
+
 @app.get("/api/channels/{channel_name}/generated_videos")
-def get_generated_videos(channel_name: str, status: Optional[str] = None):
-    """Without an explicit status, only the still-in-progress draft(s) are
-    returned — never a completed one. Once a video reaches
+def get_generated_videos(channel_name: str, status: Optional[str] = None, batch_id: Optional[str] = None):
+    """Without an explicit status or batch_id, only the still-in-progress
+    draft(s) are returned — never a completed one. Once a video reaches
     'ready_for_upload' (and anything further downstream: 'uploaded',
     'scheduled_on_youtube') it's done with this page; it's reviewed for
     title/description/tags in the normal 'Résultats IA' wizard step like any
-    other video, not re-shown here as history."""
+    other video, not re-shown here as history.
+
+    batch_id returns every video in that batch regardless of status — used
+    by the batch-progress screen to track its own drafts through to
+    ready_for_upload/rendering_failed without picking up unrelated ones."""
     DONE_STATUSES = {"ready_for_upload", "uploaded", "scheduled_on_youtube"}
     gp = get_generative_pipeline()
-    if status:
+    if batch_id:
+        videos = gp.url_manager.list_videos(batch_id=batch_id)
+    elif status:
         videos = gp.url_manager.list_videos(channel=channel_name, status=status)
     else:
         videos = [
@@ -670,6 +734,24 @@ def get_generated_videos(channel_name: str, status: Optional[str] = None):
             if v.get("source") == "generated" and v.get("status") not in DONE_STATUSES
         ]
     return [serialize_generated_video(v) for v in videos]
+
+
+@app.delete("/api/videos/{video_id}/generation_draft")
+def abandon_generation_draft(video_id: str):
+    """Lets the user drop one draft — e.g. a script they don't want to bother
+    fixing — deletes the row entirely rather than leaving it orphaned in an
+    in-progress status, which would otherwise keep resurfacing from
+    generated_videos. Only reachable for drafts still mid-flow: never a video
+    that already reached ready_for_upload or beyond."""
+    import db as _db
+    gp = get_generative_pipeline()
+    video = _db.get_video(video_id)
+    if not video or video.get("source") != "generated":
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if video.get("status") not in GENERATION_DRAFT_STATUSES:
+        raise HTTPException(status_code=400, detail="This video is no longer an editable draft")
+    gp.url_manager.delete_video(video_id)
+    return {"deleted": True}
 
 
 class ScriptUpdate(BaseModel):
@@ -707,15 +789,25 @@ def get_music_asset(channel_name: str, filename: str):
 
 
 @app.get("/api/channels/{channel_name}/asset_frame_preview")
-def asset_frame_preview(channel_name: str, bg_video_filename: str, frame_mode: str = "fill", rounded_corners: bool = False):
+def asset_frame_preview(
+    channel_name: str, bg_video_filename: str, frame_mode: str = "fill",
+    rounded_corners: bool = False, caption_style: Optional[str] = None, caption_color: Optional[str] = None,
+):
     """A composited still frame of a candidate background asset with the
     chosen cadrage — lets the Décor step show what the video will actually
-    look like before a script (or anything else) is generated for it."""
+    look like before a script (or anything else) is generated for it.
+    caption_style, when given, also overlays a sample of that subtitle style
+    (generative.caption_styles) so the whole décor — background AND
+    captions — previews together, WYSIWYG. caption_color overrides that
+    style's accent color, for the styles that support one."""
     video_path = str(_safe_asset_path(channel_name, "backgrounds", bg_video_filename))
     border_path = channel_manager.get_background_path(channel_name)
 
     from test3_script import render_frame_preview
-    jpeg_bytes = render_frame_preview(video_path, frame_mode, border_path, rounded_corners)
+    jpeg_bytes = render_frame_preview(
+        video_path, frame_mode, border_path, rounded_corners,
+        caption_style=caption_style, caption_color=caption_color,
+    )
     if not jpeg_bytes:
         raise HTTPException(status_code=500, detail="Preview render failed")
     return Response(content=jpeg_bytes, media_type="image/jpeg")
@@ -749,12 +841,31 @@ def get_narration_preview(video_id: str):
     return FileResponse(video["narration_path"])
 
 
-@app.post("/api/videos/{video_id}/assemble")
-def assemble_generated_video(video_id: str):
-    """Composites the final video from the already-generated narration —
-    local/free, no ElevenLabs call."""
+class DecorRequest(BaseModel):
+    bg_video_filename: str
+    bg_music_filename: str
+    frame_mode: str = "fill"  # "fill" | "letterbox" | "full_border"
+    rounded_corners: bool = False  # independent of frame_mode — combines with any of them
+    caption_style: str = "karaoke"  # one of generative.caption_styles.STYLES
+    caption_color: Optional[str] = None  # "#rrggbb"; only applies to CUSTOMIZABLE_COLOR_STYLES
+
+
+@app.post("/api/videos/{video_id}/finalize")
+def finalize_generated_video(video_id: str, req: DecorRequest):
+    """Phase 3, the per-video 'launch creation' action: assigns the chosen
+    background/music/cadrage to this one draft (already scripted and voiced)
+    and immediately composites the final video — local/free, no ElevenLabs
+    call. Each draft in a batch calls this independently, so they can each
+    get their own décor instead of one shared upfront."""
     import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    bg_video_path = str(_safe_asset_path(video["channel"], "backgrounds", req.bg_video_filename))
+    bg_music_path = str(_safe_asset_path(video["channel"], "music", req.bg_music_filename))
+
     gp = get_generative_pipeline()
+    gp.set_decor(video_id, bg_video_path, bg_music_path, req.frame_mode, req.rounded_corners, req.caption_style, req.caption_color)
     try:
         gp.assemble(video_id)
     except ValueError as e:

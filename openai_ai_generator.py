@@ -33,7 +33,7 @@ class OpenAIGenerator:
 
         # Content analysis prompts
         self.analysis_prompt = """
-Analyze this TikTok video content and identify specific details. Provide a JSON response with:
+Analyze this short-form video content and identify specific details. Provide a JSON response with:
 
 1. **Category**: Choose from [anime, gaming, entertainment, comedy, dance, music, lifestyle, food, tech, fitness, viral]
 2. **Emotion/Vibe**: Choose from [exciting, funny, dramatic, energetic, calm, mysterious, inspiring]
@@ -73,7 +73,7 @@ Respond ONLY with valid JSON in this format:
 """
 
         self.title_prompt = """
-Create 3 viral YouTube Shorts titles for this TikTok content. Use any detected specific content (movies, anime, games, artists) in the titles.
+Create 3 viral YouTube Shorts titles for this content. Use any detected specific content (movies, anime, games, artists) in the titles.
 
 Content analysis: {analysis}
 
@@ -205,7 +205,7 @@ Respond with JSON:
         frames = self.extract_video_frames(video_path, n=1)
         return frames[0] if frames else None
 
-    def call_openai_api(self, prompt: str, images: List[str] = None, max_tokens: int = 1000) -> Dict:
+    def call_openai_api(self, prompt: str, images: List[str] = None, max_tokens: int = 1000, temperature: float = 0.7) -> Dict:
         """Make API call to OpenAI. `images` is a list of base64-encoded JPEGs."""
         try:
             headers = {
@@ -237,7 +237,7 @@ Respond with JSON:
                 "model": self.model_name,
                 "messages": messages,
                 "max_tokens": max_tokens,
-                "temperature": 0.7
+                "temperature": temperature
             }
             
             response = requests.post(self.base_url, headers=headers, json=payload, timeout=30)
@@ -372,19 +372,29 @@ Respond with JSON:
 
     def generate_ai_data(self, video_path: str, original_title: str = "",
                           custom_prompt: str = None, transcript: str = None,
-                          use_frames: bool = True, tiktok_caption: str = None) -> Dict:
-        """Main function to generate complete AI data for video"""
+                          use_frames: bool = True, tiktok_caption: str = None,
+                          precomputed_analysis: Dict = None) -> Dict:
+        """Main function to generate complete AI data for video.
+
+        precomputed_analysis: when provided (e.g. Gemini's native image+audio
+        analysis via analyze_video_native), skips this generator's own vision
+        pass entirely and writes titles/description/tags straight from it —
+        used for the hybrid pipeline where Gemini analyzes and OpenAI writes
+        the copy, so the video isn't vision-analyzed twice."""
         try:
             print(f"🤖 Starting OpenAI analysis for: {os.path.basename(video_path)}")
             self._api_error_count = 0
 
-            # Step 1: Analyze video content (channel-aware prompt / transcript)
-            analysis = self.analyze_video_content(
-                video_path, custom_prompt=custom_prompt,
-                transcript=transcript, use_frames=use_frames, tiktok_caption=tiktok_caption
-            )
-            if "error" in analysis:
-                return self.get_complete_fallback(original_title)
+            if precomputed_analysis is not None:
+                analysis = precomputed_analysis
+            else:
+                # Step 1: Analyze video content (channel-aware prompt / transcript)
+                analysis = self.analyze_video_content(
+                    video_path, custom_prompt=custom_prompt,
+                    transcript=transcript, use_frames=use_frames, tiktok_caption=tiktok_caption
+                )
+                if "error" in analysis:
+                    return self.get_complete_fallback(original_title)
 
             # Step 2: Generate titles
             titles = self.generate_titles(analysis, custom_prompt=custom_prompt)
@@ -457,17 +467,17 @@ Respond with JSON:
         """Fallback description when API fails"""
         return f"""🔥 {title}
 
-📱 From TikTok to YouTube - bringing you the best viral content!
+📱 Bringing you the best viral content!
 
 🔔 SUBSCRIBE for more amazing videos!
 👍 LIKE if you enjoyed this!
 💬 COMMENT your thoughts!
 
-#{category} #viral #trending #shorts #tiktok"""
+#{category} #viral #trending #shorts"""
 
     def get_fallback_tags(self, category: str) -> List[str]:
         """Fallback tags when API fails"""
-        base_tags = ['shorts', 'viral', 'trending', 'tiktok', 'entertainment']
+        base_tags = ['shorts', 'viral', 'trending', 'entertainment']
         category_tags = {
             'anime': ['anime', 'manga', 'otaku', 'anime shorts'],
             'gaming': ['gaming', 'gamer', 'gameplay', 'gaming moments'],

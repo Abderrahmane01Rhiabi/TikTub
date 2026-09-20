@@ -129,7 +129,7 @@ class AITagsGenerator:
         }
         
         self.viral_tags = [
-            'shorts', 'viral', 'trending', 'tiktok', 'entertainment', 'funny', 
+            'shorts', 'viral', 'trending', 'entertainment', 'funny',
             'amazing', 'must watch', 'viral video', 'short video', 'youtube shorts'
         ]
 
@@ -138,7 +138,12 @@ class AITagsGenerator:
 
         channel_profile (from ChannelManager.get_channel_profile): controls the
         channel-specific style instructions and whether to analyze video frames,
-        an audio transcript, or both (analysis_mode: "vision" | "audio" | "vision+audio").
+        an audio transcript, both, or the video natively
+        (analysis_mode: "vision" | "audio" | "vision+audio" | "native_video").
+        "native_video" has Gemini analyze the whole video file (real image+audio
+        together, no separate Whisper step) and OpenAI write the final copy from
+        that analysis; it falls back to the "vision+audio" pipeline below on any
+        failure (missing provider, upload error, etc).
         """
 
         video_path = (
@@ -157,14 +162,38 @@ class AITagsGenerator:
         channel_profile = channel_profile or {}
         analysis_mode = channel_profile.get('analysis_mode', 'vision')
         custom_prompt = channel_profile.get('ai_style_prompt') or None
-        use_frames = analysis_mode in ('vision', 'vision+audio')
-        needs_transcript = analysis_mode in ('audio', 'vision+audio')
 
         # The original TikTok caption (untruncated, hashtags included) — yt-dlp
         # already extracts it and it was being thrown away after download.
         # Real context for the AI (e.g. "#Asta #BlackClover" identifies the
         # anime/character far more reliably than a single guessed frame).
         tiktok_caption = video_data.get('tiktok_description') or None
+
+        if analysis_mode == 'native_video' and self.use_gemini and self.use_openai and os.path.exists(video_path):
+            try:
+                print("🎬 Using Gemini native video (image+audio) analysis...")
+                native_analysis = self.gemini_ai.analyze_video_native(
+                    video_path, custom_prompt=custom_prompt, tiktok_caption=tiktok_caption
+                )
+                if "error" not in native_analysis:
+                    result = self.openai_ai.generate_ai_data(
+                        video_path, original_title, custom_prompt=custom_prompt,
+                        tiktok_caption=tiktok_caption, precomputed_analysis=native_analysis
+                    )
+                    if "error" not in result:
+                        result['ai_provider'] = 'gemini-native+openai'
+                        print(f"✅ Hybrid native-video analysis complete with {result['confidence']*100:.0f}% confidence")
+                        return self._normalize_ai_result(result, title_key='title', description_key='description', tags_key='tags')
+                    print(f"⚠️ OpenAI copywriting from native analysis failed: {result.get('error')} — falling back")
+                else:
+                    print(f"⚠️ Gemini native video analysis failed: {native_analysis.get('error')} — falling back")
+            except Exception as e:
+                print(f"⚠️ Native video pipeline failed: {e} — falling back to standard pipeline")
+            # Fall through to the standard vision+audio pipeline below as a safety net.
+            analysis_mode = 'vision+audio'
+
+        use_frames = analysis_mode in ('vision', 'vision+audio')
+        needs_transcript = analysis_mode in ('audio', 'vision+audio')
 
         transcript = None
         if needs_transcript and TRANSCRIPTION_AVAILABLE and os.path.exists(video_path):
@@ -258,14 +287,14 @@ class AITagsGenerator:
         # Generate description
         description = f"""🔥 {ai_title}
 
-📱 From TikTok to YouTube - bringing you the best viral content!
+📱 Bringing you the best viral content!
 
 🔔 SUBSCRIBE for more amazing videos!
 👍 LIKE if you enjoyed this!
 💬 COMMENT your thoughts!
 📤 SHARE with friends!
 
-#{category} #viral #trending #shorts #tiktok #entertainment"""
+#{category} #viral #trending #shorts #entertainment"""
         
         # Generate tags
         tags = self.viral_tags + category_data['tags']
@@ -361,7 +390,7 @@ class AITagsGenerator:
         all_tags = base_tags + title_keywords + desc_keywords
         
         # Tags universels pour YouTube Shorts
-        universal_tags = ['Shorts', 'TikTok', 'Viral', 'Trending', 'Entertainment']
+        universal_tags = ['Shorts', 'Viral', 'Trending', 'Entertainment']
         
         # Filtre et déduplique
         final_tags = list(dict.fromkeys(all_tags + universal_tags))[:15]  # Max 15 tags
@@ -430,7 +459,7 @@ class AITagsGenerator:
             'general': [
                 "Contenu viral du jour ! 🔥 Abonne-toi pour plus",
                 "Tu as vu ça ? Partage en commentaire ! 💬",
-                "Tendance TikTok à ne pas manquer ! #viral #trending"
+                "Tendance à ne pas manquer ! #viral #trending"
             ]
         }
         
@@ -455,7 +484,7 @@ class AITagsGenerator:
             print(f"❌ Erreur génération tags: {e}")
             # Fallback sur méthode locale simple
             return {
-                'tags': ['shorts', 'viral', 'tiktok', 'trending', 'entertainment'],
+                'tags': ['shorts', 'viral', 'trending', 'entertainment'],
                 'hashtags': ['#Shorts', '#Viral'],
                 'optimized_title': title + " 🔥",
                 'content_type': 'general',

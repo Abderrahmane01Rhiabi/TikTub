@@ -35,7 +35,7 @@ class GeminiAIGenerator:
 
         # Content analysis prompts
         self.analysis_prompt = """
-Analyze this TikTok video content and identify specific details. Provide a JSON response with:
+Analyze this short-form video content and identify specific details. Provide a JSON response with:
 
 1. **Category**: Choose from [anime, gaming, entertainment, comedy, dance, music, lifestyle, food, tech, fitness, viral]
 2. **Emotion/Vibe**: Choose from [exciting, funny, dramatic, energetic, calm, mysterious, inspiring]
@@ -75,7 +75,7 @@ Respond ONLY with valid JSON in this format:
 """
 
         self.title_prompt = """
-Create 3 viral YouTube Shorts titles for this TikTok content. Use any detected specific content (movies, anime, games, artists) in the titles.
+Create 3 viral YouTube Shorts titles for this content. Use any detected specific content (movies, anime, games, artists) in the titles.
 
 Content analysis: {analysis}
 
@@ -207,23 +207,28 @@ Respond with JSON:
         frames = self.extract_video_frames(video_path, n=1)
         return frames[0] if frames else None
 
-    def call_gemini_api(self, prompt: str, images: List[str] = None, max_tokens: int = 1000) -> Dict:
+    def call_gemini_api(self, prompt: str, images: List[str] = None, max_tokens: int = 1000, temperature: float = 0.7) -> Dict:
         """Make API call to Gemini. `images` is a list of base64-encoded JPEGs."""
-        try:
-            parts = [{"text": prompt}]
-            if images:
-                for image_base64 in images:
-                    parts.append({
-                        "inline_data": {
-                            "mime_type": "image/jpeg",
-                            "data": image_base64
-                        }
-                    })
+        parts = [{"text": prompt}]
+        if images:
+            for image_base64 in images:
+                parts.append({
+                    "inline_data": {
+                        "mime_type": "image/jpeg",
+                        "data": image_base64
+                    }
+                })
+        return self._generate_content(parts, max_tokens, temperature=temperature)
 
+    def _generate_content(self, parts: List[Dict], max_tokens: int = 1000, timeout: int = 30, temperature: float = 0.7) -> Dict:
+        """Shared generateContent call/response-parsing path for both the
+        inline-image prompts (call_gemini_api) and the native file_data
+        (whole video, image+audio together) prompts used by analyze_video_native."""
+        try:
             payload = {
                 "contents": [{"parts": parts}],
                 "generationConfig": {
-                    "temperature": 0.7,
+                    "temperature": temperature,
                     "maxOutputTokens": max_tokens,
                     "response_mime_type": "application/json"
                 }
@@ -233,7 +238,7 @@ Respond with JSON:
                 self.base_url,
                 params={"key": self.api_key},
                 json=payload,
-                timeout=30
+                timeout=timeout
             )
 
             if response.status_code == 200:
@@ -307,6 +312,129 @@ Respond with JSON:
 
         print(f"✅ Content analyzed - Category: {analysis.get('category', 'unknown')}")
         return analysis
+
+    _VIDEO_MIME_TYPES = {
+        '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.webm': 'video/webm',
+        '.mkv': 'video/x-matroska', '.avi': 'video/x-msvideo', '.m4v': 'video/mp4',
+    }
+
+    def _upload_video_file(self, video_path: str) -> Optional[Dict]:
+        """Uploads a video to the Gemini Files API so it can be referenced by
+        file_uri in a generateContent call — this is what lets Gemini see the
+        actual audio track alongside the frames in one pass, instead of the
+        3-still-JPEGs-plus-separate-Whisper-transcript approach used elsewhere
+        in this file. Returns {'name': 'files/xxx', 'uri': ..., 'mime_type': ...} or None."""
+        ext = os.path.splitext(video_path)[1].lower()
+        mime_type = self._VIDEO_MIME_TYPES.get(ext, 'video/mp4')
+
+        upload_url = "https://generativelanguage.googleapis.com/upload/v1beta/files"
+        try:
+            with open(video_path, 'rb') as f:
+                file_bytes = f.read()
+
+            metadata = {"file": {"display_name": os.path.basename(video_path)}}
+            response = requests.post(
+                upload_url,
+                params={"key": self.api_key},
+                headers={"X-Goog-Upload-Protocol": "multipart"},
+                files={
+                    "metadata": (None, json.dumps(metadata), "application/json"),
+                    "file": (os.path.basename(video_path), file_bytes, mime_type),
+                },
+                timeout=120
+            )
+            if response.status_code != 200:
+                print(f"❌ Gemini file upload failed: {response.status_code} - {response.text[:300]}")
+                return None
+
+            file_info = response.json().get('file', {})
+            if not file_info.get('uri') or not file_info.get('name'):
+                print(f"⚠️ Unexpected Gemini upload response: {json.dumps(file_info)[:200]}")
+                return None
+
+            return {"name": file_info['name'], "uri": file_info['uri'], "mime_type": mime_type}
+        except Exception as e:
+            print(f"❌ Gemini file upload error: {e}")
+            return None
+
+    def _wait_for_file_active(self, file_name: str, timeout: int = 60, poll_interval: float = 2.0) -> bool:
+        """Polls the uploaded file's processing state until it's ACTIVE (ready
+        to be referenced in generateContent) or the timeout is hit."""
+        import time
+        status_url = f"https://generativelanguage.googleapis.com/v1beta/{file_name}"
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            try:
+                response = requests.get(status_url, params={"key": self.api_key}, timeout=15)
+                if response.status_code == 200:
+                    state = response.json().get('state')
+                    if state == 'ACTIVE':
+                        return True
+                    if state == 'FAILED':
+                        return False
+            except Exception:
+                pass
+            time.sleep(poll_interval)
+        return False
+
+    def _delete_file(self, file_name: str) -> None:
+        """Best-effort cleanup of an uploaded file (it would auto-expire after
+        48h anyway, so a failure here is non-fatal)."""
+        try:
+            requests.delete(
+                f"https://generativelanguage.googleapis.com/v1beta/{file_name}",
+                params={"key": self.api_key},
+                timeout=15
+            )
+        except Exception:
+            pass
+
+    def analyze_video_native(self, video_path: str, custom_prompt: str = None,
+                              tiktok_caption: str = None) -> Dict:
+        """Analyze the video's visuals AND audio together in a single Gemini
+        call, by uploading the whole file instead of extracting still frames
+        and running a separate Whisper transcription. This gives the model
+        real access to music/tone/pacing/spoken content simultaneously —
+        richer context than the frames+transcript approach in
+        analyze_video_content, at the cost of an upload + processing wait."""
+        print(f"🎬 Analyzing video (native, image+audio) with Gemini: {os.path.basename(video_path)}")
+
+        uploaded = self._upload_video_file(video_path)
+        if not uploaded:
+            return {"error": "Failed to upload video to Gemini Files API"}
+
+        try:
+            if not self._wait_for_file_active(uploaded['name']):
+                return {"error": "Gemini file processing did not become ACTIVE in time"}
+
+            prompt = self.analysis_prompt + (
+                "\n\nYou have been given the actual video file, including its real audio track "
+                "(not just still frames). Use what you actually hear — spoken words, music mood/genre, "
+                "tone of voice, sound effects, pacing/rhythm of cuts — together with what you see. "
+                "Add these extra fields to your JSON response:\n"
+                '  "spoken_content_summary": a short summary or key quote of anything said, or null if no speech,\n'
+                '  "music_mood": the mood/genre/energy of any background music, or null if none,\n'
+                '  "hook_moment": what happens in the first 1-2 seconds that would make someone stop scrolling\n'
+            )
+            if custom_prompt:
+                prompt += f"\n\nChannel-specific style instructions:\n{custom_prompt}"
+            if tiktok_caption:
+                prompt += f"\n\nOriginal TikTok caption (use for context, don't just copy it):\n\"\"\"{tiktok_caption}\"\"\""
+
+            parts = [
+                {"file_data": {"mime_type": uploaded['mime_type'], "file_uri": uploaded['uri']}},
+                {"text": prompt}
+            ]
+            analysis = self._generate_content(parts, max_tokens=1200, timeout=60)
+
+            if "error" in analysis:
+                print(f"⚠️ Native content analysis failed: {analysis['error']}")
+                return analysis
+
+            print(f"✅ Native analysis complete - Category: {analysis.get('category', 'unknown')}")
+            return analysis
+        finally:
+            self._delete_file(uploaded['name'])
 
     def generate_titles(self, analysis: Dict, custom_prompt: str = None) -> List[str]:
         """Generate optimized titles using Gemini"""
@@ -452,17 +580,17 @@ Respond with JSON:
         """Fallback description when API fails"""
         return f"""🔥 {title}
 
-📱 From TikTok to YouTube - bringing you the best viral content!
+📱 Bringing you the best viral content!
 
 🔔 SUBSCRIBE for more amazing videos!
 👍 LIKE if you enjoyed this!
 💬 COMMENT your thoughts!
 
-#{category} #viral #trending #shorts #tiktok"""
+#{category} #viral #trending #shorts"""
 
     def get_fallback_tags(self, category: str) -> List[str]:
         """Fallback tags when API fails"""
-        base_tags = ['shorts', 'viral', 'trending', 'tiktok', 'entertainment']
+        base_tags = ['shorts', 'viral', 'trending', 'entertainment']
         category_tags = {
             'anime': ['anime', 'manga', 'otaku', 'anime shorts'],
             'gaming': ['gaming', 'gamer', 'gameplay', 'gaming moments'],

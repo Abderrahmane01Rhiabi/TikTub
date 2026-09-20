@@ -203,7 +203,39 @@ def compute_frame_scale(frame_mode, bg_mode, specific_bg, video_w, video_h, targ
             scale *= BRANDED_BACKGROUND_SCALE
         return scale
 
-def render_frame_preview(video_path: str, frame_mode: str, bg_path: str = None, rounded_corners: bool = False, target_resolution=None) -> bytes:
+
+def _overlay_caption_preview(bg_img_bgr: np.ndarray, caption_style: str, size, caption_color: str = None) -> np.ndarray:
+    """Composites that style's sample caption frame (generative.caption_styles)
+    onto a BGR OpenCV frame, positioned exactly where the real render places
+    it — dead center, matching every caption_styles clip's own
+    .set_position("center") in video_composer.py, so this WYSIWYG preview
+    doesn't lie about where the text will actually sit. Falls back to the
+    plain background (no overlay, no error) on any failure, since this is a
+    preview nicety, not something that should ever break the Décor step."""
+    try:
+        from PIL import Image
+        from generative import caption_styles
+
+        preview_fn = caption_styles.PREVIEWS.get(caption_style)
+        if not preview_fn:
+            return bg_img_bgr
+
+        style_kwargs = {"accent_color": caption_color} if caption_style in caption_styles.CUSTOMIZABLE_COLOR_STYLES else {}
+        caption_img = preview_fn(size, **style_kwargs).convert("RGBA")
+        canvas = Image.fromarray(cv2.cvtColor(bg_img_bgr, cv2.COLOR_BGR2RGB)).convert("RGBA")
+        x = (size[0] - caption_img.width) // 2
+        y = (size[1] - caption_img.height) // 2
+        canvas.alpha_composite(caption_img, (max(0, x), max(0, y)))
+        return cv2.cvtColor(np.array(canvas.convert("RGB")), cv2.COLOR_RGB2BGR)
+    except Exception as e:
+        logger.warning(f"⚠️ Caption preview overlay skipped: {e}")
+        return bg_img_bgr
+
+
+def render_frame_preview(
+    video_path: str, frame_mode: str, bg_path: str = None, rounded_corners: bool = False,
+    target_resolution=None, caption_style: str = None, caption_color: str = None,
+) -> bytes:
     """Renders ONE representative still frame exactly as the real pipeline would
     composite it (crop + scale + background), for a WYSIWYG cadrage preview —
     much cheaper than encoding the whole video just to check the positioning.
@@ -213,6 +245,14 @@ def render_frame_preview(video_path: str, frame_mode: str, bg_path: str = None, 
     corner slivers a rounded mask reveals are always plain black, never the
     channel's background image, since there's no room for it to read as a
     border anyway).
+
+    caption_style, when given, overlays that generative.caption_styles
+    preview frame (a sample caption at its most characteristic instant),
+    dead center — same spot the real render places captions — so the Décor
+    step's WYSIWYG preview covers the subtitle look too, not just the
+    background/cadrage. caption_color (a "#rrggbb" string) overrides that
+    style's accent color, for the styles that support it
+    (caption_styles.CUSTOMIZABLE_COLOR_STYLES) — ignored otherwise.
 
     Returns JPEG bytes, or None on failure."""
     try:
@@ -265,6 +305,9 @@ def render_frame_preview(video_path: str, frame_mode: str, bg_path: str = None, 
                 bg_img[dst_y1:dst_y2, dst_x1:dst_x2] = (src_region * alpha + dst_region * (1 - alpha)).astype(np.uint8)
             else:
                 bg_img[dst_y1:dst_y2, dst_x1:dst_x2] = src_region
+
+        if caption_style:
+            bg_img = _overlay_caption_preview(bg_img, caption_style, (target_w, target_h), caption_color)
 
         ok, buf = cv2.imencode('.jpg', bg_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
         return buf.tobytes() if ok else None

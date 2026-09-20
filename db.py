@@ -133,6 +133,15 @@ def get_video(video_id: str, db_path: str = DB_PATH) -> Optional[Dict]:
         conn.close()
 
 
+def delete_video(video_id: str, db_path: str = DB_PATH):
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute("DELETE FROM videos WHERE video_id = ?", (video_id,))
+    finally:
+        conn.close()
+
+
 def query_videos(status: str = None, channel: str = None, batch_id: str = None,
                   db_path: str = DB_PATH) -> List[Dict]:
     """Real indexed lookup — only the matching rows are read, not the whole table."""

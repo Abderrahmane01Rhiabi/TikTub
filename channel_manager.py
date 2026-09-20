@@ -102,7 +102,7 @@ class ChannelManager:
         """Default profile.json content for a freshly created channel"""
         return {
             "display_name": display_name,
-            "analysis_mode": "vision",  # "vision", "audio", or "vision+audio"
+            "analysis_mode": "vision",  # "vision", "audio", "vision+audio", or "native_video"
             "ai_style_prompt": "",
             "language_hint": "en",
             "preferred_days": [],

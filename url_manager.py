@@ -171,6 +171,11 @@ https://www.tiktok.com/@user/video/999
             video.update(kwargs)
             _db.upsert_video(video_id, video, self.db_path)
 
+    def delete_video(self, video_id: str):
+        """Supprime définitivement une ligne vidéo — utilisé pour abandonner un
+        brouillon de génération (jamais pour une vidéo déjà publiée/planifiée)."""
+        _db.delete_video(video_id, self.db_path)
+
     def find_duplicate(self, url: str, exclude_video_id: str = None) -> Optional[Dict]:
         """Cherche une vidéo déjà connue avec la même URL (toutes chaînes/batches
         confondus) qui a réellement avancé — pas juste une tentative en attente,
