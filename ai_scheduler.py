@@ -13,12 +13,30 @@ from typing import Dict, List, Optional
 
 
 class AIScheduler:
-    def __init__(self, ai_generator):
-        """ai_generator: an AITagsGenerator instance (reused for its Gemini/OpenAI clients)"""
+    def __init__(self, ai_generator, smart_scheduler=None):
+        """ai_generator: an AITagsGenerator instance (reused for its Gemini/OpenAI clients).
+        smart_scheduler: an optional SmartScheduler — when given, its real
+        YouTube Analytics peak-hours (per channel, same data the "Analytics"
+        scheduling mode uses) are handed to the AI alongside each video's
+        content, so it picks a time slot informed by BOTH what the video is
+        AND when that channel's audience is actually active — not content
+        reasoning alone. Fully optional: with none, this degrades to the
+        previous content-only behavior."""
         self.ai_generator = ai_generator
+        self.smart_scheduler = smart_scheduler
 
     def _ask_ai_for_slots(self, videos: List[Dict], days_ahead: int, channel_manager=None) -> Optional[List[Dict]]:
         today = datetime.now().strftime('%Y-%m-%d')
+
+        # One analytics lookup per channel (SmartScheduler caches 24h internally,
+        # but no need to hit even the cache once per video).
+        peak_hours_by_channel: Dict[str, List[int]] = {}
+        if self.smart_scheduler:
+            for channel in {v.get('target_channel') or v.get('channel', 'default') for v in videos}:
+                try:
+                    peak_hours_by_channel[channel] = self.smart_scheduler.get_channel_peak_times(channel)
+                except Exception as e:
+                    print(f"⚠️ Could not fetch analytics peak hours for {channel}: {e}")
 
         video_lines = []
         for v in videos:
@@ -31,14 +49,23 @@ class AIScheduler:
                 'title': ai_data.get('optimized_title') or v.get('original_title') or v.get('title', ''),
                 'content_type': ai_data.get('content_type', 'general'),
                 'preferred_days': profile.get('preferred_days') or [],
-                'preferred_hours': profile.get('preferred_hours') or []
+                'preferred_hours': profile.get('preferred_hours') or [],
+                'analytics_peak_hours': peak_hours_by_channel.get(channel, []),
             })
 
         prompt = f"""
 Today's date is {today}. Suggest a publish date and time (24h format) for each of the
 following YouTube Shorts videos, within the next {days_ahead} days. Spread videos from
-the same channel across different days/times for steady, non-spammy posting. If a video
-lists preferred_days/preferred_hours, prefer those when reasonable.
+the same channel across different days/times for steady, non-spammy posting.
+
+For the TIME of day specifically: analytics_peak_hours (when given, non-empty) are that
+channel's REAL best-performing hours from actual YouTube Analytics data over the last 30
+days — prefer picking from those hours over preferred_hours or your own guess, since
+they reflect when that channel's real audience is actually active. preferred_hours is
+just a static configured fallback, weaker evidence than analytics_peak_hours. Use the
+video's title/content_type to decide the DAY and the ORDER among a channel's own videos
+(e.g. don't bunch very similar videos back-to-back), not to override real analytics for
+the hour.
 
 Videos:
 {json.dumps(video_lines, indent=2, ensure_ascii=False)}

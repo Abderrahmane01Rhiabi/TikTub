@@ -73,9 +73,10 @@ class BatchProcessor:
             self.smart_scheduler.load_analytics_cache()
             print("📊 Analytics-based scheduling initialized")
 
-        # Initialize AI-suggested scheduling (per-video, channel/content-aware)
+        # Initialize AI-suggested scheduling (per-video, channel/content-aware —
+        # also fed real analytics peak-hours when available, see AIScheduler)
         if AI_SCHEDULING_SUPPORT:
-            self.ai_scheduler = AIScheduler(self.ai_generator)
+            self.ai_scheduler = AIScheduler(self.ai_generator, smart_scheduler=getattr(self, 'smart_scheduler', None))
         
     def load_config(self, config_path: str):
         """Charge la configuration"""
@@ -654,8 +655,26 @@ class BatchProcessor:
 
         # Sauvegarde (save_schedule attend une liste de dicts, pas le wrapper avec métadonnées)
         self.scheduler.save_schedule(schedule)
+        self._record_schedule_decisions(schedule, schedule_method)
 
         return schedule
+
+    def _record_schedule_decisions(self, schedule: List[Dict], method: str):
+        """Persists WHY each video's date was picked directly on the video row
+        (url_manager.record_publish_decision) — not just in the ephemeral
+        upload_schedule.json — so it's still there after publish, to later
+        check whether analytics/AI scheduling actually performs better than
+        static. analytics_peak_hours is attached regardless of the method
+        used, as context (what analytics WOULD have suggested), whenever
+        analytics support is available."""
+        for entry in schedule:
+            context = {}
+            if ANALYTICS_SUPPORT and hasattr(self, 'smart_scheduler'):
+                try:
+                    context['analytics_peak_hours'] = self.smart_scheduler.get_channel_peak_times(entry['channel'])
+                except Exception as e:
+                    print(f"⚠️ Could not record analytics context for {entry.get('video_id')}: {e}")
+            self.url_manager.record_publish_decision(entry['video_id'], method, entry['scheduled_time'], context)
 
     def ensure_schedule_includes_all_ready(self, schedule_method: str = 'static') -> List[Dict]:
         """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
@@ -688,6 +707,7 @@ class BatchProcessor:
 
         combined = existing_schedule + new_entries
         self.scheduler.save_schedule(combined)
+        self._record_schedule_decisions(new_entries, schedule_method)
         return combined
 
     def ask_user_analytics_preference(self) -> bool:

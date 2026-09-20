@@ -47,6 +47,23 @@ CREATE TABLE IF NOT EXISTS action_log (
     details TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_action_log_timestamp ON action_log(timestamp);
+
+-- One row per performance snapshot of a published video (views/likes/status
+-- at a point in time) — a video accumulates many rows over its lifetime,
+-- unlike the `videos` table which holds only the current state. Powers any
+-- future "what actually performs well" analysis (script_format/décor/
+-- scheduling-method vs real outcome), which a single live-fetched snapshot
+-- (the old Dashboard "Actualiser les stats" behavior) can't support since
+-- it was never kept past the current page load.
+CREATE TABLE IF NOT EXISTS video_stats_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    video_id TEXT NOT NULL,
+    checkpoint TEXT,
+    snapshot_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_stats_history_video ON video_stats_history(video_id);
+CREATE INDEX IF NOT EXISTS idx_stats_history_snapshot ON video_stats_history(snapshot_at);
 """
 
 
@@ -138,6 +155,51 @@ def delete_video(video_id: str, db_path: str = DB_PATH):
     try:
         with conn:
             conn.execute("DELETE FROM videos WHERE video_id = ?", (video_id,))
+    finally:
+        conn.close()
+
+
+def insert_stats_snapshot(video_id: str, checkpoint: Optional[str], data: Dict, db_path: str = DB_PATH):
+    """Appends one performance snapshot — never overwrites a previous one,
+    the whole point is keeping the history, not just the latest value."""
+    from datetime import datetime
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                "INSERT INTO video_stats_history (video_id, checkpoint, snapshot_at, data) VALUES (?, ?, ?, ?)",
+                (video_id, checkpoint, datetime.now().isoformat(), json.dumps(data, ensure_ascii=False)),
+            )
+    finally:
+        conn.close()
+
+
+def get_stats_history(video_id: str, db_path: str = DB_PATH) -> List[Dict]:
+    """Every snapshot ever taken for this video, oldest first."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT checkpoint, snapshot_at, data FROM video_stats_history WHERE video_id = ? ORDER BY snapshot_at",
+            (video_id,),
+        ).fetchall()
+        return [
+            {"checkpoint": r["checkpoint"], "snapshot_at": r["snapshot_at"], **json.loads(r["data"])}
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
+def get_captured_checkpoints(video_id: str, db_path: str = DB_PATH) -> set:
+    """Which named checkpoints ('24h', '3d', ...) already have a snapshot for
+    this video — so the background tracker never double-captures one."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT checkpoint FROM video_stats_history WHERE video_id = ? AND checkpoint IS NOT NULL",
+            (video_id,),
+        ).fetchall()
+        return {r["checkpoint"] for r in rows}
     finally:
         conn.close()
 

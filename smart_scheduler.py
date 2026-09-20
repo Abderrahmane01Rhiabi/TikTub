@@ -20,36 +20,56 @@ class SmartScheduler:
         }
     
     def get_channel_peak_times(self, channel_name, use_cache=True):
-        """Get personalized peak times for a specific channel"""
-        
-        # Check cache first
+        """Personalized peak HOURS for a channel. Note: the YouTube Analytics
+        API has no hour-of-day dimension for Core reports (see
+        YouTubeAnalytics.get_peak_hours) — this always returns the same
+        generic defaults, honestly, rather than pretending to compute
+        something the data can't support. For a genuinely real,
+        per-channel signal, see get_channel_best_weekdays() below, which
+        this same call also fetches and caches (one API round-trip covers
+        both)."""
+
+        # Check cache first — was previously comparing timedelta.hours
+        # (the 0-23 HOUR COMPONENT, not elapsed time — a timedelta of "3
+        # days, 5 hours" has .hours == 5, so this was ALWAYS < 24 and the
+        # cache never actually expired). Compare the timedelta itself instead.
         if use_cache and channel_name in self.analytics_cache:
             cached_data = self.analytics_cache[channel_name]
-            # Cache valid for 24 hours
-            if (datetime.now() - datetime.fromisoformat(cached_data['timestamp'])).hours < 24:
+            if datetime.now() - datetime.fromisoformat(cached_data['timestamp']) < timedelta(hours=24):
                 print(f"📊 Using cached analytics for {channel_name}")
                 return cached_data['peak_times']
-        
+
         print(f"📊 Getting fresh analytics data for {channel_name}...")
-        
+
         # Get fresh analytics data
         analytics = YouTubeAnalytics(channel_name)
         peak_hours = analytics.get_peak_hours(days_back=30, top_hours=4)
-        
+        best_weekdays = analytics.get_best_weekdays(days_back=30, top_days=7)
+
         if not peak_hours or len(peak_hours) < 4:
             print(f"⚠️  No analytics data for {channel_name}, using fallback times")
             peak_hours = self.fallback_times["weekdays"]
-        
+
         # Cache the results
         self.analytics_cache[channel_name] = {
             'peak_times': peak_hours,
+            'best_weekdays': best_weekdays,
             'timestamp': datetime.now().isoformat()
         }
-        
+
         # Save cache to file
         self.save_analytics_cache()
-        
+
         return peak_hours
+
+    def get_channel_best_weekdays(self, channel_name, use_cache=True):
+        """This channel's weekdays (0=Monday..6=Sunday) ranked best-to-worst
+        by real engagement history — genuinely data-driven, shares the same
+        24h cache/fetch as get_channel_peak_times (calling this also
+        populates/refreshes it)."""
+        self.get_channel_peak_times(channel_name, use_cache=use_cache)
+        cached = self.analytics_cache.get(channel_name) or {}
+        return cached.get('best_weekdays') or [0, 1, 2, 3, 4, 5, 6]
     
     def create_analytics_based_schedule(self, videos, days_ahead=7):
         """Create upload schedule based on real analytics data"""
@@ -66,24 +86,31 @@ class SmartScheduler:
                 videos_by_channel[channel] = []
             videos_by_channel[channel].append(video)
         
-        # Get personalized peak times for each channel
+        # Get personalized peak times + real best weekdays for each channel
         channel_peak_times = {}
+        channel_best_weekdays = {}
         for channel in videos_by_channel.keys():
             peak_times = self.get_channel_peak_times(channel)
             channel_peak_times[channel] = peak_times
             print(f"📺 {channel}: Peak times {[f'{h:02d}:00' for h in peak_times]}")
-        
+            # Real data (unlike peak_times, generic — see get_channel_peak_times)
+            # — skip this channel's two weakest weekdays below rather than
+            # treating all 7 days as equally good.
+            channel_best_weekdays[channel] = set(self.get_channel_best_weekdays(channel)[:5])
+
         # Create time slots for next 7 days
         base_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
         all_slots = []
-        
+
         for day in range(days_ahead):
             current_date = base_date + timedelta(days=day)
             is_weekend = current_date.weekday() >= 5
-            
+
             for channel, videos_list in videos_by_channel.items():
+                if current_date.weekday() not in channel_best_weekdays[channel]:
+                    continue  # one of this channel's two real weakest days — skip it
                 peak_times = channel_peak_times[channel]
-                
+
                 # Adjust times for weekends if needed
                 if is_weekend:
                     # Slightly later times for weekends

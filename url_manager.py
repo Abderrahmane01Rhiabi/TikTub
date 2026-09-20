@@ -176,6 +176,40 @@ https://www.tiktok.com/@user/video/999
         brouillon de génération (jamais pour une vidéo déjà publiée/planifiée)."""
         _db.delete_video(video_id, self.db_path)
 
+    def record_publish_decision(self, video_id: str, method: str, scheduled_time: str, context: Optional[Dict] = None):
+        """Persists WHY a publish date was chosen, ON the video itself — not
+        just in the ephemeral upload_schedule.json — so it survives past
+        publish and can later be cross-referenced with real performance
+        (video_stats_history) to see whether analytics/AI scheduling
+        actually did better than static. method: 'static' | 'analytics' |
+        'ai' | 'manual'. context: method-specific detail (e.g. the
+        channel's analytics peak hours at the time this was decided)."""
+        video = _db.get_video(video_id, self.db_path)
+        if not video:
+            return
+        self.update_video_status(
+            video_id, video['status'],
+            publish_decision={
+                'method': method,
+                'scheduled_time': scheduled_time,
+                'decided_at': datetime.now().isoformat(),
+                'context': context or {},
+            },
+        )
+
+    def add_stats_snapshot(self, video_id: str, checkpoint: Optional[str], data: Dict):
+        """Appends one performance snapshot (views/likes/status/...) to this
+        video's history — never overwrites a previous one."""
+        _db.insert_stats_snapshot(video_id, checkpoint, data, self.db_path)
+
+    def get_stats_history(self, video_id: str) -> List[Dict]:
+        """Every snapshot ever taken for this video, oldest first."""
+        return _db.get_stats_history(video_id, self.db_path)
+
+    def get_captured_checkpoints(self, video_id: str) -> set:
+        """Which named checkpoints already have a snapshot for this video."""
+        return _db.get_captured_checkpoints(video_id, self.db_path)
+
     def find_duplicate(self, url: str, exclude_video_id: str = None) -> Optional[Dict]:
         """Cherche une vidéo déjà connue avec la même URL (toutes chaînes/batches
         confondus) qui a réellement avancé — pas juste une tentative en attente,

@@ -103,6 +103,18 @@ def get_batch_processor():
     return _batch_processor
 
 
+@app.on_event("startup")
+def _start_stats_tracker():
+    """Launches the background performance-snapshot loop (stats_tracker.py)
+    — best-effort: config.yaml missing or any init hiccup shouldn't ever
+    block the app itself from starting, this is a nice-to-have."""
+    try:
+        from stats_tracker import start_background_tracker
+        start_background_tracker(get_batch_processor())
+    except Exception as e:
+        print(f"⚠️ Stats tracker did not start: {e}")
+
+
 def video_media_url(video: dict) -> Optional[str]:
     """Best-effort browser-playable URL for a video's current file.
 
@@ -841,6 +853,25 @@ def get_narration_preview(video_id: str):
     return FileResponse(video["narration_path"])
 
 
+@app.get("/api/videos/{video_id}/stats_history")
+def get_video_stats_history(video_id: str):
+    """Every performance snapshot ever captured for this video (see
+    stats_tracker.py — 24h/3d/7d/30d checkpoints after publish), plus
+    however the publish date was decided (publish_decision: which method,
+    and its context — e.g. the channel's analytics peak hours at the time).
+    Empty history just means no checkpoint has come due yet, not an error."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    gp = get_batch_processor()
+    return {
+        "video_id": video_id,
+        "publish_decision": video.get("publish_decision"),
+        "history": gp.url_manager.get_stats_history(video_id),
+    }
+
+
 class DecorRequest(BaseModel):
     bg_video_filename: str
     bg_music_filename: str
@@ -940,6 +971,9 @@ def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
         dt = datetime.strptime(update.scheduled_time, "%Y-%m-%d %H:%M:%S")
         entry["scheduled_time"] = update.scheduled_time
         entry["scheduled_time_readable"] = dt.strftime("%A %d/%m/%Y à %H:%M")
+        # Overrides whatever automated method decided — the record on the
+        # video itself should say so, not keep claiming "analytics"/"ai".
+        bp.url_manager.record_publish_decision(video_id, "manual", update.scheduled_time)
 
     if update.publish_now is not None:
         entry["publish_now"] = update.publish_now
