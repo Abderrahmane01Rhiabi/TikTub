@@ -173,7 +173,8 @@ class BatchProcessor:
                 if not video_path:
                     self.url_manager.update_video_status(
                         video['video_id'],
-                        'download_failed'
+                        'download_failed',
+                        error_message=tiktok_meta.get('download_error')
                     )
                     continue
 
@@ -270,7 +271,9 @@ class BatchProcessor:
             video_path, title, tiktok_meta = self.download_tiktok_video(video['url'], video_id=video['video_id'])
 
             if not video_path:
-                self.url_manager.update_video_status(video['video_id'], 'download_failed')
+                self.url_manager.update_video_status(
+                    video['video_id'], 'download_failed', error_message=tiktok_meta.get('download_error')
+                )
                 continue
 
             self.url_manager.update_video_status(
@@ -513,9 +516,14 @@ class BatchProcessor:
                 temp_files = list(temp_path.glob('*.mp4'))
                 if temp_files:
                     return str(temp_files[0]), safe_title, tiktok_meta
+                # yt-dlp "succeeded" but produced no .mp4 (photo post, slideshow...)
+                return None, None, {'download_error': "Aucune vidéo .mp4 récupérée (publication photo/diaporama ?)"}
 
         except Exception as e:
             logger.error(f"Erreur téléchargement: {e}")
+            # Kept on the video row (error_message) so the UI can say WHY,
+            # not just "téléchargement échoué".
+            return None, None, {'download_error': str(e)[:500]}
 
         return None, None, {}
 

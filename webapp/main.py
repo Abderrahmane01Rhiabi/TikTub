@@ -205,9 +205,11 @@ def overview():
         for bucket, statuses in OVERVIEW_BUCKETS.items():
             if status in statuses:
                 entry["counts"][bucket] += 1
-        if status in OVERVIEW_BUCKETS["errors"] and len(entry["errors"]) < 5:
+        if status in OVERVIEW_BUCKETS["errors"] and len(entry["errors"]) < 20:
             entry["errors"].append({
-                "title": (video.get("ai_data") or {}).get("optimized_title") or video.get("original_title") or video.get("url") or video["video_id"],
+                "video_id": video["video_id"],
+                "url": video.get("url"),
+                "title": (video.get("ai_data") or {}).get("optimized_title") or video.get("original_title"),
                 "status": status,
                 "message": video.get("error_message") or video.get("render_error"),
             })
@@ -228,6 +230,22 @@ def overview():
     ]
     totals = {key: sum(c["counts"][key] for c in channels_out) for key in list(OVERVIEW_BUCKETS) + ["scheduled"]}
     return {"channels": channels_out, "totals": totals}
+
+
+@app.post("/api/videos/{video_id}/dismiss")
+def dismiss_failed_video(video_id: str):
+    """Removes a failed video from the "en erreur" lists (Accueil) — sets
+    it to 'rejected', the same status as a video unticked in Sélection, so
+    its URL can be imported again later (rejected is ignored by the
+    duplicate check). Only for videos actually in an error status."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if video.get("status") not in OVERVIEW_BUCKETS["errors"]:
+        raise HTTPException(status_code=400, detail="Cette vidéo n'est pas en erreur")
+    get_batch_processor().url_manager.update_video_status(video_id, "rejected", dismissed_from=video["status"])
+    return {"dismissed": True}
 
 
 @app.get("/api/channels/{channel_name}/profile")

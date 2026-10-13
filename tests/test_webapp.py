@@ -141,7 +141,18 @@ def test_overview_counts_each_stage_per_channel(client, project, monkeypatch):
 
     a = next(c for c in data["channels"] if c["channel"] == "chanA")
     assert a["counts"] == {"to_sort": 2, "generating": 1, "ready": 1, "in_progress": 0, "errors": 1, "scheduled": 1}
-    assert a["errors"] == [{"title": "https://t/e1", "status": "download_failed", "message": "404"}]
+    assert a["errors"] == [{"video_id": "e1", "url": "https://t/e1", "title": None,
+                            "status": "download_failed", "message": "404"}]
     assert a["next_publish"].startswith("2030-01-07")
     assert data["totals"]["ready"] == 2  # chanA + chanB; unknown channels are ignored
     assert "uploads_today" in a["quota"]
+
+
+def test_dismissing_a_failed_video_removes_it_from_errors(client, project):
+    project.add_video("e1", status="download_failed")
+    project.add_video("ok", status="ready_for_upload")
+
+    assert client.post("/api/videos/e1/dismiss").json() == {"dismissed": True}
+    assert db.get_video("e1")["status"] == "rejected"
+    assert client.post("/api/videos/ok/dismiss").status_code == 400  # not an error: untouched
+    assert db.get_video("ok")["status"] == "ready_for_upload"

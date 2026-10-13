@@ -50,22 +50,64 @@
   .load-error{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px;border:1px solid var(--danger);border-radius:10px;background:rgba(248,113,113,.06);font-size:12.5px;color:#f3b4b4;}
 
   /* home */
-  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
-  .kpi{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;color:var(--text);transition:border-color .12s ease,background .12s ease;}
-  .kpi:hover{border-color:var(--accent);background:#1b1f28;}
-  .kpi .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;}
-  .kpi .l{font-size:12px;color:var(--muted);margin-top:2px;}
-  .kpi .go{font-size:11px;color:var(--accent);margin-top:8px;}
-  .kpi.warn .n{color:#f5c56d;} .kpi.bad .n{color:var(--danger);}
-  .kpi.zero{opacity:.55;}
-  .home-ch{display:flex;flex-direction:column;gap:10px;}
-  .home-ch .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
-  .home-ch .counts{display:flex;gap:6px;flex-wrap:wrap;}
-  .chip{font-size:11.5px;padding:3px 9px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:#c7cbd4;cursor:pointer;font-family:inherit;}
-  .chip:hover{border-color:var(--accent);}
-  .chip.bad{border-color:rgba(248,113,113,.5);color:var(--danger);}
-  .chip.muted{cursor:default;color:var(--dim);}
-  .home-errors{font-size:11.5px;color:var(--muted);margin:0;padding-left:16px;}
+  .home-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;}
+  .statbar{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));background:var(--panel);border:1px solid var(--border);border-radius:12px;overflow:hidden;}
+  .stat{background:none;border:none;border-left:1px solid var(--border-soft);padding:14px 18px;text-align:left;font-family:inherit;color:var(--text);cursor:pointer;display:flex;flex-direction:column;gap:2px;transition:background .12s ease;}
+  .stat:first-child{border-left:none;}
+  .stat:hover{background:#1b1f28;}
+  .stat .n{font-size:22px;font-weight:700;line-height:1.1;font-variant-numeric:tabular-nums;}
+  .stat .l{font-size:12px;color:var(--muted);}
+  .stat .go{font-size:11px;color:var(--accent);opacity:0;transition:opacity .12s ease;margin-top:2px;}
+  .stat:hover .go{opacity:1;}
+  .stat.zero{cursor:default;} .stat.zero:hover{background:none;}
+  .stat.zero .n{color:var(--dim);} .stat.zero .go{display:none;}
+  .stat.bad .n{color:var(--danger);}
+
+  .home-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:14px;align-items:start;}
+  .chcard{background:var(--panel);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;min-width:0;}
+  .chcard > *{padding:14px 16px;}
+  .chcard > * + *{border-top:1px solid var(--border-soft);}
+  .chcard-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+  .chcard-head .who{min-width:0;}
+  .chcard-head .name{display:flex;align-items:center;gap:8px;font-size:14px;font-weight:700;}
+  .chcard-head .yt{font-size:11.5px;color:var(--muted);margin:3px 0 0 18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;white-space:nowrap;flex:none;}
+  .pill.ok{background:rgba(74,222,128,.12);color:var(--ok);}
+  .pill.warn{background:rgba(245,197,109,.14);color:#f5c56d;}
+  .pill.bad{background:rgba(248,113,113,.14);color:var(--danger);}
+  .pill.wait{background:var(--panel2);color:var(--dim);}
+  .pill button{all:unset;cursor:pointer;text-decoration:underline;}
+
+  .ministats{display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:4px;padding:10px 10px !important;}
+  .ministat{background:none;border:none;border-radius:8px;padding:6px 6px;text-align:center;font-family:inherit;color:var(--text);cursor:pointer;transition:background .12s ease;}
+  .ministat:hover{background:var(--panel2);}
+  .ministat .n{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .ministat .l{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+  .ministat.zero{cursor:default;} .ministat.zero:hover{background:none;}
+  .ministat.zero .n{color:var(--dim);}
+  .ministat.bad .n{color:var(--danger);}
+
+  .facts{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--muted);}
+  .fact{display:flex;align-items:center;gap:8px;min-width:0;}
+  .fact svg{flex:none;color:var(--dim);}
+  .fact.warn{color:#f5c56d;} .fact.warn svg{color:#f5c56d;}
+  .fact.bad{color:var(--danger);} .fact.bad svg{color:var(--danger);}
+
+  .errs summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--danger);}
+  .errs summary::-webkit-details-marker{display:none;}
+  .errs summary .chev{transition:transform .15s ease;color:var(--dim);}
+  .errs[open] summary .chev{transform:rotate(90deg);}
+  .errs summary .all{margin-left:auto;font-weight:500;color:var(--muted);font-size:11px;}
+  .errs summary .all:hover{color:var(--text);}
+  .err-list{display:flex;flex-direction:column;gap:2px;margin-top:10px;}
+  .err-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 0;border-top:1px solid var(--border-soft);}
+  .err-item:first-child{border-top:none;}
+  .err-title{font-size:12px;color:#c7cbd4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .err-title a{color:inherit;text-decoration:none;} .err-title a:hover{color:var(--accent);}
+  .err-why{grid-column:1 / 2;font-size:11px;color:var(--dim);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+  .err-item .btn{grid-row:1 / span 2;grid-column:2;}
+
+  .home-empty{display:flex;align-items:center;gap:10px;padding:14px 16px;border:1px dashed var(--border);border-radius:12px;font-size:12.5px;color:var(--muted);}
 
   .screen{display:none;flex-direction:column;gap:16px;}
   .screen.active{display:flex;}
@@ -281,12 +323,15 @@
 
   <!-- Accueil : where every channel stands, one click from the right step -->
   <section class="screen" id="homeScreen">
-    <div>
-      <h1 class="h1">Où en sont tes chaînes</h1>
-      <p class="sub">Tout ce qui t'attend, en un coup d'œil. Clique sur un chiffre pour aller directement à l'étape concernée.</p>
+    <div class="home-head">
+      <div>
+        <h1 class="h1">Où en sont tes chaînes</h1>
+        <p class="sub" id="homeSub">Tout ce qui t'attend, en un coup d'œil.</p>
+      </div>
+      <button class="btn secondary small" id="homeRefreshBtn">↻ Actualiser</button>
     </div>
-    <div class="kpis" id="homeKpis"></div>
-    <div class="grid-channels" id="homeChannels"></div>
+    <div class="statbar" id="homeKpis"></div>
+    <div class="home-grid" id="homeChannels"></div>
   </section>
 
   <!-- Dashboard : per-channel published videos + live YouTube stats -->
@@ -662,10 +707,41 @@ const STATUS_LABELS = {
   error: 'erreur', rendering_failed: 'génération échouée',
 };
 
+const ICONS = {
+  calendar: '<path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/>',
+  gauge: '<path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/>',
+  alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  check: '<path d="M20 6L9 17l-5-5"/>',
+  chevron: '<path d="M9 18l6-6-6-6"/>',
+  link: '<path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+};
+function icon(name, size = 14){
+  return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+}
+
+// "TikTok · @user" instead of an 80-character URL
+function sourceLabel(url){
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    const platform = host.includes('tiktok') ? 'TikTok' : host.includes('instagram') ? 'Instagram'
+      : (host.includes('facebook') || host.startsWith('fb.')) ? 'Facebook' : host;
+    const user = u.pathname.match(/@([^/]+)/);
+    const kind = /\/photo\//.test(u.pathname) ? 'photo' : /\/reels?\//.test(u.pathname) ? 'reel'
+      : /^\/p\//.test(u.pathname) ? 'publication' : 'vidéo';
+    return `${platform} · ${user ? '@' + user[1] : kind}${user && kind === 'photo' ? ' (photo)' : ''}`;
+  } catch (_) { return url || 'vidéo'; }
+}
+
+document.getElementById('homeRefreshBtn').addEventListener('click', () => {
+  Object.keys(connectionCache).forEach(k => delete connectionCache[k]);
+  safeLoad(loadHome, 'homeKpis');
+});
+
 async function loadHome(){
   const kpis = document.getElementById('homeKpis');
   const grid = document.getElementById('homeChannels');
-  kpis.innerHTML = spinnerHtml('Chargement...');
+  kpis.innerHTML = `<div class="stat zero">${spinnerHtml('Chargement...')}</div>`;
   grid.innerHTML = '';
   const data = await api('/api/overview');
   const t = data.totals;
@@ -675,69 +751,167 @@ async function loadHome(){
   setSpaceBadge('publication', t.ready);
   setSpaceBadge('generation', t.generating);
 
+  const waiting = t.to_sort + t.ready + t.generating;
+  document.getElementById('homeSub').textContent = waiting
+    ? `${waiting} vidéo(s) attendent une action de ta part.`
+    : (t.errors ? `Rien en attente — ${t.errors} erreur(s) à regarder ou retirer.` : 'Tout est à jour. Rien en attente.');
+
   const kpiDefs = [
-    { n: t.to_sort, l: 'vidéo(s) à trier', go: 'Import → Sélection', action: () => goTo(3) },
-    hasGeneration && { n: t.generating, l: 'génération(s) en cours', go: 'Génération', action: () => openSpace('generation') },
-    { n: t.ready, l: 'prête(s) à publier', go: 'Publication → Résultats IA', action: () => goTo(5) },
-    { n: t.scheduled, l: 'programmée(s) sur YouTube', go: 'Dashboard', action: () => openSpace('dashboard') },
-    { n: t.errors, l: 'en erreur', go: 'Voir le détail ↓', cls: 'bad',
-      action: () => { const el = document.querySelector('.home-ch[data-has-errors="1"]'); if (el) el.scrollIntoView({behavior:'smooth', block:'center'}); } },
+    { n: t.to_sort, l: 'à trier', go: 'Import → Sélection', action: () => goTo(3) },
+    hasGeneration && { n: t.generating, l: 'en génération', go: 'Génération', action: () => openSpace('generation') },
+    { n: t.ready, l: 'prêtes à publier', go: 'Publication', action: () => goTo(5) },
+    { n: t.scheduled, l: 'programmées', go: 'Dashboard', action: () => openSpace('dashboard') },
+    { n: t.errors, l: 'en erreur', go: 'Voir ↓', cls: 'bad', action: () => {
+        const first = document.querySelector('.chcard details.errs');
+        if (first){ first.open = true; first.scrollIntoView({behavior:'smooth', block:'center'}); } } },
   ].filter(Boolean);
   kpis.innerHTML = kpiDefs.map((k, i) => `
-    <button class="kpi ${k.n ? (k.cls || '') : 'zero'}" data-k="${i}">
-      <div class="n">${k.n}</div><div class="l">${esc(k.l)}</div><div class="go">${esc(k.go)} →</div>
+    <button class="stat ${k.n ? (k.cls || '') : 'zero'}" data-k="${i}" ${k.n ? '' : 'tabindex="-1"'}>
+      <span class="n">${k.n}</span><span class="l">${esc(k.l)}</span><span class="go">${esc(k.go)} →</span>
     </button>`).join('');
-  kpis.querySelectorAll('.kpi').forEach(btn => btn.addEventListener('click', () => kpiDefs[+btn.dataset.k].action()));
+  kpis.querySelectorAll('.stat').forEach(btn => btn.addEventListener('click', () => {
+    const k = kpiDefs[+btn.dataset.k]; if (k.n) k.action();
+  }));
 
-  grid.innerHTML = data.channels.map(c => {
-    const ch = channels.find(x => x.name === c.channel) || { display_name: c.channel };
-    const q = c.quota;
-    const counts = c.counts;
-    const chips = [
-      counts.to_sort && `<button class="chip" data-go="3">${counts.to_sort} à trier</button>`,
-      counts.generating && `<button class="chip" data-go="generation">${counts.generating} en génération</button>`,
-      counts.ready && `<button class="chip" data-go="5">${counts.ready} prête(s)</button>`,
-      counts.scheduled && `<button class="chip" data-go="dashboard">${counts.scheduled} programmée(s)</button>`,
-      counts.in_progress && `<span class="chip muted">${counts.in_progress} en cours</span>`,
-      counts.errors && `<span class="chip bad">${counts.errors} en erreur</span>`,
-    ].filter(Boolean);
-    return `
-    <div class="card home-ch" data-channel="${c.channel}" data-has-errors="${counts.errors ? 1 : 0}">
-      <div class="ch-head"><span class="dot" style="background:${channelColor(c.channel)}"></span><span class="ch-name">${esc(ch.display_name)}</span></div>
-      <div class="row" data-role="conn">${spinnerHtml('Connexion...')}</div>
-      <div class="row">📅 ${c.next_publish ? `Prochaine publication : ${esc(formatWhen(c.next_publish))}` : 'Rien de programmé'}</div>
-      <div class="row">${q.exhausted
-        ? '⛔ Quota YouTube du jour atteint'
-        : `📊 ${q.uploads_today} upload(s) aujourd'hui · ≈ ${q.estimated_uploads_left} restant(s)`}</div>
-      <div class="counts">${chips.length ? chips.join('') : '<span class="empty-note">Rien en attente.</span>'}</div>
-      ${c.errors.length ? `<ul class="home-errors">${c.errors.map(e =>
-        `<li>${esc(e.title)} — ${esc(STATUS_LABELS[e.status] || e.status)}${e.message ? ` : ${esc(e.message.slice(0, 140))}` : ''}</li>`).join('')}</ul>` : ''}
-    </div>`;
-  }).join('');
+  grid.innerHTML = data.channels.map(c => channelHomeCard(c)).join('');
+  wireHomeCards(grid, data.channels);
+}
 
-  grid.querySelectorAll('.chip[data-go]').forEach(btn => btn.addEventListener('click', () => {
+function channelHomeCard(c){
+  const ch = channels.find(x => x.name === c.channel) || { display_name: c.channel };
+  const counts = c.counts;
+  const q = c.quota;
+  const stats = [
+    { n: counts.to_sort, l: 'À trier', go: '3' },
+    ch.generation_mode && { n: counts.generating, l: 'Génération', go: 'generation' },
+    { n: counts.ready, l: 'Prêtes', go: '5' },
+    { n: counts.scheduled, l: 'Programmées', go: 'dashboard' },
+    { n: counts.errors, l: 'Erreurs', go: 'errors', cls: 'bad' },
+  ].filter(Boolean);
+
+  const quotaFact = q.exhausted
+    ? `<div class="fact bad">${icon('gauge')}<span>Quota YouTube du jour atteint</span></div>`
+    : `<div class="fact ${q.estimated_uploads_left < 3 ? 'warn' : ''}">${icon('gauge')}<span>Quota : ${q.uploads_today} aujourd'hui · ≈ ${q.estimated_uploads_left} restant(s)</span></div>`;
+
+  const errors = c.errors.length ? `
+    <details class="errs">
+      <summary>${icon('chevron')}${icon('alert')} ${counts.errors} erreur(s) à traiter
+        <span class="all" data-dismiss-all role="button">Tout retirer</span></summary>
+      <div class="err-list">
+        ${c.errors.map(e => `
+          <div class="err-item" data-video="${esc(e.video_id)}">
+            <div class="err-title">${e.url
+              ? `<a href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.url)}">${esc(e.title || sourceLabel(e.url))} ${icon('link', 11)}</a>`
+              : esc(e.title || e.video_id)}</div>
+            <div class="err-why">${esc(STATUS_LABELS[e.status] || e.status)} · ${esc(e.message || 'raison non enregistrée (échec antérieur à cette version)')}</div>
+            <button class="btn secondary small" data-dismiss>Retirer</button>
+          </div>`).join('')}
+      </div>
+    </details>` : '';
+
+  return `
+  <article class="chcard" data-channel="${c.channel}">
+    <div class="chcard-head">
+      <div class="who">
+        <div class="name"><span class="dot" style="background:${channelColor(c.channel)}"></span>${esc(ch.display_name)}</div>
+        <div class="yt" data-role="yt">&nbsp;</div>
+      </div>
+      <span class="pill wait" data-role="conn">Vérification…</span>
+    </div>
+    <div class="ministats">
+      ${stats.map(s => `<button class="ministat ${s.n ? (s.cls || '') : 'zero'}" data-go="${s.go}" ${s.n ? '' : 'tabindex="-1"'}>
+        <div class="n">${s.n}</div><div class="l">${s.l}</div></button>`).join('')}
+    </div>
+    <div class="facts">
+      <div class="fact">${icon('calendar')}<span>${c.next_publish ? `Prochaine publication : ${esc(formatWhen(c.next_publish))}` : 'Rien de programmé'}</span></div>
+      ${quotaFact}
+    </div>
+    ${errors}
+  </article>`;
+}
+
+function wireHomeCards(grid, channelData){
+  grid.querySelectorAll('.ministat').forEach(btn => btn.addEventListener('click', () => {
+    if (btn.classList.contains('zero')) return;
     const go = btn.dataset.go;
-    if (/^\d+$/.test(go)) goTo(+go); else openSpace(go);
+    if (go === 'errors'){
+      const d = btn.closest('.chcard').querySelector('details.errs');
+      if (d){ d.open = true; d.scrollIntoView({behavior:'smooth', block:'nearest'}); }
+    } else if (/^\d+$/.test(go)) goTo(+go);
+    else openSpace(go);
+  }));
+
+  grid.querySelectorAll('[data-dismiss]').forEach(btn => btn.addEventListener('click', async () => {
+    const item = btn.closest('.err-item');
+    btn.disabled = true;
+    try {
+      await api(`/api/videos/${item.dataset.video}/dismiss`, { method: 'POST' });
+      item.remove();
+      refreshHomeCounts();
+    } catch (e){ btn.disabled = false; log(e.message, 'error'); }
+  }));
+
+  grid.querySelectorAll('[data-dismiss-all]').forEach(el => el.addEventListener('click', async (ev) => {
+    ev.preventDefault(); // don't toggle the <details>
+    const card = el.closest('.chcard');
+    const items = [...card.querySelectorAll('.err-item')];
+    if (!confirm(`Retirer les ${items.length} erreur(s) de cette chaîne ? Les URL pourront être réimportées plus tard.`)) return;
+    for (const item of items){
+      try { await api(`/api/videos/${item.dataset.video}/dismiss`, { method: 'POST' }); item.remove(); }
+      catch (e){ log(e.message, 'error'); break; }
+    }
+    refreshHomeCounts();
   }));
 
   // Connection states fill in as they arrive (one cheap YouTube call each)
-  data.channels.forEach(async c => {
-    const row = grid.querySelector(`.home-ch[data-channel="${c.channel}"] [data-role="conn"]`);
+  channelData.forEach(async c => {
+    const card = grid.querySelector(`.chcard[data-channel="${c.channel}"]`);
+    const pill = card.querySelector('[data-role="conn"]');
+    const yt = card.querySelector('[data-role="yt"]');
     const chObj = channels.find(x => x.name === c.channel);
-    if (chObj && !chObj.has_credentials){ row.innerHTML = '<span class="cbadge missing">● Pas de credentials.json</span>'; return; }
+    if (chObj && !chObj.has_credentials){
+      pill.className = 'pill bad'; pill.textContent = 'Pas de credentials';
+      return;
+    }
     try {
       const s = await cachedConnectionStatus(c.channel);
       if (s.state === 'connected'){
-        row.innerHTML = `<span class="cbadge connected">● Connectée</span><span>${esc(s.youtube_channel_title || '')}</span>`;
+        pill.className = 'pill ok'; pill.innerHTML = `${icon('check', 11)} Connectée`;
+        yt.textContent = s.youtube_channel_title ? `YouTube · ${s.youtube_channel_title}` : '';
       } else {
-        const label = { expired: 'Connexion expirée', not_connected: 'Jamais connectée' }[s.state] || 'Vérification impossible';
-        row.innerHTML = `<span class="cbadge ${s.state === 'expired' ? 'pending' : 'missing'}">● ${label}</span><button class="chip" data-go-settings>Reconnecter →</button>`;
-        row.querySelector('[data-go-settings]').addEventListener('click', () => goTo(0));
+        const label = { expired: 'Expirée', not_connected: 'Non connectée' }[s.state] || 'Erreur';
+        pill.className = `pill ${s.state === 'expired' ? 'warn' : 'bad'}`;
+        pill.innerHTML = `${label} · <button type="button">reconnecter</button>`;
+        pill.querySelector('button').addEventListener('click', () => goTo(0));
+        yt.textContent = s.reason || '';
       }
     } catch (e){
-      row.innerHTML = `<span class="cbadge missing">● Vérification impossible</span>`;
+      pill.className = 'pill bad'; pill.textContent = 'Vérification impossible';
     }
   });
+}
+
+// After a dismiss: re-read the counts without redrawing the cards (keeps
+// open <details> and scroll position).
+async function refreshHomeCounts(){
+  try {
+    const data = await api('/api/overview');
+    const t = data.totals;
+    document.querySelectorAll('#homeKpis .stat.bad .n').forEach(n => { n.textContent = t.errors; });
+    data.channels.forEach(c => {
+      const card = document.querySelector(`.chcard[data-channel="${c.channel}"]`);
+      if (!card) return;
+      const errStat = card.querySelector('.ministat[data-go="errors"]');
+      if (errStat){
+        errStat.querySelector('.n').textContent = c.counts.errors;
+        errStat.classList.toggle('zero', !c.counts.errors);
+        errStat.classList.toggle('bad', !!c.counts.errors);
+      }
+      const details = card.querySelector('details.errs');
+      if (details && !c.counts.errors) details.remove();
+    });
+    if (!t.errors) document.querySelectorAll('#homeKpis .stat.bad').forEach(el => { el.classList.remove('bad'); el.classList.add('zero'); });
+  } catch (_) {}
 }
 
 // ---------- Step 0 : Connect channels ----------
