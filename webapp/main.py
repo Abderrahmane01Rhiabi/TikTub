@@ -1133,7 +1133,15 @@ def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
         raise HTTPException(status_code=404, detail="Video not in current schedule")
 
     if update.scheduled_time is not None:
-        dt = datetime.strptime(update.scheduled_time, "%Y-%m-%d %H:%M:%S")
+        try:
+            dt = datetime.strptime(update.scheduled_time, "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Date invalide (format attendu : AAAA-MM-JJ HH:MM:SS)")
+        # A date in the past can't be scheduled on YouTube — refuse it here
+        # (e.g. a calendar drag onto yesterday) rather than at publish time.
+        from datetime import timezone as _tz
+        if bp._parse_slot(update.scheduled_time) <= datetime.now(_tz.utc):
+            raise HTTPException(status_code=400, detail="Cette date est déjà passée — choisis un moment dans le futur.")
         entry["scheduled_time"] = update.scheduled_time
         entry["scheduled_time_readable"] = dt.strftime("%A %d/%m/%Y à %H:%M")
         # Overrides whatever automated method decided — the record on the
@@ -1145,6 +1153,59 @@ def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
 
     bp.scheduler.save_schedule(schedule)
     return entry
+
+
+@app.get("/api/calendar")
+def calendar():
+    """Everything with a publish date, for the Planning calendar: entries
+    still to publish (movable — from the schedule) AND videos already sent
+    to YouTube (read-only — their publishAt is YouTube's now), so the
+    calendar shows real gaps and overloaded days, not just the pending part.
+    Every `when` is a timezone-aware ISO date (the schedule mixes aware and
+    naive local strings depending on the method that wrote it)."""
+    bp = get_batch_processor()
+    _, pending, db = _pending_schedule(bp)
+
+    items = []
+    for entry in pending:
+        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
+        try:
+            when = bp._parse_slot(entry["scheduled_time"]).isoformat()
+        except (KeyError, ValueError, TypeError):
+            continue
+        items.append({
+            "video_id": entry["video_id"], "channel": channel, "title": entry.get("title"),
+            "when": when, "kind": "pending", "publish_now": bool(entry.get("publish_now")),
+        })
+
+    from datetime import timezone as _tz
+    now = datetime.now(_tz.utc)
+    for video in db.get("videos", {}).values():
+        status = video.get("status")
+        if status not in ("scheduled_on_youtube", "uploaded"):
+            continue
+        raw = video.get("scheduled_publish_time") if status == "scheduled_on_youtube" else video.get("uploaded_at")
+        if not raw:
+            continue
+        try:
+            when_dt = bp._parse_slot(raw)
+        except (ValueError, TypeError):
+            continue
+        # scheduled_on_youtube is never updated locally once YouTube actually
+        # publishes the video at its publishAt — past that date it IS published.
+        kind = "scheduled" if status == "scheduled_on_youtube" and when_dt > now else "published"
+        items.append({
+            "video_id": video["video_id"], "channel": video.get("channel"),
+            "title": (video.get("ai_data") or {}).get("optimized_title") or video.get("original_title"),
+            "when": when_dt.isoformat(), "kind": kind,
+            "youtube_url": video.get("youtube_url"), "publish_now": False,
+        })
+
+    return {
+        "items": items,
+        "max_daily_uploads": bp.config["general"]["max_daily_uploads"],
+        "spacing_hours": bp.config["scheduling"]["spacing_hours"],
+    }
 
 
 class PublishRequest(BaseModel):

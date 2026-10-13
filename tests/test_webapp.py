@@ -156,3 +156,42 @@ def test_dismissing_a_failed_video_removes_it_from_errors(client, project):
     assert db.get_video("e1")["status"] == "rejected"
     assert client.post("/api/videos/ok/dismiss").status_code == 400  # not an error: untouched
     assert db.get_video("ok")["status"] == "ready_for_upload"
+
+
+# ---- Planning calendar
+
+def test_calendar_lists_pending_and_youtube_scheduled_with_aware_dates(client, project):
+    project.add_video("p1", status="ready_for_upload")
+    project.add_video("s1", status="scheduled_on_youtube", scheduled_publish_time="2030-02-01T18:00:00+01:00",
+                      ai_data={"optimized_title": "Déjà programmée"})
+    project.add_video("u1", status="uploaded", uploaded_at="2026-10-01T10:00:00")
+    project.write_schedule([{"video_id": "p1", "channel": "chanA", "title": "À publier",
+                             "scheduled_time": "2030-01-07 18:00:00", "video_data": {}}])
+
+    data = client.get("/api/calendar").json()
+
+    by_id = {i["video_id"]: i for i in data["items"]}
+    assert by_id["p1"]["kind"] == "pending" and by_id["p1"]["when"].startswith("2030-01-07T18:00:00+")
+    assert by_id["s1"]["kind"] == "scheduled" and by_id["s1"]["title"] == "Déjà programmée"
+    assert by_id["u1"]["kind"] == "published"
+    assert data["max_daily_uploads"] > 0 and data["spacing_hours"] > 0
+
+
+def test_schedule_edit_rejects_past_and_malformed_dates(client, project):
+    project.add_video("p1", status="ready_for_upload")
+    project.write_schedule([{"video_id": "p1", "channel": "chanA", "title": "x",
+                             "scheduled_time": "2030-01-07 18:00:00", "video_data": {}}])
+
+    assert client.patch("/api/schedule/p1", json={"scheduled_time": "2020-01-01 09:00:00"}).status_code == 400
+    assert client.patch("/api/schedule/p1", json={"scheduled_time": "demain"}).status_code == 400
+    ok = client.patch("/api/schedule/p1", json={"scheduled_time": "2030-01-09 18:00:00"})
+    assert ok.status_code == 200 and ok.json()["scheduled_time"] == "2030-01-09 18:00:00"
+
+
+def test_calendar_treats_past_youtube_schedules_as_published(client, project):
+    project.add_video("old", status="scheduled_on_youtube", scheduled_publish_time="2020-05-01T18:00:00+02:00")
+    project.add_video("future", status="scheduled_on_youtube", scheduled_publish_time="2030-05-01T18:00:00+02:00")
+
+    kinds = {i["video_id"]: i["kind"] for i in client.get("/api/calendar").json()["items"]}
+
+    assert kinds == {"old": "published", "future": "scheduled"}

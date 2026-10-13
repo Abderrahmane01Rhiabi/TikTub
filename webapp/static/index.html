@@ -369,6 +369,41 @@
   #genBatchCards > .card{border-radius:12px;}
   .gen-label{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;}
   .gen-label .num{font-size:11px;color:var(--dim);font-weight:600;}
+
+  /* Planning calendar */
+  .cal-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .cal-title{font-weight:700;font-size:13.5px;margin:0 6px;text-transform:capitalize;}
+  .cal-head .summary{margin-left:auto;font-size:12px;color:var(--muted);}
+  .cal-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--panel);}
+  .cal{display:grid;grid-template-columns:150px repeat(7,minmax(118px,1fr));min-width:980px;}
+  .cal .hd{padding:10px;font-size:11.5px;color:var(--muted);border-left:1px solid var(--border-soft);text-transform:capitalize;}
+  .cal .hd b{display:block;font-size:15px;color:var(--text);font-weight:700;margin-top:1px;}
+  .cal .hd.today, .cal .hd.today b{color:var(--accent);}
+  .cal .corner{padding:10px;font-size:11px;color:var(--dim);}
+  .cal .lane{padding:10px 12px;font-size:12.5px;font-weight:600;display:flex;align-items:flex-start;gap:8px;border-top:1px solid var(--border-soft);min-width:0;}
+  .cal .lane span:last-child{overflow:hidden;text-overflow:ellipsis;}
+  .cal .cell{min-height:92px;padding:6px;display:flex;flex-direction:column;gap:5px;border-top:1px solid var(--border-soft);border-left:1px solid var(--border-soft);transition:background .1s ease,box-shadow .1s ease;min-width:0;}
+  .cal .cell.today{background:rgba(109,141,253,.05);}
+  .cal .cell.past{background:rgba(0,0,0,.22);}
+  .cal .cell.over-limit{box-shadow:inset 0 0 0 1px rgba(248,113,113,.55);}
+  .cal .cell .limit{font-size:10px;color:var(--danger);font-weight:600;}
+  .cal .cell.droppable{background:rgba(109,141,253,.07);}
+  .cal .cell.over{background:rgba(109,141,253,.18);box-shadow:inset 0 0 0 1px var(--accent);}
+  .slot{display:flex;flex-direction:column;gap:1px;padding:5px 7px;border-radius:7px;font-size:11px;line-height:1.3;background:var(--panel2);border:1px solid var(--border);border-left:3px solid var(--ch,#9aa1ac);cursor:pointer;min-width:0;font-family:inherit;color:inherit;text-align:left;}
+  .slot:hover{border-color:var(--accent);border-left-color:var(--ch,#9aa1ac);}
+  .slot .t{font-weight:700;font-variant-numeric:tabular-nums;display:flex;align-items:center;gap:4px;color:var(--text);}
+  .slot .t svg{color:var(--dim);}
+  .slot .n{color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .slot[draggable="true"]{cursor:grab;}
+  .slot.dragging{opacity:.35;}
+  .slot.scheduled{opacity:.75;}
+  .slot.published{opacity:.5;}
+  .slot.close{border-color:rgba(245,197,109,.7);}
+  .slot.close .t svg.warn{color:#f5c56d;}
+  .cal-legend{display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--muted);align-items:center;}
+  .cal-legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--border);}
+  #slotDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(440px,calc(100vw - 32px));}
+  #slotDialog::backdrop{background:rgba(0,0,0,.55);}
 </style>
 </head>
 <body>
@@ -578,9 +613,15 @@
         <button class="seg-opt" data-m="ai">IA, par vidéo</button>
       </div>
       <span class="spacer"></span>
+      <div class="seg" id="planningViewSeg">
+        <button class="seg-opt" data-v="calendar">Calendrier</button>
+        <button class="seg-opt" data-v="list">Liste</button>
+      </div>
       <button class="btn primary small" id="genScheduleBtn" data-icon="calendar">Générer le planning</button>
     </div>
+    <div class="stack" id="scheduleCalendar"></div>
     <div class="stack" id="scheduleSections"></div>
+    <dialog id="slotDialog"></dialog>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
       <span class="progress-text">Publication · étape 2 sur 3</span>
@@ -1552,31 +1593,61 @@ document.querySelectorAll('#scheduleMethodSeg .seg-opt').forEach(btn => btn.addE
   scheduleMethod = btn.dataset.m;
 }));
 
+// Planning has two views of the same schedule: a week calendar (default —
+// shows gaps/overloaded days, drag a video to another day) and the list
+// (exact edits). The choice is remembered per browser.
+let planningView = 'calendar';
+try { planningView = localStorage.getItem('tiktub.planningView') || 'calendar'; } catch (_) {}
+
+function syncPlanningViewSeg(){
+  document.querySelectorAll('#planningViewSeg .seg-opt').forEach(b => b.classList.toggle('active', b.dataset.v === planningView));
+}
+document.querySelectorAll('#planningViewSeg .seg-opt').forEach(btn => btn.addEventListener('click', () => {
+  planningView = btn.dataset.v;
+  try { localStorage.setItem('tiktub.planningView', planningView); } catch (_) {}
+  loadPlanningScreen();
+}));
+
 async function loadPlanningScreen(){
   // Re-fetch the real, currently-pending schedule every time this screen is
   // entered — otherwise it keeps showing whatever was rendered by the last
   // "Générer le planning" click, even for videos already published since.
-  const wrap = document.getElementById('scheduleSections');
-  wrap.innerHTML = spinnerHtml('Chargement...');
+  syncPlanningViewSeg();
+  const list = document.getElementById('scheduleSections');
+  const cal = document.getElementById('scheduleCalendar');
+  list.style.display = planningView === 'list' ? '' : 'none';
+  cal.style.display = planningView === 'calendar' ? '' : 'none';
+  const target = planningView === 'calendar' ? cal : list;
+  target.innerHTML = spinnerHtml('Chargement...');
   try {
-    const data = await api('/api/schedule');
-    renderSchedule(data.schedule || []);
+    if (planningView === 'calendar'){
+      calData = await api('/api/calendar');
+      jumpToNextPublicationWeek();
+      renderCalendar();
+    } else {
+      const data = await api('/api/schedule');
+      renderSchedule(data.schedule || []);
+    }
   } catch (e){
-    showLoadError(wrap, e, loadPlanningScreen);
+    showLoadError(target, e, loadPlanningScreen);
     log(e.message, 'error');
   }
 }
 
 document.getElementById('genScheduleBtn').addEventListener('click', async () => {
-  const wrap = document.getElementById('scheduleSections');
-  wrap.innerHTML = spinnerHtml('Génération du planning...');
+  const btn = document.getElementById('genScheduleBtn');
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Génération…';
   try {
     const schedule = await api('/api/schedule', { method:'POST', body: JSON.stringify({ method: scheduleMethod }) });
     log(`Planning généré : ${schedule.length} vidéo(s)`, 'success');
-    renderSchedule(schedule);
+    await loadPlanningScreen();
   } catch (e){
-    showLoadError(wrap, e, loadPlanningScreen);
     log(e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = label;
   }
 });
 
@@ -1649,6 +1720,227 @@ function renderSchedule(schedule){
       } catch (e){ log(e.message, 'error'); }
     }, { once:true });
   }));
+}
+
+
+// ---------- Planning : week calendar ----------
+
+let calData = null;
+let calWeekStart = startOfWeek(new Date());
+let calDrag = null;
+let calUserNavigated = false;
+
+// First view: if this week is empty but something is planned later, open the
+// week of the next publication instead of an empty grid.
+function jumpToNextPublicationWeek(){
+  if (calUserNavigated) return;
+  const now = new Date();
+  const thisWeekEnd = addDays(calWeekStart, 7);
+  const upcoming = (calData.items || []).map(i => new Date(i.when)).filter(d => d >= now).sort((a, b) => a - b);
+  const anyThisWeek = (calData.items || []).some(i => { const d = new Date(i.when); return d >= calWeekStart && d < thisWeekEnd; });
+  if (!anyThisWeek && upcoming.length) calWeekStart = startOfWeek(upcoming[0]);
+}
+
+function startOfWeek(d){
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7)); // Monday
+  return x;
+}
+function addDays(d, n){ const x = new Date(d); x.setDate(x.getDate() + n); return x; }
+function pad2(n){ return String(n).padStart(2, '0'); }
+function dayKey(d){ return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function hhmm(d){ return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`; }
+// The schedule API takes local "YYYY-MM-DD HH:MM:SS" (same as the pencil edit)
+function toLocalApiTime(d){ return `${dayKey(d)} ${hhmm(d)}:00`; }
+
+function renderCalendar(){
+  const box = document.getElementById('scheduleCalendar');
+  const now = new Date();
+  const days = [...Array(7)].map((_, i) => addDays(calWeekStart, i));
+  const weekEnd = addDays(calWeekStart, 7);
+  const all = (calData.items || []).map(i => ({ ...i, date: new Date(i.when) }));
+  const spacingMs = calData.spacing_hours * 3600 * 1000;
+
+  // Lanes = channels that have anything to show at all (empty week included)
+  const laneNames = channels.map(c => c.name).filter(n => all.some(i => i.channel === n));
+  if (!laneNames.length){
+    box.innerHTML = emptyState('Rien de programmé', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
+    return;
+  }
+
+  // Two videos of the same channel closer than spacing_hours = flagged
+  const close = new Set();
+  laneNames.forEach(n => {
+    const mine = all.filter(i => i.channel === n && i.kind !== 'published').sort((a, b) => a.date - b.date);
+    mine.forEach((it, k) => { if (k && it.date - mine[k - 1].date < spacingMs){ close.add(it.video_id); close.add(mine[k - 1].video_id); } });
+  });
+
+  const inWeek = all.filter(i => i.date >= calWeekStart && i.date < weekEnd);
+  const pendingThisWeek = inWeek.filter(i => i.kind === 'pending').length;
+  const fmtDay = d => d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  const title = `Semaine du ${fmtDay(days[0])} au ${fmtDay(days[6])} ${days[6].getFullYear()}`;
+
+  const header = `
+    <div class="cal-head">
+      <button class="btn secondary small" data-cal="prev" title="Semaine précédente">‹</button>
+      <button class="btn secondary small" data-cal="next" title="Semaine suivante">›</button>
+      <button class="btn ghost small" data-cal="today">Aujourd'hui</button>
+      <span class="cal-title">${esc(title)}</span>
+      <span class="summary">${pendingThisWeek} à publier cette semaine · ${inWeek.length - pendingThisWeek} déjà sur YouTube</span>
+    </div>`;
+
+  const head = `<div class="corner">Glisse une vidéo vers un autre jour</div>` + days.map(d => `
+    <div class="hd ${dayKey(d) === dayKey(now) ? 'today' : ''}">${esc(d.toLocaleDateString('fr-FR', { weekday: 'short' }))}<b>${d.getDate()}</b></div>`).join('');
+
+  const rows = laneNames.map(name => {
+    const ch = channels.find(c => c.name === name) || { display_name: name };
+    const cells = days.map(d => {
+      const key = dayKey(d);
+      const dayItems = inWeek.filter(i => i.channel === name && dayKey(i.date) === key).sort((a, b) => a.date - b.date);
+      const isPast = addDays(d, 1) <= now;
+      const count = dayItems.filter(i => i.kind !== 'published').length;
+      const overLimit = count > calData.max_daily_uploads;
+      return `<div class="cell ${key === dayKey(now) ? 'today' : ''} ${isPast ? 'past' : ''} ${overLimit ? 'over-limit' : ''}" data-channel="${name}" data-day="${key}">
+        ${dayItems.map(i => slotHtml(i, close.has(i.video_id))).join('')}
+        ${overLimit ? `<span class="limit">${count} > limite de ${calData.max_daily_uploads}/jour</span>` : ''}
+      </div>`;
+    }).join('');
+    return `<div class="lane"><span class="dot" style="background:${channelColor(name)};margin-top:4px"></span><span>${esc(ch.display_name)}</span></div>${cells}`;
+  }).join('');
+
+  box.innerHTML = `${header}
+    <div class="cal-wrap"><div class="cal">${head}${rows}</div></div>
+    <div class="cal-legend">
+      <span><span class="sw" style="background:var(--panel2)"></span>À publier (déplaçable)</span>
+      <span style="opacity:.75">${icon('lock', 11)} Déjà programmée sur YouTube</span>
+      <span style="opacity:.6">${icon('check', 11)} Publiée</span>
+      <span>${icon('alert', 11)} Trop proche d'une autre vidéo (&lt; ${calData.spacing_hours} h)</span>
+    </div>`;
+
+  box.querySelector('[data-cal="prev"]').addEventListener('click', () => { calUserNavigated = true; calWeekStart = addDays(calWeekStart, -7); renderCalendar(); });
+  box.querySelector('[data-cal="next"]').addEventListener('click', () => { calUserNavigated = true; calWeekStart = addDays(calWeekStart, 7); renderCalendar(); });
+  box.querySelector('[data-cal="today"]').addEventListener('click', () => { calUserNavigated = true; calWeekStart = startOfWeek(new Date()); renderCalendar(); });
+  wireCalendar(box, all);
+}
+
+function slotHtml(i, tooClose){
+  const movable = i.kind === 'pending' && !i.publish_now;
+  const lead = i.publish_now ? icon('globe', 10) : i.kind === 'scheduled' ? icon('lock', 10) : i.kind === 'published' ? icon('check', 10) : '';
+  const tip = i.kind === 'pending'
+    ? (i.publish_now ? 'Publication immédiate au prochain « Publier tout »' : 'Clique pour modifier, ou glisse vers un autre jour')
+    : i.kind === 'scheduled' ? 'Déjà programmée sur YouTube (non modifiable ici)' : 'Déjà publiée';
+  return `<button type="button" class="slot ${i.kind} ${tooClose ? 'close' : ''}" style="--ch:${channelColor(i.channel)}"
+      data-video="${esc(i.video_id)}" data-channel="${esc(i.channel)}" ${movable ? 'draggable="true"' : ''} title="${esc(tip)}">
+    <span class="t">${lead}${i.publish_now ? 'Immédiate' : hhmm(i.date)}${tooClose ? icon('alert', 11).replace('<svg', '<svg class="warn"') : ''}</span>
+    <span class="n">${esc(i.title || 'Vidéo')}</span>
+  </button>`;
+}
+
+function wireCalendar(box, all){
+  const byId = Object.fromEntries(all.map(i => [i.video_id, i]));
+  const now = new Date();
+
+  box.querySelectorAll('.slot').forEach(el => {
+    const item = byId[el.dataset.video];
+    el.addEventListener('click', () => {
+      if (item.kind === 'pending') openSlotDialog(item);
+      else if (item.youtube_url) window.open(item.youtube_url, '_blank', 'noopener');
+    });
+    if (el.getAttribute('draggable') !== 'true') return;
+    el.addEventListener('dragstart', ev => {
+      calDrag = item;
+      el.classList.add('dragging');
+      ev.dataTransfer.effectAllowed = 'move';
+      ev.dataTransfer.setData('text/plain', item.video_id);
+      box.querySelectorAll(`.cell[data-channel="${CSS.escape(item.channel)}"]`).forEach(c => {
+        if (addDays(new Date(c.dataset.day + 'T00:00:00'), 1) > now) c.classList.add('droppable');
+      });
+    });
+    el.addEventListener('dragend', () => {
+      calDrag = null;
+      el.classList.remove('dragging');
+      box.querySelectorAll('.cell').forEach(c => c.classList.remove('droppable', 'over'));
+    });
+  });
+
+  box.querySelectorAll('.cell').forEach(cell => {
+    cell.addEventListener('dragover', ev => {
+      if (!calDrag || !cell.classList.contains('droppable')) return;
+      ev.preventDefault();
+      cell.classList.add('over');
+    });
+    cell.addEventListener('dragleave', () => cell.classList.remove('over'));
+    cell.addEventListener('drop', async ev => {
+      ev.preventDefault();
+      cell.classList.remove('over');
+      const item = calDrag;
+      if (!item || !cell.classList.contains('droppable')) return;
+      const target = new Date(`${cell.dataset.day}T${hhmm(item.date)}:00`);
+      if (dayKey(target) === dayKey(item.date)) return;
+      if (target <= new Date()){ log('Ce créneau est déjà passé — choisis un jour à venir.', 'error'); return; }
+      await saveSlot(item, target);
+    });
+  });
+}
+
+async function saveSlot(item, when){
+  try {
+    await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: toLocalApiTime(when) }) });
+    log(`Déplacée au ${when.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} à ${hhmm(when)}`, 'success');
+  } catch (e){ log(e.message, 'error'); }
+  calData = await api('/api/calendar');
+  renderCalendar();
+}
+
+function openSlotDialog(item){
+  const dlg = document.getElementById('slotDialog');
+  const ch = channels.find(c => c.name === item.channel) || { display_name: item.channel };
+  const local = `${dayKey(item.date)}T${hhmm(item.date)}`;
+  dlg.innerHTML = `
+    <div class="chcard" style="border:none">
+      <div class="chcard-head">
+        <div class="who">
+          <div class="name"><span class="dot" style="background:${channelColor(item.channel)}"></span>${esc(ch.display_name)}</div>
+          <div class="meta">${esc(item.title || '')}</div>
+        </div>
+        <button class="btn ghost small" data-act="close" title="Fermer">${icon('x', 14)}</button>
+      </div>
+      <div class="chcard-body">
+        <label class="switch"><input type="checkbox" data-role="now" ${item.publish_now ? 'checked' : ''}> Publier immédiatement (publique) au prochain « Publier tout »</label>
+        <div data-role="when-row" ${item.publish_now ? 'style="opacity:.4;pointer-events:none"' : ''}>
+          <label class="f">Date et heure de publication</label>
+          <input class="f" type="datetime-local" data-role="when" value="${local}">
+        </div>
+        <span class="tiny" data-role="err" style="color:var(--danger)"></span>
+      </div>
+      <div class="chcard-foot">
+        <button class="btn ghost small" data-act="close">Annuler</button>
+        <button class="btn primary small push" data-act="save">Enregistrer</button>
+      </div>
+    </div>`;
+  const nowBox = dlg.querySelector('[data-role="now"]');
+  nowBox.addEventListener('change', () => {
+    dlg.querySelector('[data-role="when-row"]').style.cssText = nowBox.checked ? 'opacity:.4;pointer-events:none' : '';
+  });
+  dlg.querySelectorAll('[data-act="close"]').forEach(b => b.addEventListener('click', () => dlg.close()));
+  dlg.querySelector('[data-act="save"]').addEventListener('click', async () => {
+    const err = dlg.querySelector('[data-role="err"]');
+    try {
+      if (nowBox.checked !== !!item.publish_now){
+        await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ publish_now: nowBox.checked }) });
+      }
+      const value = dlg.querySelector('[data-role="when"]').value;
+      if (!nowBox.checked && value && value !== local){
+        await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: value.replace('T', ' ') + ':00' }) });
+      }
+      dlg.close();
+      log('Planning mis à jour', 'success');
+      calData = await api('/api/calendar');
+      renderCalendar();
+    } catch (e){ err.textContent = e.message; }
+  });
+  dlg.showModal();
 }
 
 // ---------- Step 6 : Summary & publish ----------
