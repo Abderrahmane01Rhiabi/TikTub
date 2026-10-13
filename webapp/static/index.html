@@ -367,6 +367,16 @@
   .dvstats svg{color:var(--dim);}
   .astat{border-radius:8px;}
 
+  /* Dashboard overview: collapsible */
+  .overview-summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;}
+  .overview-summary::-webkit-details-marker{display:none;}
+  .overview-summary > svg{color:var(--dim);transition:transform .15s ease;flex:none;}
+  .overview-card[open] .overview-summary > svg{transform:rotate(90deg);}
+  .overview-summary .overview-mini{margin-left:auto;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;}
+  .overview-card[open] .overview-summary .overview-mini{display:none;}
+  .overview-card:not([open]) > .overview-summary{border-bottom:none;}
+  .overview-summary:hover .name{color:var(--accent);}
+
   /* Génération */
   #genBatchCards > .card{border-radius:12px;}
   .gen-label{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;}
@@ -2211,6 +2221,9 @@ async function loadChannelOverview(channelName){
   try {
     const data = await api(`/api/channels/${channelName}/channel_analytics?days=30`);
     box.innerHTML = renderChannelOverview(data);
+    box.querySelector('details').addEventListener('toggle', ev => {
+      try { localStorage.setItem(OVERVIEW_OPEN_KEY, ev.target.open ? '1' : '0'); } catch (_) {}
+    });
   } catch (e){
     // 403 (scope not granted yet) or not connected — just hide the section
     box.innerHTML = '';
@@ -2219,7 +2232,9 @@ async function loadChannelOverview(channelName){
 
 function renderDailyViewsSvg(daily){
   if (!daily.length) return '<span class="empty-note">Pas de données.</span>';
-  const w = 560, h = 90, pad = 6;
+  // Drawn in a fixed coordinate space and stretched to the card's full
+  // width; non-scaling-stroke keeps the line thin whatever the width.
+  const w = 1000, h = 90, pad = 6;
   const maxY = Math.max(1, ...daily.map(p => p.views));
   const stepX = (w - pad * 2) / Math.max(1, daily.length - 1);
   const pts = daily.map((p, i) => {
@@ -2227,45 +2242,70 @@ function renderDailyViewsSvg(daily){
     const y = h - pad - (p.views / maxY) * (h - pad * 2);
     return `${x.toFixed(1)},${y.toFixed(1)}`;
   }).join(' ');
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" style="display:block;max-width:100%">
-    <polyline points="${pts}" fill="none" stroke="#6d8dfd" stroke-width="1.8"/>
+  return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" style="display:block">
+    <polyline points="${pts}" fill="none" stroke="#6d8dfd" stroke-width="1.8" vector-effect="non-scaling-stroke" stroke-linejoin="round"/>
   </svg>`;
+}
+
+// YouTube Analytics traffic source codes → readable French labels
+const TRAFFIC_LABELS = {
+  YT_SEARCH: 'Recherche YouTube', SHORTS: 'Fil Shorts', YT_CHANNEL: 'Page de la chaîne', EXT_URL: 'Sites externes',
+  PLAYLIST: 'Playlists', YT_OTHER_PAGE: 'Autres pages YouTube', RELATED_VIDEO: 'Vidéos suggérées',
+  SUBSCRIBER: 'Abonnés (accueil, notifications)', NOTIFICATION: 'Notifications', NO_LINK_OTHER: 'Accès direct / inconnu',
+  BROWSE: 'Accueil YouTube', YT_PLAYLIST_PAGE: 'Page de playlist', END_SCREEN: 'Écrans de fin', HASHTAGS: 'Hashtags',
+  SOUND_PAGE: 'Page du son', ADVERTISING: 'Publicité', CAMPAIGN_CARD: 'Fiches de campagne', ANNOTATION: 'Annotations',
+};
+
+const OVERVIEW_OPEN_KEY = 'tiktub.dashOverviewOpen';
+function overviewOpen(){
+  try { return localStorage.getItem(OVERVIEW_OPEN_KEY) !== '0'; } catch (_) { return true; }
 }
 
 function renderChannelOverview(data){
   const t = data.totals || {};
+  const fmt = v => typeof v === 'number' ? v.toLocaleString() : v;
   const tiles = [
     ['Abonnés', data.subscriber_count ?? '—'],
     ['Vues (30 j)', t.views ?? '—'],
     ['Minutes regardées', t.estimated_minutes_watched ?? '—'],
-    ['% moyen regardé', t.average_view_percentage != null ? t.average_view_percentage.toFixed(1) + '%' : '—'],
+    // Shorts replay in a loop, so this can exceed 100 %
+    ['% moyen regardé', t.average_view_percentage != null ? t.average_view_percentage.toFixed(1) + ' %' : '—'],
     ['Abonnés gagnés', t.subscribers_gained ?? '—'],
     ['Abonnés perdus', t.subscribers_lost ?? '—'],
   ];
   const traffic = (data.traffic_sources || []).slice().sort((a, b) => b.views - a.views).slice(0, 6);
   const topVideos = data.top_videos || [];
+  const summary = [
+    data.subscriber_count != null && `${fmt(data.subscriber_count)} abonnés`,
+    t.views != null && `${fmt(t.views)} vues`,
+    t.average_view_percentage != null && `${t.average_view_percentage.toFixed(0)} % regardé`,
+  ].filter(Boolean).join(' · ');
 
   return `
-  <div class="chcard" style="padding:16px">
-    <div class="name" style="font-size:13px;font-weight:700;margin-bottom:10px">Vue d'ensemble · 30 derniers jours</div>
+  <details class="chcard overview-card" ${overviewOpen() ? 'open' : ''}>
+    <summary class="overview-summary">
+      ${icon('chevron')}
+      <span class="name" style="font-size:13px;font-weight:700">Vue d'ensemble · 30 derniers jours</span>
+      <span class="overview-mini">${esc(summary)}</span>
+    </summary>
     <div class="analytics-grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      ${tiles.map(([label, val]) => `<div class="astat"><span class="alabel">${label}</span><span class="aval">${esc(typeof val === 'number' ? val.toLocaleString() : val)}</span></div>`).join('')}
+      ${tiles.map(([label, val]) => `<div class="astat"><span class="alabel">${label}</span><span class="aval">${esc(fmt(val))}</span></div>`).join('')}
     </div>
-    <div class="asection" style="margin-top:12px">
+    <div class="asection">
       <div class="atitle">Vues par jour</div>
       ${renderDailyViewsSvg(data.daily_views || [])}
     </div>
-    <div style="display:flex;gap:20px;flex-wrap:wrap;margin-top:12px">
-      <div class="asection" style="flex:1;min-width:180px">
+    <div style="display:flex;gap:28px;flex-wrap:wrap">
+      <div class="asection" style="flex:1;min-width:200px">
         <div class="atitle">Sources de trafic</div>
-        ${traffic.length ? traffic.map(s => `<div class="aline"><span>${esc(s.type)}</span><span>${s.views}</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
+        ${traffic.length ? traffic.map(s => `<div class="aline"><span title="${esc(s.type)}">${esc(TRAFFIC_LABELS[s.type] || s.type)}</span><span>${fmt(s.views)}</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
       </div>
-      <div class="asection" style="flex:2;min-width:240px">
-        <div class="atitle">Meilleures vidéos (30j)</div>
-        ${topVideos.length ? topVideos.map(v => `<div class="aline"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:280px">${esc(v.title)}</span><span>${v.views} vues</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
+      <div class="asection" style="flex:2;min-width:260px">
+        <div class="atitle">Meilleures vidéos (30 j)</div>
+        ${topVideos.length ? topVideos.map(v => `<div class="aline"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;flex:1;margin-right:12px">${esc(v.title)}</span><span style="flex:none">${fmt(v.views)} vues</span></div>`).join('') : '<span class="empty-note">Aucune donnée.</span>'}
       </div>
     </div>
-  </div>`;
+  </details>`;
 }
 
 function renderDashGrid(){
