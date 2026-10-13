@@ -414,55 +414,26 @@ def find_video_by_path(database, video_path):
     return None, None
 
 def find_matching_video_file(expected_path, video_data=None):
-    """Trouve le fichier vidéo correspondant même si le nom a changé"""
-    # Fix double slashes
+    """Retourne le fichier vidéo enregistré pour cette vidéo, ou None s'il
+    n'existe plus. Ne devine JAMAIS un autre fichier (ancien comportement :
+    fichier unique / nom approchant / plus récent de processed_videos/) —
+    ça pouvait publier la vidéo B sous le titre de la vidéo A. Mieux vaut un
+    échec explicite "fichier introuvable" qu'un upload du mauvais contenu."""
+    if not expected_path:
+        return None
     expected_path = expected_path.replace('//', '/')
-    
-    # Si le fichier existe déjà, le retourner
     if os.path.exists(expected_path):
         return expected_path
-    
-    # Chercher dans processed_videos
-    processed_dir = Path('processed_videos')
-    if not processed_dir.exists():
-        return None
-    
-    # Lister tous les fichiers MP4
-    available_files = list(processed_dir.glob('*.mp4'))
-    
-    if not available_files:
-        return None
-    
-    # Si une seule vidéo disponible, l'utiliser
-    if len(available_files) == 1:
-        print(f"🔍 Fichier unique trouvé: {available_files[0].name}")
-        return str(available_files[0])
-    
-    # Essayer de matcher par titre/nom
-    if video_data:
-        search_terms = []
-        
-        # Ajouter différents termes de recherche
-        if video_data.get('custom_title'):
-            search_terms.append(video_data['custom_title'].lower())
-        if video_data.get('original_title'):
-            search_terms.append(video_data['original_title'].lower())
-        
-        # Chercher un match partiel
-        for file_path in available_files:
-            filename_lower = file_path.name.lower()
-            for term in search_terms:
-                # Nettoyer les termes pour la comparaison
-                clean_term = ''.join(c for c in term if c.isalnum() or c.isspace()).strip()
-                if clean_term and len(clean_term) > 3:
-                    if clean_term[:10] in filename_lower or any(word in filename_lower for word in clean_term.split() if len(word) > 3):
-                        print(f"🔍 Match trouvé: {file_path.name} (terme: {clean_term})")
-                        return str(file_path)
-    
-    # Sinon, prendre le plus récent
-    latest_file = max(available_files, key=lambda f: f.stat().st_mtime)
-    print(f"🔍 Fichier le plus récent: {latest_file.name}")
-    return str(latest_file)
+    print(f"❌ Fichier vidéo introuvable: {expected_path}")
+    return None
+
+def current_video_data(schedule_entry, database):
+    """La ligne vidéo À JOUR (base SQLite), pas la copie figée dans
+    upload_schedule.json au moment où le planning a été généré — sinon un
+    titre/description/tags corrigé à l'étape "Résultats IA" après la
+    génération du planning serait ignoré et l'ancien publié. La copie ne sert
+    plus que de secours si la ligne a disparu de la base."""
+    return database.get('videos', {}).get(schedule_entry['video_id']) or schedule_entry['video_data']
 
 def convert_to_utc(local_time_str):
     """Convertit un timestamp local en UTC pour YouTube API"""
@@ -497,23 +468,31 @@ def update_video_status(video_id, youtube_url, youtube_id, scheduled_time=None):
     vidéo locaux (brut + traité) — une fois réellement publiée sur YouTube, ils
     n'ont plus besoin de rester sur le disque, où ils s'accumulaient sinon
     indéfiniment (rien d'autre dans le pipeline ne les nettoyait)."""
-    database = load_video_database()
-    if video_id in database.get("videos", {}):
-        video = database["videos"][video_id]
+    # Lecture + écriture ciblées sur CETTE ligne (URLManager.update_video_status),
+    # jamais load_all + replace_all de toute la base : ce dernier faisait
+    # DELETE FROM videos puis réinsérait l'instantané, effaçant au passage
+    # toute écriture faite entre-temps par un thread d'arrière-plan
+    # (génération de scripts/audio, stats_tracker).
+    from url_manager import URLManager
+    import db as _db
+    video = _db.get_video(video_id)
+    if video:
         update_data = {
             "youtube_url": youtube_url,
             "youtube_id": youtube_id,
             "uploaded_at": datetime.now().isoformat(),
-            "updated_at": datetime.now().isoformat()
         }
-
         if scheduled_time:
-            update_data["status"] = "scheduled_on_youtube"
+            status = "scheduled_on_youtube"
             update_data["scheduled_publish_time"] = scheduled_time
         else:
-            update_data["status"] = "uploaded"
+            status = "uploaded"
 
-        video.update(update_data)
+        try:
+            URLManager().update_video_status(video_id, status, **update_data)
+        except Exception as e:
+            print(f"⚠️ Erreur sauvegarde base de données: {e}")
+            return False
 
         for path_key in ("raw_video_path", "video_path"):
             path = video.get(path_key)
@@ -524,7 +503,7 @@ def update_video_status(video_id, youtube_url, youtube_id, scheduled_time=None):
                 except OSError as e:
                     print(f"⚠️ Impossible de supprimer {path}: {e}")
 
-        return save_video_database(database)
+        return True
     return False
 
 def authenticate_youtube(channel_name="default"):
@@ -769,7 +748,7 @@ def upload_scheduled_videos():
     for i, video in enumerate(videos_to_upload, 1):
         print(f"\n📤 Upload {i}/{len(videos_to_upload)}: {video['title']}")
         
-        video_data = video['video_data']
+        video_data = current_video_data(video, database)
         ai_data = video_data.get('ai_data', {})
         
         # Utilise les données AI optimisées
@@ -879,7 +858,7 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
                   "error": f"Authentication failed for channel '{channel_name}'"}]
 
     for video in videos_to_upload:
-        video_data = video['video_data']
+        video_data = current_video_data(video, database)
         ai_data = video_data.get('ai_data', {})
 
         title = ai_data.get('optimized_title') or video['title']

@@ -354,6 +354,20 @@ def update_visibility(channel_name: str, youtube_id: str, update: VisibilityUpda
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"YouTube API error: {e}")
 
+    # Keep our local record in step with what we just told YouTube, so the
+    # "Planning" screen and the dashboard's local_status don't go stale.
+    bp = get_batch_processor()
+    for video in bp.url_manager.list_videos(channel=channel_name):
+        if video.get('youtube_id') == youtube_id:
+            local_status = 'scheduled_on_youtube' if new_status.get('publishAt') else 'uploaded'
+            bp.url_manager.update_video_status(
+                video['video_id'], local_status,
+                scheduled_publish_time=new_status.get('publishAt')
+            )
+            break
+
+    return {"privacy_status": new_status.get('privacyStatus'), "publish_at": new_status.get('publishAt')}
+
 
 @app.get("/api/channels/{channel_name}/videos/{youtube_id}/analytics")
 def video_analytics(channel_name: str, youtube_id: str):
@@ -387,20 +401,6 @@ def channel_analytics_endpoint(channel_name: str, days: int = 30):
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"YouTube API error: {e}")
-
-    # Keep our local record in step with what we just told YouTube, so the
-    # "Planning" screen and the dashboard's local_status don't go stale.
-    bp = get_batch_processor()
-    for video in bp.url_manager.list_videos(channel=channel_name):
-        if video.get('youtube_id') == youtube_id:
-            local_status = 'scheduled_on_youtube' if new_status.get('publishAt') else 'uploaded'
-            bp.url_manager.update_video_status(
-                video['video_id'], local_status,
-                scheduled_publish_time=new_status.get('publishAt')
-            )
-            break
-
-    return {"privacy_status": new_status.get('privacyStatus'), "publish_at": new_status.get('publishAt')}
 
 
 # ---------------------------------------------------------------------------
@@ -600,11 +600,19 @@ _batch_threads: Dict[str, threading.Thread] = {}
 _batch_threads_lock = threading.Lock()
 
 
-def _start_batch_thread(batch_id: str, target):
-    thread = threading.Thread(target=target, args=(batch_id,), daemon=True)
+def _start_batch_thread(batch_id: str, target) -> bool:
+    """Starts `target(batch_id)` in a background thread — unless one is
+    already running for this batch (double click, second tab...), since two
+    concurrent audio phases would each synthesize every draft and pay
+    ElevenLabs twice. Returns whether a new thread was started."""
     with _batch_threads_lock:
+        existing = _batch_threads.get(batch_id)
+        if existing and existing.is_alive():
+            return False
+        thread = threading.Thread(target=target, args=(batch_id,), daemon=True)
         _batch_threads[batch_id] = thread
-    thread.start()
+        thread.start()
+    return True
 
 
 @app.get("/api/batches/{batch_id}/active")
@@ -701,8 +709,7 @@ def generate_batch_audio(batch_id: str):
     has a script but no audio yet — a background thread, same polling
     pattern as phase 1's script generation."""
     gp = get_generative_pipeline()
-    _start_batch_thread(batch_id, gp.run_batch_audio)
-    return {"started": True}
+    return {"started": _start_batch_thread(batch_id, gp.run_batch_audio)}
 
 
 @app.post("/api/videos/{video_id}/advance")
@@ -944,6 +951,14 @@ def get_schedule():
         e for e in data.get("schedule", [])
         if db.get("videos", {}).get(e.get("video_id"), {}).get("status") not in published_statuses
     ]
+    # Show the CURRENT title (what will actually be published — see
+    # youtube_uploader.current_video_data), not the copy frozen into
+    # upload_schedule.json when the schedule was generated.
+    for entry in pending:
+        video = db.get("videos", {}).get(entry.get("video_id")) or {}
+        current_title = (video.get("ai_data") or {}).get("optimized_title")
+        if current_title:
+            entry["title"] = current_title
     return {**data, "schedule": pending}
 
 

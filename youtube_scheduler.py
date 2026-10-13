@@ -179,13 +179,26 @@ class YouTubeScheduler:
             'is_valid': len(violations) == 0
         }
     
-    def save_schedule(self, schedule: List[Dict], filename: str = "upload_schedule.json"):
-        """Sauvegarde le planning"""
+    def save_schedule(self, schedule: List[Dict], filename: str = "upload_schedule.json",
+                      schedule_method: Optional[str] = None):
+        """Sauvegarde le planning.
+
+        schedule_method ("static" | "analytics" | "ai") est mémorisé dans le
+        fichier pour que les vidéos ajoutées plus tard au planning
+        (BatchProcessor.ensure_schedule_includes_all_ready) suivent la même
+        méthode que celle choisie par l'utilisateur. Sans valeur, celle déjà
+        présente dans le fichier est conservée (ex: simple modif d'une date)."""
+        if schedule_method is None and os.path.exists(filename):
+            try:
+                schedule_method = self.load_schedule(filename).get('schedule_method')
+            except (OSError, json.JSONDecodeError):
+                pass
         schedule_data = {
             'created_at': datetime.now().isoformat(),
             'config_used': self.config,
+            'schedule_method': schedule_method,
             'schedule': schedule,
-            'validation': self.validate_schedule(schedule)
+            'validation': self.validate_schedule(schedule) if schedule else None
         }
         
         with open(filename, 'w', encoding='utf-8') as f:

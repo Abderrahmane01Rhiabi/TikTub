@@ -10,7 +10,7 @@ import sys
 import yaml
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 # Imports des modules créés
@@ -656,7 +656,7 @@ class BatchProcessor:
             schedule = self.scheduler.create_upload_schedule(ready_videos, channel_manager=channel_manager)
 
         # Sauvegarde (save_schedule attend une liste de dicts, pas le wrapper avec métadonnées)
-        self.scheduler.save_schedule(schedule)
+        self.scheduler.save_schedule(schedule, schedule_method=schedule_method)
         self._record_schedule_decisions(schedule, schedule_method)
 
         return schedule
@@ -678,7 +678,43 @@ class BatchProcessor:
                     print(f"⚠️ Could not record analytics context for {entry.get('video_id')}: {e}")
             self.url_manager.record_publish_decision(entry['video_id'], method, entry['scheduled_time'], context)
 
-    def ensure_schedule_includes_all_ready(self, schedule_method: str = 'static') -> List[Dict]:
+    def _parse_slot(self, value: str) -> datetime:
+        """Les méthodes de planning n'écrivent pas la même chose : 'static'
+        une date ISO avec fuseau, 'analytics'/'ai'/modif manuelle une date
+        locale sans fuseau. Tout est ramené à une date avec fuseau (celui de
+        config.yaml) pour pouvoir les comparer entre elles."""
+        from dateutil import parser as date_parser
+        dt = date_parser.parse(value)
+        return dt if dt.tzinfo else self.scheduler.timezone.localize(dt)
+
+    def _shift_off_taken_slots(self, new_entries: List[Dict], existing_entries: List[Dict]):
+        """Chaque méthode de planning repart de "maintenant" : les vidéos
+        ajoutées après coup tomberaient donc sur les MÊMES premiers créneaux
+        que celles déjà planifiées sur la même chaîne. Décale chaque nouvelle
+        entrée (de spacing_hours en spacing_hours) jusqu'à ce qu'elle soit à
+        au moins spacing_hours de tout créneau déjà pris sur sa chaîne."""
+        from dateutil import parser as date_parser
+        spacing = timedelta(hours=self.config['scheduling']['spacing_hours'])
+        taken: Dict[str, List[datetime]] = {}
+        for entry in existing_entries:
+            try:
+                taken.setdefault(entry.get('channel'), []).append(self._parse_slot(entry['scheduled_time']))
+            except (KeyError, ValueError, TypeError):
+                continue
+
+        for entry in sorted(new_entries, key=lambda e: self._parse_slot(e['scheduled_time'])):
+            slot = original = self._parse_slot(entry['scheduled_time'])
+            channel_slots = taken.setdefault(entry.get('channel'), [])
+            while any(abs(slot - other) < spacing for other in channel_slots):
+                slot += spacing
+            channel_slots.append(slot)
+            if slot != original:
+                # Keep the format the scheduling method originally wrote (with/without timezone)
+                had_tz = date_parser.parse(entry['scheduled_time']).tzinfo is not None
+                entry['scheduled_time'] = slot.isoformat() if had_tz else slot.strftime('%Y-%m-%d %H:%M:%S')
+                entry['scheduled_time_readable'] = slot.strftime('%A %d/%m/%Y à %H:%M')
+
+    def ensure_schedule_includes_all_ready(self, schedule_method: str = None) -> List[Dict]:
         """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
         publie que ce qui est dans upload_schedule.json, donc une vidéo passée à
         'ready_for_upload' APRÈS la dernière génération du planning serait sinon
@@ -698,6 +734,8 @@ class BatchProcessor:
             return existing_schedule
 
         print(f"⚠️ {len(missing)} vidéo(s) prête(s) manquaient du planning — ajout automatique avant publication")
+        # Même méthode que celle choisie à "Générer le planning", pas toujours 'static'
+        schedule_method = schedule_method or existing.get('schedule_method') or 'static'
         channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
 
         if schedule_method == 'ai' and AI_SCHEDULING_SUPPORT:
@@ -707,8 +745,9 @@ class BatchProcessor:
         else:
             new_entries = self.scheduler.create_upload_schedule(missing, channel_manager=channel_manager)
 
-        combined = existing_schedule + new_entries
-        self.scheduler.save_schedule(combined)
+        self._shift_off_taken_slots(new_entries, existing_schedule)
+        combined = sorted(existing_schedule + new_entries, key=lambda e: self._parse_slot(e['scheduled_time']))
+        self.scheduler.save_schedule(combined, schedule_method=schedule_method)
         self._record_schedule_decisions(new_entries, schedule_method)
         return combined
 
