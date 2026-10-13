@@ -315,7 +315,19 @@ def render_frame_preview(
         logger.error(f"❌ Preview render failed: {e}")
         return None
 
-def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None, frame_mode=None, rounded_corners=False):
+def processed_output_paths(title: str, bg_mode: str, output_name: str = None):
+    """(output .mp4, temp audio) for a processed video. output_name (the
+    video_id, from the batch pipeline) makes both unique per video; the
+    title-based name is only the old CLI fallback — two videos with the same
+    caption (e.g. one URL imported for several channels) used to write the
+    SAME file, each processing overwriting the previous one, and the first
+    upload deleting it for the others."""
+    stem = output_name or f"{title}_{bg_mode}_processed"
+    return (os.path.join(CONFIG['output_folder'], f"{stem}.mp4"),
+            os.path.join(CONFIG['temp_folder'], f"{stem}-temp-audio.m4a"))
+
+
+def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None, frame_mode=None, rounded_corners=False, output_name=None):
     """frame_mode ('letterbox' | 'full_border' | 'fill' | None): how the video
     sits inside the 9:16 canvas relative to the background border, chosen
     per-video by the user in the 'Cadrage' wizard step (see
@@ -419,14 +431,14 @@ def process_video_with_background_options(video_path: str, title: str, bg_mode='
         video_centered = video_resized.set_position('center')
         final = CompositeVideoClip([background, video_centered])
 
-        output_path = f"{CONFIG['output_folder']}/{title}_{bg_mode}_processed.mp4"
+        output_path, temp_audio = processed_output_paths(title, bg_mode, output_name)
 
         final.write_videofile(
             output_path,
             fps=30,
             codec='libx264',
             audio_codec='aac',
-            temp_audiofile=f"{CONFIG['temp_folder']}/temp-audio.m4a",
+            temp_audiofile=temp_audio,
             remove_temp=True,
             verbose=False,
             logger=None

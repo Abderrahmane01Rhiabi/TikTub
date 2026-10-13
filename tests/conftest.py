@@ -35,6 +35,20 @@ shutil.copy(ROOT / "config.yaml.example", Path(_SESSION_DIR) / "config.yaml")
 os.environ["TIKTUB_DATA_DIR"] = _SESSION_DIR
 
 
+def _import_webapp_once():
+    """Imports webapp.main exactly once, with its import-time chdir landing
+    in the throwaway session dir, then restores the cwd — so no test ever
+    finds itself moved out of its own tmp dir by a first import."""
+    if "webapp.main" in sys.modules:
+        return sys.modules["webapp.main"]
+    cwd = os.getcwd()
+    try:
+        import webapp.main as m
+    finally:
+        os.chdir(cwd)
+    return m
+
+
 class Project:
     """Helpers over the per-test data directory."""
 
@@ -92,7 +106,7 @@ def project(tmp_path, monkeypatch):
 def client(project):
     """FastAPI test client (startup events — the stats tracker — not run)."""
     from fastapi.testclient import TestClient
-    import webapp.main as m
+    m = _import_webapp_once()
     from channel_manager import ChannelManager
     m.CONFIG_PATH = project.root / "config.yaml"
     m._batch_processor = None

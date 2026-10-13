@@ -171,3 +171,40 @@ def test_past_date_upload_goes_out_public(project, fake_youtube):
     assert result["success"] and "passée" in result["note"]
     assert fake_youtube.inserted[0]["status"]["privacyStatus"] == "public"
     assert db.get_video("v1")["status"] == "uploaded"
+
+
+# ---- one source URL imported for several channels
+
+def test_same_caption_videos_get_distinct_processed_files():
+    """Regression: the processed file was named after the caption, so one URL
+    imported for 3 channels wrote ONE shared file (each processing overwrote
+    the previous one, and the first upload deleted it for the others)."""
+    from test3_script import processed_output_paths
+    a = processed_output_paths("Same caption", "specific", output_name="chanA_1")
+    b = processed_output_paths("Same caption", "specific", output_name="chanB_1")
+    assert a[0] != b[0] and a[1] != b[1]
+    assert a[0].endswith("chanA_1.mp4") and b[0].endswith("chanB_1.mp4")
+
+
+def test_batch_processing_names_the_file_after_the_video(project, monkeypatch):
+    import test3_script
+    from batch_processor import BatchProcessor
+    seen = {}
+    monkeypatch.setattr(test3_script, "process_video_with_background_options",
+                        lambda *a, output_name=None, **k: seen.setdefault("name", output_name) and None)
+    BatchProcessor("config.yaml").process_tiktok_video("x.mp4", "t", "none", output_name="vid_42")
+    assert seen["name"] == "vid_42"
+
+
+def test_reprocess_sends_a_video_back_to_cadrage_keeping_its_ai_data(client, project):
+    from pathlib import Path
+    Path("temp/v1").mkdir(parents=True)
+    Path("temp/v1/src.mp4").write_bytes(b"x")
+    project.add_video("v1", raw_video_path="temp/v1/src.mp4", video_path="processed_videos/gone.mp4",
+                      ai_data={"optimized_title": "reviewed"})
+    project.add_video("v2", raw_video_path="temp/none.mp4", video_path="processed_videos/gone2.mp4")
+
+    assert client.post("/api/videos/v1/reprocess").status_code == 200
+    v1 = db.get_video("v1")
+    assert v1["status"] == "selected" and v1["reprocess_keep_ai"] and v1["ai_data"]["optimized_title"] == "reviewed"
+    assert client.post("/api/videos/v2/reprocess").status_code == 400  # source gone too

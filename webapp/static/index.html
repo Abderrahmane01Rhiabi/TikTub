@@ -344,11 +344,12 @@
   .vrow:first-child{border-top:none;}
   .mthumb{border-radius:6px;}
   .datebadge{border-radius:8px;}
-  .publish-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-top:1px solid var(--border-soft);font-size:12.5px;}
+  .publish-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;align-items:center;padding:9px 0;border-top:1px solid var(--border-soft);font-size:12.5px;}
   .publish-row:first-child{border-top:none;}
-  .publish-row .name{flex:1;min-width:0;color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .publish-row .when{flex:none;color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;}
-  .publish-row .flag{flex:none;}
+  .publish-row .name{grid-column:1 / -1;min-width:0;color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .publish-row .when{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;}
+  .publish-row .flag{display:flex;gap:6px;align-items:center;justify-content:flex-end;}
+  .publish-row .flag .btn{padding:3px 9px;font-size:11px;}
   .totalbar{border-radius:12px;}
   .result-line{display:flex;align-items:flex-start;gap:8px;padding:8px 0;}
   .result-line svg{flex:none;margin-top:1px;}
@@ -372,7 +373,7 @@
 
   /* Planning calendar */
   .cal-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
-  .cal-title{font-weight:700;font-size:13.5px;margin:0 6px;text-transform:capitalize;}
+  .cal-title{font-weight:700;font-size:13.5px;margin:0 6px;}
   .cal-head .summary{margin-left:auto;font-size:12px;color:var(--muted);}
   .cal-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:var(--panel);}
   .cal{display:grid;grid-template-columns:150px repeat(7,minmax(118px,1fr));min-width:980px;}
@@ -659,8 +660,10 @@
 
 <script>
 const CHANNEL_COLORS = {
-  meme_culture: '#6d8dfd', animeshorts: '#b18cfd', prince_moulay_hassan: '#f5c56d',
-  lungte888: '#6ddbf5', zit_bliss: '#fd8cc4', lungtemotivates: '#4ade80'
+  // Kept distinct from the status colors (accent blue, ok green, warn amber,
+  // danger red) so a channel dot is never mistaken for a state.
+  meme_culture: '#38bdf8', animeshorts: '#b18cfd', prince_moulay_hassan: '#fb923c',
+  lungte888: '#e2e8f0', zit_bliss: '#fd8cc4', lungtemotivates: '#2dd4bf'
 };
 function channelColor(name){ return CHANNEL_COLORS[name] || '#9aa1ac'; }
 function esc(s){ return (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -801,6 +804,7 @@ document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', 
 const SCREEN_LOADERS = {
   0: [() => loadConnectionScreen(), 'connectGrid'],
   1: [() => loadBackgrounds(), 'backgroundsGrid'],
+  2: [() => refreshDownloadedRow(), 'downloadedRow'],
   3: [() => loadSelection(), 'selectionSections'],
   4: [() => loadFrameStep(), 'frameGrid'],
   5: [() => loadResultsScreen(), 'resultsList'],
@@ -1238,7 +1242,7 @@ document.getElementById('downloadAllBtn').addEventListener('click', async () => 
   }
   dlBtn.disabled = false;
   dlBtn.innerHTML = dlLabel;
-  refreshDownloadedRow();
+  safeLoad(refreshDownloadedRow, 'downloadedRow');
 });
 
 async function refreshDownloadedRow(){
@@ -1487,7 +1491,7 @@ function renderResults(videos){
         <div class="rfields">
           <div><label class="f">Titre</label><input class="f r-title" value="${esc(ai.optimized_title)}"></div>
           <div><label class="f">Description</label><textarea class="f r-desc">${esc(desc)}</textarea></div>
-          <div><label class="f">Tags, séparés par des virgules</label><input class="tags-input r-tags" value="${esc(tags)}"></div>
+          <div><label class="f">Tags, séparés par des virgules</label><textarea class="tags-input r-tags" rows="2" style="resize:vertical">${esc(tags)}</textarea></div>
         </div>
       </div>
       <div class="chcard-foot">
@@ -1684,7 +1688,7 @@ function renderSchedule(schedule){
           <div class="vname">${esc(e.title)}</div>
           ${e.publish_now
             ? `<span class="pill ok">${icon('globe', 11)} Publication immédiate</span>`
-            : `${dateBadgeHtml(e.scheduled_time, e.scheduled_time_readable)}
+            : `${dateBadgeHtml(e.scheduled_time, e.when ? formatWhen(e.when) : e.scheduled_time)}
                <button class="editbtn edit-date" title="Modifier la date">${icon('edit')}</button>`}
           <button class="btn ghost small publish-now-toggle">${e.publish_now ? 'Programmer plutôt' : 'Publier maintenant'}</button>
         </div>`).join('')}
@@ -1715,7 +1719,7 @@ function renderSchedule(schedule){
       const scheduled_time = input.value.replace('T',' ') + ':00';
       try {
         const entry = await api(`/api/schedule/${row.dataset.video}`, { method:'PATCH', body: JSON.stringify({scheduled_time}) });
-        input.outerHTML = dateBadgeHtml(entry.scheduled_time, entry.scheduled_time_readable);
+        input.outerHTML = dateBadgeHtml(entry.scheduled_time, formatWhen(input.value));
         log('Date mise à jour', 'success');
       } catch (e){ log(e.message, 'error'); }
     }, { once:true });
@@ -1878,7 +1882,10 @@ function wireCalendar(box, all){
       if (!item || !cell.classList.contains('droppable')) return;
       const target = new Date(`${cell.dataset.day}T${hhmm(item.date)}:00`);
       if (dayKey(target) === dayKey(item.date)) return;
-      if (target <= new Date()){ log('Ce créneau est déjà passé — choisis un jour à venir.', 'error'); return; }
+      if (target <= new Date()){
+        log(`${target.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric' })} à ${hhmm(target)} est déjà passé — choisis un jour à venir, ou clique la vidéo pour changer aussi l'heure.`, 'error');
+        return;
+      }
       await saveSlot(item, target);
     });
   });
@@ -1977,9 +1984,9 @@ async function loadSummaryFromSchedule(){
       </div>
       <div>
         ${byChannel[name].map(e => `
-          <div class="publish-row" data-title="${esc(e.title)}">
-            <span class="name">${esc(e.title)}</span>
-            <span class="when">${e.publish_now ? 'immédiate' : esc(e.scheduled_time_readable || e.scheduled_time)}</span>
+          <div class="publish-row" data-title="${esc(e.title)}" data-video="${esc(e.video_id)}">
+            <span class="name" title="${esc(e.title)}">${esc(e.title)}</span>
+            <span class="when">${e.publish_now ? 'Publication immédiate' : esc(e.when ? formatWhen(e.when) : e.scheduled_time)}</span>
             <span class="flag" data-role="flag"></span>
           </div>`).join('')}
       </div>
@@ -2042,17 +2049,19 @@ function fillPreflightCard(item){
   }
 
   // Per-video flags on the matching rows
-  const flag = (titles, html) => card.querySelectorAll('.publish-row').forEach(row => {
-    if (titles.includes(row.dataset.title)) row.querySelector('[data-role="flag"]').innerHTML = html;
+  const flag = (match, html) => card.querySelectorAll('.publish-row').forEach(row => {
+    if (match(row)) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend', html);
   });
   if (item.missing_files.length){
     worse('warn');
-    flag(item.missing_files, `<span class="pill bad" title="Fichier vidéo introuvable : ne sera pas publiée">Fichier manquant</span>`);
+    const ids = item.missing_ids || [];
+    flag(row => ids.includes(row.dataset.video),
+      `<span class="pill bad" title="Fichier vidéo introuvable : ne sera pas publiée">Fichier manquant</span><button class="btn secondary small" data-reprocess>Retraiter</button>`);
     facts.push(`<div class="fact warn">${icon('alert')}<span>${item.missing_files.length} fichier(s) introuvable(s) — non publiée(s)</span></div>`);
   }
   if (item.past_dates.length){
     worse('warn');
-    flag(item.past_dates, `<span class="pill warn" title="Date déjà passée : sera publiée immédiatement">Date passée</span>`);
+    flag(row => item.past_dates.includes(row.dataset.title), `<span class="pill warn" title="Date déjà passée : sera publiée immédiatement">Date passée</span>`);
     facts.push(`<div class="fact warn">${icon('clock')}<span>${item.past_dates.length} date(s) déjà passée(s) — publiée(s) immédiatement</span></div>`);
   }
 
@@ -2064,6 +2073,16 @@ function fillPreflightCard(item){
   card.querySelector('[data-role="checks"]').innerHTML = facts.join('');
   const go = card.querySelector('[data-go-settings]');
   if (go) go.addEventListener('click', ev => { ev.preventDefault(); goTo(0); });
+
+  card.querySelectorAll('[data-reprocess]').forEach(btn => btn.addEventListener('click', async () => {
+    const row = btn.closest('.publish-row');
+    btn.disabled = true;
+    try {
+      await api(`/api/videos/${row.dataset.video}/reprocess`, { method: 'POST' });
+      log('Vidéo renvoyée au cadrage — ses titre/description/tags sont conservés. Termine par « Suivant (lancer l\'IA) ».', 'success');
+      goTo(4);
+    } catch (e){ btn.disabled = false; log(e.message, 'error'); }
+  }));
 }
 
 function publishResultsHtml(results){

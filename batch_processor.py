@@ -192,7 +192,7 @@ class BatchProcessor:
                 )
                 
                 processed_path = self.process_tiktok_video(
-                    video_path, title, bg_mode
+                    video_path, title, bg_mode, output_name=video['video_id']
                 )
                 
                 if not processed_path:
@@ -332,18 +332,27 @@ class BatchProcessor:
                 bg_mode, specific_bg = self.get_background_for_video(video)
                 frame_mode = video.get('frame_mode')
                 rounded_corners = video.get('rounded_corners', False)
-                processed_path = self.process_tiktok_video(raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners)
+                processed_path = self.process_tiktok_video(
+                    raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
+                    output_name=video['video_id']  # unique per video, see test3_script
+                )
 
                 if not processed_path:
                     self.url_manager.update_video_status(video['video_id'], 'processing_failed')
                     continue
 
-                self.url_manager.update_video_status(video['video_id'], 'generating_tags')
-                ai_data = self.generate_ai_content(video, title, video_path=processed_path)
+                if video.get('reprocess_keep_ai') and video.get('ai_data'):
+                    # Re-rendering a video whose file went missing: keep the
+                    # title/description/tags already reviewed — only the
+                    # file needed redoing, not the AI pass.
+                    ai_data = video['ai_data']
+                else:
+                    self.url_manager.update_video_status(video['video_id'], 'generating_tags')
+                    ai_data = self.generate_ai_content(video, title, video_path=processed_path)
 
                 self.url_manager.update_video_status(
                     video['video_id'], 'ready_for_upload',
-                    video_path=processed_path, ai_data=ai_data
+                    video_path=processed_path, ai_data=ai_data, reprocess_keep_ai=False
                 )
                 processed_count += 1
                 print(f"✅ Traité: {ai_data.get('optimized_title', title)}")
@@ -527,14 +536,15 @@ class BatchProcessor:
 
         return None, None, {}
 
-    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False) -> str:
+    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False, output_name: str = None) -> str:
         """Interface avec le traitement vidéo existant"""
         # Réutilise la fonction de test3_script.py
         try:
             from test3_script import process_video_with_background_options
 
             return process_video_with_background_options(
-                video_path, title, bg_mode, specific_bg, frame_mode, rounded_corners
+                video_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
+                output_name=output_name
             )
 
         except Exception as e:

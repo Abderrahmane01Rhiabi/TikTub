@@ -554,6 +554,25 @@ def select_video(video_id: str, update: SelectionUpdate):
     return {"ok": True}
 
 
+@app.post("/api/videos/{video_id}/reprocess")
+def reprocess_video(video_id: str):
+    """Sends a ready video whose processed file is missing back to
+    Import → Cadrage ('selected'), to be rendered again from its downloaded
+    source — keeping its reviewed title/description/tags (reprocess_keep_ai).
+    Refused if the downloaded source is gone too (then: re-import the URL)."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if video.get("status") in ("uploaded", "scheduled_on_youtube"):
+        raise HTTPException(status_code=400, detail="Vidéo déjà envoyée sur YouTube")
+    raw = video.get("raw_video_path")
+    if not raw or not os.path.exists(raw):
+        raise HTTPException(status_code=400, detail="Le fichier téléchargé n'existe plus non plus — réimporte le lien dans Import → URLs.")
+    get_batch_processor().url_manager.update_video_status(video_id, "selected", video_path=None, reprocess_keep_ai=True)
+    return {"reprocess": True}
+
+
 @app.get("/api/videos/{video_id}/frame_suggestion")
 def get_frame_suggestion(video_id: str):
     bp = get_batch_processor()
@@ -1053,6 +1072,13 @@ def _pending_schedule(bp):
         current_title = (video.get("ai_data") or {}).get("optimized_title")
         if current_title:
             entry["title"] = current_title
+        # Timezone-aware ISO date, so the browser formats it (in French) —
+        # scheduled_time_readable is strftime'd in the server's (English)
+        # locale, and scheduled_time mixes aware/naive formats.
+        try:
+            entry["when"] = bp._parse_slot(entry["scheduled_time"]).isoformat()
+        except (KeyError, ValueError, TypeError):
+            entry["when"] = None
     return data, pending, db
 
 
@@ -1076,12 +1102,13 @@ def publish_preflight():
     for channel, entries in sorted(by_channel.items()):
         health = get_connection_health(channel)
         quota_status = quota.status_for_channel(channel)
-        missing_files, past_dates = [], []
+        missing_files, missing_ids, past_dates = [], [], []
         for entry in entries:
             video = current_video_data(entry, db)
             path = video.get("video_path")
             if not path or not os.path.exists(path):
                 missing_files.append(entry["title"])
+                missing_ids.append(entry["video_id"])
             if effective_scheduled_time(entry)[1]:
                 past_dates.append(entry["title"])
 
@@ -1092,6 +1119,7 @@ def publish_preflight():
             "connection": health,
             "quota": quota_status,
             "missing_files": missing_files,
+            "missing_ids": missing_ids,
             "past_dates": past_dates,
             "blocked": blocked,
             "publishable": 0 if blocked else len(entries) - len(missing_files),
