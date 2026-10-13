@@ -102,7 +102,7 @@
   .errs summary .all{margin-left:auto;font-weight:500;color:var(--muted);font-size:11px;}
   .errs summary .all:hover{color:var(--text);}
   .err-list{display:flex;flex-direction:column;gap:2px;margin-top:10px;}
-  .err-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;align-items:center;padding:8px 0;border-top:1px solid var(--border-soft);}
+  .err-item{display:grid;grid-template-columns:minmax(0,1fr) max-content;gap:4px 10px;align-items:center;padding:8px 0;border-top:1px solid var(--border-soft);}
   .err-item:first-child{border-top:none;}
   .err-title{font-size:12px;color:#c7cbd4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .err-title a{color:inherit;text-decoration:none;} .err-title a:hover{color:var(--accent);}
@@ -342,16 +342,21 @@
   .rlayout .rthumb{width:96px;border-radius:10px;}
   .rfields{display:flex;flex-direction:column;gap:10px;min-width:0;}
   .askrow{border-top:none;padding-top:0;}
-  .vrow{padding:10px 0;}
+  .vrow{padding:10px 0;row-gap:8px;}
+  .vrow .vname{flex:1 1 180px;}
   .vrow:first-child{border-top:none;}
   .mthumb{border-radius:6px;}
   .datebadge{border-radius:8px;}
-  .publish-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;align-items:center;padding:9px 0;border-top:1px solid var(--border-soft);font-size:12.5px;}
+  /* Card rows, one line per role — never rigid columns for variable content:
+     1. title  2. info line (date + status pills, wraps)  3. actions (only if any, wraps) */
+  .publish-row{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid var(--border-soft);font-size:12.5px;min-width:0;}
   .publish-row:first-child{border-top:none;}
-  .publish-row .name{grid-column:1 / -1;min-width:0;color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .publish-row .when{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap;}
-  .publish-row .flag{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;}
-  .publish-row .flag .btn{padding:3px 9px;font-size:11px;}
+  .publish-row .name{min-width:0;color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .publish-row .info{display:flex;align-items:center;gap:6px 8px;flex-wrap:wrap;min-width:0;}
+  .publish-row .when{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;}
+  .publish-row .row-actions{display:flex;gap:6px;flex-wrap:wrap;}
+  .publish-row .row-actions:empty{display:none;}
+  .publish-row .row-actions .btn{padding:4px 10px;font-size:11.5px;}
   .totalbar{border-radius:12px;}
   .result-line{display:flex;align-items:flex-start;gap:8px;padding:8px 0;}
   .result-line svg{flex:none;margin-top:1px;}
@@ -441,6 +446,10 @@
   .rank-row .chips span{font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .rank-row .views{text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
   .rank-row .views b{display:block;color:var(--text);font-size:13px;}
+  @media (max-width:760px){
+    .rank-row{grid-template-columns:26px 42px minmax(0,1fr);}
+    .rank-row .views, .rank-row > .btn{grid-column:3;justify-self:start;text-align:left;}
+  }
   .score{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap;}
   .score.up{background:rgba(74,222,128,.12);color:var(--ok);}
   .score.viral{background:linear-gradient(135deg,rgba(109,141,253,.25),rgba(74,222,128,.25));color:var(--text);}
@@ -2041,8 +2050,11 @@ async function loadSummaryFromSchedule(){
         ${byChannel[name].map(e => `
           <div class="publish-row" data-title="${esc(e.title)}" data-video="${esc(e.video_id)}">
             <span class="name" title="${esc(e.title)}">${esc(e.title)}</span>
-            <span class="when">${e.publish_now ? 'Publication immédiate' : esc(e.when ? formatWhen(e.when) : e.scheduled_time)}</span>
-            <span class="flag" data-role="flag"></span>
+            <div class="info">
+              <span class="when">${e.publish_now ? 'Publication immédiate' : esc(e.when ? formatWhen(e.when) : e.scheduled_time)}</span>
+              <span class="info" data-role="flag"></span>
+            </div>
+            <div class="row-actions" data-role="actions"></div>
           </div>`).join('')}
       </div>
       <div class="facts" data-role="checks">${spinnerHtml('Connexion, quota, fichiers…')}</div>
@@ -2108,15 +2120,19 @@ function fillPreflightCard(item){
   }
 
   // Per-video flags on the matching rows
-  card.querySelectorAll('[data-role="flag"]').forEach(f => { f.innerHTML = ''; }); // re-runs must not stack flags
-  const flag = (match, html) => card.querySelectorAll('.publish-row').forEach(row => {
-    if (match(row)) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend', html);
+  // re-runs must not stack flags/buttons
+  card.querySelectorAll('[data-role="flag"], [data-role="actions"]').forEach(f => { f.innerHTML = ''; });
+  const flag = (match, html, actions = '') => card.querySelectorAll('.publish-row').forEach(row => {
+    if (!match(row)) return;
+    row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend', html);
+    if (actions) row.querySelector('[data-role="actions"]').insertAdjacentHTML('beforeend', actions);
   });
   if (item.missing_files.length){
     worse('warn');
     const ids = item.missing_ids || [];
     flag(row => ids.includes(row.dataset.video),
-      `<span class="pill bad" title="Fichier vidéo introuvable : ne sera pas publiée">Fichier manquant</span><button class="btn secondary small" data-reprocess title="Refaire le cadrage et le traitement depuis le fichier téléchargé">Retraiter</button><button class="btn ghost small danger" data-abandon title="Retirer cette vidéo du planning">Abandonner</button>`);
+      `<span class="pill bad" title="Fichier vidéo introuvable : ne sera pas publiée">Fichier manquant</span>`,
+      `<button class="btn secondary small" data-reprocess title="Refaire le cadrage et le traitement depuis le fichier téléchargé">${icon('refresh', 12)} Retraiter</button><button class="btn ghost small danger" data-abandon title="Retirer cette vidéo du planning">${icon('trash', 12)} Abandonner</button>`);
     facts.push(`<div class="fact warn">${icon('alert')}<span>${item.missing_files.length} fichier(s) introuvable(s) — non publiée(s)</span></div>`);
   }
   if (item.past_dates.length){
