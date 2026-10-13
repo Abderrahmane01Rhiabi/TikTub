@@ -13,6 +13,7 @@ from typing import List, Dict
 # before any Flow/InstalledAppFlow does its token exchange.
 os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow, Flow
@@ -149,6 +150,38 @@ def get_connected_channel_title(channel_name: str):
     response = youtube.channels().list(part='snippet', mine=True).execute()
     items = response.get('items', [])
     return items[0]['snippet']['title'] if items else None
+
+
+def get_connection_health(channel_name: str) -> Dict:
+    """Why a channel is or isn't usable right now, for the UI — instead of a
+    bare "Non connectée" that hides an expired token behind the same label
+    as a channel never connected at all.
+
+    state: "connected" | "not_connected" (never connected: no token yet) |
+           "expired" (token exists but Google refuses it: revoked, or the
+           7-day limit of Google Cloud projects in "Testing" mode) |
+           "missing_credentials" (no credentials.json) |
+           "error" (anything else — network down, account without channel...)
+    """
+    health = {"state": "connected", "youtube_channel_title": None, "reason": None}
+    if not os.path.exists(get_credentials_path(channel_name)):
+        return {**health, "state": "missing_credentials", "reason": "Pas de credentials.json pour cette chaîne."}
+    if not os.path.exists(get_token_path(channel_name)):
+        return {**health, "state": "not_connected"}
+    try:
+        title = get_connected_channel_title(channel_name)
+    except RefreshError as e:
+        details = e.args[1] if len(e.args) > 1 and isinstance(e.args[1], dict) else {}
+        reason = details.get("error_description") or details.get("error") or str(e)
+        return {**health, "state": "expired", "reason": f"Google refuse l'autorisation enregistrée ({reason})."}
+    except ValueError as e:
+        # token.json unreadable / missing fields — only a reconnect fixes it
+        return {**health, "state": "expired", "reason": f"Token illisible ({e})."}
+    except Exception as e:
+        return {**health, "state": "error", "reason": str(e)[:300]}
+    if title is None:
+        return {**health, "state": "error", "reason": "Ce compte Google n'a pas de chaîne YouTube."}
+    return {**health, "youtube_channel_title": title}
 
 
 def has_edit_scope(channel_name: str) -> bool:
@@ -382,6 +415,63 @@ def update_video_visibility(channel_name: str, youtube_video_id: str,
     return response.get('status', {})
 
 
+class QuotaExceededError(Exception):
+    """YouTube refused an upload for quota reasons. project_wide=True for
+    "quotaExceeded" (the whole Google Cloud project is out for the day — no
+    other channel of that project can upload either), False for
+    "uploadLimitExceeded" (this one channel hit its own upload cap)."""
+    def __init__(self, reason: str):
+        super().__init__(reason)
+        self.reason = reason
+        self.project_wide = reason != "uploadLimitExceeded"
+
+
+QUOTA_ERROR_REASONS = {"quotaExceeded", "dailyLimitExceeded", "uploadLimitExceeded"}
+
+
+def http_error_reason(error: HttpError):
+    """The machine-readable reason ("quotaExceeded", ...) of a YouTube API error."""
+    try:
+        data = json.loads(error.content.decode("utf-8"))
+        errors = (data.get("error") or {}).get("errors") or []
+        if errors and errors[0].get("reason"):
+            return errors[0]["reason"]
+    except Exception:
+        pass
+    for detail in getattr(error, "error_details", None) or []:
+        if isinstance(detail, dict) and detail.get("reason"):
+            return detail["reason"]
+    return None
+
+
+QUOTA_SKIP_MESSAGE = "Quota YouTube du jour atteint pour ce projet Google — sera publiée au prochain « Publier tout » après la réinitialisation (minuit heure du Pacifique, ≈ 9h à Paris)."
+
+
+def effective_scheduled_time(entry: Dict, now: datetime = None):
+    """(scheduled_time to send to YouTube, note for the user).
+
+    None = immediate public upload: either the "Publier maintenant" toggle,
+    or a planned date that has already passed (e.g. a video held back a day
+    by the quota) — YouTube can't schedule into the past, and publishing now
+    is the closest thing to what was planned."""
+    if entry.get('publish_now'):
+        return None, None
+    scheduled_time = entry.get('scheduled_time')
+    if not scheduled_time:
+        return None, None
+    try:
+        import dateutil.parser
+        planned = dateutil.parser.parse(scheduled_time)
+        if planned.tzinfo is None:
+            planned = planned.astimezone()  # naive = local time of this machine
+        now = now or datetime.now(timezone.utc)
+        if planned <= now + timedelta(minutes=10):
+            return None, "Date prévue déjà passée → publiée immédiatement."
+    except (ValueError, OverflowError):
+        pass
+    return scheduled_time, None
+
+
 def load_video_database():
     """Charge la base de données des vidéos.
 
@@ -506,8 +596,13 @@ def update_video_status(video_id, youtube_url, youtube_id, scheduled_time=None):
         return True
     return False
 
-def authenticate_youtube(channel_name="default"):
-    """Authentification avec YouTube API (Multi-channel support)"""
+def authenticate_youtube(channel_name="default", interactive=True):
+    """Authentification avec YouTube API (Multi-channel support).
+
+    interactive=False (web app): never falls back to InstalledAppFlow's local
+    OAuth server — that blocks the calling thread until someone completes a
+    login in a browser, i.e. forever for a web request. Returns None instead,
+    and the UI's "Connexion" step is where the user (re)connects."""
     credentials_file = get_credentials_path(channel_name)
     token_file = get_token_path(channel_name)
     
@@ -531,6 +626,8 @@ def authenticate_youtube(channel_name="default"):
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
+        elif not interactive:
+            return None
         else:
             flow = InstalledAppFlow.from_client_secrets_file(credentials_file, SCOPES)
             # 👉 Force manual browser authorization (no GUI/browser popup)
@@ -626,6 +723,12 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
                 print(f"📅 Vidéo programmée dans YouTube Studio")
                 print(f"🕐 Publication automatique: {scheduled_time}")
             
+            try:
+                import quota
+                quota.record_upload(channel_name)
+            except Exception as e:
+                print(f"⚠️ Suivi du quota non enregistré: {e}")
+
             # Met à jour la base de données
             if video_id:
                 if update_video_status(video_id, url, youtube_video_id, scheduled_time):
@@ -637,6 +740,10 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
             return url
 
     except HttpError as e:
+        reason = http_error_reason(e)
+        if reason in QUOTA_ERROR_REASONS:
+            print(f"⛔ Quota YouTube atteint ({reason})")
+            raise QuotaExceededError(reason)
         print(f"❌ Erreur YouTube API: {e}")
     except Exception as e:
         print(f"❌ Erreur upload: {e}")
@@ -765,23 +872,29 @@ def upload_scheduled_videos():
         
         print(f"📁 Utilisation du fichier: {video_path}")
 
-        # 'publish_now' (set via the "Publier maintenant" toggle in Planning)
-        # means upload immediately as public instead of private+scheduled —
-        # upload_video() already treats scheduled_time=None as an immediate
-        # public upload, so no other change is needed here.
-        scheduled_time = None if video.get('publish_now') else video['scheduled_time']
+        scheduled_time, note = effective_scheduled_time(video)
+        if note:
+            print(f"ℹ️ {note}")
 
-        url = upload_video(
-            youtube=youtube,
-            video_path=video_path,
-            title=title,
-            description=description,
-            tags=tags,
-            video_id=video['video_id'],
-            scheduled_time=scheduled_time,
-            auto_confirm=auto_confirm,
-            channel_name=channel_name
-        )
+        try:
+            url = upload_video(
+                youtube=youtube,
+                video_path=video_path,
+                title=title,
+                description=description,
+                tags=tags,
+                video_id=video['video_id'],
+                scheduled_time=scheduled_time,
+                auto_confirm=auto_confirm,
+                channel_name=channel_name
+            )
+        except QuotaExceededError as e:
+            if e.project_wide:
+                import quota
+                quota.mark_exhausted(channel_name)
+            print(f"⛔ {QUOTA_SKIP_MESSAGE if e.project_wide else 'Limite d’uploads de la chaîne atteinte.'}")
+            print(f"⏭️ {len(videos_to_upload) - i + 1} vidéo(s) restante(s) non publiée(s), à relancer plus tard.")
+            break
         
         if url:
             success_count += 1
@@ -848,16 +961,33 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
     if not videos_to_upload:
         return results
 
+    def skip_all(videos, error):
+        """One result line PER video (not one anonymous line for the whole
+        channel), so the UI shows exactly which videos weren't published."""
+        return [{"video_id": v['video_id'], "title": current_video_data(v, database).get('ai_data', {}).get('optimized_title') or v['title'],
+                 "success": False, "skipped": True, "url": None, "error": error} for v in videos]
+
+    import quota
+    if quota.is_exhausted(channel_name):
+        return skip_all(videos_to_upload, QUOTA_SKIP_MESSAGE)
+
+    health = get_connection_health(channel_name)
+    if health["state"] != "connected":
+        messages = {
+            "expired": "Connexion YouTube expirée — reconnecte la chaîne à l'étape 1 · Connexion.",
+            "not_connected": "Chaîne jamais connectée — connecte-la à l'étape 1 · Connexion.",
+            "missing_credentials": "Pas de credentials.json pour cette chaîne.",
+        }
+        return skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}"))
+
     try:
-        youtube = authenticate_youtube(channel_name)
+        youtube = authenticate_youtube(channel_name, interactive=False)
     except Exception as e:
-        return [{"video_id": None, "title": None, "success": False, "url": None, "error": str(e)}]
-
+        return skip_all(videos_to_upload, f"Authentification échouée : {e}")
     if not youtube:
-        return [{"video_id": None, "title": None, "success": False, "url": None,
-                  "error": f"Authentication failed for channel '{channel_name}'"}]
+        return skip_all(videos_to_upload, f"Authentification échouée pour la chaîne '{channel_name}'")
 
-    for video in videos_to_upload:
+    for index, video in enumerate(videos_to_upload):
         video_data = current_video_data(video, database)
         ai_data = video_data.get('ai_data', {})
 
@@ -865,33 +995,41 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
         description = video_data.get('custom_description') or (ai_data.get('description_suggestions') or [''])[0]
         tags = ai_data.get('tags', ['Shorts', 'TikTok', 'Viral'])
 
-        video_path = find_matching_video_file(video_data['video_path'], video_data)
+        video_path = find_matching_video_file(video_data.get('video_path'), video_data)
         if not video_path:
-            results.append({"video_id": video['video_id'], "title": video['title'],
+            results.append({"video_id": video['video_id'], "title": title,
                              "success": False, "url": None, "error": "Video file not found"})
             continue
 
-        # 'publish_now' (set via the "Publier maintenant" toggle in Planning)
-        # means upload immediately as public instead of private+scheduled —
-        # upload_video() already treats scheduled_time=None as an immediate
-        # public upload, so no other change is needed here.
-        scheduled_time = None if video.get('publish_now') else video['scheduled_time']
+        scheduled_time, note = effective_scheduled_time(video)
 
-        url = upload_video(
-            youtube=youtube,
-            video_path=video_path,
-            title=title,
-            description=description,
-            tags=tags,
-            video_id=video['video_id'],
-            scheduled_time=scheduled_time,
-            auto_confirm=auto_confirm,
-            channel_name=channel_name
-        )
+        try:
+            url = upload_video(
+                youtube=youtube,
+                video_path=video_path,
+                title=title,
+                description=description,
+                tags=tags,
+                video_id=video['video_id'],
+                scheduled_time=scheduled_time,
+                auto_confirm=auto_confirm,
+                channel_name=channel_name
+            )
+        except QuotaExceededError as e:
+            # Stop here: every further call would fail the same way. The
+            # remaining videos stay ready_for_upload + in the schedule, so the
+            # next "Publier tout" after the reset picks them up.
+            if e.project_wide:
+                quota.mark_exhausted(channel_name)
+                message = QUOTA_SKIP_MESSAGE
+            else:
+                message = "Limite d'uploads de cette chaîne atteinte pour aujourd'hui (uploadLimitExceeded) — réessaie demain."
+            results.extend(skip_all(videos_to_upload[index:], message))
+            break
 
         results.append({
             "video_id": video['video_id'], "title": title,
-            "success": bool(url), "url": url,
+            "success": bool(url), "url": url, "note": note if url else None,
             "error": None if url else "Upload failed"
         })
 

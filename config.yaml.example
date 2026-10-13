@@ -30,3 +30,12 @@ youtube:
   auto_publish: false
   default_category: '24'
   default_privacy: private
+  # Quota YouTube par projet Google Cloud (partagé par les chaînes dont le
+  # credentials.json vient du même projet), réinitialisé à minuit heure du
+  # Pacifique. Sert uniquement à l'ESTIMATION affichée avant publication ;
+  # seul un vrai refus "quotaExceeded" de YouTube bloque les uploads.
+  # Coût d'un upload : ~1600 unités historiquement, ~100 annoncé depuis fin
+  # 2025 — vérifie dans Google Cloud Console → API YouTube Data → Quotas.
+  quota:
+    upload_cost: 100
+    daily_units: 10000

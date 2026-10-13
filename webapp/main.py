@@ -23,7 +23,12 @@ from urllib.parse import quote
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-os.chdir(PROJECT_ROOT)  # all existing modules use relative paths (channels/, database/, temp/...)
+# All existing modules use paths relative to the cwd (channels/, database/,
+# temp/, config.yaml...), so the cwd IS the data directory. TIKTUB_DATA_DIR
+# lets the test suite point it at a throwaway folder instead of the real
+# project data; normal runs leave it unset and keep using the project root.
+DATA_ROOT = Path(os.environ.get("TIKTUB_DATA_DIR") or PROJECT_ROOT)
+os.chdir(DATA_ROOT)
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
@@ -32,7 +37,7 @@ from pydantic import BaseModel, Field
 
 from channel_manager import ChannelManager
 
-CONFIG_PATH = PROJECT_ROOT / "config.yaml"
+CONFIG_PATH = DATA_ROOT / "config.yaml"
 
 app = FastAPI(title="TikTub")
 channel_manager = ChannelManager()
@@ -276,15 +281,18 @@ def oauth_callback(request: Request):
 
 @app.get("/api/channels/{channel_name}/connection_status")
 def connection_status(channel_name: str):
-    from youtube_uploader import get_connected_channel_title, has_edit_scope
-    try:
-        title = get_connected_channel_title(channel_name)
-    except Exception:
-        title = None
+    """state tells WHY a channel isn't usable (see get_connection_health) —
+    "expired" vs "not_connected" vs "error" — instead of one bare
+    "Non connectée" for every case."""
+    from youtube_uploader import get_connection_health, has_edit_scope
+    health = get_connection_health(channel_name)
+    connected = health["state"] == "connected"
     return {
-        "connected": title is not None,
-        "youtube_channel_title": title,
-        "can_edit": has_edit_scope(channel_name) if title is not None else False,
+        "connected": connected,
+        "state": health["state"],
+        "reason": health["reason"],
+        "youtube_channel_title": health["youtube_channel_title"],
+        "can_edit": has_edit_scope(channel_name) if connected else False,
     }
 
 
@@ -942,7 +950,13 @@ def get_schedule():
     Also self-heals: any 'ready_for_upload' video missing from the schedule
     (processed after the last "Générer le planning" click) gets added first,
     so Planning/Publier never silently omit real, waiting work."""
-    bp = get_batch_processor()
+    data, pending, _ = _pending_schedule(get_batch_processor())
+    return {**data, "schedule": pending}
+
+
+def _pending_schedule(bp):
+    """(schedule file data, entries still to publish, db snapshot) — the
+    shared basis of the Planning/Publier screens and the pre-publish check."""
     bp.ensure_schedule_includes_all_ready()
     data = bp.scheduler.load_schedule() or {"schedule": []}
     db = bp.url_manager.load_database()
@@ -959,7 +973,63 @@ def get_schedule():
         current_title = (video.get("ai_data") or {}).get("optimized_title")
         if current_title:
             entry["title"] = current_title
-    return {**data, "schedule": pending}
+    return data, pending, db
+
+
+@app.get("/api/publish/preflight")
+def publish_preflight():
+    """Checks, per channel, everything that would make "Publier tout" fail
+    or silently skip videos — BEFORE anything is sent: connection state,
+    the Google project's YouTube quota, missing video files, planned dates
+    already passed. Read-only on YouTube's side (one cheap channels.list
+    call per channel for the connection check, no upload)."""
+    import quota
+    from youtube_uploader import get_connection_health, current_video_data, effective_scheduled_time
+
+    _, pending, db = _pending_schedule(get_batch_processor())
+    by_channel: Dict[str, list] = {}
+    for entry in pending:
+        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
+        by_channel.setdefault(channel, []).append(entry)
+
+    report = []
+    for channel, entries in sorted(by_channel.items()):
+        health = get_connection_health(channel)
+        quota_status = quota.status_for_channel(channel)
+        missing_files, past_dates = [], []
+        for entry in entries:
+            video = current_video_data(entry, db)
+            path = video.get("video_path")
+            if not path or not os.path.exists(path):
+                missing_files.append(entry["title"])
+            if effective_scheduled_time(entry)[1]:
+                past_dates.append(entry["title"])
+
+        blocked = health["state"] != "connected" or quota_status["exhausted"]
+        report.append({
+            "channel": channel,
+            "videos": len(entries),
+            "connection": health,
+            "quota": quota_status,
+            "missing_files": missing_files,
+            "past_dates": past_dates,
+            "blocked": blocked,
+            "publishable": 0 if blocked else len(entries) - len(missing_files),
+        })
+
+    # Channels sharing one Google Cloud project share one quota: flag it,
+    # so "≈ N uploads left" isn't read as N per channel.
+    channels_by_project: Dict[str, list] = {}
+    for item in report:
+        channels_by_project.setdefault(item["quota"]["project_key"], []).append(item["channel"])
+    for item in report:
+        item["quota"]["shared_with"] = [c for c in channels_by_project[item["quota"]["project_key"]] if c != item["channel"]]
+
+    return {
+        "channels": report,
+        "total_videos": sum(i["videos"] for i in report),
+        "total_publishable": sum(i["publishable"] for i in report),
+    }
 
 
 class ScheduleEntryUpdate(BaseModel):

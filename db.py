@@ -64,6 +64,20 @@ CREATE TABLE IF NOT EXISTS video_stats_history (
 );
 CREATE INDEX IF NOT EXISTS idx_stats_history_video ON video_stats_history(video_id);
 CREATE INDEX IF NOT EXISTS idx_stats_history_snapshot ON video_stats_history(snapshot_at);
+
+-- YouTube API quota consumption, per Google Cloud project (the quota is
+-- per project, shared by every channel whose credentials.json comes from
+-- it) and per quota day (YouTube resets at midnight Pacific Time) — see
+-- quota.py. `exhausted` is set only from a REAL quotaExceeded answer from
+-- YouTube, never from our own estimate.
+CREATE TABLE IF NOT EXISTS quota_usage (
+    project_key TEXT NOT NULL,
+    day TEXT NOT NULL,
+    units INTEGER NOT NULL DEFAULT 0,
+    uploads INTEGER NOT NULL DEFAULT 0,
+    exhausted INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (project_key, day)
+);
 """
 
 
@@ -269,6 +283,47 @@ def list_action_log(limit: int = 200, db_path: str = DB_PATH) -> List[Dict]:
             "SELECT * FROM action_log ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
         return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def add_quota_usage(project_key: str, day: str, units: int, uploads: int = 1, db_path: str = DB_PATH):
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """INSERT INTO quota_usage (project_key, day, units, uploads) VALUES (?, ?, ?, ?)
+                   ON CONFLICT(project_key, day) DO UPDATE SET
+                       units = units + excluded.units, uploads = uploads + excluded.uploads""",
+                (project_key, day, units, uploads)
+            )
+    finally:
+        conn.close()
+
+
+def set_quota_exhausted(project_key: str, day: str, db_path: str = DB_PATH):
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute(
+                """INSERT INTO quota_usage (project_key, day, exhausted) VALUES (?, ?, 1)
+                   ON CONFLICT(project_key, day) DO UPDATE SET exhausted = 1""",
+                (project_key, day)
+            )
+    finally:
+        conn.close()
+
+
+def get_quota_usage(project_key: str, day: str, db_path: str = DB_PATH) -> Dict:
+    conn = get_connection(db_path)
+    try:
+        row = conn.execute(
+            "SELECT units, uploads, exhausted FROM quota_usage WHERE project_key = ? AND day = ?",
+            (project_key, day)
+        ).fetchone()
+        if not row:
+            return {"units": 0, "uploads": 0, "exhausted": False}
+        return {"units": row["units"], "uploads": row["uploads"], "exhausted": bool(row["exhausted"])}
     finally:
         conn.close()
 

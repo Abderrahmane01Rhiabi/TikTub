@@ -713,3 +713,17 @@ For issues or questions:
 2. Review log files in project directory
 3. Ensure all dependencies are installed
 4. Verify YouTube API credentials are correct
+
+---
+
+## 🧪 Tests automatiques
+
+La suite de tests est dans `tests/` (publication, quota YouTube, planning, API web). Chaque test tourne dans un dossier temporaire : jamais sur ta vraie base, tes chaînes ou tes clés, et sans aucun appel à YouTube, Gemini, OpenAI ou ElevenLabs.
+
+```bash
+source .venv/bin/activate
+pip install -r requirements-dev.txt   # une seule fois (installe pytest)
+python -m pytest
+```
+
+Les anciens fichiers `test_*.py` à la racine sont des scripts manuels, pas des tests automatiques : pytest les ignore volontairement.

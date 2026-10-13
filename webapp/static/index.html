@@ -181,6 +181,16 @@
   .result-line:first-of-type{border-top:none;}
   .result-line.ok{color:var(--ok);}
   .result-line.fail{color:var(--danger);}
+  .result-line.skip{color:#f5c56d;}
+  .result-line .note{color:var(--dim);}
+  #preflightBox{display:flex;flex-direction:column;gap:8px;margin:12px 0;}
+  .pf-card{font-size:12px;line-height:1.5;padding:10px 12px;border-radius:10px;background:var(--panel);border:1px solid var(--border);}
+  .pf-card.warn{border-color:#f5c56d;}
+  .pf-card.bad{border-color:var(--danger);}
+  .pf-card .pf-head{display:flex;align-items:center;gap:8px;font-weight:600;margin-bottom:2px;}
+  .pf-card .pf-row{color:var(--muted);}
+  .pf-card .pf-row.warn{color:#f5c56d;}
+  .pf-card .pf-row.bad{color:var(--danger);}
 
   #log{font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:110px;overflow:auto;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;}
   #log div.error{color:var(--danger);}
@@ -385,6 +395,7 @@
       <p class="sub">Dernière vérification avant l'envoi réel sur YouTube.</p>
     </div>
     <div id="summarySections"><span class="empty-note">Génère d'abord un planning à l'étape précédente.</span></div>
+    <div id="preflightBox"></div>
     <div class="totalbar">
       <div><div class="big" id="summaryTotal">0 vidéo</div><div class="lbl" id="summaryLbl">rien à publier</div></div>
       <button class="btn publish" id="publishAllBtn">
@@ -499,9 +510,21 @@ function renderConnectionBody(card, ch, status){
       <div class="ctitle">${esc(status.youtube_channel_title || '')} — lecture/upload OK, édition dashboard indisponible</div>
       <button class="btn primary small connect-btn" style="margin-top:8px">Reconnecter (activer l'édition)</button>`;
     if (outer) outer.style.borderColor = '#f5c56d';
+  } else if (status.state === 'expired'){
+    card.innerHTML = `
+      <span class="cbadge pending">● Connexion expirée</span>
+      <div class="ctitle">${esc(status.reason || '')} Reconnecte la chaîne. Si ça revient chaque semaine, ton projet Google Cloud est en mode « Test » : publie-le dans Google Auth Platform → Audience.</div>
+      <button class="btn primary small connect-btn" style="margin-top:8px">Se reconnecter</button>`;
+    if (outer) outer.style.borderColor = '#f5c56d';
+  } else if (status.state === 'error'){
+    card.innerHTML = `
+      <span class="cbadge missing">● Vérification impossible</span>
+      <div class="ctitle">${esc(status.reason || '')}</div>
+      <button class="btn secondary small connect-btn" style="margin-top:8px">Se reconnecter</button>`;
+    if (outer) outer.style.borderColor = 'var(--danger)';
   } else {
     card.innerHTML = `
-      <span class="cbadge missing">● Non connectée</span>
+      <span class="cbadge missing">● Jamais connectée</span>
       <button class="btn primary small connect-btn" style="margin-top:8px">Se connecter</button>`;
     if (outer) outer.style.borderColor = 'var(--danger)';
   }
@@ -983,6 +1006,7 @@ async function loadSummaryFromSchedule(){
     wrap.innerHTML = '<span class="empty-note">Aucune vidéo en attente de publication.</span>';
     document.getElementById('summaryTotal').textContent = '0 vidéo';
     document.getElementById('summaryLbl').textContent = 'rien à publier';
+    document.getElementById('preflightBox').innerHTML = '';
     return;
   }
   wrap.innerHTML = names.map(name => {
@@ -995,19 +1019,91 @@ async function loadSummaryFromSchedule(){
   }).join('');
   document.getElementById('summaryTotal').textContent = `${schedule.length} vidéo${schedule.length>1?'s':''}`;
   document.getElementById('summaryLbl').textContent = `sur ${names.length} chaîne${names.length>1?'s':''}`;
+  loadPreflight();
+}
+
+// Pre-publish check: connection, quota, missing files, past dates — per channel,
+// shown BEFORE "Publier tout" so nothing fails or gets skipped by surprise.
+let lastPreflight = null;
+
+async function loadPreflight(){
+  const box = document.getElementById('preflightBox');
+  box.innerHTML = spinnerHtml('Vérification des chaînes et du quota...');
+  try {
+    lastPreflight = await api('/api/publish/preflight');
+  } catch (e){
+    lastPreflight = null;
+    box.innerHTML = `<div class="pf-card bad">Vérification impossible : ${esc(e.message)}</div>`;
+    return lastPreflight;
+  }
+  box.innerHTML = lastPreflight.channels.map(preflightCardHtml).join('');
+  return lastPreflight;
+}
+
+function preflightCardHtml(item){
+  const chObj = channels.find(c => c.name === item.channel);
+  const name = chObj ? chObj.display_name : item.channel;
+  const rows = [];
+  let level = '';
+
+  const conn = item.connection;
+  if (conn.state === 'connected'){
+    rows.push(`<div class="pf-row">✅ Connectée${conn.youtube_channel_title ? ` (${esc(conn.youtube_channel_title)})` : ''}</div>`);
+  } else {
+    level = 'bad';
+    const label = {expired:'Connexion expirée', not_connected:'Jamais connectée', missing_credentials:'Pas de credentials.json'}[conn.state] || 'Connexion impossible';
+    rows.push(`<div class="pf-row bad">⛔ ${label} — ses ${item.videos} vidéo(s) seront ignorées. Reconnecte-la à l'étape 1 · Connexion.</div>`);
+  }
+
+  const q = item.quota;
+  const resetAt = new Date(q.resets_at).toLocaleTimeString('fr-FR', {hour:'2-digit', minute:'2-digit'});
+  const shared = q.shared_with && q.shared_with.length
+    ? ` · quota partagé avec ${q.shared_with.map(c => esc((channels.find(x => x.name === c) || {}).display_name || c)).join(', ')}`
+    : '';
+  if (q.exhausted){
+    level = 'bad';
+    rows.push(`<div class="pf-row bad">⛔ Quota YouTube du jour atteint pour ce projet Google — reprise après ${resetAt}${shared}.</div>`);
+  } else {
+    const tight = q.estimated_uploads_left < item.videos;
+    if (tight && !level) level = 'warn';
+    rows.push(`<div class="pf-row ${tight ? 'warn' : ''}">📊 Quota : ${q.uploads_today} upload(s) aujourd'hui · ≈ ${q.estimated_uploads_left} restant(s) (estimation)${shared}${tight ? ' — risque de dépassement : les vidéos en trop resteront prêtes pour le lendemain' : ''}.</div>`);
+  }
+
+  if (item.missing_files.length){
+    if (!level) level = 'warn';
+    rows.push(`<div class="pf-row warn">⚠️ Fichier introuvable pour : ${item.missing_files.map(esc).join(', ')} — ne seront pas publiées.</div>`);
+  }
+  if (item.past_dates.length){
+    if (!level) level = 'warn';
+    rows.push(`<div class="pf-row warn">🕐 Date déjà passée pour : ${item.past_dates.map(esc).join(', ')} — seront publiées immédiatement.</div>`);
+  }
+
+  return `<div class="pf-card ${level}">
+    <div class="pf-head"><span class="dot" style="background:${channelColor(item.channel)}"></span>${esc(name)} <span class="count" style="margin-left:auto">${item.publishable}/${item.videos} publiable(s)</span></div>
+    ${rows.join('')}
+  </div>`;
 }
 
 document.getElementById('publishAllBtn').addEventListener('click', async () => {
   const btn = document.getElementById('publishAllBtn');
   const originalHtml = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> Publication en cours...';
+  btn.innerHTML = '<span class="spinner"></span> Vérification...';
   try {
+    const pf = await loadPreflight();
+    if (pf && pf.total_publishable < pf.total_videos){
+      const proceed = pf.total_publishable === 0
+        ? (alert(`Aucune vidéo publiable pour l'instant (${pf.total_videos} en attente). Regarde les avertissements au-dessus du bouton.`), false)
+        : confirm(`${pf.total_publishable} vidéo(s) sur ${pf.total_videos} peuvent être publiées maintenant. Les autres seront ignorées (voir les avertissements) et resteront prêtes. Continuer ?`);
+      if (!proceed) return;
+    }
+    btn.innerHTML = '<span class="spinner"></span> Publication en cours...';
     const { results } = await api('/api/publish_all', { method:'POST' });
     const box = document.getElementById('publishResults');
     box.innerHTML = results.length ? results.map(r => `
-      <div class="result-line ${r.success ? 'ok' : 'fail'}">
-        ${r.success ? '✅' : '❌'} [${esc(r.channel||'')}] ${esc(r.title||'')} ${r.url ? `→ <a href="${r.url}" target="_blank" style="color:inherit">${r.url}</a>` : esc(r.error||'')}
+      <div class="result-line ${r.success ? 'ok' : (r.skipped ? 'skip' : 'fail')}">
+        ${r.success ? '✅' : (r.skipped ? '⏭️' : '❌')} [${esc(r.channel||'')}] ${esc(r.title||'')} ${r.url ? `→ <a href="${r.url}" target="_blank" style="color:inherit">${r.url}</a>` : esc(r.error||'')}
+        ${r.note ? `<span class="note">· ${esc(r.note)}</span>` : ''}
       </div>`).join('') : '<span class="empty-note">Rien à publier.</span>';
     log('Publication terminée', 'success');
     await loadSummaryFromSchedule(); // videos just published must disappear from "Prêt à publier"

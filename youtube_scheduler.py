@@ -207,8 +207,12 @@ class YouTubeScheduler:
         print(f"✅ Planning sauvegardé dans {filename}")
         return filename
     
-    def load_schedule(self, filename: str = "upload_schedule.json") -> Dict:
-        """Charge un planning existant"""
+    def load_schedule(self, filename: str = "upload_schedule.json") -> Optional[Dict]:
+        """Charge un planning existant — None s'il n'y en a pas encore (tous
+        les appelants font déjà `load_schedule() or {...}`; avant, une première
+        utilisation sans planning levait FileNotFoundError → erreur 500)."""
+        if not os.path.exists(filename):
+            return None
         with open(filename, 'r', encoding='utf-8') as f:
             return json.load(f)
     
