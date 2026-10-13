@@ -51,20 +51,47 @@ class GenerativePipeline:
         self.channel_manager = ChannelManager()
         self.url_manager = URLManager()
 
-    def create_draft(self, channel_name: str, count: int = 1) -> str:
+    def create_draft(self, channel_name: str, count: int = 1, inspired_by: str = None) -> str:
         """Phase 1 kickoff: registers `count` new video rows sharing one
         batch_id — no script, no decor, nothing generated yet. Meant to be
-        followed immediately by run_batch_scripts()."""
+        followed immediately by run_batch_scripts().
+
+        inspired_by ("Refaire ce style" from a top performer): every draft
+        remembers that video — its scripts get written in the same format
+        and structure (on new topics), and its décor is pre-filled in phase 3
+        with the winner's choices (decor_preset), still changeable."""
+        extra = {}
+        if inspired_by:
+            winner = _db.get_video(inspired_by)
+            if not winner or winner.get("source") != "generated" or winner.get("channel") != channel_name:
+                raise ValueError("Vidéo modèle introuvable sur cette chaîne")
+            extra = {"inspired_by": inspired_by, "decor_preset": self._decor_preset(winner)}
         videos = [
             {
                 "line_number": i + 1,
                 "channel": channel_name,
                 "status": "awaiting_script",
                 "source": "generated",
+                **extra,
             }
             for i in range(count)
         ]
         return self.url_manager.add_batch(f"{channel_name}_generated", videos)
+
+    def _decor_preset(self, winner: Dict) -> Dict:
+        """The winner's décor as asset FILENAMES (what the Décor step picks
+        from) — only those still present in the channel's assets folders."""
+        assets = self.list_assets(winner["channel"])
+        name = lambda p: os.path.basename(p) if p else None
+        bg, music = name(winner.get("bg_video_path")), name(winner.get("bg_music_path"))
+        return {
+            "bg_video_filename": bg if bg in assets["backgrounds"] else None,
+            "bg_music_filename": music if music in assets["music"] else None,
+            "frame_mode": winner.get("frame_mode") or "fill",
+            "rounded_corners": bool(winner.get("rounded_corners")),
+            "caption_style": winner.get("caption_style") or "karaoke",
+            "caption_color": winner.get("caption_color"),
+        }
 
     RECENT_HISTORY_LIMIT = 15
 
@@ -94,7 +121,14 @@ class GenerativePipeline:
 
         profile = self.channel_manager.get_channel_profile(video["channel"])
         recent_titles, recent_formats = self._recent_script_history(video["channel"], exclude_video_id=video_id)
-        script = generate_script(profile, recent_titles=recent_titles, recent_formats=recent_formats)
+        inspiration = None
+        if video.get("inspired_by"):
+            winner = _db.get_video(video["inspired_by"])
+            if winner and winner.get("script_text"):
+                inspiration = {"format": winner.get("script_format"), "title": winner.get("title"),
+                               "script_text": winner.get("script_text")}
+        script = generate_script(profile, recent_titles=recent_titles, recent_formats=recent_formats,
+                                 inspiration=inspiration)
 
         self.url_manager.update_video_status(
             video_id, "script_generated",

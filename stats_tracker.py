@@ -28,17 +28,91 @@ CHECKPOINTS: Dict[str, timedelta] = {
 PUBLISHED_STATUSES = {"uploaded", "scheduled_on_youtube"}
 
 
+def _local_naive(value: str):
+    """Any stored date (ISO with or without offset, 'YYYY-MM-DD HH:MM:SS')
+    as a naive local datetime, comparable with datetime.now()."""
+    from dateutil import parser as date_parser
+    dt = date_parser.parse(value)
+    return dt.astimezone().replace(tzinfo=None) if dt.tzinfo else dt
+
+
+def published_moment(video: Dict):
+    """When the video actually went public: YouTube's own publishedAt once
+    synced, else the planned publishAt for a scheduled upload, else the
+    upload time (immediate public upload). Checkpoints ("24h", "7d"...)
+    count from THIS — counting from the upload made a video scheduled 3
+    days out get its "24h" snapshot while still private."""
+    for key in ("youtube_published_at", "scheduled_publish_time", "uploaded_at"):
+        if video.get(key):
+            try:
+                return _local_naive(video[key])
+            except (ValueError, OverflowError):
+                continue
+    return None
+
+
 def _due_checkpoints(video: Dict, now: datetime, captured: set) -> List[str]:
     """Which of this video's checkpoints have both come due (time-wise) and
     not been captured yet."""
-    uploaded_at = video.get("uploaded_at")
-    if not uploaded_at:
+    published = published_moment(video)
+    if not published:
         return []
-    try:
-        uploaded_dt = datetime.fromisoformat(uploaded_at)
-    except ValueError:
-        return []
-    return [name for name, delta in CHECKPOINTS.items() if name not in captured and now - uploaded_dt >= delta]
+    return [name for name, delta in CHECKPOINTS.items() if name not in captured and now - published >= delta]
+
+
+def sync_youtube_statuses(batch_processor) -> Dict[str, int]:
+    """Brings local statuses back in line with YouTube. 'scheduled_on_youtube'
+    was never updated after YouTube actually published the video at its
+    publishAt, so videos stayed "programmées" forever. For every scheduled
+    video whose planned date has passed, asks YouTube (one cheap
+    videos.list call per 50 videos per channel) and records what it really
+    is: public → uploaded, still private → uploaded + youtube_privacy,
+    re-scheduled later → new date kept, gone from the channel →
+    youtube_deleted. A channel that can't be reached is left untouched."""
+    from youtube_uploader import get_video_stats
+
+    url_manager = batch_processor.url_manager
+    now = datetime.now()
+    summary = {"checked": 0, "published": 0, "private": 0, "rescheduled": 0, "deleted": 0, "unreachable": 0}
+
+    due_by_channel: Dict[str, List[Dict]] = {}
+    for video in url_manager.list_videos(status="scheduled_on_youtube"):
+        when = published_moment(video)
+        if video.get("youtube_id") and when and when <= now:
+            due_by_channel.setdefault(video.get("channel", "default"), []).append(video)
+
+    for channel, videos in due_by_channel.items():
+        try:
+            stats = get_video_stats(channel, [v["youtube_id"] for v in videos])
+        except Exception as e:
+            print(f"⚠️ Status sync failed for {channel}: {e}")
+            stats = {}
+        if not stats:
+            # not connected / API unreachable: never conclude "deleted" from silence
+            summary["unreachable"] += len(videos)
+            continue
+        for video in videos:
+            summary["checked"] += 1
+            live = stats.get(video["youtube_id"])
+            if live is None:
+                url_manager.update_video_status(video["video_id"], "youtube_deleted")
+                summary["deleted"] += 1
+                continue
+            privacy, publish_at = live.get("privacy_status"), live.get("publish_at")
+            if privacy == "private" and publish_at and _local_naive(publish_at) > now:
+                url_manager.update_video_status(video["video_id"], "scheduled_on_youtube", scheduled_publish_time=publish_at)
+                summary["rescheduled"] += 1
+                continue
+            url_manager.update_video_status(
+                video["video_id"], "uploaded",
+                youtube_published_at=live.get("published_at") or video.get("scheduled_publish_time"),
+                youtube_privacy=privacy,
+            )
+            summary["published" if privacy != "private" else "private"] += 1
+
+    if any(summary[k] for k in ("published", "private", "rescheduled", "deleted")):
+        print(f"🔄 Statuts YouTube resynchronisés : {summary}")
+    return summary
 
 
 def run_snapshot_cycle(batch_processor):
@@ -91,6 +165,12 @@ def start_background_tracker(batch_processor, interval_seconds: int = 3600):
     polling than that)."""
     def _loop():
         while True:
+            try:
+                # statuses first, so freshly published videos get their
+                # real publish date before checkpoints are computed
+                sync_youtube_statuses(batch_processor)
+            except Exception as e:
+                print(f"⚠️ Status sync failed: {e}")
             try:
                 run_snapshot_cycle(batch_processor)
             except Exception as e:

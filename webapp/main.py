@@ -474,6 +474,27 @@ def video_analytics(channel_name: str, youtube_id: str):
         raise HTTPException(status_code=502, detail=f"YouTube API error: {e}")
 
 
+@app.get("/api/channels/{channel_name}/performance")
+def channel_performance(channel_name: str):
+    """"Ce qui marche": this channel's published videos ranked by views 7
+    days after publication, each scored against the channel's median, plus
+    which choices (format, décor, captions, publish day/hour...) beat it.
+    Local data only (snapshots already recorded by stats_tracker)."""
+    import performance
+    bp = get_batch_processor()
+    videos = [v for v in bp.url_manager.list_videos(channel=channel_name) if v.get("youtube_id")]
+    history = {v["video_id"]: bp.url_manager.get_stats_history(v["video_id"]) for v in videos}
+    return performance.analyze(videos, history)
+
+
+@app.post("/api/sync_youtube_statuses")
+def sync_youtube_statuses_now():
+    """Runs the YouTube status resync right away (it also runs hourly in the
+    background, see stats_tracker) — the Dashboard's "Synchroniser" button."""
+    from stats_tracker import sync_youtube_statuses
+    return sync_youtube_statuses(get_batch_processor())
+
+
 @app.get("/api/channels/{channel_name}/channel_analytics")
 def channel_analytics_endpoint(channel_name: str, days: int = 30):
     from youtube_uploader import get_channel_analytics, has_analytics_scope
@@ -754,6 +775,8 @@ def serialize_generated_video(video: dict) -> dict:
         "words_path": video.get("words_path"),
         "media_url": video_media_url(video),
         "render_error": video.get("render_error"),
+        "inspired_by": video.get("inspired_by"),
+        "decor_preset": video.get("decor_preset"),
     }
 
 
@@ -778,6 +801,7 @@ MAX_BATCH_COUNT = 20
 
 class CreateDraftRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=MAX_BATCH_COUNT)
+    inspired_by: Optional[str] = None  # video_id of a top performer to remake ("Refaire ce style")
 
 
 @app.post("/api/channels/{channel_name}/generation_draft")
@@ -788,7 +812,10 @@ def create_generation_draft(channel_name: str, req: CreateDraftRequest):
     polls generated_videos?batch_id=... to watch scripts land. Audio (phase 2)
     and decor+assembly (phase 3) are separate, user-triggered steps."""
     gp = get_generative_pipeline()
-    batch_id = gp.create_draft(channel_name, count=req.count)
+    try:
+        batch_id = gp.create_draft(channel_name, count=req.count, inspired_by=req.inspired_by)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     _start_batch_thread(batch_id, gp.run_batch_scripts)
     videos = gp.url_manager.list_videos(batch_id=batch_id)
     return {"batch_id": batch_id, "videos": [serialize_generated_video(v) for v in videos]}

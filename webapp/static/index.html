@@ -416,6 +416,36 @@
   .cal-legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--border);}
   #slotDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(440px,calc(100vw - 32px));}
   #slotDialog::backdrop{background:rgba(0,0,0,.55);}
+
+  /* Dashboard → Ce qui marche */
+  .perf-insight .best{display:flex;flex-direction:column;gap:2px;}
+  .perf-insight .best .v{font-size:14px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .perf-insight .best .s{font-size:12px;color:var(--muted);}
+  .gbars{display:flex;flex-direction:column;gap:6px;}
+  .gbar{display:grid;grid-template-columns:minmax(0,1fr) 54px;gap:8px;align-items:center;font-size:11.5px;}
+  .gbar .lbl{display:flex;flex-direction:column;gap:3px;min-width:0;}
+  .gbar .lbl span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c7cbd4;}
+  .gbar .track{height:6px;border-radius:99px;background:var(--panel2);overflow:hidden;}
+  .gbar .fill{height:100%;border-radius:99px;background:var(--accent);}
+  .gbar .fill.low{background:var(--dim);}
+  .gbar .x{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);}
+  .rank-row{display:grid;grid-template-columns:26px 42px minmax(0,1fr) auto auto;gap:12px;align-items:center;padding:10px 0;border-top:1px solid var(--border-soft);}
+  .rank-row:first-child{border-top:none;}
+  .rank-row .n{font-size:12px;color:var(--dim);font-weight:700;text-align:right;font-variant-numeric:tabular-nums;}
+  .rank-row .th{width:42px;height:42px;border-radius:8px;background:var(--panel2) center/cover;}
+  .rank-row .t{min-width:0;display:flex;flex-direction:column;gap:4px;}
+  .rank-row .t a{color:var(--text);text-decoration:none;font-size:12.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rank-row .t a:hover{color:var(--accent);}
+  .rank-row .chips{display:flex;gap:5px;flex-wrap:wrap;}
+  .rank-row .chips span{font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rank-row .views{text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .rank-row .views b{display:block;color:var(--text);font-size:13px;}
+  .score{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--muted);white-space:nowrap;}
+  .score.up{background:rgba(74,222,128,.12);color:var(--ok);}
+  .score.viral{background:linear-gradient(135deg,rgba(109,141,253,.25),rgba(74,222,128,.25));color:var(--text);}
+  .score.down{color:var(--dim);}
+  #remakeDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(480px,calc(100vw - 32px));}
+  #remakeDialog::backdrop{background:rgba(0,0,0,.55);}
 </style>
 </head>
 <body>
@@ -468,12 +498,22 @@
         <h1 class="h1">Tes vidéos publiées</h1>
         <p class="sub">Ce que TikTub a publié sur chaque chaîne, avec les vues et likes réels de YouTube.</p>
       </div>
-      <div class="actions"><button class="btn secondary small" id="dashRefreshBtn" data-icon="refresh">Actualiser les stats</button></div>
+      <div class="actions">
+        <button class="btn ghost small" id="dashSyncBtn" data-icon="link" title="Demande à YouTube le vrai statut des vidéos programmées dont la date est passée (aussi fait automatiquement chaque heure)">Synchroniser avec YouTube</button>
+        <button class="btn secondary small" id="dashRefreshBtn" data-icon="refresh">Actualiser les stats</button>
+      </div>
     </div>
     <div class="toolbar">
       <div class="seg" id="dashChannelSeg"></div>
+      <span class="spacer"></span>
+      <div class="seg" id="dashViewSeg">
+        <button class="seg-opt" data-v="videos">Vidéos</button>
+        <button class="seg-opt" data-v="perf">Ce qui marche</button>
+      </div>
     </div>
     <div id="channelOverview"></div>
+    <div class="stack" id="perfView" style="display:none"></div>
+    <div class="stack" id="videosView">
     <div class="toolbar">
       <div class="seg" id="dashFilterSeg">
         <button class="seg-opt active" data-f="all">Toutes</button>
@@ -485,6 +525,8 @@
       <span class="progress-text" id="dashNote"></span>
     </div>
     <div id="dashGrid" class="vgrid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))"></div>
+    </div>
+    <dialog id="remakeDialog"></dialog>
     <div class="navbar">
       <button class="btn secondary" id="dashBackBtn">← Accueil</button>
       <span></span><span></span>
@@ -2157,9 +2199,7 @@ let dashVideos = [];
 let dashFilter = 'all';
 
 document.getElementById('dashBackBtn').addEventListener('click', () => openSpace('home'));
-document.getElementById('dashRefreshBtn').addEventListener('click', () => {
-  if (dashboardChannel) loadDashboard(dashboardChannel, true);
-});
+document.getElementById('dashRefreshBtn').addEventListener('click', () => applyDashView());
 document.querySelectorAll('#dashFilterSeg .seg-opt').forEach(btn => btn.addEventListener('click', () => {
   document.querySelectorAll('#dashFilterSeg .seg-opt').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
@@ -2178,7 +2218,7 @@ function openDashboard(){
   dashboardScreen.classList.add('active');
   if (!dashboardChannel && channels.length) dashboardChannel = channels[0].name;
   renderDashChannelChips();
-  if (dashboardChannel) loadDashboard(dashboardChannel, true);
+  applyDashView();
 }
 
 function renderDashChannelChips(){
@@ -2190,7 +2230,7 @@ function renderDashChannelChips(){
   seg.querySelectorAll('.seg-opt').forEach(btn => btn.addEventListener('click', () => {
     dashboardChannel = btn.dataset.ch;
     renderDashChannelChips();
-    loadDashboard(dashboardChannel, true);
+    applyDashView();
   }));
 }
 
@@ -2525,7 +2565,8 @@ async function loadGeneration(channelName){
       // mid-flow — resume that batch's view (pollBatchProgress re-fetches
       // with batch_id, which also picks up any sibling already finished).
       genCardStatus = {};
-      genBatchId = videos[0].batch_id;
+      genBatchId = (genPreferredBatch && videos.some(v => v.batch_id === genPreferredBatch)) ? genPreferredBatch : videos[0].batch_id;
+      genPreferredBatch = null;
       pollBatchProgress(genBatchId);
     } else {
       genBatchId = null;
@@ -2729,7 +2770,10 @@ function renderBatchSummary(batchId, videos, active){
 function genHead(v, i, pillCls, pillText){
   return `<div class="chcard-head" style="padding:0 0 10px;margin-bottom:10px;border-bottom:1px solid var(--border-soft)">
     <div class="who"><div class="gen-label"><span class="num">VIDÉO ${i + 1}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.title || '')}</span></div></div>
-    <span class="pill ${pillCls}">${pillText}</span>
+    <div style="display:flex;gap:6px;flex:none">
+      ${v.inspired_by ? `<span class="pill ok" title="Écrite dans le style d'une vidéo qui a très bien marché">★ Style gagnant</span>` : ''}
+      <span class="pill ${pillCls}">${pillText}</span>
+    </div>
   </div>`;
 }
 
@@ -2759,6 +2803,7 @@ function cardBodyHtml(v, i){
       ? genAssets.music.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
       : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/music/</option>`;
     return `${genHead(v, i, 'ok', 'Voix prête — choisis le décor')}
+      ${v.decor_preset ? '<div class="tiny" style="margin:-4px 0 8px;color:var(--muted)">Décor pré-rempli avec celui de la vidéo modèle — modifiable.</div>' : ''}
       <audio src="/api/videos/${v.video_id}/narration" controls style="width:100%"></audio>
       <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap-reverse;align-items:flex-start">
         <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px">
@@ -2784,7 +2829,7 @@ function cardBodyHtml(v, i){
               <option value="minimal">★ Minimaliste / Cinéma</option>
             </select>
           </div>
-          <div data-role="caption-color-row" hidden style="display:flex;align-items:center;gap:8px">
+          <div data-role="caption-color-row" style="display:none;align-items:center;gap:8px">
             <label class="f" style="margin:0">Couleur</label>
             <input type="color" data-role="caption-color" value="${CAPTION_STYLE_DEFAULT_COLOR.karaoke}" style="width:40px;height:28px;padding:2px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;cursor:pointer">
           </div>
@@ -2941,12 +2986,30 @@ function wireCardEvents(card, v, batchId){
     };
     const updateColorVisibility = () => {
       const customizable = CAPTION_COLOR_STYLES.has(captionSelect.value);
-      colorRow.hidden = !customizable;
+      // style.display, not the `hidden` attribute: the row's inline
+      // display:flex overrode `hidden`, so the picker never disappeared
+      colorRow.style.display = customizable ? 'flex' : 'none';
       if (customizable) colorInput.value = CAPTION_STYLE_DEFAULT_COLOR[captionSelect.value];
     };
     captionSelect.addEventListener('change', updateColorVisibility);
     [bgSelect, frameSelect, roundedCheck, captionSelect, colorInput].forEach(el => el.addEventListener('change', updatePreview));
+
+    // "Refaire ce style": start from the top performer's décor (still editable)
+    const preset = v.decor_preset;
+    if (preset){
+      if (preset.bg_video_filename && genAssets.backgrounds.includes(preset.bg_video_filename)) bgSelect.value = preset.bg_video_filename;
+      const mu = card.querySelector('[data-role="music"]');
+      if (preset.bg_music_filename && genAssets.music.includes(preset.bg_music_filename)){
+        mu.value = preset.bg_music_filename;
+        const mp = card.querySelector('[data-role="music-preview"]');
+        if (mp) mp.src = `/api/channels/${genChannel}/assets/music/${encodeURIComponent(preset.bg_music_filename)}`;
+      }
+      if (preset.frame_mode) frameSelect.value = preset.frame_mode;
+      roundedCheck.checked = !!preset.rounded_corners;
+      if (preset.caption_style) captionSelect.value = preset.caption_style;
+    }
     updateColorVisibility();
+    if (preset && preset.caption_color && CAPTION_COLOR_STYLES.has(captionSelect.value)) colorInput.value = preset.caption_color;
     if (genAssets.backgrounds.length) updatePreview();
   }
 
@@ -2960,6 +3023,193 @@ function wireCardEvents(card, v, batchId){
       musicPreview.play().catch(() => {}); // autoplay can be blocked — controls are there regardless
     });
   }
+}
+
+
+// ---------- Dashboard → Ce qui marche (top performers) ----------
+
+let dashView = 'videos';
+try { dashView = localStorage.getItem('tiktub.dashView') || 'videos'; } catch (_) {}
+let perfData = null;
+
+document.querySelectorAll('#dashViewSeg .seg-opt').forEach(btn => btn.addEventListener('click', () => {
+  dashView = btn.dataset.v;
+  try { localStorage.setItem('tiktub.dashView', dashView); } catch (_) {}
+  applyDashView();
+}));
+
+function applyDashView(){
+  document.querySelectorAll('#dashViewSeg .seg-opt').forEach(b => b.classList.toggle('active', b.dataset.v === dashView));
+  document.getElementById('videosView').style.display = dashView === 'videos' ? '' : 'none';
+  document.getElementById('perfView').style.display = dashView === 'perf' ? '' : 'none';
+  if (!dashboardChannel) return;
+  if (dashView === 'perf'){
+    loadChannelOverview(dashboardChannel);
+    safeLoad(() => loadPerformance(dashboardChannel), 'perfView');
+  } else {
+    loadDashboard(dashboardChannel, true); // also loads the channel overview
+  }
+}
+
+document.getElementById('dashSyncBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('dashSyncBtn');
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Synchronisation…';
+  try {
+    const r = await api('/api/sync_youtube_statuses', { method: 'POST' });
+    const parts = [
+      r.published && `${r.published} publiée(s)`, r.private && `${r.private} privée(s)`,
+      r.rescheduled && `${r.rescheduled} reprogrammée(s)`, r.deleted && `${r.deleted} supprimée(s) sur YouTube`,
+    ].filter(Boolean);
+    log(r.checked
+      ? `Statuts YouTube : ${r.checked} vérifiée(s) — ${parts.join(', ') || 'rien n\'a changé'}`
+        + (r.unreachable ? ` · ${r.unreachable} non vérifiée(s) (chaîne non connectée)` : '')
+      : (r.unreachable ? `${r.unreachable} vidéo(s) non vérifiée(s) : chaîne non connectée` : 'Statuts déjà à jour'), 'success');
+    applyDashView();
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = label; }
+});
+
+function fmtScore(s){
+  if (s >= 100) return 'virale';
+  return '×' + (s >= 10 ? Math.round(s) : s.toFixed(1).replace('.', ','));
+}
+function scoreBadge(s){
+  const cls = s >= 100 ? 'viral' : s >= 1.5 ? 'up' : s < 0.8 ? 'down' : '';
+  return `<span class="score ${cls}" title="${s.toLocaleString('fr-FR')} × la médiane de la chaîne à 7 jours">${fmtScore(s)}</span>`;
+}
+
+async function loadPerformance(channelName){
+  const box = document.getElementById('perfView');
+  box.innerHTML = spinnerHtml('Analyse des performances…');
+  perfData = await api(`/api/channels/${channelName}/performance`);
+  const ch = channels.find(c => c.name === channelName) || { display_name: channelName };
+  const d = perfData;
+
+  if (!d.analyzed){
+    box.innerHTML = emptyState('Pas encore assez de recul',
+      d.too_recent ? `${d.too_recent} vidéo(s) publiée(s) ont moins de 7 jours — reviens quand elles auront une semaine.` : 'Aucune vidéo publiée sur cette chaîne pour l\'instant.', 'chart');
+    return;
+  }
+
+  const head = `
+    <article class="chcard">
+      <div class="chcard-head">
+        <div class="who"><div class="name"><span class="dot" style="background:${channelColor(channelName)}"></span>Ce qui marche sur ${esc(ch.display_name)}</div></div>
+        <span class="pill wait">${d.analyzed} vidéo${d.analyzed > 1 ? 's' : ''} comparée${d.analyzed > 1 ? 's' : ''}</span>
+      </div>
+      <div class="facts">
+        <div class="fact">${icon('clock')}<span>Toutes comparées au même âge : <b style="color:var(--text)">7 jours après leur publication</b>.</span></div>
+        <div class="fact">${icon('gauge')}<span>Une vidéo « habituelle » de la chaîne fait <b style="color:var(--text)">${d.median_views_7d.toLocaleString('fr-FR')} vues</b> en 7 jours (médiane) — « ×2 » = deux fois plus.</span></div>
+        ${d.too_recent ? `<div class="fact">${icon('calendar')}<span>${d.too_recent} vidéo(s) trop récente(s) pas encore comptée(s).</span></div>` : ''}
+      </div>
+    </article>`;
+
+  const insights = d.insights.length ? `
+    <div class="grid-3">${d.insights.slice(0, 6).map(insightCardHtml).join('')}</div>`
+    : emptyState('Pas encore de tendance', 'Il faut au moins 2 vidéos par option (format, fond, jour…) pour comparer.', 'chart');
+
+  const ranking = `
+    <article class="chcard">
+      <div class="chcard-head">
+        <div class="who"><div class="name">Classement à 7 jours</div><div class="meta" style="margin-left:0">Les meilleures en haut. « Refaire ce style » relance un lot de scripts sur le même modèle.</div></div>
+      </div>
+      <div>${d.videos.slice(0, 15).map((v, i) => rankRowHtml(v, i)).join('')}</div>
+    </article>`;
+
+  box.innerHTML = head + insights + ranking;
+  box.querySelectorAll('[data-remake]').forEach(btn => btn.addEventListener('click', () =>
+    openRemakeDialog(channelName, d.videos.find(v => v.video_id === btn.dataset.remake))));
+}
+
+function insightCardHtml(ins){
+  const max = Math.max(...ins.groups.map(g => g.score), 1);
+  const best = ins.best;
+  return `
+  <article class="chcard perf-insight">
+    <div class="chcard-head">
+      <div class="who"><div class="name" style="font-size:12.5px;color:var(--muted);font-weight:600">${esc(ins.label)}</div></div>
+      ${best.reliable ? '' : '<span class="pill warn" title="Moins de 3 vidéos dans ce groupe">Peu de données</span>'}
+    </div>
+    <div class="best">
+      <span class="v" title="${esc(best.label)}">${esc(best.label)}</span>
+      <span class="s">${fmtScore(best.score)} la médiane · ${best.count} vidéos · ${best.median_views_7d.toLocaleString('fr-FR')} vues typiques</span>
+    </div>
+    <div class="gbars">
+      ${ins.groups.slice(0, 5).map(g => `
+        <div class="gbar">
+          <div class="lbl"><span title="${esc(g.label)}">${esc(g.label)} <span class="tiny">(${g.count})</span></span>
+            <div class="track"><div class="fill ${g.score < 1 ? 'low' : ''}" style="width:${Math.max(4, Math.min(100, g.score / max * 100)).toFixed(0)}%"></div></div></div>
+          <span class="x">${fmtScore(g.score)}</span>
+        </div>`).join('')}
+    </div>
+  </article>`;
+}
+
+function rankRowHtml(v, i){
+  const a = v.attrs;
+  const chips = [
+    a.script_format && `Format ${a.script_format}`, a.background && `Fond ${a.background}`,
+    a.caption_style && `Sous-titres ${a.caption_style}`, a.weekday && `${a.weekday} ${a.hour_slot || ''}`,
+  ].filter(Boolean);
+  return `
+  <div class="rank-row">
+    <span class="n">${i + 1}</span>
+    <div class="th" style="${v.thumbnail_url ? `background-image:url('${v.thumbnail_url}')` : ''}"></div>
+    <div class="t">
+      ${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank" rel="noopener" title="${esc(v.title)}">${esc(v.title)}</a>` : `<a title="${esc(v.title)}">${esc(v.title)}</a>`}
+      <div class="chips">${chips.map(c => `<span title="${esc(c)}">${esc(c)}</span>`).join('')}</div>
+    </div>
+    <div class="views"><b>${v.views_7d.toLocaleString('fr-FR')}</b>vues à 7 j ${scoreBadge(v.score)}</div>
+    ${v.remakeable ? `<button class="btn secondary small" data-remake="${esc(v.video_id)}">${icon('sparkle', 13)} Refaire ce style</button>` : '<span></span>'}
+  </div>`;
+}
+
+let genPreferredBatch = null; // opens Génération on the batch just launched from here
+
+function openRemakeDialog(channelName, v){
+  const dlg = document.getElementById('remakeDialog');
+  const a = v.attrs;
+  const reused = [
+    a.script_format && ['Format et structure du script', `${a.script_format} · ${({A: 'Affirmations', B: 'Storytime', D: 'Liste éducative'})[a.script_format] || ''}`],
+    a.background && ['Fond vidéo', a.background],
+    a.music && ['Musique', a.music],
+    a.caption_style && ['Sous-titres', a.caption_style],
+  ].filter(Boolean);
+  dlg.innerHTML = `
+    <div class="chcard" style="border:none">
+      <div class="chcard-head">
+        <div class="who"><div class="name">${icon('sparkle', 15)} Refaire ce style</div><div class="meta" style="margin-left:0">${esc(v.title)} · ${v.views_7d.toLocaleString('fr-FR')} vues à 7 j</div></div>
+        <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
+      </div>
+      <div class="chcard-body">
+        <div class="muted">L'IA écrit de <b style="color:var(--text)">nouveaux scripts sur d'autres sujets</b>, en reprenant ce qui a fait marcher celui-ci :</div>
+        <div class="recap">${reused.map(([k, val]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(val)}</span></div>`).join('')}</div>
+        <div class="tiny">Le décor est pré-rempli à l'étape Décor et reste modifiable. Rien n'est envoyé à ElevenLabs avant que tu valides les scripts.</div>
+        <div><label class="f">Nombre de vidéos</label><input class="f" type="number" data-role="count" value="3" min="1" max="${MAX_BATCH_COUNT}" style="width:90px"></div>
+        <span class="tiny" data-role="err" style="color:var(--danger)"></span>
+      </div>
+      <div class="chcard-foot">
+        <button class="btn ghost small" data-act="close">Annuler</button>
+        <button class="btn primary small push" data-act="go">Écrire les scripts →</button>
+      </div>
+    </div>`;
+  dlg.querySelectorAll('[data-act="close"]').forEach(b => b.addEventListener('click', () => dlg.close()));
+  dlg.querySelector('[data-act="go"]').addEventListener('click', async () => {
+    const count = Math.max(1, Math.min(MAX_BATCH_COUNT, parseInt(dlg.querySelector('[data-role="count"]').value, 10) || 1));
+    const go = dlg.querySelector('[data-act="go"]');
+    go.disabled = true;
+    try {
+      const res = await api(`/api/channels/${channelName}/generation_draft`, { method: 'POST', body: JSON.stringify({ count, inspired_by: v.video_id }) });
+      dlg.close();
+      log(`${count} script(s) en cours d'écriture dans le style de « ${v.title} »`, 'success');
+      genChannel = channelName;
+      genPreferredBatch = res.batch_id;
+      openSpace('generation');
+    } catch (e){ go.disabled = false; dlg.querySelector('[data-role="err"]').textContent = e.message; }
+  });
+  dlg.showModal();
 }
 
 // ---------- Boot ----------

@@ -56,6 +56,7 @@ STYLE_EXAMPLES: List[str] = [
 def _build_prompt(
     channel_profile: Dict, style_examples: List[str],
     recent_titles: Optional[List[str]] = None, recent_formats: Optional[List[str]] = None,
+    inspiration: Optional[Dict] = None,
 ) -> str:
     style_prompt = channel_profile.get("script_style_prompt", "")
     examples_block = "\n\n---\n\n".join(style_examples)
@@ -69,7 +70,7 @@ Sujets/angles DÉJÀ traités récemment sur cette chaîne — n'en refais AUCUN
 reformulé différemment (ex: ne refais pas "3 signes que X" si la liste ci-dessous en contient déjà
 plusieurs, ne refais pas "j'ai testé X pendant Nh" si déjà présent) :
 {titles_list}"""
-        if recent_formats:
+        if recent_formats and not inspiration:
             counts = {f: recent_formats.count(f) for f in ("A", "B", "D")}
             least_used = min(counts, key=counts.get)
             history_block += (
@@ -77,6 +78,22 @@ plusieurs, ne refais pas "j'ai testé X pendant Nh" si déjà présent) :
                 f"Le format \"{least_used}\" est sous-représenté — privilégie-le cette fois, "
                 f"sauf si un autre format sert clairement mieux le nouvel angle choisi."
             )
+
+    inspiration_block = ""
+    if inspiration:
+        fmt = inspiration.get("format") or ""
+        inspiration_block = f"""
+
+Cette vidéo de la chaîne a TRÈS BIEN marché — c'est le modèle à suivre :
+Titre : {inspiration.get("title") or ""}
+Format : {fmt}
+Script :
+{inspiration.get("script_text") or ""}
+
+Écris un NOUVEAU script qui reprend ce qui la fait marcher : même format ("{fmt}"), même structure,
+même type d'accroche dans la première phrase, même rythme et même longueur approximative.
+Mais le SUJET doit être différent (ni le même thème reformulé, ni les mêmes phrases), et le titre aussi.
+Indique "{fmt}" dans le champ "format"."""
 
     return f"""{style_prompt}
 
@@ -87,7 +104,7 @@ Voici des exemples de scripts déjà publiés sur cette chaîne, à titre de ré
 ---
 {examples_block}
 ---
-{history_block}
+{history_block}{inspiration_block}
 
 Réponds UNIQUEMENT avec un objet JSON valide de cette forme exacte, rien d'autre avant ou après :
 {{
@@ -118,6 +135,7 @@ SCRIPT_TEMPERATURE = 0.95  # higher than the app's shared 0.7 default — this c
 def generate_script(
     channel_profile: Dict, style_examples: Optional[List[str]] = None,
     recent_titles: Optional[List[str]] = None, recent_formats: Optional[List[str]] = None,
+    inspiration: Optional[Dict] = None,
 ) -> Dict:
     """Generate one new script + title/description/tags in the channel's style.
 
@@ -132,7 +150,7 @@ def generate_script(
     calling call_gemini_api/call_openai_api directly with images=None since
     there is no video to analyze yet at this stage.
     """
-    prompt = _build_prompt(channel_profile, style_examples or STYLE_EXAMPLES, recent_titles, recent_formats)
+    prompt = _build_prompt(channel_profile, style_examples or STYLE_EXAMPLES, recent_titles, recent_formats, inspiration)
 
     gemini_key = os.getenv("GEMINI_API_KEY")
     if gemini_key:
