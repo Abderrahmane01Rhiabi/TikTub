@@ -79,11 +79,12 @@
   .pill.wait{background:var(--panel2);color:var(--dim);}
   .pill button{all:unset;cursor:pointer;text-decoration:underline;}
 
-  .ministats{display:grid;grid-template-columns:repeat(auto-fit,minmax(64px,1fr));gap:4px;padding:10px 10px !important;}
+  .ministats{display:grid;grid-template-columns:repeat(auto-fit,minmax(58px,1fr));gap:2px;padding:10px 8px !important;}
   .ministat{background:none;border:none;border-radius:8px;padding:6px 6px;text-align:center;font-family:inherit;color:var(--text);cursor:pointer;transition:background .12s ease;}
   .ministat:hover{background:var(--panel2);}
   .ministat .n{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;}
-  .ministat .l{font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;}
+  .ministat .l{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .ministat{min-width:0;}
   .ministat.zero{cursor:default;} .ministat.zero:hover{background:none;}
   .ministat.zero .n{color:var(--dim);}
   .ministat.bad .n{color:var(--danger);}
@@ -301,7 +302,7 @@
   .chcard-foot .note{font-size:11.5px;color:var(--muted);}
   .chcard-foot .push{margin-left:auto;}
   .chcard .muted{font-size:12px;color:var(--muted);line-height:1.45;}
-  .chcard .tiny{font-size:11px;color:var(--dim);}
+  .tiny{font-size:11px;color:var(--dim);}
   .chcard-head .meta{font-size:11.5px;color:var(--muted);margin:3px 0 0 18px;}
   .grid-3{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;align-items:start;}
   .btn svg{flex:none;}
@@ -348,8 +349,8 @@
   .publish-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:3px 10px;align-items:center;padding:9px 0;border-top:1px solid var(--border-soft);font-size:12.5px;}
   .publish-row:first-child{border-top:none;}
   .publish-row .name{grid-column:1 / -1;min-width:0;color:#c7cbd4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .publish-row .when{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;}
-  .publish-row .flag{display:flex;gap:6px;align-items:center;justify-content:flex-end;}
+  .publish-row .when{color:var(--dim);font-size:11.5px;font-variant-numeric:tabular-nums;white-space:nowrap;}
+  .publish-row .flag{display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;}
   .publish-row .flag .btn{padding:3px 9px;font-size:11px;}
   .totalbar{border-radius:12px;}
   .result-line{display:flex;align-items:flex-start;gap:8px;padding:8px 0;}
@@ -2107,6 +2108,7 @@ function fillPreflightCard(item){
   }
 
   // Per-video flags on the matching rows
+  card.querySelectorAll('[data-role="flag"]').forEach(f => { f.innerHTML = ''; }); // re-runs must not stack flags
   const flag = (match, html) => card.querySelectorAll('.publish-row').forEach(row => {
     if (match(row)) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend', html);
   });
@@ -2114,7 +2116,7 @@ function fillPreflightCard(item){
     worse('warn');
     const ids = item.missing_ids || [];
     flag(row => ids.includes(row.dataset.video),
-      `<span class="pill bad" title="Fichier vidéo introuvable : ne sera pas publiée">Fichier manquant</span><button class="btn secondary small" data-reprocess>Retraiter</button>`);
+      `<span class="pill bad" title="Fichier vidéo introuvable : ne sera pas publiée">Fichier manquant</span><button class="btn secondary small" data-reprocess title="Refaire le cadrage et le traitement depuis le fichier téléchargé">Retraiter</button><button class="btn ghost small danger" data-abandon title="Retirer cette vidéo du planning">Abandonner</button>`);
     facts.push(`<div class="fact warn">${icon('alert')}<span>${item.missing_files.length} fichier(s) introuvable(s) — non publiée(s)</span></div>`);
   }
   if (item.past_dates.length){
@@ -2131,6 +2133,17 @@ function fillPreflightCard(item){
   card.querySelector('[data-role="checks"]').innerHTML = facts.join('');
   const go = card.querySelector('[data-go-settings]');
   if (go) go.addEventListener('click', ev => { ev.preventDefault(); goTo(0); });
+
+  card.querySelectorAll('[data-abandon]').forEach(btn => btn.addEventListener('click', async () => {
+    const row = btn.closest('.publish-row');
+    if (!confirm(`Retirer « ${row.dataset.title} » du planning ? Elle ne sera pas publiée (le lien pourra être réimporté plus tard).`)) return;
+    btn.disabled = true;
+    try {
+      await api(`/api/videos/${row.dataset.video}/abandon`, { method: 'POST' });
+      log('Vidéo retirée du planning', 'success');
+      await loadSummaryFromSchedule();
+    } catch (e){ btn.disabled = false; log(e.message, 'error'); }
+  }));
 
   card.querySelectorAll('[data-reprocess]').forEach(btn => btn.addEventListener('click', async () => {
     const row = btn.closest('.publish-row');
@@ -2675,7 +2688,7 @@ function renderBatchGrid(batchId, videos, active){
   if (!cards){
     stage.innerHTML = `
       <div id="genBatchSummary" class="card"></div>
-      <div id="genBatchCards" style="display:flex;flex-wrap:wrap;gap:10px;margin-top:10px"></div>`;
+      <div id="genBatchCards" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,440px),1fr));gap:12px;margin-top:12px;align-items:start"></div>`;
     cards = document.getElementById('genBatchCards');
   }
 
@@ -2689,7 +2702,6 @@ function renderBatchGrid(batchId, videos, active){
       card = document.createElement('div');
       card.className = 'card';
       card.dataset.video = v.video_id;
-      card.style.cssText = 'flex:1;min-width:260px';
       cards.appendChild(card);
     }
     // A card whose status hasn't changed since the last poll is left alone —
@@ -2699,7 +2711,6 @@ function renderBatchGrid(batchId, videos, active){
       // The décor card carries a full-size WYSIWYG preview (background +
       // caption style together) — give it more room than the other, purely
       // textual card states.
-      card.style.cssText = v.status === 'audio_generated' ? 'flex:1;min-width:420px' : 'flex:1;min-width:260px';
       card.innerHTML = cardBodyHtml(v, i);
       wireCardEvents(card, v, batchId);
       genCardStatus[v.video_id] = v.status;
@@ -2768,12 +2779,15 @@ function renderBatchSummary(batchId, videos, active){
 }
 
 function genHead(v, i, pillCls, pillText){
-  return `<div class="chcard-head" style="padding:0 0 10px;margin-bottom:10px;border-bottom:1px solid var(--border-soft)">
-    <div class="who"><div class="gen-label"><span class="num">VIDÉO ${i + 1}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.title || '')}</span></div></div>
-    <div style="display:flex;gap:6px;flex:none">
-      ${v.inspired_by ? `<span class="pill ok" title="Écrite dans le style d'une vidéo qui a très bien marché">★ Style gagnant</span>` : ''}
-      <span class="pill ${pillCls}">${pillText}</span>
+  return `<div style="padding:0 0 10px;margin-bottom:10px;border-bottom:1px solid var(--border-soft);display:flex;flex-direction:column;gap:6px">
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <span class="gen-label"><span class="num" style="white-space:nowrap">VIDÉO ${i + 1}</span></span>
+      <span style="margin-left:auto;display:flex;gap:6px;flex-wrap:wrap">
+        ${v.inspired_by ? `<span class="pill ok" title="Écrite dans le style d'une vidéo qui a très bien marché">★ Style gagnant</span>` : ''}
+        <span class="pill ${pillCls}">${pillText}</span>
+      </span>
     </div>
+    ${v.title ? `<div style="font-size:13px;font-weight:600;line-height:1.35">${esc(v.title)}</div>` : ''}
   </div>`;
 }
 
@@ -2805,7 +2819,7 @@ function cardBodyHtml(v, i){
     return `${genHead(v, i, 'ok', 'Voix prête — choisis le décor')}
       ${v.decor_preset ? '<div class="tiny" style="margin:-4px 0 8px;color:var(--muted)">Décor pré-rempli avec celui de la vidéo modèle — modifiable.</div>' : ''}
       <audio src="/api/videos/${v.video_id}/narration" controls style="width:100%"></audio>
-      <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap-reverse;align-items:flex-start">
+      <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap-reverse;align-items:flex-end">
         <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px">
           <div><label class="f">Fond vidéo</label><select class="f" data-role="bg">${bgOptions}</select></div>
           <div>
@@ -3101,7 +3115,7 @@ async function loadPerformance(channelName){
       </div>
       <div class="facts">
         <div class="fact">${icon('clock')}<span>Toutes comparées au même âge : <b style="color:var(--text)">7 jours après leur publication</b>.</span></div>
-        <div class="fact">${icon('gauge')}<span>Une vidéo « habituelle » de la chaîne fait <b style="color:var(--text)">${d.median_views_7d.toLocaleString('fr-FR')} vues</b> en 7 jours (médiane) — « ×2 » = deux fois plus.</span></div>
+        <div class="fact">${icon('gauge')}<span>Une vidéo « habituelle » de la chaîne fait <b style="color:var(--text)">${Math.round(d.median_views_7d).toLocaleString('fr-FR')} vues</b> en 7 jours (médiane) — « ×2 » = deux fois plus.</span></div>
         ${d.too_recent ? `<div class="fact">${icon('calendar')}<span>${d.too_recent} vidéo(s) trop récente(s) pas encore comptée(s).</span></div>` : ''}
       </div>
     </article>`;
@@ -3134,7 +3148,7 @@ function insightCardHtml(ins){
     </div>
     <div class="best">
       <span class="v" title="${esc(best.label)}">${esc(best.label)}</span>
-      <span class="s">${fmtScore(best.score)} la médiane · ${best.count} vidéos · ${best.median_views_7d.toLocaleString('fr-FR')} vues typiques</span>
+      <span class="s">${fmtScore(best.score)} la médiane · ${best.count} vidéos · ${Math.round(best.median_views_7d).toLocaleString('fr-FR')} vues typiques</span>
     </div>
     <div class="gbars">
       ${ins.groups.slice(0, 5).map(g => `

@@ -594,6 +594,28 @@ def reprocess_video(video_id: str):
     return {"reprocess": True}
 
 
+@app.post("/api/videos/{video_id}/abandon")
+def abandon_ready_video(video_id: str):
+    """Drops a video that's waiting to be published (e.g. its file is gone
+    and it isn't worth reprocessing): removed from upload_schedule.json —
+    otherwise "Publier tout" would still try it — and set to 'rejected'
+    (its URL can be imported again later)."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if video.get("status") in ("uploaded", "scheduled_on_youtube"):
+        raise HTTPException(status_code=400, detail="Vidéo déjà envoyée sur YouTube")
+    bp = get_batch_processor()
+    data = bp.scheduler.load_schedule()
+    if data:
+        remaining = [e for e in data.get("schedule", []) if e.get("video_id") != video_id]
+        if len(remaining) != len(data.get("schedule", [])):
+            bp.scheduler.save_schedule(remaining)
+    bp.url_manager.update_video_status(video_id, "rejected", abandoned_from=video.get("status"))
+    return {"abandoned": True}
+
+
 @app.get("/api/videos/{video_id}/frame_suggestion")
 def get_frame_suggestion(video_id: str):
     bp = get_batch_processor()

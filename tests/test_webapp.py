@@ -195,3 +195,19 @@ def test_calendar_treats_past_youtube_schedules_as_published(client, project):
     kinds = {i["video_id"]: i["kind"] for i in client.get("/api/calendar").json()["items"]}
 
     assert kinds == {"old": "published", "future": "scheduled"}
+
+
+def test_abandon_removes_the_video_from_the_schedule(client, project):
+    project.add_video("gone", status="ready_for_upload", video_path="processed_videos/gone.mp4")
+    project.add_video("keep", status="ready_for_upload")
+    project.write_schedule([{"video_id": "gone", "channel": "chanA", "title": "g", "scheduled_time": "2030-01-07 18:00:00", "video_data": {}},
+                            {"video_id": "keep", "channel": "chanA", "title": "k", "scheduled_time": "2030-01-09 18:00:00", "video_data": {}}])
+
+    assert client.post("/api/videos/gone/abandon").json() == {"abandoned": True}
+
+    assert db.get_video("gone")["status"] == "rejected"
+    import json
+    ids = [e["video_id"] for e in json.load(open("upload_schedule.json"))["schedule"]]
+    assert ids == ["keep"]  # "Publier tout" can no longer pick it up
+    project.add_video("pub", status="uploaded")
+    assert client.post("/api/videos/pub/abandon").status_code == 400
