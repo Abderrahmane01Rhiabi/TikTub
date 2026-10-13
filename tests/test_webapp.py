@@ -119,3 +119,29 @@ def test_a_second_background_phase_is_refused_while_one_runs(client):
     assert m._start_batch_thread("B", lambda b: runs.append(b)) is True
     m._batch_threads["B"].join(5)
     assert runs == ["B", "B"]
+
+
+# ---- Accueil overview
+
+def test_overview_counts_each_stage_per_channel(client, project, monkeypatch):
+    import channel_manager
+    monkeypatch.setattr(channel_manager.ChannelManager, "list_channels",
+                        lambda self: [{"name": "chanA"}, {"name": "chanB"}])
+    project.add_video("s1", status="selected")
+    project.add_video("s2", status="selected")
+    project.add_video("r1", status="ready_for_upload")
+    project.add_video("g1", status="script_generated")
+    project.add_video("e1", status="download_failed", error_message="404")
+    project.add_video("p1", status="scheduled_on_youtube", scheduled_publish_time="2030-01-07T18:00:00+01:00")
+    project.add_video("p0", status="scheduled_on_youtube", scheduled_publish_time="2020-01-07T18:00:00+01:00")
+    project.add_video("b1", channel="chanB", status="ready_for_upload")
+    project.add_video("x1", channel="unknown_channel", status="ready_for_upload")
+
+    data = client.get("/api/overview").json()
+
+    a = next(c for c in data["channels"] if c["channel"] == "chanA")
+    assert a["counts"] == {"to_sort": 2, "generating": 1, "ready": 1, "in_progress": 0, "errors": 1, "scheduled": 1}
+    assert a["errors"] == [{"title": "https://t/e1", "status": "download_failed", "message": "404"}]
+    assert a["next_publish"].startswith("2030-01-07")
+    assert data["totals"]["ready"] == 2  # chanA + chanB; unknown channels are ignored
+    assert "uploads_today" in a["quota"]

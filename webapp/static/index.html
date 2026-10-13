@@ -29,6 +29,44 @@
   .step.todo{background:var(--panel);color:var(--muted);border:1px solid var(--border);}
   .step.todo:hover,.step.done:hover{background:var(--border);color:var(--text);}
 
+  /* main navigation: one tab per space, plus a contextual sub-stepper */
+  .spaces{display:flex;gap:4px;flex-wrap:wrap;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;}
+  .space{padding:7px 13px;border-radius:7px;font-size:12.5px;font-weight:600;white-space:nowrap;border:none;cursor:pointer;font-family:inherit;background:transparent;color:var(--muted);transition:background .12s ease,color .12s ease;}
+  .space:hover{background:var(--border-soft);color:var(--text);}
+  .space.active{background:var(--accent);color:#fff;}
+  .space .badge{display:inline-block;min-width:16px;padding:0 5px;margin-left:5px;border-radius:999px;background:rgba(255,255,255,.18);font-size:10.5px;line-height:16px;text-align:center;}
+  .space:not(.active) .badge{background:rgba(109,141,253,.2);color:var(--accent);}
+  .subnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .subnav:empty{display:none;}
+  .subnav .subnav-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-right:4px;}
+
+  /* toasts */
+  #toasts{position:fixed;top:16px;right:16px;display:flex;flex-direction:column;gap:8px;z-index:1000;max-width:min(380px,calc(100vw - 32px));}
+  .toast{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:pointer;animation:toast-in .18s ease;}
+  .toast.error{border-left-color:var(--danger);}
+  .toast.success{border-left-color:var(--ok);}
+  .toast.leaving{opacity:0;transform:translateX(12px);transition:opacity .2s ease,transform .2s ease;}
+  @keyframes toast-in{from{opacity:0;transform:translateX(12px);}to{opacity:1;transform:none;}}
+  .load-error{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px;border:1px solid var(--danger);border-radius:10px;background:rgba(248,113,113,.06);font-size:12.5px;color:#f3b4b4;}
+
+  /* home */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px;}
+  .kpi{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:14px;text-align:left;cursor:pointer;font-family:inherit;color:var(--text);transition:border-color .12s ease,background .12s ease;}
+  .kpi:hover{border-color:var(--accent);background:#1b1f28;}
+  .kpi .n{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;}
+  .kpi .l{font-size:12px;color:var(--muted);margin-top:2px;}
+  .kpi .go{font-size:11px;color:var(--accent);margin-top:8px;}
+  .kpi.warn .n{color:#f5c56d;} .kpi.bad .n{color:var(--danger);}
+  .kpi.zero{opacity:.55;}
+  .home-ch{display:flex;flex-direction:column;gap:10px;}
+  .home-ch .row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted);}
+  .home-ch .counts{display:flex;gap:6px;flex-wrap:wrap;}
+  .chip{font-size:11.5px;padding:3px 9px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:#c7cbd4;cursor:pointer;font-family:inherit;}
+  .chip:hover{border-color:var(--accent);}
+  .chip.bad{border-color:rgba(248,113,113,.5);color:var(--danger);}
+  .chip.muted{cursor:default;color:var(--dim);}
+  .home-errors{font-size:11.5px;color:var(--muted);margin:0;padding-left:16px;}
+
   .screen{display:none;flex-direction:column;gap:16px;}
   .screen.active{display:flex;}
 
@@ -220,19 +258,36 @@
 <div class="app">
   <div class="topbar">
     <div class="brand"><div class="mark"></div>TikTub</div>
-    <div class="steps" id="stepnav">
-      <button class="step" data-i="0">1 · Connexion</button>
-      <button class="step" data-i="1">2 · Fonds</button>
-      <button class="step" data-i="2">3 · URLs</button>
-      <button class="step" data-i="3">4 · Sélection</button>
-      <button class="step" data-i="4">5 · Cadrage</button>
-      <button class="step" data-i="5">6 · Résultats IA</button>
-      <button class="step" data-i="6">7 · Planning</button>
-      <button class="step" data-i="7">8 · Publier</button>
-    </div>
-    <button class="btn secondary" id="dashboardBtn" style="margin-left:10px">📊 Dashboard</button>
-    <button class="btn secondary" id="generationBtn">🪄 Génération</button>
+    <nav class="spaces" id="spacenav">
+      <button class="space" data-space="home">🏠 Accueil</button>
+      <button class="space" data-space="import">📥 Import</button>
+      <button class="space" data-space="generation" id="generationBtn">🪄 Génération</button>
+      <button class="space" data-space="publication">🚀 Publication</button>
+      <button class="space" data-space="dashboard">📊 Dashboard</button>
+      <button class="space" data-space="settings">⚙️ Réglages</button>
+    </nav>
   </div>
+  <!-- Steps of the current space only (Import, Publication, Réglages) -->
+  <div class="subnav" id="stepnav">
+    <button class="step" data-i="0" data-space="settings">Connexion</button>
+    <button class="step" data-i="1" data-space="settings">Fonds</button>
+    <button class="step" data-i="2" data-space="import">1 · URLs</button>
+    <button class="step" data-i="3" data-space="import">2 · Sélection</button>
+    <button class="step" data-i="4" data-space="import">3 · Cadrage</button>
+    <button class="step" data-i="5" data-space="publication">1 · Résultats IA</button>
+    <button class="step" data-i="6" data-space="publication">2 · Planning</button>
+    <button class="step" data-i="7" data-space="publication">3 · Publier</button>
+  </div>
+
+  <!-- Accueil : where every channel stands, one click from the right step -->
+  <section class="screen" id="homeScreen">
+    <div>
+      <h1 class="h1">Où en sont tes chaînes</h1>
+      <p class="sub">Tout ce qui t'attend, en un coup d'œil. Clique sur un chiffre pour aller directement à l'étape concernée.</p>
+    </div>
+    <div class="kpis" id="homeKpis"></div>
+    <div class="grid-channels" id="homeChannels"></div>
+  </section>
 
   <!-- Dashboard : per-channel published videos + live YouTube stats -->
   <section class="screen" id="dashboardScreen">
@@ -254,7 +309,7 @@
     </div>
     <div id="dashGrid" class="vgrid" style="grid-template-columns:repeat(auto-fill,minmax(240px,1fr))"></div>
     <div class="navbar">
-      <button class="btn secondary" id="dashBackBtn">← Retour au wizard</button>
+      <button class="btn secondary" id="dashBackBtn">← Accueil</button>
       <span></span><span></span>
     </div>
   </section>
@@ -263,7 +318,7 @@
   <section class="screen" id="generationScreen">
     <div>
       <h1 class="h1">Génération de vidéos</h1>
-      <p class="sub">Un lot à la fois : les scripts d'abord (relecture possible), puis les audios pour tout le lot, puis pour chaque vidéo tu choisis son décor et tu lances sa création. Une fois créée, la vidéo passe par l'étape 6 · Résultats IA comme n'importe quelle vidéo.</p>
+      <p class="sub">Un lot à la fois : les scripts d'abord (relecture possible), puis les audios pour tout le lot, puis pour chaque vidéo tu choisis son décor et tu lances sa création. Une fois créée, la vidéo rejoint 🚀 Publication → Résultats IA, comme n'importe quelle vidéo importée.</p>
     </div>
     <div class="seg" id="genChannelSeg"></div>
     <div class="gen-steps" id="genStepsBar"></div>
@@ -283,7 +338,7 @@
     <div class="grid-channels" id="connectGrid"></div>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Étape 1 sur 8</span>
+      <span class="progress-text">Réglages · 1 sur 2</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -297,8 +352,8 @@
     <div class="bgrid" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Étape 2 sur 8</span>
-      <button class="btn primary next">Suivant →</button>
+      <span class="progress-text">Réglages · 2 sur 2</span>
+      <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
 
@@ -318,8 +373,8 @@
     <div class="divider"><span class="line"></span>Vidéos téléchargées<span class="line"></span></div>
     <div class="dl-row" id="downloadedRow"><span class="empty-note">Rien téléchargé pour l'instant.</span></div>
     <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Étape 3 sur 8</span>
+      <button class="btn secondary" disabled>← Précédent</button>
+      <span class="progress-text">Import · étape 1 sur 3</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -333,7 +388,7 @@
     <div id="selectionSections"><span class="empty-note">Aucune vidéo téléchargée pour l'instant.</span></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text" id="selCountText">Étape 4 sur 8</span>
+      <span class="progress-text" id="selCountText">Import · étape 2 sur 3</span>
       <button class="btn primary next">Suivant (cadrage) →</button>
     </div>
   </section>
@@ -347,7 +402,7 @@
     <div id="frameGrid" class="bgrid"><span class="empty-note">Chargement...</span></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Étape 5 sur 8</span>
+      <span class="progress-text">Import · étape 3 sur 3</span>
       <button class="btn primary" id="toResultsBtn">Suivant (lancer l'IA) →</button>
     </div>
   </section>
@@ -360,8 +415,8 @@
     </div>
     <div id="resultsList"><span class="empty-note">En attente du traitement...</span></div>
     <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text" id="resultsCountText">Étape 6 sur 8</span>
+      <button class="btn secondary" disabled>← Précédent</button>
+      <span class="progress-text" id="resultsCountText">Publication · étape 1 sur 3</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -383,7 +438,7 @@
     <div id="scheduleSections"><span class="empty-note">Aucun planning généré pour l'instant.</span></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Étape 7 sur 8</span>
+      <span class="progress-text">Publication · étape 2 sur 3</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -410,8 +465,12 @@
     </div>
   </section>
 
-  <div id="log"></div>
+  <details class="card" id="logBox" style="padding:10px 14px">
+    <summary style="cursor:pointer;font-size:12px;color:var(--muted)">Historique des messages</summary>
+    <div id="log" style="margin-top:8px"></div>
+  </details>
 </div>
+<div id="toasts" aria-live="polite"></div>
 
 <script>
 const CHANNEL_COLORS = {
@@ -422,46 +481,263 @@ function channelColor(name){ return CHANNEL_COLORS[name] || '#9aa1ac'; }
 function esc(s){ return (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function spinnerHtml(text){ return `<span class="spinner-row"><span class="spinner"></span>${esc(text)}</span>`; }
 
+// Every message lands in the "Historique" box; successes and errors also pop
+// up as a toast in the corner, where they're actually seen.
 function log(msg, cls){
   const el = document.getElementById('log');
   const line = document.createElement('div');
   if (cls) line.className = cls;
   line.textContent = new Date().toLocaleTimeString() + ' — ' + msg;
   el.prepend(line);
+  if (cls === 'error' || cls === 'success') toast(msg, cls);
 }
-async function api(path, options){
-  const res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}}, options));
-  if (!res.ok){ throw new Error(`${res.status}: ${await res.text()}`); }
+function toast(msg, cls){
+  const box = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = `toast ${cls || ''}`;
+  el.textContent = msg;
+  const dismiss = () => { el.classList.add('leaving'); setTimeout(() => el.remove(), 200); };
+  el.addEventListener('click', dismiss);
+  box.prepend(el);
+  while (box.children.length > 4) box.lastChild.remove();
+  setTimeout(dismiss, cls === 'error' ? 9000 : 4500);
+}
+
+// GETs are plain reads and answer in well under a second: one still pending
+// after 20s means the server is down or restarting (uvicorn --reload), and
+// the screen should say so instead of spinning forever. Actions
+// (POST/PATCH/...) get no timeout — downloads, processing and publishing
+// legitimately run for minutes.
+const GET_TIMEOUT_MS = 20000;
+async function api(path, options = {}){
+  const method = (options.method || 'GET').toUpperCase();
+  const controller = new AbortController();
+  const timer = method === 'GET' ? setTimeout(() => controller.abort(), GET_TIMEOUT_MS) : null;
+  let res;
+  try {
+    res = await fetch(path, Object.assign({headers:{'Content-Type':'application/json'}, signal: controller.signal}, options));
+  } catch (e){
+    throw new Error(e.name === 'AbortError'
+      ? 'Le serveur ne répond pas (délai dépassé) — il redémarre peut-être. Réessaie dans quelques secondes.'
+      : 'Serveur injoignable — vérifie que uvicorn tourne toujours dans le terminal.');
+  } finally {
+    clearTimeout(timer);
+  }
+  if (!res.ok){
+    const text = await res.text();
+    let detail = text;
+    try { const parsed = JSON.parse(text); if (parsed && parsed.detail) detail = typeof parsed.detail === 'string' ? parsed.detail : JSON.stringify(parsed.detail); } catch (_) {}
+    throw new Error(`${res.status} — ${detail}`);
+  }
   return res.status === 204 ? null : res.json();
 }
 
+// A failed screen load shows what went wrong + a retry button, in place of
+// its content — never a spinner left running or a misleading empty state.
+function showLoadError(el, error, retry){
+  if (!el) return;
+  el.innerHTML = `<div class="load-error"><span>⚠️ ${esc(error.message)}</span><button class="btn secondary small">↻ Réessayer</button></div>`;
+  el.querySelector('button').addEventListener('click', retry);
+}
+async function safeLoad(fn, containerId){
+  try { await fn(); }
+  catch (e){
+    showLoadError(document.getElementById(containerId), e, () => safeLoad(fn, containerId));
+    log(e.message, 'error');
+  }
+}
+
 let channels = [];
-let current = 0;
+let current = 2;
+let currentSpace = 'home';
 const screens = document.querySelectorAll('.screen');
 const stepBtns = document.querySelectorAll('#stepnav .step');
 
+// Spaces: two sources of videos (Import, Génération) feeding ONE publishing
+// pipeline (Publication), plus Accueil / Dashboard / one-time Réglages.
+// Numbered screens (data-idx) belong to the space whose range contains them.
+const STEP_SPACES = { settings: [0, 1], import: [2, 4], publication: [5, 7] };
+const lastStep = { settings: 0, import: 2, publication: 5 };
+function spaceOfStep(i){
+  return Object.keys(STEP_SPACES).find(k => i >= STEP_SPACES[k][0] && i <= STEP_SPACES[k][1]);
+}
+
 function render(){
-  screens.forEach(el => el.classList.toggle('active', +el.dataset.idx === current));
+  const stepSpace = STEP_SPACES[currentSpace] ? currentSpace : null;
+  screens.forEach(el => {
+    if (el.dataset.idx !== undefined) el.classList.toggle('active', stepSpace !== null && +el.dataset.idx === current);
+  });
+  document.getElementById('homeScreen').classList.toggle('active', currentSpace === 'home');
+  if (currentSpace !== 'dashboard') dashboardScreen.classList.remove('active');
+  if (currentSpace !== 'generation') generationScreen.classList.remove('active');
   stepBtns.forEach(btn => {
     const i = +btn.dataset.i;
+    btn.style.display = btn.dataset.space === stepSpace ? '' : 'none';
     btn.classList.remove('current','done','todo');
     btn.classList.add(i === current ? 'current' : (i < current ? 'done' : 'todo'));
   });
+  document.querySelectorAll('#spacenav .space').forEach(btn =>
+    btn.classList.toggle('active', btn.dataset.space === currentSpace));
 }
-function goTo(i){ current = i; render(); onEnterScreen(i); }
 
+function goTo(i){
+  current = i;
+  currentSpace = spaceOfStep(i);
+  lastStep[currentSpace] = i;
+  render();
+  onEnterScreen(i);
+}
+
+function openSpace(space){
+  if (space === 'generation'){ currentSpace = space; render(); openGeneration(); return; }
+  if (space === 'dashboard'){ currentSpace = space; render(); openDashboard(); return; }
+  if (STEP_SPACES[space]){ goTo(lastStep[space]); return; }
+  currentSpace = 'home';
+  render();
+  safeLoad(loadHome, 'homeKpis');
+}
+
+document.querySelectorAll('#spacenav .space').forEach(btn =>
+  btn.addEventListener('click', () => openSpace(btn.dataset.space)));
 stepBtns.forEach(btn => btn.addEventListener('click', () => goTo(+btn.dataset.i)));
-document.querySelectorAll('.next').forEach(btn => btn.addEventListener('click', () => goTo(Math.min(current+1, screens.length-1))));
-document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', () => goTo(Math.max(current-1, 0))));
+// Next/prev stay inside the current space; "Suivant" on the last Réglages
+// screen returns to Accueil. (Cadrage → Publication goes through its own
+// "Traiter" button, which processes the videos first.)
+document.querySelectorAll('.next').forEach(btn => btn.addEventListener('click', () => {
+  const range = STEP_SPACES[currentSpace];
+  if (!range || current >= range[1]){ openSpace('home'); return; }
+  goTo(current + 1);
+}));
+document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', () => {
+  const range = STEP_SPACES[currentSpace];
+  if (range && current > range[0]) goTo(current - 1);
+}));
 
+const SCREEN_LOADERS = {
+  0: [() => loadConnectionScreen(), 'connectGrid'],
+  1: [() => loadBackgrounds(), 'backgroundsGrid'],
+  3: [() => loadSelection(), 'selectionSections'],
+  4: [() => loadFrameStep(), 'frameGrid'],
+  5: [() => loadResultsScreen(), 'resultsList'],
+  6: [() => loadPlanningScreen(), 'scheduleSections'],
+  7: [() => loadSummaryFromSchedule(), 'summarySections'],
+};
 function onEnterScreen(i){
-  if (i === 0) loadConnectionScreen();
-  if (i === 1) loadBackgrounds();
-  if (i === 3) loadSelection();
-  if (i === 4) loadFrameStep();
-  if (i === 5) loadResultsScreen();
-  if (i === 6) loadPlanningScreen();
-  if (i === 7) loadSummaryFromSchedule();
+  const loader = SCREEN_LOADERS[i];
+  if (loader) safeLoad(loader[0], loader[1]);
+}
+
+// ---------- Accueil ----------
+
+// Connection checks cost a (cheap) YouTube call each: cache them a few
+// minutes so going back and forth to Accueil doesn't re-check 6 channels
+// every time. The Réglages → Connexion screen always checks live.
+const CONNECTION_CACHE_MS = 5 * 60 * 1000;
+const connectionCache = {};
+async function cachedConnectionStatus(channelName){
+  const hit = connectionCache[channelName];
+  if (hit && Date.now() - hit.at < CONNECTION_CACHE_MS) return hit.status;
+  const status = await api(`/api/channels/${channelName}/connection_status`);
+  connectionCache[channelName] = { at: Date.now(), status };
+  return status;
+}
+
+function formatWhen(iso){
+  const d = new Date(iso);
+  return d.toLocaleDateString('fr-FR', { weekday:'short', day:'2-digit', month:'2-digit' })
+    + ' à ' + d.toLocaleTimeString('fr-FR', { hour:'2-digit', minute:'2-digit' });
+}
+
+function setSpaceBadge(space, n){
+  const btn = document.querySelector(`#spacenav .space[data-space="${space}"]`);
+  if (!btn) return;
+  let badge = btn.querySelector('.badge');
+  if (!n){ if (badge) badge.remove(); return; }
+  if (!badge){ badge = document.createElement('span'); badge.className = 'badge'; btn.appendChild(badge); }
+  badge.textContent = n;
+}
+
+const STATUS_LABELS = {
+  download_failed: 'téléchargement échoué', processing_failed: 'traitement échoué',
+  error: 'erreur', rendering_failed: 'génération échouée',
+};
+
+async function loadHome(){
+  const kpis = document.getElementById('homeKpis');
+  const grid = document.getElementById('homeChannels');
+  kpis.innerHTML = spinnerHtml('Chargement...');
+  grid.innerHTML = '';
+  const data = await api('/api/overview');
+  const t = data.totals;
+  const hasGeneration = channels.some(ch => ch.generation_mode);
+
+  setSpaceBadge('import', t.to_sort);
+  setSpaceBadge('publication', t.ready);
+  setSpaceBadge('generation', t.generating);
+
+  const kpiDefs = [
+    { n: t.to_sort, l: 'vidéo(s) à trier', go: 'Import → Sélection', action: () => goTo(3) },
+    hasGeneration && { n: t.generating, l: 'génération(s) en cours', go: 'Génération', action: () => openSpace('generation') },
+    { n: t.ready, l: 'prête(s) à publier', go: 'Publication → Résultats IA', action: () => goTo(5) },
+    { n: t.scheduled, l: 'programmée(s) sur YouTube', go: 'Dashboard', action: () => openSpace('dashboard') },
+    { n: t.errors, l: 'en erreur', go: 'Voir le détail ↓', cls: 'bad',
+      action: () => { const el = document.querySelector('.home-ch[data-has-errors="1"]'); if (el) el.scrollIntoView({behavior:'smooth', block:'center'}); } },
+  ].filter(Boolean);
+  kpis.innerHTML = kpiDefs.map((k, i) => `
+    <button class="kpi ${k.n ? (k.cls || '') : 'zero'}" data-k="${i}">
+      <div class="n">${k.n}</div><div class="l">${esc(k.l)}</div><div class="go">${esc(k.go)} →</div>
+    </button>`).join('');
+  kpis.querySelectorAll('.kpi').forEach(btn => btn.addEventListener('click', () => kpiDefs[+btn.dataset.k].action()));
+
+  grid.innerHTML = data.channels.map(c => {
+    const ch = channels.find(x => x.name === c.channel) || { display_name: c.channel };
+    const q = c.quota;
+    const counts = c.counts;
+    const chips = [
+      counts.to_sort && `<button class="chip" data-go="3">${counts.to_sort} à trier</button>`,
+      counts.generating && `<button class="chip" data-go="generation">${counts.generating} en génération</button>`,
+      counts.ready && `<button class="chip" data-go="5">${counts.ready} prête(s)</button>`,
+      counts.scheduled && `<button class="chip" data-go="dashboard">${counts.scheduled} programmée(s)</button>`,
+      counts.in_progress && `<span class="chip muted">${counts.in_progress} en cours</span>`,
+      counts.errors && `<span class="chip bad">${counts.errors} en erreur</span>`,
+    ].filter(Boolean);
+    return `
+    <div class="card home-ch" data-channel="${c.channel}" data-has-errors="${counts.errors ? 1 : 0}">
+      <div class="ch-head"><span class="dot" style="background:${channelColor(c.channel)}"></span><span class="ch-name">${esc(ch.display_name)}</span></div>
+      <div class="row" data-role="conn">${spinnerHtml('Connexion...')}</div>
+      <div class="row">📅 ${c.next_publish ? `Prochaine publication : ${esc(formatWhen(c.next_publish))}` : 'Rien de programmé'}</div>
+      <div class="row">${q.exhausted
+        ? '⛔ Quota YouTube du jour atteint'
+        : `📊 ${q.uploads_today} upload(s) aujourd'hui · ≈ ${q.estimated_uploads_left} restant(s)`}</div>
+      <div class="counts">${chips.length ? chips.join('') : '<span class="empty-note">Rien en attente.</span>'}</div>
+      ${c.errors.length ? `<ul class="home-errors">${c.errors.map(e =>
+        `<li>${esc(e.title)} — ${esc(STATUS_LABELS[e.status] || e.status)}${e.message ? ` : ${esc(e.message.slice(0, 140))}` : ''}</li>`).join('')}</ul>` : ''}
+    </div>`;
+  }).join('');
+
+  grid.querySelectorAll('.chip[data-go]').forEach(btn => btn.addEventListener('click', () => {
+    const go = btn.dataset.go;
+    if (/^\d+$/.test(go)) goTo(+go); else openSpace(go);
+  }));
+
+  // Connection states fill in as they arrive (one cheap YouTube call each)
+  data.channels.forEach(async c => {
+    const row = grid.querySelector(`.home-ch[data-channel="${c.channel}"] [data-role="conn"]`);
+    const chObj = channels.find(x => x.name === c.channel);
+    if (chObj && !chObj.has_credentials){ row.innerHTML = '<span class="cbadge missing">● Pas de credentials.json</span>'; return; }
+    try {
+      const s = await cachedConnectionStatus(c.channel);
+      if (s.state === 'connected'){
+        row.innerHTML = `<span class="cbadge connected">● Connectée</span><span>${esc(s.youtube_channel_title || '')}</span>`;
+      } else {
+        const label = { expired: 'Connexion expirée', not_connected: 'Jamais connectée' }[s.state] || 'Vérification impossible';
+        row.innerHTML = `<span class="cbadge ${s.state === 'expired' ? 'pending' : 'missing'}">● ${label}</span><button class="chip" data-go-settings>Reconnecter →</button>`;
+        row.querySelector('[data-go-settings]').addEventListener('click', () => goTo(0));
+      }
+    } catch (e){
+      row.innerHTML = `<span class="cbadge missing">● Vérification impossible</span>`;
+    }
+  });
 }
 
 // ---------- Step 0 : Connect channels ----------
@@ -489,6 +765,7 @@ async function loadConnectionScreen(){
     if (!ch.has_credentials) continue;
     try {
       const status = await api(`/api/channels/${ch.name}/connection_status`);
+      connectionCache[ch.name] = { at: Date.now(), status };
       renderConnectionBody(card, ch, status);
     } catch (e){
       card.innerHTML = `<span class="cbadge missing">Erreur</span>`;
@@ -542,6 +819,7 @@ async function startConnect(ch, card){
         clearInterval(poll);
         try {
           const status = await api(`/api/channels/${ch.name}/connection_status`);
+          connectionCache[ch.name] = { at: Date.now(), status };
           renderConnectionBody(card, ch, status);
           if (status.connected) log(`${ch.display_name} connectée : ${status.youtube_channel_title}`, 'success');
         } catch (e){ log(e.message, 'error'); }
@@ -666,7 +944,7 @@ async function loadSelection(){
 function updateSelCount(){
   const total = document.querySelectorAll('.sel-check').length;
   const selected = document.querySelectorAll('.sel-check:not(.off)').length;
-  document.getElementById('selCountText').textContent = `Étape 4 sur 8 · ${selected}/${total} sélectionnées`;
+  document.getElementById('selCountText').textContent = `Import · étape 2 sur 3 · ${selected}/${total} sélectionnées`;
 }
 
 let resultsScreenBusy = false;
@@ -780,14 +1058,14 @@ async function loadResultsScreen(){
     const videos = await api('/api/videos?status=ready_for_upload');
     renderResults(videos);
   } catch (e){
-    document.getElementById('resultsList').innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
+    showLoadError(document.getElementById('resultsList'), e, loadResultsScreen);
     log(e.message, 'error');
   }
 }
 
 function renderResults(videos){
   const list = document.getElementById('resultsList');
-  document.getElementById('resultsCountText').textContent = `Étape 6 sur 8 · ${videos.length} vidéo(s) prêtes`;
+  document.getElementById('resultsCountText').textContent = `Publication · étape 1 sur 3 · ${videos.length} vidéo(s) prêtes`;
   if (!videos.length){ list.innerHTML = '<span class="empty-note">Aucune vidéo prête.</span>'; return; }
 
   list.innerHTML = videos.map(v => {
@@ -913,7 +1191,8 @@ async function loadPlanningScreen(){
     const data = await api('/api/schedule');
     renderSchedule(data.schedule || []);
   } catch (e){
-    wrap.innerHTML = '<span class="empty-note">Aucun planning généré pour l\'instant.</span>';
+    showLoadError(wrap, e, loadPlanningScreen);
+    log(e.message, 'error');
   }
 }
 
@@ -1052,7 +1331,7 @@ function preflightCardHtml(item){
   } else {
     level = 'bad';
     const label = {expired:'Connexion expirée', not_connected:'Jamais connectée', missing_credentials:'Pas de credentials.json'}[conn.state] || 'Connexion impossible';
-    rows.push(`<div class="pf-row bad">⛔ ${label} — ses ${item.videos} vidéo(s) seront ignorées. Reconnecte-la à l'étape 1 · Connexion.</div>`);
+    rows.push(`<div class="pf-row bad">⛔ ${label} — ses ${item.videos} vidéo(s) seront ignorées. Reconnecte-la dans ⚙️ Réglages → Connexion.</div>`);
   }
 
   const q = item.quota;
@@ -1118,8 +1397,7 @@ let dashboardChannel = null;
 let dashVideos = [];
 let dashFilter = 'all';
 
-document.getElementById('dashboardBtn').addEventListener('click', openDashboard);
-document.getElementById('dashBackBtn').addEventListener('click', closeDashboard);
+document.getElementById('dashBackBtn').addEventListener('click', () => openSpace('home'));
 document.getElementById('dashRefreshBtn').addEventListener('click', () => {
   if (dashboardChannel) loadDashboard(dashboardChannel, true);
 });
@@ -1142,10 +1420,6 @@ function openDashboard(){
   if (!dashboardChannel && channels.length) dashboardChannel = channels[0].name;
   renderDashChannelChips();
   if (dashboardChannel) loadDashboard(dashboardChannel, true);
-}
-function closeDashboard(){
-  dashboardScreen.classList.remove('active');
-  render();
 }
 
 function renderDashChannelChips(){
@@ -1177,7 +1451,7 @@ async function loadDashboard(channelName, refresh){
       : (data.videos.length ? 'Clique "Actualiser les stats" pour charger vues/likes réels' : '');
     loadChannelOverview(channelName);
   } catch (e){
-    grid.innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
+    showLoadError(grid, e, () => loadDashboard(channelName, refresh));
     log(e.message, 'error');
   }
 }
@@ -1400,7 +1674,6 @@ const CAPTION_COLOR_STYLES = new Set(['karaoke', 'bounce', 'typewriter']);
 const CAPTION_STYLE_DEFAULT_COLOR = { karaoke: '#ffe000', bounce: '#6d8dfd', typewriter: '#ffe000' };
 function spin(text){ return `<span class="spinner"></span> ${esc(text)}`; }
 
-document.getElementById('generationBtn').addEventListener('click', openGeneration);
 document.getElementById('genBackBtn').addEventListener('click', startNewBatch);
 
 function generationChannels(){ return channels.filter(ch => ch.generation_mode); }
@@ -1463,7 +1736,7 @@ async function loadGeneration(channelName){
       renderStarter();
     }
   } catch (e){
-    stage.innerHTML = '<span class="empty-note">Erreur de chargement.</span>';
+    showLoadError(stage, e, () => loadGeneration(channelName));
     log(e.message, 'error');
   }
 }
@@ -1631,7 +1904,7 @@ function renderBatchSummary(batchId, videos, active){
         : ''}
     </div>
     ${done + failed === videos.length
-      ? `<div class="progress-text" style="margin-top:6px">Terminé — les vidéos prêtes t'attendent dans 6 · Résultats IA.</div>`
+      ? `<div class="progress-text" style="margin-top:6px">Terminé — les vidéos prêtes t'attendent dans 🚀 Publication → Résultats IA.</div>`
       : ''}`;
 
   const audioBtn = document.getElementById('genAudioAllBtn');
@@ -1886,8 +2159,7 @@ async function boot(){
   if (!channels.some(ch => ch.generation_mode)) document.getElementById('generationBtn').style.display = 'none';
   renderUrlsGrid();
   await refreshDownloadedRow();
-  render();
-  loadConnectionScreen();
+  openSpace('home');
 }
 boot()
   .catch(e => log(e.message, 'error'))

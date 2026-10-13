@@ -974,8 +974,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
     health = get_connection_health(channel_name)
     if health["state"] != "connected":
         messages = {
-            "expired": "Connexion YouTube expirée — reconnecte la chaîne à l'étape 1 · Connexion.",
-            "not_connected": "Chaîne jamais connectée — connecte-la à l'étape 1 · Connexion.",
+            "expired": "Connexion YouTube expirée — reconnecte la chaîne dans ⚙️ Réglages → Connexion.",
+            "not_connected": "Chaîne jamais connectée — connecte-la dans ⚙️ Réglages → Connexion.",
             "missing_credentials": "Pas de credentials.json pour cette chaîne.",
         }
         return skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}"))

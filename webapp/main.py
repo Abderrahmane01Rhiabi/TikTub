@@ -168,6 +168,68 @@ def list_channels():
     return channel_manager.list_channels()
 
 
+OVERVIEW_BUCKETS = {
+    "to_sort": {"selected"},  # downloaded, waiting for Sélection/Cadrage/Traiter
+    "generating": {"awaiting_script", "script_generated", "audio_generated"},
+    "ready": {"ready_for_upload"},  # waiting for Résultats IA → Planning → Publier
+    "in_progress": {"pending", "downloading", "processing", "generating_tags"},
+    "errors": {"download_failed", "processing_failed", "error", "rendering_failed"},
+}
+
+
+@app.get("/api/overview")
+def overview():
+    """Accueil: per channel, what's waiting at each stage + what's scheduled
+    + the Google project's quota today. Local data only (one DB read, no
+    YouTube call) so the home screen is instant — the UI fetches each
+    channel's connection state separately."""
+    import quota
+    from dateutil import parser as date_parser
+    from datetime import timezone as _tz
+
+    bp = get_batch_processor()
+    now = datetime.now(_tz.utc)
+    per_channel: Dict[str, dict] = {
+        ch["name"]: {
+            "counts": {bucket: 0 for bucket in OVERVIEW_BUCKETS} | {"scheduled": 0},
+            "next_publish": None, "errors": [],
+        }
+        for ch in channel_manager.list_channels()
+    }
+
+    for video in bp.url_manager.list_videos():
+        entry = per_channel.get(video.get("channel"))
+        if entry is None:
+            continue
+        status = video.get("status")
+        for bucket, statuses in OVERVIEW_BUCKETS.items():
+            if status in statuses:
+                entry["counts"][bucket] += 1
+        if status in OVERVIEW_BUCKETS["errors"] and len(entry["errors"]) < 5:
+            entry["errors"].append({
+                "title": (video.get("ai_data") or {}).get("optimized_title") or video.get("original_title") or video.get("url") or video["video_id"],
+                "status": status,
+                "message": video.get("error_message") or video.get("render_error"),
+            })
+        if status == "scheduled_on_youtube" and video.get("scheduled_publish_time"):
+            try:
+                when = date_parser.parse(video["scheduled_publish_time"])
+                when = when if when.tzinfo else when.astimezone()
+            except (ValueError, OverflowError):
+                continue
+            if when > now:
+                entry["counts"]["scheduled"] += 1
+                if entry["next_publish"] is None or when < date_parser.parse(entry["next_publish"]):
+                    entry["next_publish"] = when.isoformat()
+
+    channels_out = [
+        {"channel": name, **data, "quota": quota.status_for_channel(name)}
+        for name, data in per_channel.items()
+    ]
+    totals = {key: sum(c["counts"][key] for c in channels_out) for key in list(OVERVIEW_BUCKETS) + ["scheduled"]}
+    return {"channels": channels_out, "totals": totals}
+
+
 @app.get("/api/channels/{channel_name}/profile")
 def get_channel_profile(channel_name: str):
     return channel_manager.get_channel_profile(channel_name)
