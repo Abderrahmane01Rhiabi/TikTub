@@ -250,7 +250,7 @@ class GenerativePipeline:
         )
         return _db.get_video(video_id)
 
-    def assemble(self, video_id: str) -> str:
+    def assemble(self, video_id: str, progress_cb=None) -> str:
         """Composite the final video from the already-generated narration —
         local/free, no ElevenLabs call. The only method that writes the
         final mp4. Requires decor (set_decor) to have been chosen already."""
@@ -273,6 +273,7 @@ class GenerativePipeline:
                 caption_style=video.get("caption_style", "karaoke"),
                 caption_color=video.get("caption_color"),
                 border_image_path=self.channel_manager.get_background_path(video["channel"]),
+                progress_cb=progress_cb,
             )
         except Exception as e:
             self.url_manager.update_video_status(video_id, "rendering_failed", render_error=str(e))

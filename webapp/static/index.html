@@ -373,6 +373,13 @@
   .dvstats svg{color:var(--dim);}
   .astat{border-radius:8px;}
 
+  /* real progress bars (encoding) */
+  .pjob{display:flex;flex-direction:column;gap:6px;}
+  .pjob-line{display:flex;justify-content:space-between;gap:10px;font-size:12px;color:var(--muted);}
+  .pjob-line b{color:var(--text);font-variant-numeric:tabular-nums;}
+  .pbar{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;border:1px solid var(--border-soft);}
+  .pbar > div{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--ok));transition:width .5s ease;}
+
   /* Dashboard overview: collapsible */
   .overview-summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;}
   .overview-summary::-webkit-details-marker{display:none;}
@@ -1404,26 +1411,6 @@ function updateSelCount(){
   });
 }
 
-let resultsScreenBusy = false;
-
-document.getElementById('toResultsBtn').addEventListener('click', async () => {
-  resultsScreenBusy = true; // tells loadResultsScreen() (fired by goTo below) to stand down —
-                             // this handler owns the screen until process_selected finishes
-  goTo(5);
-  const list = document.getElementById('resultsList');
-  list.innerHTML = spinnerHtml('Traitement en cours (fond + IA)... peut prendre quelques minutes.');
-  try {
-    const result = await api('/api/process_selected', { method:'POST' });
-    log(`${result.processed} vidéo(s) traitée(s)`, 'success');
-    renderResults(result.videos);
-  } catch (e){
-    showLoadError(list, e, loadResultsScreen);
-    log(e.message, 'error');
-  } finally {
-    resultsScreenBusy = false;
-  }
-});
-
 // ---------- Step 4 : Frame positioning (cadrage) ----------
 
 const FRAME_MODES = [
@@ -1510,22 +1497,71 @@ function renderFrameCard(card, videoId, mode, rounded){
 
 // ---------- Step 3 : AI results ----------
 
-async function loadResultsScreen(){
-  // Shows every video currently ready for review — curated ones just
-  // processed by the button below, AND generated ones assembled from the
-  // Génération tab (which never went through process_selected). Backs off
-  // if toResultsBtn's own processing flow is already running, so the two
-  // don't race to overwrite #resultsList (the fast local read here would
-  // otherwise clobber the real "Traitement en cours..." spinner).
-  if (resultsScreenBusy) return;
-  document.getElementById('resultsList').innerHTML = spinnerHtml('Chargement...');
+// Import processing runs in the background (POST /api/process_selected
+// returns at once); Résultats IA shows its real progress while it runs —
+// also after a page reload, since the state comes from the server.
+let processPollTimer = null;
+let processSeenRunning = false;
+
+document.getElementById('toResultsBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('toResultsBtn');
+  btn.disabled = true;
   try {
-    const videos = await api('/api/videos?status=ready_for_upload');
-    renderResults(videos);
-  } catch (e){
-    showLoadError(document.getElementById('resultsList'), e, loadResultsScreen);
-    log(e.message, 'error');
+    const r = await api('/api/process_selected', { method:'POST' });
+    if (!r.started && !r.running){ log('Aucune vidéo sélectionnée à traiter.', 'error'); return; }
+    goTo(5);
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; }
+});
+
+function formatEta(seconds){
+  if (seconds == null) return '';
+  if (seconds < 60) return `≈ ${Math.max(1, seconds)} s restantes`;
+  return `≈ ${Math.round(seconds / 60)} min restantes`;
+}
+
+function progressBarHtml(job, label){
+  const pct = Math.round((job.fraction || 0) * 100);
+  const eta = formatEta(job.eta_seconds);
+  return `
+    <div class="pjob">
+      <div class="pjob-line"><span>${esc(label)}</span><b>${pct} %</b></div>
+      <div class="pbar"><div style="width:${pct}%"></div></div>
+      <div class="pjob-line tiny"><span>${pct === 0 ? 'Préparation…' : esc(eta)}</span><span>${job.elapsed_seconds != null ? `${job.elapsed_seconds} s écoulées` : ''}</span></div>
+    </div>`;
+}
+
+async function loadResultsScreen(){
+  clearTimeout(processPollTimer);
+  const list = document.getElementById('resultsList');
+  const status = await api('/api/process_status');
+  if (status.key && !status.done){
+    processSeenRunning = true;
+    const phase = status.phase === 'ia' ? 'Analyse IA (titre, description, tags)' : 'Encodage (fond + cadrage)';
+    list.innerHTML = `
+      <article class="chcard">
+        <div class="chcard-head">
+          <div class="who"><div class="name">${spin('')} Traitement en cours</div>
+            <div class="meta" style="margin-left:0">Tu peux changer d'écran ou recharger la page : ça continue.</div></div>
+          <span class="pill wait">vidéo ${Math.min(status.index + 1, status.total)} sur ${status.total}</span>
+        </div>
+        <div class="chcard-body">
+          <div class="muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(status.title || '')}</div>
+          ${progressBarHtml(status, phase)}
+        </div>
+      </article>`;
+    // keep polling only while this screen is the one shown
+    processPollTimer = setTimeout(() => { if (currentSpace === 'publication' && current === 5) safeLoad(loadResultsScreen, 'resultsList'); }, 1500);
+    return;
   }
+  if (processSeenRunning && status.key){
+    processSeenRunning = false;
+    if (status.error) log(`Traitement interrompu : ${status.error}`, 'error');
+    else log(`${status.processed} vidéo(s) traitée(s)`, 'success');
+  }
+  list.innerHTML = spinnerHtml('Chargement...');
+  const videos = await api('/api/videos?status=ready_for_upload');
+  renderResults(videos);
 }
 
 function renderResults(videos){
@@ -2693,8 +2729,9 @@ async function pollBatchProgress(batchId){
   }
 
   renderBatchGrid(batchId, videos, activeResp.active);
-  if (activeResp.active){
-    genBatchPollTimer = setTimeout(() => pollBatchProgress(batchId), 3000);
+  const assembling = videos.some(v => v.status === 'assembling');
+  if (activeResp.active || assembling){
+    genBatchPollTimer = setTimeout(() => pollBatchProgress(batchId), assembling ? 1500 : 3000);
   }
 }
 
@@ -2723,6 +2760,10 @@ function renderBatchGrid(batchId, videos, active){
     // A card whose status hasn't changed since the last poll is left alone —
     // it may hold an in-progress script edit or a decor pick that a blind
     // refresh would wipe out, since sibling videos can still be generating.
+    if (genCardStatus[v.video_id] === v.status && v.status === 'assembling'){
+      const slot = card.querySelector('[data-role="progress"]');
+      if (slot) slot.innerHTML = progressBarHtml(v.progress || { fraction: 0 }, 'Encodage de la vidéo');
+    }
     if (genCardStatus[v.video_id] !== v.status){
       // The décor card carries a full-size WYSIWYG preview (background +
       // caption style together) — give it more room than the other, purely
@@ -2746,6 +2787,7 @@ function renderBatchSummary(batchId, videos, active){
   const readyForAudio = videos.filter(v => v.status === 'script_generated').length;
   const readyForDecor = videos.filter(v => v.status === 'audio_generated').length;
   const done = videos.filter(v => v.status === 'ready_for_upload').length;
+  const assemblingCount = videos.filter(v => v.status === 'assembling').length;
   const failed = videos.filter(v => v.status === 'rendering_failed').length;
   // active + no video left awaiting_script means phase 2 (audio) is the one
   // running — script_generated is ambiguous on its own (it's both "phase 1
@@ -2759,6 +2801,8 @@ function renderBatchSummary(batchId, videos, active){
     phaseLine = `Génération audio en cours (${videos.length - scripting - readyForAudio}/${videos.length - scripting})…`;
   } else if (readyForAudio > 0){
     phaseLine = `${readyForAudio} script${readyForAudio > 1 ? 's' : ''} prêt${readyForAudio > 1 ? 's' : ''} à relire — corrige-les si besoin, puis lance ${readyForAudio > 1 ? 'les audios' : "l'audio"}.`;
+  } else if (assemblingCount > 0){
+    phaseLine = `Création en cours : ${assemblingCount} vidéo${assemblingCount > 1 ? 's' : ''}…`;
   } else if (readyForDecor > 0 && done + failed < videos.length){
     phaseLine = `${readyForDecor} vidéo${readyForDecor > 1 ? 's' : ''} prête${readyForDecor > 1 ? 's' : ''} pour le décor.`;
   } else {
@@ -2768,7 +2812,7 @@ function renderBatchSummary(batchId, videos, active){
   const summary = document.getElementById('genBatchSummary');
   summary.innerHTML = `
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
-      <div style="font-size:13px;font-weight:600;flex:1">${active && (scripting > 0 || audioRunning) ? spin(phaseLine) : esc(phaseLine)}</div>
+      <div style="font-size:13px;font-weight:600;flex:1">${(active && (scripting > 0 || audioRunning)) || assemblingCount ? spin(phaseLine) : esc(phaseLine)}</div>
       ${readyForAudio > 0 && scripting === 0 && !audioRunning
         ? `<button class="btn primary small" id="genAudioAllBtn">${icon('mic', 14)} Générer ${readyForAudio > 1 ? `les ${readyForAudio} audios` : "l'audio"}</button>`
         : ''}
@@ -2879,6 +2923,12 @@ function cardBodyHtml(v, i){
       </div>`;
   }
 
+  if (v.status === 'assembling'){
+    return `${genHead(v, i, 'wait', 'Création…')}
+      <div data-role="progress">${progressBarHtml(v.progress || { fraction: 0 }, 'Encodage de la vidéo')}</div>
+      <div class="tiny" style="margin-top:8px">Tu peux changer d'écran ou recharger la page : la création continue.</div>`;
+  }
+
   if (v.status === 'ready_for_upload'){
     return `${genHead(v, i, 'ok', icon('check', 11) + ' Créée')}
       <video src="${v.media_url || ''}" controls style="max-width:170px;aspect-ratio:9/16;border-radius:10px;background:#000"></video>`;
@@ -2964,7 +3014,7 @@ function wireCardEvents(card, v, batchId){
     if (!bg || !mu){ if (note) note.textContent = 'Choisis un fond vidéo ET une musique.'; return; }
     const originalLabel = finalizeBtn.innerHTML;
     finalizeBtn.disabled = true;
-    finalizeBtn.innerHTML = spin('Création en cours (1-2 min)...');
+    finalizeBtn.innerHTML = spin('Lancement…');
     try {
       await api(`/api/videos/${v.video_id}/finalize`, {
         method: 'POST',

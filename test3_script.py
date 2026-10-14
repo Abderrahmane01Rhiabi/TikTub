@@ -315,6 +315,13 @@ def render_frame_preview(
         logger.error(f"❌ Preview render failed: {e}")
         return None
 
+def _encode_logger(progress_cb):
+    if not progress_cb:
+        return None
+    from progress import EncodeProgress
+    return EncodeProgress(progress_cb)
+
+
 def processed_output_paths(title: str, bg_mode: str, output_name: str = None):
     """(output .mp4, temp audio) for a processed video. output_name (the
     video_id, from the batch pipeline) makes both unique per video; the
@@ -327,7 +334,7 @@ def processed_output_paths(title: str, bg_mode: str, output_name: str = None):
             os.path.join(CONFIG['temp_folder'], f"{stem}-temp-audio.m4a"))
 
 
-def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None, frame_mode=None, rounded_corners=False, output_name=None):
+def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None, frame_mode=None, rounded_corners=False, output_name=None, progress_cb=None):
     """frame_mode ('letterbox' | 'full_border' | 'fill' | None): how the video
     sits inside the 9:16 canvas relative to the background border, chosen
     per-video by the user in the 'Cadrage' wizard step (see
@@ -441,7 +448,8 @@ def process_video_with_background_options(video_path: str, title: str, bg_mode='
             temp_audiofile=temp_audio,
             remove_temp=True,
             verbose=False,
-            logger=None
+            # progress_cb(0..1): real per-frame encoding progress (progress.py)
+            logger=_encode_logger(progress_cb)
         )
 
         video.close()

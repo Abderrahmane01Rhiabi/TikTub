@@ -21,6 +21,13 @@ from test3_script import compute_frame_scale, rounded_corner_mask, ROUNDED_CORNE
 from moviepy.video.fx.all import crop as vcrop
 
 
+def _encode_logger(progress_cb):
+    if not progress_cb:
+        return None
+    from progress import EncodeProgress
+    return EncodeProgress(progress_cb)
+
+
 def _build_background_layers(bg_video_path, total_duration, size, frame_mode, rounded_corners, border_image_path):
     """Returns the list of clips (bottom to top) that make up the background:
     the video placed/scaled per frame_mode ('fill' / 'letterbox' /
@@ -85,7 +92,10 @@ def render_video(
     frame_mode: str = "fill",
     rounded_corners: bool = False,
     border_image_path: str = None,
+    progress_cb=None,
 ) -> str:
+    """progress_cb(0..1), if given, receives the real encoding progress
+    (moviepy's per-frame callbacks, see progress.EncodeProgress)."""
     total_duration = words[-1][2] if words else AudioFileClip(narration_mp3).duration
     narration_audio = AudioFileClip(narration_mp3).subclip(0, total_duration)
 
@@ -107,6 +117,6 @@ def render_video(
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
     final.write_videofile(
         out_path, fps=25, codec="libx264", audio_codec="aac",
-        threads=4, preset="medium", logger=None,
+        threads=4, preset="medium", logger=_encode_logger(progress_cb),
     )
     return out_path

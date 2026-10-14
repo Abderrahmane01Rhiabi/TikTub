@@ -301,12 +301,20 @@ class BatchProcessor:
         """Marque une vidéo téléchargée comme sélectionnée (ou rejetée) pour l'étape IA"""
         self.url_manager.update_video_status(video_id, 'selected' if selected else 'rejected')
 
-    def process_selected_videos(self, batch_id: str = None) -> int:
+    # Within one video: encoding is the long, measurable part; the AI pass
+    # after it has no progress of its own, so it gets the last slice.
+    PROCESS_ENCODE_SHARE = 0.85
+
+    def process_selected_videos(self, batch_id: str = None, on_progress=None) -> int:
         """Traite (background + IA channel-aware) les vidéos marquées 'selected'.
 
         Sans batch_id : traite TOUTES les vidéos sélectionnées, toutes chaînes/batches
         confondus (c'est le mode utilisé par l'assistant web, qui travaille sur les 6
-        chaînes en une seule fois plutôt que chaîne par chaîne)."""
+        chaînes en une seule fois plutôt que chaîne par chaîne).
+
+        on_progress(index, total, title, phase, fraction_overall), si fourni :
+        progression réelle (encodage image par image, puis phase IA), pour
+        la barre de progression de l'UI."""
         selected_videos = (
             self.list_batch_videos(batch_id, status='selected') if batch_id
             else self.list_all_videos(status='selected')
@@ -316,9 +324,17 @@ class BatchProcessor:
             return 0
 
         processed_count = 0
-        for video in selected_videos:
+        total = len(selected_videos)
+        for index, video in enumerate(selected_videos):
             channel_name = video.get('channel', 'default')
             print(f"\n🔄 Traitement (chaîne: {channel_name}): {video['url']}")
+            label = video.get('original_title') or video.get('url')
+
+            def report(phase, within, i=index):
+                if on_progress:
+                    on_progress(i, total, label, phase, (i + within) / total)
+
+            report('encodage', 0.0)
 
             try:
                 self.url_manager.update_video_status(video['video_id'], 'processing')
@@ -334,7 +350,8 @@ class BatchProcessor:
                 rounded_corners = video.get('rounded_corners', False)
                 processed_path = self.process_tiktok_video(
                     raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
-                    output_name=video['video_id']  # unique per video, see test3_script
+                    output_name=video['video_id'],  # unique per video, see test3_script
+                    progress_cb=lambda f: report('encodage', self.PROCESS_ENCODE_SHARE * f),
                 )
 
                 if not processed_path:
@@ -348,7 +365,9 @@ class BatchProcessor:
                     ai_data = video['ai_data']
                 else:
                     self.url_manager.update_video_status(video['video_id'], 'generating_tags')
+                    report('ia', self.PROCESS_ENCODE_SHARE)
                     ai_data = self.generate_ai_content(video, title, video_path=processed_path)
+                report('ia', 1.0)
 
                 self.url_manager.update_video_status(
                     video['video_id'], 'ready_for_upload',
@@ -536,7 +555,7 @@ class BatchProcessor:
 
         return None, None, {}
 
-    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False, output_name: str = None) -> str:
+    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False, output_name: str = None, progress_cb=None) -> str:
         """Interface avec le traitement vidéo existant"""
         # Réutilise la fonction de test3_script.py
         try:
@@ -544,7 +563,7 @@ class BatchProcessor:
 
             return process_video_with_background_options(
                 video_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
-                output_name=output_name
+                output_name=output_name, progress_cb=progress_cb
             )
 
         except Exception as e:

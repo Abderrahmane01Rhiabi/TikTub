@@ -108,6 +108,36 @@ def get_batch_processor():
     return _batch_processor
 
 
+INTERRUPTED_STATUSES = {
+    # a background render/processing can't survive a server restart (its
+    # thread and progress live in this process) — put those videos back
+    # where the user can relaunch them instead of leaving them stuck
+    "assembling": "audio_generated",
+    "processing": "selected",
+    "generating_tags": "selected",
+}
+
+
+def recover_interrupted() -> int:
+    bp = get_batch_processor()
+    count = 0
+    for stuck, back_to in INTERRUPTED_STATUSES.items():
+        for video in bp.url_manager.list_videos(status=stuck):
+            bp.url_manager.update_video_status(video["video_id"], back_to, interrupted_from=stuck)
+            count += 1
+    if count:
+        print(f"↩️ {count} vidéo(s) interrompue(s) par le redémarrage remise(s) à relancer")
+    return count
+
+
+@app.on_event("startup")
+def _recover_interrupted_jobs():
+    try:
+        recover_interrupted()
+    except Exception as e:
+        print(f"⚠️ Recovery of interrupted jobs skipped: {e}")
+
+
 @app.on_event("startup")
 def _start_stats_tracker():
     """Launches the background performance-snapshot loop (stats_tracker.py)
@@ -674,13 +704,45 @@ def process_selected(batch_id: str):
     return {"processed": count, "videos": [serialize_video(v) for v in videos]}
 
 
+PROCESS_JOB = "process_selected"
+_process_start_lock = threading.Lock()
+
+
 @app.post("/api/process_selected")
 def process_selected_all():
-    """Process every 'selected' video across all channels/batches at once."""
+    """Starts processing every 'selected' video (all channels) in a background
+    thread and returns at once — it used to be one HTTP request blocking for
+    minutes. Progress (real per-frame encoding, then the AI pass) is read
+    from GET /api/process_status. A second start while one runs is refused."""
+    import progress
     bp = get_batch_processor()
-    count = bp.process_selected_videos(batch_id=None)
-    videos = bp.list_all_videos(status='ready_for_upload')
-    return {"processed": count, "videos": [serialize_video(v) for v in videos]}
+    with _process_start_lock:
+        if progress.is_running(PROCESS_JOB):
+            return {"started": False, "running": True}
+        total = len(bp.list_all_videos(status="selected"))
+        if not total:
+            return {"started": False, "running": False, "total": 0}
+        progress.start(PROCESS_JOB, kind="process", total=total, index=0, title=None, phase="encodage", processed=None)
+
+    def run():
+        try:
+            processed = bp.process_selected_videos(
+                batch_id=None,
+                on_progress=lambda i, t, title, phase, f: progress.update(PROCESS_JOB, f, index=i, total=t, title=title, phase=phase),
+            )
+            progress.finish(PROCESS_JOB, processed=processed)
+        except Exception as e:
+            progress.finish(PROCESS_JOB, error=str(e))
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True, "total": total}
+
+
+@app.get("/api/process_status")
+def process_status():
+    """The current/last Import processing run (see process_selected_all)."""
+    import progress
+    return progress.get(PROCESS_JOB) or {"key": None, "done": True, "processed": None}
 
 
 class AiRedoRequest(BaseModel):
@@ -799,7 +861,15 @@ def serialize_generated_video(video: dict) -> dict:
         "render_error": video.get("render_error"),
         "inspired_by": video.get("inspired_by"),
         "decor_preset": video.get("decor_preset"),
+        "progress": _assemble_progress(video),
     }
+
+
+def _assemble_progress(video: dict):
+    if video.get("status") != "assembling":
+        return None
+    import progress
+    return progress.get(f"assemble:{video.get('video_id')}")
 
 
 def _safe_asset_path(channel_name: str, subfolder: str, filename: str) -> Path:
@@ -1058,14 +1128,34 @@ def finalize_generated_video(video_id: str, req: DecorRequest):
     bg_video_path = str(_safe_asset_path(video["channel"], "backgrounds", req.bg_video_filename))
     bg_music_path = str(_safe_asset_path(video["channel"], "music", req.bg_music_filename))
 
+    import progress
+    key = f"assemble:{video_id}"
+    if video.get("status") == "assembling" or progress.is_running(key):
+        raise HTTPException(status_code=409, detail="Création déjà en cours pour cette vidéo")
+    if not video.get("words_path"):
+        raise HTTPException(status_code=400, detail="Cette vidéo n'a pas encore de voix générée.")
+
     gp = get_generative_pipeline()
     gp.set_decor(video_id, bg_video_path, bg_music_path, req.frame_mode, req.rounded_corners, req.caption_style, req.caption_color)
-    try:
-        gp.assemble(video_id)
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Assembly failed: {e}")
+
+    # Rendering takes 1-2 min: run it in the background (it used to block
+    # this request the whole time) and expose the real encoding progress.
+    gp.url_manager.update_video_status(video_id, "assembling")
+    progress.start(key, kind="assemble", phase="encodage")
+
+    def run():
+        try:
+            gp.assemble(video_id, progress_cb=lambda f: progress.update(key, f))
+            progress.finish(key)
+        except Exception as e:
+            # assemble() records rendering_failed for render errors; anything
+            # raised before rendering would otherwise leave it "assembling"
+            current = _db.get_video(video_id) or {}
+            if current.get("status") == "assembling":
+                gp.url_manager.update_video_status(video_id, "rendering_failed", render_error=str(e))
+            progress.finish(key, error=str(e))
+
+    threading.Thread(target=run, daemon=True).start()
     return serialize_generated_video(_db.get_video(video_id))
 
 
