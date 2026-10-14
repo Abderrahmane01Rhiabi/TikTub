@@ -80,7 +80,13 @@ plusieurs, ne refais pas "j'ai testé X pendant Nh" si déjà présent) :
             )
 
     inspiration_block = ""
-    if inspiration:
+    if inspiration and not inspiration.get("script_text"):
+        fmt = inspiration.get("format") or ""
+        inspiration_block = f"""
+
+Le format "{fmt}" est celui qui marche le mieux sur cette chaîne : écris ce script dans ce format,
+sur un sujet neuf. Indique "{fmt}" dans le champ "format"."""
+    elif inspiration:
         fmt = inspiration.get("format") or ""
         inspiration_block = f"""
 

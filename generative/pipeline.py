@@ -33,7 +33,7 @@ Statuses:
 
 import json
 import os
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import db as _db
 from channel_manager import ChannelManager
@@ -51,7 +51,8 @@ class GenerativePipeline:
         self.channel_manager = ChannelManager()
         self.url_manager = URLManager()
 
-    def create_draft(self, channel_name: str, count: int = 1, inspired_by: str = None) -> str:
+    def create_draft(self, channel_name: str, count: int = 1, inspired_by: str = None,
+                     recipe: Optional[Dict] = None) -> str:
         """Phase 1 kickoff: registers `count` new video rows sharing one
         batch_id — no script, no decor, nothing generated yet. Meant to be
         followed immediately by run_batch_scripts().
@@ -59,13 +60,19 @@ class GenerativePipeline:
         inspired_by ("Refaire ce style" from a top performer): every draft
         remembers that video — its scripts get written in the same format
         and structure (on new topics), and its décor is pre-filled in phase 3
-        with the winner's choices (decor_preset), still changeable."""
+        with the winner's choices (decor_preset), still changeable.
+
+        recipe (Accueil's "idée de la semaine"): the channel's winning choice
+        per dimension {script_format, background, music, caption_style} —
+        each one given replaces the model's own in the preset / script format."""
         extra = {}
         if inspired_by:
             winner = _db.get_video(inspired_by)
             if not winner or winner.get("source") != "generated" or winner.get("channel") != channel_name:
                 raise ValueError("Vidéo modèle introuvable sur cette chaîne")
-            extra = {"inspired_by": inspired_by, "decor_preset": self._decor_preset(winner)}
+            extra = {"inspired_by": inspired_by, "decor_preset": self._decor_preset(winner, recipe or {})}
+            if (recipe or {}).get("script_format") in ("A", "B", "D"):
+                extra["recipe_format"] = recipe["script_format"]
         videos = [
             {
                 "line_number": i + 1,
@@ -78,20 +85,29 @@ class GenerativePipeline:
         ]
         return self.url_manager.add_batch(f"{channel_name}_generated", videos)
 
-    def _decor_preset(self, winner: Dict) -> Dict:
+    def _decor_preset(self, winner: Dict, recipe: Dict = None) -> Dict:
         """The winner's décor as asset FILENAMES (what the Décor step picks
-        from) — only those still present in the channel's assets folders."""
+        from) — only those still present in the channel's assets folders —
+        with the recipe's winning choices taking precedence."""
+        from generative.caption_styles import STYLES
+        recipe = recipe or {}
         assets = self.list_assets(winner["channel"])
         name = lambda p: os.path.basename(p) if p else None
-        bg, music = name(winner.get("bg_video_path")), name(winner.get("bg_music_path"))
-        return {
+        bg = recipe.get("background") if recipe.get("background") in assets["backgrounds"] else name(winner.get("bg_video_path"))
+        music = recipe.get("music") if recipe.get("music") in assets["music"] else name(winner.get("bg_music_path"))
+        caption = recipe.get("caption_style") if recipe.get("caption_style") in STYLES else winner.get("caption_style")
+        preset = {
             "bg_video_filename": bg if bg in assets["backgrounds"] else None,
             "bg_music_filename": music if music in assets["music"] else None,
             "frame_mode": winner.get("frame_mode") or "fill",
             "rounded_corners": bool(winner.get("rounded_corners")),
-            "caption_style": winner.get("caption_style") or "karaoke",
-            "caption_color": winner.get("caption_color"),
+            "caption_style": caption or "karaoke",
+            # the model's color only goes with the model's own caption style
+            "caption_color": winner.get("caption_color") if caption == winner.get("caption_style") else None,
         }
+        if recipe:
+            preset["from_recipe"] = True
+        return preset
 
     RECENT_HISTORY_LIMIT = 15
 
@@ -125,8 +141,14 @@ class GenerativePipeline:
         if video.get("inspired_by"):
             winner = _db.get_video(video["inspired_by"])
             if winner and winner.get("script_text"):
-                inspiration = {"format": winner.get("script_format"), "title": winner.get("title"),
-                               "script_text": winner.get("script_text")}
+                fmt = video.get("recipe_format") or winner.get("script_format")
+                if fmt == winner.get("script_format"):
+                    inspiration = {"format": fmt, "title": winner.get("title"),
+                                   "script_text": winner.get("script_text")}
+                else:
+                    # the winning format isn't the model's: copying its
+                    # structure would contradict it — just impose the format
+                    inspiration = {"format": fmt}
         script = generate_script(profile, recent_titles=recent_titles, recent_formats=recent_formats,
                                  inspiration=inspiration)
 

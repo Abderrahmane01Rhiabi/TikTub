@@ -483,6 +483,13 @@
   .rank-row .views b{display:block;color:var(--text);font-size:13px;}
   .suggest-card{margin-bottom:16px;border-color:color-mix(in srgb, var(--accent) 40%, var(--border));}
   .suggest-card .chcard-body > div:first-child{font-size:14px;line-height:1.5;}
+  .recipe{display:flex;flex-direction:column;border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+  .recipe-row{display:grid;grid-template-columns:150px minmax(0,1fr) auto;gap:12px;align-items:center;padding:7px 12px;font-size:13px;}
+  .recipe-row + .recipe-row{border-top:1px solid var(--border);}
+  .recipe-row .k{color:var(--muted);}
+  .recipe-row .v{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .recipe-row .s{color:var(--muted);font-size:12px;white-space:nowrap;}
+  @media (max-width:760px){ .recipe-row{grid-template-columns:1fr;gap:2px;} .recipe-row .s{white-space:normal;} }
   .suggest-card .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;}
   .rank-row .views .ret{display:block;font-size:11.5px;margin-top:2px;}
   @media (max-width:760px){
@@ -1141,6 +1148,17 @@ function isoWeek(d = new Date()){
   const w = Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 864e5 + 1) / 7);
   return `${t.getUTCFullYear()}-W${w}`;
 }
+const RECIPE_LABELS = { script_format: 'Format', background: 'Fond', music: 'Musique', caption_style: 'Sous-titres', hour_slot: 'Heure de publication' };
+function recipeHtml(items){
+  return `<div class="recipe">${items.map(r => `
+    <div class="recipe-row">
+      <span class="k">${esc(RECIPE_LABELS[r.dimension] || r.dimension_label)}</span>
+      <span class="v" title="${esc(r.label)}">${esc(r.label)}</span>
+      <span class="s">${r.from_model
+        ? '<span class="tiny" title="Pas encore assez de vidéos pour désigner un gagnant">celui du modèle</span>'
+        : `${fmtScore(r.score)} · ${r.count} vidéos${r.median_retention_7d != null ? ` · ${fmtPct(r.median_retention_7d)} regardé` : ''}${r.dimension === 'hour_slot' ? ' · conseil pour le planning' : ''}`}</span>
+    </div>`).join('')}</div>`;
+}
 function suggestionKey(s){ return `tiktub.suggest.${s.channel}`; }
 function suggestionDismissed(s){
   try { return localStorage.getItem(suggestionKey(s)) === `${isoWeek()}:${s.dimension}:${s.value}`; } catch { return false; }
@@ -1162,8 +1180,9 @@ async function loadHomeSuggestion(){
         <div>Sur <b><span class="dot" style="background:${channelColor(s.channel)}"></span> ${esc(ch.display_name)}</b>, les vidéos
           <b>${esc(s.dimension_label.toLowerCase())} « ${esc(s.label)} »</b> font <b>${fmtScore(s.score)}</b> les vues habituelles
           (${s.count} vidéos${s.median_retention_7d != null ? `, ${fmtPct(s.median_retention_7d)} regardé` : ''}).
-          Lancer 3 nouvelles vidéos dans ce style ?</div>
-        <div class="tiny">Modèle : « ${esc(s.video.title)} » · ${s.video.views_7d.toLocaleString('fr-FR')} vues à 7 j. Rien n'est envoyé à ElevenLabs avant que tu valides les scripts.</div>
+          Lancer 3 nouvelles vidéos avec la recette gagnante ?</div>
+        ${recipeHtml(s.recipe)}
+        <div class="tiny">Script calqué sur « ${esc(s.video.title)} » (${s.video.views_7d.toLocaleString('fr-FR')} vues à 7 j), sur un nouveau sujet. Rien n'est envoyé à ElevenLabs avant que tu valides les scripts.</div>
       </div>
       <div class="chcard-foot">
         <button class="btn ghost small" data-act="later">Pas cette semaine</button>
@@ -1171,7 +1190,7 @@ async function loadHomeSuggestion(){
         <button class="btn primary small push" data-act="go">${icon('sparkle', 13)} Lancer 3 vidéos</button>
       </div>
     </article>`;
-  box.querySelector('[data-act="go"]').addEventListener('click', () => openRemakeDialog(s.channel, s.video));
+  box.querySelector('[data-act="go"]').addEventListener('click', () => openRemakeDialog(s.channel, s.video, s));
   box.querySelector('[data-act="see"]').addEventListener('click', () => { dashboardChannel = s.channel; dashView = 'perf'; openSpace('dashboard'); });
   box.querySelector('[data-act="later"]').addEventListener('click', () => {
     try { localStorage.setItem(suggestionKey(s), `${isoWeek()}:${s.dimension}:${s.value}`); } catch {}
@@ -3130,7 +3149,7 @@ function cardBodyHtml(v, i){
       ? genAssets.music.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
       : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/music/</option>`;
     return `${genHead(v, i, 'ok', 'Voix prête — choisis le décor')}
-      ${v.decor_preset ? '<div class="tiny" style="margin:-4px 0 8px;color:var(--muted)">Décor pré-rempli avec celui de la vidéo modèle — modifiable.</div>' : ''}
+      ${v.decor_preset ? `<div class="tiny" style="margin:-4px 0 8px;color:var(--muted)">Décor pré-rempli avec ${v.decor_preset.from_recipe ? 'la recette gagnante de la chaîne' : 'celui de la vidéo modèle'} — modifiable.</div>` : ''}
       <audio src="/api/videos/${v.video_id}/narration" controls style="width:100%"></audio>
       <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap-reverse;align-items:flex-end">
         <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px">
@@ -3506,10 +3525,10 @@ function rankRowHtml(v, i){
 
 let genPreferredBatch = null; // opens Génération on the batch just launched from here
 
-function openRemakeDialog(channelName, v){
+function openRemakeDialog(channelName, v, suggestion){
   const dlg = document.getElementById('remakeDialog');
   const a = v.attrs;
-  const reused = [
+  const reused = suggestion ? [] : [
     a.script_format && ['Format et structure du script', `${a.script_format} · ${({A: 'Affirmations', B: 'Storytime', D: 'Liste éducative'})[a.script_format] || ''}`],
     a.background && ['Fond vidéo', a.background],
     a.music && ['Musique', a.music],
@@ -3522,8 +3541,8 @@ function openRemakeDialog(channelName, v){
         <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
       </div>
       <div class="chcard-body">
-        <div class="muted">L'IA écrit de <b style="color:var(--text)">nouveaux scripts sur d'autres sujets</b>, en reprenant ce qui a fait marcher celui-ci :</div>
-        <div class="recap">${reused.map(([k, val]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(val)}</span></div>`).join('')}</div>
+        <div class="muted">L'IA écrit de <b style="color:var(--text)">nouveaux scripts sur d'autres sujets</b>, en reprenant ${suggestion ? 'la recette qui marche le mieux sur la chaîne' : 'ce qui a fait marcher celui-ci'} :</div>
+        ${suggestion ? recipeHtml(suggestion.recipe) : `<div class="recap">${reused.map(([k, val]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(val)}</span></div>`).join('')}</div>`}
         <div class="tiny">Le décor est pré-rempli à l'étape Décor et reste modifiable. Rien n'est envoyé à ElevenLabs avant que tu valides les scripts.</div>
         <div><label class="f">Nombre de vidéos</label><input class="f" type="number" data-role="count" value="3" min="1" max="${MAX_BATCH_COUNT}" style="width:90px"></div>
         <span class="tiny" data-role="err" style="color:var(--danger)"></span>
@@ -3539,7 +3558,7 @@ function openRemakeDialog(channelName, v){
     const go = dlg.querySelector('[data-act="go"]');
     go.disabled = true;
     try {
-      const res = await api(`/api/channels/${channelName}/generation_draft`, { method: 'POST', body: JSON.stringify({ count, inspired_by: v.video_id }) });
+      const res = await api(`/api/channels/${channelName}/generation_draft`, { method: 'POST', body: JSON.stringify({ count, inspired_by: v.video_id, recipe: suggestion ? suggestion.recipe_values : null }) });
       dlg.close();
       log(`${count} script(s) en cours d'écriture dans le style de « ${v.title} »`, 'success');
       genChannel = channelName;

@@ -1092,6 +1092,9 @@ MAX_BATCH_COUNT = 20
 class CreateDraftRequest(BaseModel):
     count: int = Field(default=1, ge=1, le=MAX_BATCH_COUNT)
     inspired_by: Optional[str] = None  # video_id of a top performer to remake ("Refaire ce style")
+    # winning choices overriding the model's (Accueil's "idée de la semaine"):
+    # {script_format, background, music, caption_style}
+    recipe: Optional[Dict[str, str]] = None
 
 
 @app.post("/api/channels/{channel_name}/generation_draft")
@@ -1103,7 +1106,8 @@ def create_generation_draft(channel_name: str, req: CreateDraftRequest):
     and decor+assembly (phase 3) are separate, user-triggered steps."""
     gp = get_generative_pipeline()
     try:
-        batch_id = gp.create_draft(channel_name, count=req.count, inspired_by=req.inspired_by)
+        batch_id = gp.create_draft(channel_name, count=req.count, inspired_by=req.inspired_by,
+                                   recipe=req.recipe if req.inspired_by else None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     _start_batch_thread(batch_id, gp.run_batch_scripts)

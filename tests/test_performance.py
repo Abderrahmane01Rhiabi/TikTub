@@ -139,3 +139,54 @@ def test_suggestions_endpoint_only_covers_generation_channels(client, project, m
     monkeypatch.setattr(main, "channel_performance", lambda name: {"name": name})
     monkeypatch.setattr(perf, "suggest", lambda a: {"score": 2.0, "from": a["name"]})
     assert client.get("/api/suggestions").json() == [{"channel": "gen", "score": 2.0, "from": "gen"}]
+
+
+def test_suggestion_carries_the_whole_winning_recipe_and_the_closest_model():
+    def v(vid, views, fmt, bg, music, hour):
+        return make(vid, views, fmt, bg, bg_music_path=f"m/{music}", published=f"2026-09-01T{hour}:00:00")
+    items = [v("b1", 900, "B", "sea.mp4", "calm.mp3", "08"),   # best views, but the losing music and hour
+             v("b2", 800, "B", "sea.mp4", "calm.mp3", "19"), v("b3", 700, "B", "sea.mp4", "pop.mp3", "19"),
+             v("b4", 650, "B", "city.mp4", "pop.mp3", "19"), v("b5", 600, "B", "city.mp4", "pop.mp3", "19"),
+             v("d1", 100, "D", "city.mp4", "calm.mp3", "08"), v("d2", 120, "D", "city.mp4", "calm.mp3", "08"),
+             v("d3", 110, "D", "city.mp4", "calm.mp3", "08"), v("d4", 90, "D", "city.mp4", "calm.mp3", "08"),
+             v("d5", 95, "D", "city.mp4", "calm.mp3", "08")]
+    s = performance.suggest(run(items))
+
+    rec = {r["dimension"]: r for r in s["recipe"]}
+    assert rec["script_format"]["value"] == "B" and rec["music"]["value"] == "pop.mp3"
+    assert rec["hour_slot"]["value"] == "18h–21h" and not rec["hour_slot"]["from_model"]
+    assert s["recipe_values"]["music"] == "pop.mp3" and "hour_slot" not in s["recipe_values"]  # advice only
+    # the model shares the most winning choices (b3: B, sea, pop, 19h), not just the most views (b1)
+    assert s["video"]["video_id"] == "b3"
+    # captions: no evidence on this channel → the model's own, flagged as such
+    assert rec["caption_style"]["from_model"] and rec["caption_style"]["score"] is None
+
+
+def test_recipe_overrides_the_models_decor_and_format(client, project, monkeypatch):
+    assets = Path("channels/chanA/assets")
+    (assets / "backgrounds").mkdir(parents=True)
+    (assets / "music").mkdir(parents=True)
+    for f in ("backgrounds/sea.mp4", "backgrounds/city.mp4", "music/calm.mp3", "music/pop.mp3"):
+        (assets / f).write_bytes(b"x")
+    project.add_video("win", status="uploaded", source="generated", youtube_id="Yw", title="Gagnant",
+                      script_text="Jour 1...", script_format="B", caption_style="hormozi", caption_color="#ff0000",
+                      bg_video_path=str(assets / "backgrounds/sea.mp4"), bg_music_path=str(assets / "music/calm.mp3"))
+    import webapp.main as m
+    monkeypatch.setattr(m, "_start_batch_thread", lambda batch_id, target: True)
+    recipe = {"background": "city.mp4", "music": "pop.mp3", "caption_style": "karaoke", "script_format": "D"}
+    draft = client.post("/api/channels/chanA/generation_draft",
+                        json={"count": 1, "inspired_by": "win", "recipe": recipe}).json()["videos"][0]
+
+    p = draft["decor_preset"]
+    assert (p["bg_video_filename"], p["bg_music_filename"], p["caption_style"]) == ("city.mp4", "pop.mp3", "karaoke")
+    assert p["caption_color"] is None and p["from_recipe"]  # the model's red went with ITS style
+
+    import generative.pipeline as gp_mod
+    seen = {}
+    monkeypatch.setattr(gp_mod, "generate_script", lambda profile, recent_titles=None, recent_formats=None, inspiration=None:
+                        seen.update(inspiration=inspiration) or {"script_text": "n", "title": "N", "format": "D", "tags": []})
+    m.get_generative_pipeline().generate_script_for(draft["video_id"])
+    assert seen["inspiration"] == {"format": "D"}  # not B's structure: just the winning format
+
+    from generative.script_generator import _build_prompt
+    assert 'Indique "D"' in _build_prompt({}, ["ex"], ["t"], ["A"], {"format": "D"})

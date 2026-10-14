@@ -156,23 +156,64 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
 # What "Refaire ce style" carries over to new scripts: only these choices
 # can be suggested (a publish weekday isn't something a remake reuses).
 REMAKE_DIMENSIONS = {"script_format", "background", "music", "caption_style"}
-SUGGEST_MIN_SCORE = 1.5  # the style must clearly beat the channel's usual
+# The full winning recipe: the remake choices + when to publish (advice only)
+RECIPE_DIMENSIONS = ["script_format", "background", "music", "caption_style", "hour_slot"]
+SUGGEST_MIN_SCORE = 1.5  # the headline style must clearly beat the channel's usual
+
+
+def recipe(analysis: Dict) -> Dict[str, Dict]:
+    """The best option of each recipe dimension — only when it's backed by
+    enough videos and actually beats the channel's usual (score > 1)."""
+    out = {}
+    for ins in analysis.get("insights", []):
+        top = ins["best"]
+        if ins["dimension"] in RECIPE_DIMENSIONS and top["reliable"] and top["score"] > 1 \
+                and top["score"] > ins["worst"]["score"]:
+            out[ins["dimension"]] = {"dimension": ins["dimension"], "dimension_label": ins["label"],
+                                     "value": top["value"], "label": top["label"], "score": top["score"],
+                                     "count": top["count"], "median_retention_7d": top.get("median_retention_7d")}
+    return out
 
 
 def suggest(analysis: Dict) -> Optional[Dict]:
-    """The Accueil's "idée de la semaine": the strongest well-backed winning
-    style on the channel, with its best remakeable video as the model.
-    None when nothing clearly stands out."""
-    best = None
+    """The Accueil's "idée de la semaine": headlined by the strongest
+    well-backed winning style, with the whole winning recipe (format, décor,
+    music, captions, publish hour) and the remakeable video closest to it as
+    the model. None when nothing clearly stands out."""
+    headline = None
     for ins in analysis.get("insights", []):
         top = ins["best"]
         if ins["dimension"] not in REMAKE_DIMENSIONS or not top["reliable"] \
                 or top["score"] < SUGGEST_MIN_SCORE or top["score"] <= ins["worst"]["score"]:
             continue
-        model = next((r for r in analysis["videos"]  # already sorted by 7-day views
-                      if r["remakeable"] and r["attrs"].get(ins["dimension"]) == top["value"]), None)
-        if model and (best is None or top["score"] > best["score"]):
-            best = {"dimension": ins["dimension"], "dimension_label": ins["label"], "value": top["value"],
-                    "label": top["label"], "score": top["score"], "count": top["count"],
-                    "median_retention_7d": top.get("median_retention_7d"), "video": model}
-    return best
+        if any(r["remakeable"] and r["attrs"].get(ins["dimension"]) == top["value"] for r in analysis["videos"]) \
+                and (headline is None or top["score"] > headline[1]["score"]):
+            headline = (ins, top)
+    if headline is None:
+        return None
+    ins, top = headline
+    winning = recipe(analysis)
+
+    # the model: among the remakeable videos of the headline style, the one
+    # sharing the most recipe choices (the script prompt copies its
+    # structure); rows are sorted by 7-day views, so ties go to the best one
+    candidates = [r for r in analysis["videos"] if r["remakeable"] and r["attrs"].get(ins["dimension"]) == top["value"]]
+    matches = lambda r: sum(r["attrs"].get(d) == w["value"] for d, w in winning.items())
+    model = max(candidates, key=matches)  # max keeps the first of equal ones
+
+    items = []
+    for dim in RECIPE_DIMENSIONS:
+        if dim in winning:
+            items.append({**winning[dim], "from_model": False})
+        elif dim in REMAKE_DIMENSIONS and model["attrs"].get(dim):
+            # not enough evidence to pick a winner: the model's own choice
+            value = model["attrs"][dim]
+            items.append({"dimension": dim, "dimension_label": dict(DIMENSIONS)[dim], "value": value,
+                          "label": label(dim, value), "score": None, "count": None,
+                          "median_retention_7d": None, "from_model": True})
+    return {"dimension": ins["dimension"], "dimension_label": ins["label"], "value": top["value"],
+            "label": top["label"], "score": top["score"], "count": top["count"],
+            "median_retention_7d": top.get("median_retention_7d"), "video": model,
+            "recipe": items,
+            # what the drafts get pre-filled with (winning choices only)
+            "recipe_values": {d: w["value"] for d, w in winning.items() if d in REMAKE_DIMENSIONS}}
