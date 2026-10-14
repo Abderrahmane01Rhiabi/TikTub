@@ -129,7 +129,9 @@ def recover_interrupted() -> int:
     count = 0
     for stuck, back_to in INTERRUPTED_STATUSES.items():
         for video in bp.url_manager.list_videos(status=stuck):
-            bp.url_manager.update_video_status(video["video_id"], back_to, interrupted_from=stuck)
+            extra = {"error_message": "Téléchargement interrompu par un redémarrage du serveur — réimporte le lien."} \
+                if back_to == "download_failed" else {}
+            bp.url_manager.update_video_status(video["video_id"], back_to, interrupted_from=stuck, **extra)
             count += 1
     if count:
         print(f"↩️ {count} vidéo(s) interrompue(s) par le redémarrage remise(s) à relancer")
@@ -206,7 +208,7 @@ def list_channels():
 
 OVERVIEW_BUCKETS = {
     "to_sort": {"selected"},  # downloaded, waiting for Sélection/Cadrage/Traiter
-    "generating": {"awaiting_script", "script_generated", "audio_generated"},
+    "generating": {"awaiting_script", "script_generated", "audio_generated", "assembling"},
     "ready": {"ready_for_upload"},  # waiting for Résultats IA → Planning → Publier
     "in_progress": {"pending", "downloading", "processing", "generating_tags"},
     "errors": {"download_failed", "processing_failed", "error", "rendering_failed"},
@@ -1000,7 +1002,18 @@ def advance_generation_draft(video_id: str):
     assemble) — single retry endpoint used by the UI instead of it having to
     guess which specific step to re-fire. A no-op if the draft isn't
     currently in rendering_failed."""
+    import db as _db
     gp = get_generative_pipeline()
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    # A failed ASSEMBLY (voice + décor already there) is retried in the
+    # background with its progress bar, like "Lancer la création" — not in
+    # this request, which would block for 1-2 minutes.
+    if video.get("status") == "rendering_failed" and video.get("words_path") \
+            and video.get("bg_video_path") and video.get("bg_music_path"):
+        _start_assembly(gp, video_id)
+        return serialize_generated_video(_db.get_video(video_id))
     try:
         video = gp.advance_draft(video_id)
     except ValueError as e:
@@ -1193,10 +1206,18 @@ def finalize_generated_video(video_id: str, req: DecorRequest):
 
     gp = get_generative_pipeline()
     gp.set_decor(video_id, bg_video_path, bg_music_path, req.frame_mode, req.rounded_corners, req.caption_style, req.caption_color)
+    _start_assembly(gp, video_id)
+    return serialize_generated_video(_db.get_video(video_id))
 
-    # Rendering takes 1-2 min: run it in the background (it used to block
-    # this request the whole time) and expose the real encoding progress.
-    gp.url_manager.update_video_status(video_id, "assembling")
+
+def _start_assembly(gp, video_id: str):
+    """Rendering takes 1-2 min: runs it in the background (it used to block
+    the request the whole time) and exposes the real encoding progress
+    under progress key "assemble:<video_id>"."""
+    import db as _db
+    import progress
+    key = f"assemble:{video_id}"
+    gp.url_manager.update_video_status(video_id, "assembling", render_error=None)
     progress.start(key, kind="assemble", phase="encodage")
 
     def run():
@@ -1212,7 +1233,6 @@ def finalize_generated_video(video_id: str, req: DecorRequest):
             progress.finish(key, error=str(e))
 
     threading.Thread(target=run, daemon=True).start()
-    return serialize_generated_video(_db.get_video(video_id))
 
 
 # ---------------------------------------------------------------------------

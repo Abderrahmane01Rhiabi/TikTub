@@ -192,3 +192,38 @@ def test_unknown_error_keeps_the_cleaned_text():
     from batch_processor import explain_download_error
     hint, detail = explain_download_error("\x1b[0;31mERROR:\x1b[0m [Instagram] x1: Something odd happened")
     assert hint == detail == "Something odd happened"
+
+
+def test_retrying_a_failed_creation_runs_in_background_too(client, draft_ready_for_decor, monkeypatch):
+    import generative.pipeline as gp_mod
+    calls = {"n": 0}
+    def flaky_render(narration, words, bg, music, out_path, progress_cb=None, **kw):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("first try fails")
+        progress_cb(1.0)
+        Path(out_path).write_bytes(b"mp4")
+        return out_path
+    monkeypatch.setattr(gp_mod, "render_video", flaky_render)
+
+    client.post("/api/videos/g1/finalize", json=draft_ready_for_decor)
+    assert wait_until(lambda: db.get_video("g1")["status"] == "rendering_failed")
+
+    retry = client.post("/api/videos/g1/advance").json()
+    assert retry["status"] == "assembling"            # returned at once, not after the render
+    assert wait_until(lambda: db.get_video("g1")["status"] == "ready_for_upload")
+    assert db.get_video("g1")["render_error"] is None
+
+
+def test_assembling_counts_as_in_generation_on_home(client, project, monkeypatch):
+    import channel_manager
+    monkeypatch.setattr(channel_manager.ChannelManager, "list_channels", lambda self: [{"name": "chanA"}])
+    project.add_video("g", status="assembling", source="generated")
+    assert client.get("/api/overview").json()["totals"]["generating"] == 1
+
+
+def test_interrupted_download_says_why(client, project):
+    import webapp.main as m
+    project.add_video("d", status="downloading")
+    m.recover_interrupted()
+    assert "redémarrage" in db.get_video("d")["error_message"]
