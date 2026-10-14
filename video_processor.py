@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+"""Video processing for imported videos: fit to 9:16 over a background
+(image, blur, color...), frame modes, rounded corners, frame previews."""
 
 import os
-import re
 import random
 import logging
 import cv2
@@ -54,10 +55,6 @@ BACKGROUND_CONFIG = {
     ]
 }
 
-def setup_directories():
-    for folder in [CONFIG['temp_folder'], CONFIG['output_folder']]:
-        Path(folder).mkdir(exist_ok=True)
-
 def fix_pil_compatibility():
     try:
         from PIL import Image
@@ -74,31 +71,6 @@ def rounded_corner_mask(w: int, h: int, radius: int) -> np.ndarray:
     mask_img = Image.new('L', (w, h), 0)
     ImageDraw.Draw(mask_img).rounded_rectangle([0, 0, w - 1, h - 1], radius=radius, fill=255)
     return np.array(mask_img)
-
-def download_tiktok_video(url: str):
-    try:
-        import yt_dlp
-
-        ydl_opts = {
-            'outtmpl': f"{CONFIG['temp_folder']}/%(title)s.%(ext)s",
-            'format': 'best[height<=1920]',
-            'writeinfojson': True,
-        }
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            safe_title = re.sub(r'[^\w\s-]', '', info.get('title', 'video'))[:30]
-            ydl.download([url])
-
-            temp_files = list(Path(CONFIG['temp_folder']).glob('*.mp4'))
-            if temp_files:
-                return str(temp_files[-1]), safe_title
-            else:
-                return None, None
-
-    except Exception as e:
-        logger.error(f"❌ Download failed: {e}")
-        return None, None
 
 def get_background_image(mode='random', specific=None):
     try:
@@ -474,67 +446,3 @@ def process_video_with_background_options(video_path: str, title: str, bg_mode='
     except Exception as e:
         logger.error(f"❌ Processing failed: {e}")
         return None
-
-def get_background_options():
-    print("Background Options:")
-    print("1. Random image from backgrounds/")
-    print("2. Blurred video background")
-    print("3. Solid color")
-    print("4. Gradient color")
-    print("5. Specific image")
-    print("6. Black background")
-
-def interactive_background_selection():
-    get_background_options()
-    choice = input("Choose background mode (1-6): ").strip()
-
-    mode_map = {
-        '1': 'random',
-        '2': 'blur',
-        '3': 'solid',
-        '4': 'gradient',
-        '5': 'specific',
-        '6': 'none'
-    }
-
-    mode = mode_map.get(choice, 'random')
-    specific = None
-
-    if mode == 'specific':
-        bgs = list(Path(CONFIG['backgrounds_folder']).glob('*'))
-        print("Available backgrounds:")
-        for i, bg in enumerate(bgs, 1):
-            print(f"{i}. {bg.name}")
-        specific = input("Enter background filename: ").strip()
-
-    return mode, specific
-
-def main():
-    print("📹 TikTok Processor with Background Fill")
-    setup_directories()
-
-    url = input("Enter TikTok video URL: ").strip()
-    if not url:
-        print("❌ No URL entered.")
-        return
-
-    bg_mode, specific = interactive_background_selection()
-
-    video_path, title = download_tiktok_video(url)
-    if not video_path:
-        print("❌ Download failed.")
-        return
-
-    output = process_video_with_background_options(video_path, title, bg_mode, specific)
-
-    if output:
-        print(f"\n✅ Success! Video saved to: {output}")
-    else:
-        print("❌ Video processing failed.")
-
-    # Cleanup
-    for f in Path(CONFIG['temp_folder']).glob('*'):
-        f.unlink()
-
-if __name__ == "__main__":
-    main()

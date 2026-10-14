@@ -386,7 +386,7 @@ def render_video_ffmpeg(
 ) -> str:
     """music_volume is kept for signature compatibility with the moviepy
     path; the ffmpeg path uses MUSIC_LEVEL + ducking instead."""
-    from test3_script import compute_frame_scale, get_video_dimensions, rounded_corner_mask, ROUNDED_CORNER_RADIUS_RATIO
+    from video_processor import compute_frame_scale, get_video_dimensions, rounded_corner_mask, ROUNDED_CORNER_RADIUS_RATIO
 
     if caption_style not in BUILDERS:
         raise ValueError(f"caption style {caption_style!r} not supported by the ffmpeg composer")

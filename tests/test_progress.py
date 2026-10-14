@@ -268,7 +268,7 @@ def test_dropped_file_is_refused_when_it_cannot_be_a_video(client, project):
 def test_video_dimensions_of_an_unreadable_file_are_none(tmp_path):
     """Regression: cv2 reports -1 x -1 for an unreadable file, which the
     helper used to return as real dimensions (also used to suggest framing)."""
-    from test3_script import get_video_dimensions, is_decodable_video
+    from video_processor import get_video_dimensions, is_decodable_video
     fake = tmp_path / "fake.mp4"
     fake.write_bytes(b"not a video")
     assert get_video_dimensions(str(fake)) == (None, None)

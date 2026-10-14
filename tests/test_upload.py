@@ -179,7 +179,7 @@ def test_same_caption_videos_get_distinct_processed_files():
     """Regression: the processed file was named after the caption, so one URL
     imported for 3 channels wrote ONE shared file (each processing overwrote
     the previous one, and the first upload deleted it for the others)."""
-    from test3_script import processed_output_paths
+    from video_processor import processed_output_paths
     a = processed_output_paths("Same caption", "specific", output_name="chanA_1")
     b = processed_output_paths("Same caption", "specific", output_name="chanB_1")
     assert a[0] != b[0] and a[1] != b[1]
@@ -187,10 +187,10 @@ def test_same_caption_videos_get_distinct_processed_files():
 
 
 def test_batch_processing_names_the_file_after_the_video(project, monkeypatch):
-    import test3_script
+    import video_processor
     from batch_processor import BatchProcessor
     seen = {}
-    monkeypatch.setattr(test3_script, "process_video_with_background_options",
+    monkeypatch.setattr(video_processor, "process_video_with_background_options",
                         lambda *a, output_name=None, **k: seen.setdefault("name", output_name) and None)
     BatchProcessor("config.yaml").process_tiktok_video("x.mp4", "t", "none", output_name="vid_42")
     assert seen["name"] == "vid_42"

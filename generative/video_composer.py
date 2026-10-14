@@ -17,7 +17,7 @@ from moviepy.audio.fx.all import audio_loop
 
 from generative.voice_generator import WordTimings
 from generative import caption_styles
-from test3_script import compute_frame_scale, rounded_corner_mask, ROUNDED_CORNER_RADIUS_RATIO
+from video_processor import compute_frame_scale, rounded_corner_mask, ROUNDED_CORNER_RADIUS_RATIO
 from moviepy.video.fx.all import crop as vcrop
 
 

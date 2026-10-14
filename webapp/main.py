@@ -746,7 +746,7 @@ async def upload_source_file(video_id: str, file: UploadFile = File(...)):
     with open(dest, "wb") as out:
         shutil.copyfileobj(file.file, out)
 
-    from test3_script import get_video_dimensions, is_decodable_video
+    from video_processor import get_video_dimensions, is_decodable_video
     width, height = get_video_dimensions(str(dest))
     if not width or not is_decodable_video(str(dest)):
         dest.unlink(missing_ok=True)
@@ -865,7 +865,7 @@ def frame_preview(video_id: str, frame_mode: str, rounded_corners: bool = False)
     bg_mode, specific_bg = bp.get_background_for_video(video)
     bg_path = specific_bg if bg_mode == "specific" else None
 
-    from test3_script import render_frame_preview
+    from video_processor import render_frame_preview
     jpeg_bytes = render_frame_preview(raw_path, frame_mode, bg_path, rounded_corners)
     if not jpeg_bytes:
         raise HTTPException(status_code=500, detail="Preview render failed")
@@ -1249,7 +1249,7 @@ def asset_frame_preview(
     video_path = str(_safe_asset_path(channel_name, "backgrounds", bg_video_filename))
     border_path = channel_manager.get_background_path(channel_name)
 
-    from test3_script import render_frame_preview
+    from video_processor import render_frame_preview
     jpeg_bytes = render_frame_preview(
         video_path, frame_mode, border_path, rounded_corners,
         caption_style=caption_style, caption_color=caption_color,
