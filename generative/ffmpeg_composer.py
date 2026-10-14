@@ -164,6 +164,11 @@ def _next_start(lines, li: int, i: int, end: float) -> float:
     return lines[li + 1][0][1] if li + 1 < len(lines) else end
 
 
+def _scale_tag(scale: float) -> str:
+    """Shrinks a unit that would be wider than the safe area (cs.fit_scale)."""
+    return "" if scale >= 1.0 else f"\\fscx{scale * 100:.1f}\\fscy{scale * 100:.1f}"
+
+
 def _rounded_rect_path(w: float, h: float, r: float) -> str:
     """ASS vector drawing of a rounded rectangle (cubic Bézier corners)."""
     k = r * 0.4477  # 1 - 0.5523 (circle approximation)
@@ -180,23 +185,29 @@ def _rounded_rect_path(w: float, h: float, r: float) -> str:
 def _karaoke(words, size, accent):
     f = FontSpec(cs.FONT_BOLD, cs._KARAOKE_FONT_SIZE)
     hi = cs._parse_color(accent) or cs._KARAOKE_HIGHLIGHT
-    lines = cs.group_into_lines(words, f.pil, cs._KARAOKE_STROKE, size[0] - 2 * cs.MARGIN)
+    max_width = size[0] - 2 * cs.MARGIN
+    measure = lambda text: cs.drawn_words_width(text, f.pil, cs._KARAOKE_STROKE)
+    lines = cs.group_into_lines(words, f.pil, cs._KARAOKE_STROKE, max_width, measure)
     gap = _gap_tag(f, cs._KARAOKE_STROKE)
     cx, cy = size[0] // 2, size[1] / 2
     events = []
     for li, line in enumerate(lines):
-        dy = _ink_center_offset(" ".join(w[0] for w in line), f, cs._KARAOKE_STROKE)
+        joined = " ".join(w[0] for w in line)
+        scale = cs.fit_scale(measure(joined), max_width)
+        dy = _ink_center_offset(joined, f, cs._KARAOKE_STROKE) * scale
         for i, (_, start, end) in enumerate(line):
             parts = [f"{{\\c{_tag_color(hi)}}}{_esc(w[0])}{{\\c{_tag_color(cs._KARAOKE_TEXT)}}}" if k == i else _esc(w[0])
                      for k, w in enumerate(line)]
             events.append(_event(start, _next_start(lines, li, i, end), "K",
-                                 f"{{\\an5\\pos({cx},{cy - dy:.1f})}}" + gap.join(parts)))
+                                 f"{{\\an5\\pos({cx},{cy - dy:.1f}){_scale_tag(scale)}}}" + gap.join(parts)))
     return [_style("K", f, cs._KARAOKE_TEXT, cs._KARAOKE_STROKE_COLOR, cs._KARAOKE_STROKE)], events
 
 
 def _mrbeast(words, size, accent):
     f = FontSpec(cs.FONT_HEAVY, cs._MRBEAST_FONT_SIZE)
-    lines = cs.group_into_lines(words, f.pil, cs._MRBEAST_STROKE, size[0] - 2 * cs.MARGIN)
+    max_width = size[0] - 2 * cs.MARGIN
+    measure = lambda text: cs.drawn_words_width(text, f.pil, cs._MRBEAST_STROKE, upper=True)
+    lines = cs.group_into_lines(words, f.pil, cs._MRBEAST_STROKE, max_width, measure)
     gap = _gap_tag(f, cs._MRBEAST_STROKE)
     cx, cy = size[0] // 2, size[1] / 2
     events = []
@@ -204,8 +215,9 @@ def _mrbeast(words, size, accent):
         text = [w[0].upper() for w in line]
         start = line[0][1]
         end = line[-1][2] if li + 1 >= len(lines) else lines[li + 1][0][1]
-        dy = _ink_center_offset(" ".join(text), f, cs._MRBEAST_STROKE)
-        events.append(_event(start, end, "M", f"{{\\an5\\pos({cx},{cy - dy:.1f})}}" + gap.join(_esc(t) for t in text)))
+        scale = cs.fit_scale(measure(" ".join(w[0] for w in line)), max_width)
+        dy = _ink_center_offset(" ".join(text), f, cs._MRBEAST_STROKE) * scale
+        events.append(_event(start, end, "M", f"{{\\an5\\pos({cx},{cy - dy:.1f}){_scale_tag(scale)}}}" + gap.join(_esc(t) for t in text)))
     return [_style("M", f, cs._MRBEAST_COLOR, cs._MRBEAST_STROKE_COLOR, cs._MRBEAST_STROKE)], events
 
 
@@ -220,11 +232,12 @@ def _hormozi(words, size, accent):
         color = cs._HORMOZI_COLORS[i % len(cs._HORMOZI_COLORS)]
         w_px, line_h, _ = cs._text_size(text, f.pil, cs._HORMOZI_STROKE)
         box_w, box_h = w_px + 34 * 2, line_h + 20 * 2
-        box = (f"{{\\an5\\pos({cx},{cy:.1f})\\bord0\\shad0\\c{_tag_color(color)}\\1a{_tag_alpha(235)}\\p1}}"
+        scale = cs.fit_scale(box_w, size[0] - 2 * cs.MARGIN)
+        box = (f"{{\\an5\\pos({cx},{cy:.1f}){_scale_tag(scale)}\\bord0\\shad0\\c{_tag_color(color)}\\1a{_tag_alpha(235)}\\p1}}"
                f"{_rounded_rect_path(box_w, box_h, 14)}{{\\p0}}")
         events.append(_event(start, end, "H", box, layer=0))
-        dy = _ink_center_offset(text, f, cs._HORMOZI_STROKE)
-        events.append(_event(start, end, "H", f"{{\\an5\\pos({cx},{cy - dy:.1f})}}{_esc(text)}", layer=1))
+        dy = _ink_center_offset(text, f, cs._HORMOZI_STROKE) * scale
+        events.append(_event(start, end, "H", f"{{\\an5\\pos({cx},{cy - dy:.1f}){_scale_tag(scale)}}}{_esc(text)}", layer=1))
     return [_style("H", f, cs._HORMOZI_TEXT, cs._HORMOZI_STROKE_COLOR, cs._HORMOZI_STROKE)], events
 
 
@@ -238,12 +251,14 @@ def _bounce(words, size, accent):
         dur_ms = max(end - start, 0.05) * 1000
         third = dur_ms / 3
         t = text.upper()
-        dy = _ink_center_offset(t, f, b)
+        k = cs.fit_scale(cs._text_size(t, f.pil, b)[0] * 1.10, size[0] - 2 * cs.MARGIN)
+        dy = _ink_center_offset(t, f, b) * k
         # 40% → 110% in the first third, settle to 100% by two thirds (cs._bounce_scale_factor);
-        # the stroke scales with the word, as in moviepy's whole-image resize
-        anim = (f"\\fscx40\\fscy40\\bord{b * 0.4:.1f}"
-                f"\\t(0,{third:.0f},\\fscx110\\fscy110\\bord{b * 1.1:.1f})"
-                f"\\t({third:.0f},{2 * third:.0f},\\fscx100\\fscy100\\bord{b})")
+        # the stroke scales with the word, as in moviepy's whole-image resize; k shrinks
+        # the whole animation for a word too long to overshoot inside the frame
+        anim = (f"\\fscx{40 * k:.1f}\\fscy{40 * k:.1f}\\bord{b * 0.4 * k:.1f}"
+                f"\\t(0,{third:.0f},\\fscx{110 * k:.1f}\\fscy{110 * k:.1f}\\bord{b * 1.1 * k:.1f})"
+                f"\\t({third:.0f},{2 * third:.0f},\\fscx{100 * k:.1f}\\fscy{100 * k:.1f}\\bord{b * k:.1f})")
         events.append(_event(start, start + dur_ms / 1000, "B", f"{{\\an5\\pos({cx},{cy - dy:.1f}){anim}}}{_esc(t)}"))
     return [_style("B", f, cs._BOUNCE_COLOR, stroke_color, b)], events
 
@@ -251,7 +266,7 @@ def _bounce(words, size, accent):
 def _typewriter(words, size, accent):
     f = FontSpec(cs.FONT_MONO, cs._TYPEWRITER_FONT_SIZE)
     cursor = cs._parse_color(accent) or cs._TYPEWRITER_CURSOR
-    lines = cs.group_into_lines(words, f.pil, 0, size[0] - 2 * cs.MARGIN)
+    lines = cs.group_into_lines(words, f.pil, 0, size[0] - 2 * cs.MARGIN, lambda t: cs.typewriter_drawn_width(t, f.pil))
     cx, cy = size[0] / 2, size[1] / 2
     pad = 20
     events = []

@@ -137,3 +137,31 @@ def test_real_render_of_the_animated_styles(media, tmp_path, style):
     ffmpeg_composer.render_video_ffmpeg(str(media / "voice.mp3"), WORDS, str(media / "bg.mp4"), str(media / "music.mp3"),
                                         str(out), size=(360, 640), caption_style=style)
     assert "Duration: 00:00:02.2" in probe(out)
+
+
+def test_no_caption_ever_leaves_the_safe_area():
+    """Regression: wrapping measured plain lowercase text with normal spaces
+    while styles draw capitals / stroke-inclusive word boxes — on real
+    scripts half the MrBeast lines left the frame. Measured as drawn now,
+    and a single unit too long for the frame is shrunk to fit."""
+    from generative import caption_styles as cs
+    text = ("et autorise-toi à relâcher toute tension. je n'ai plus besoin de forcer les portes fermées, "
+            "anticonstitutionnellement extraordinairement inconditionnellement").split()
+    words = [(w, i * 0.4, i * 0.4 + 0.35) for i, w in enumerate(text)]
+    limit = 1080 - 2 * cs.MARGIN
+
+    f = cs._font(cs.FONT_HEAVY, cs._MRBEAST_FONT_SIZE)
+    m = lambda t: cs.drawn_words_width(t, f, cs._MRBEAST_STROKE, upper=True)
+    for line in cs.group_into_lines(words, f, cs._MRBEAST_STROKE, limit, m):
+        joined = " ".join(w[0] for w in line)
+        assert m(joined) * cs.fit_scale(m(joined), limit) <= limit + 0.5
+
+    f = cs._font(cs.FONT_BOLD, cs._KARAOKE_FONT_SIZE)
+    m = lambda t: cs.drawn_words_width(t, f, cs._KARAOKE_STROKE)
+    assert all(m(" ".join(w[0] for w in l)) * cs.fit_scale(m(" ".join(w[0] for w in l)), limit) <= limit + 0.5
+               for l in cs.group_into_lines(words, f, cs._KARAOKE_STROKE, limit, m))
+
+    # the longest word, popping in at 110 %, gets a shrink factor in both renderers
+    ass = ffmpeg_composer.build_ass(words, (1080, 1920), "bounce")
+    long_word_event = next(l for l in ass.splitlines() if "INCONDITIONNELLEMENT" in l)
+    assert "\\fscx40.0" not in long_word_event  # scaled below the normal 40 % start

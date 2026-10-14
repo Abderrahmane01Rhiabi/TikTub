@@ -130,8 +130,36 @@ def group_into_chunks(words: WordTimings, chunk_size: int, font=None, stroke_wid
     return chunks
 
 
-def _clip_from_array(arr: np.ndarray, start: float, dur: float) -> ImageClip:
-    return ImageClip(arr).set_start(start).set_duration(max(dur, 0.05)).set_position("center")
+def _clip_from_array(arr: np.ndarray, start: float, dur: float, scale: float = 1.0) -> ImageClip:
+    clip = ImageClip(arr).set_start(start).set_duration(max(dur, 0.05)).set_position("center")
+    return clip.resize(scale) if scale < 1.0 else clip
+
+
+# ---------------------------------------------------------------------------
+# Widths AS DRAWN. Line wrapping used to measure the plain lowercase text
+# with normal spaces, while styles draw each word as its own stroke-
+# inclusive box, separated by a stroke-inclusive space — and MrBeast in
+# capitals: measured on real scripts, half of MrBeast's lines (and some
+# karaoke / typewriter ones) came out wider than the frame. Every wrapping
+# now measures exactly what gets drawn (the ffmpeg composer uses the same
+# functions).
+# ---------------------------------------------------------------------------
+
+def drawn_words_width(text: str, font, stroke: int, upper: bool = False) -> int:
+    words = text.split(" ")
+    space_w = _text_size(" ", font, stroke)[0]
+    return sum(_text_size(w.upper() if upper else w, font, stroke)[0] for w in words) + space_w * (len(words) - 1)
+
+
+def typewriter_drawn_width(text: str, font) -> int:
+    # the frame reserves an "I" for the cursor, plus its 4 px gap and 6 px bar
+    return _text_size(text + "I", font, 0)[0] + 10
+
+
+def fit_scale(width: float, max_width: float) -> float:
+    """< 1 when a single unit (one long word) is wider than the safe area:
+    it gets shrunk to fit instead of leaving the frame."""
+    return min(1.0, max_width / width) if width > 0 else 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -167,12 +195,14 @@ def karaoke_build_clips(words: WordTimings, size, accent_color: str = None) -> L
     font = _font(FONT_BOLD, _KARAOKE_FONT_SIZE)
     highlight_color = _parse_color(accent_color) or _KARAOKE_HIGHLIGHT
     max_width = size[0] - 2 * MARGIN
-    lines = group_into_lines(words, font, _KARAOKE_STROKE, max_width)
+    measure = lambda text: drawn_words_width(text, font, _KARAOKE_STROKE)
+    lines = group_into_lines(words, font, _KARAOKE_STROKE, max_width, measure)
     clips = []
     for li, line in enumerate(lines):
+        scale = fit_scale(measure(" ".join(w[0] for w in line)), max_width)
         for i, (text, start, end) in enumerate(line):
             next_start = line[i + 1][1] if i + 1 < len(line) else (lines[li + 1][0][1] if li + 1 < len(lines) else end)
-            clips.append(_clip_from_array(_karaoke_line_frame(line, i, font, highlight_color), start, next_start - start))
+            clips.append(_clip_from_array(_karaoke_line_frame(line, i, font, highlight_color), start, next_start - start, scale))
     return clips
 
 
@@ -181,7 +211,7 @@ def karaoke_preview_frame(size, accent_color: str = None) -> Image.Image:
     font = _font(FONT_BOLD, _KARAOKE_FONT_SIZE)
     highlight_color = _parse_color(accent_color) or _KARAOKE_HIGHLIGHT
     max_width = size[0] - 2 * MARGIN
-    lines = group_into_lines(words, font, _KARAOKE_STROKE, max_width)
+    lines = group_into_lines(words, font, _KARAOKE_STROKE, max_width, lambda t: drawn_words_width(t, font, _KARAOKE_STROKE))
     arr = _karaoke_line_frame(lines[0], 2, font, highlight_color)  # highlight the 3rd word, mid-sentence
     return Image.fromarray(arr)
 
@@ -215,19 +245,21 @@ def _mrbeast_line_frame(line, font) -> np.ndarray:
 def mrbeast_build_clips(words: WordTimings, size) -> List[ImageClip]:
     font = _font(FONT_HEAVY, _MRBEAST_FONT_SIZE)
     max_width = size[0] - 2 * MARGIN
-    lines = group_into_lines(words, font, _MRBEAST_STROKE, max_width)
+    measure = lambda text: drawn_words_width(text, font, _MRBEAST_STROKE, upper=True)
+    lines = group_into_lines(words, font, _MRBEAST_STROKE, max_width, measure)
     clips = []
     for li, line in enumerate(lines):
         start = line[0][1]
         end = line[-1][2] if li + 1 >= len(lines) else lines[li + 1][0][1]
-        clips.append(_clip_from_array(_mrbeast_line_frame(line, font), start, end - start))
+        scale = fit_scale(measure(" ".join(w[0] for w in line)), max_width)
+        clips.append(_clip_from_array(_mrbeast_line_frame(line, font), start, end - start, scale))
     return clips
 
 
 def mrbeast_preview_frame(size) -> Image.Image:
     font = _font(FONT_HEAVY, _MRBEAST_FONT_SIZE)
     max_width = size[0] - 2 * MARGIN
-    lines = group_into_lines(_SAMPLE_WORDS, font, _MRBEAST_STROKE, max_width)
+    lines = group_into_lines(_SAMPLE_WORDS, font, _MRBEAST_STROKE, max_width, lambda t: drawn_words_width(t, font, _MRBEAST_STROKE, upper=True))
     return Image.fromarray(_mrbeast_line_frame(lines[0], font))
 
 
@@ -264,7 +296,8 @@ def hormozi_build_clips(words: WordTimings, size) -> List[ImageClip]:
     for i, chunk in enumerate(chunks):
         start, end = chunk[0][1], chunk[-1][2]
         color = _HORMOZI_COLORS[i % len(_HORMOZI_COLORS)]
-        clips.append(_clip_from_array(_hormozi_chunk_frame(chunk, color, font), start, end - start))
+        box_w = _text_size(" ".join(w[0].upper() for w in chunk), font, _HORMOZI_STROKE)[0] + 68
+        clips.append(_clip_from_array(_hormozi_chunk_frame(chunk, color, font), start, end - start, fit_scale(box_w, max_width)))
     return clips
 
 
@@ -317,11 +350,13 @@ def bounce_build_clips(words: WordTimings, size, accent_color: str = None) -> Li
     font = _font(FONT_BOLD, _BOUNCE_FONT_SIZE)
     stroke_color = _parse_color(accent_color) or _BOUNCE_STROKE_COLOR
     clips = []
+    max_width = size[0] - 2 * MARGIN
     for text, start, end in words:
         dur = max(end - start, 0.05)
         arr = _bounce_word_frame(text, font, stroke_color)
+        fit = fit_scale(_text_size(text.upper(), font, _BOUNCE_STROKE)[0] * 1.10, max_width)
         base = ImageClip(arr).set_start(start).set_duration(dur).set_position("center")
-        clip = base.resize(lambda t, d=dur: _bounce_scale_factor(t, d))
+        clip = base.resize(lambda t, d=dur, k=fit: k * _bounce_scale_factor(t, d))
         clips.append(clip)
     return clips
 
@@ -365,7 +400,7 @@ def typewriter_build_clips(words: WordTimings, size, accent_color: str = None) -
     font = _font(FONT_MONO, _TYPEWRITER_FONT_SIZE)
     cursor_color = _parse_color(accent_color) or _TYPEWRITER_CURSOR
     max_width = size[0] - 2 * MARGIN
-    lines = group_into_lines(words, font, 0, max_width)
+    lines = group_into_lines(words, font, 0, max_width, lambda t: typewriter_drawn_width(t, font))
     clips = []
     for li, line in enumerate(lines):
         prefix = ""
