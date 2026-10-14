@@ -30,6 +30,8 @@ if str(PROJECT_ROOT) not in sys.path:
 DATA_ROOT = Path(os.environ.get("TIKTUB_DATA_DIR") or PROJECT_ROOT)
 os.chdir(DATA_ROOT)
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -39,7 +41,16 @@ from channel_manager import ChannelManager
 
 CONFIG_PATH = DATA_ROOT / "config.yaml"
 
-app = FastAPI(title="TikTub")
+@asynccontextmanager
+async def lifespan(app):
+    # each is best-effort: none of them may ever keep the app from starting
+    _recover_interrupted_jobs()
+    _daily_backup_on_startup()
+    _start_stats_tracker()
+    yield
+
+
+app = FastAPI(title="TikTub", lifespan=lifespan)
 channel_manager = ChannelManager()
 
 # Serve downloaded/processed videos so <video> tags in the UI can preview them
@@ -138,7 +149,6 @@ def recover_interrupted() -> int:
     return count
 
 
-@app.on_event("startup")
 def _recover_interrupted_jobs():
     try:
         recover_interrupted()
@@ -146,7 +156,6 @@ def _recover_interrupted_jobs():
         print(f"⚠️ Recovery of interrupted jobs skipped: {e}")
 
 
-@app.on_event("startup")
 def _daily_backup_on_startup():
     def run():
         try:
@@ -212,7 +221,6 @@ def download_backup(name: str):
     return FileResponse(path, filename=name, media_type="application/zip")
 
 
-@app.on_event("startup")
 def _start_stats_tracker():
     """Launches the background performance-snapshot loop (stats_tracker.py)
     — best-effort: config.yaml missing or any init hiccup shouldn't ever
