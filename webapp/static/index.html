@@ -1889,11 +1889,19 @@ function renderCalendar(){
     return;
   }
 
-  // Two videos of the same channel closer than spacing_hours = flagged
-  const close = new Set();
+  // Two videos of the same channel closer than spacing_hours = flagged (advice only).
+  // close: video_id → the nearest too-close neighbour, so the tooltip can say which and by how much.
+  const close = new Map();
+  const flagPair = (a, b) => {
+    const gap = Math.abs(a.date - b.date);
+    [[a, b], [b, a]].forEach(([x, y]) => {
+      const prev = close.get(x.video_id);
+      if (!prev || gap < prev.gap) close.set(x.video_id, { other: y, gap });
+    });
+  };
   laneNames.forEach(n => {
     const mine = all.filter(i => i.channel === n && i.kind !== 'published').sort((a, b) => a.date - b.date);
-    mine.forEach((it, k) => { if (k && it.date - mine[k - 1].date < spacingMs){ close.add(it.video_id); close.add(mine[k - 1].video_id); } });
+    mine.forEach((it, k) => { if (k && it.date - mine[k - 1].date < spacingMs) flagPair(it, mine[k - 1]); });
   });
 
   const inWeek = all.filter(i => i.date >= calWeekStart && i.date < weekEnd);
@@ -1922,7 +1930,7 @@ function renderCalendar(){
       const count = dayItems.filter(i => i.kind !== 'published').length;
       const overLimit = count > calData.max_daily_uploads;
       return `<div class="cell ${key === dayKey(now) ? 'today' : ''} ${isPast ? 'past' : ''} ${overLimit ? 'over-limit' : ''}" data-channel="${name}" data-day="${key}">
-        ${dayItems.map(i => slotHtml(i, close.has(i.video_id))).join('')}
+        ${dayItems.map(i => slotHtml(i, close.get(i.video_id))).join('')}
         ${overLimit ? `<span class="limit">${count} > limite de ${calData.max_daily_uploads}/jour</span>` : ''}
       </div>`;
     }).join('');
@@ -1935,7 +1943,8 @@ function renderCalendar(){
       <span><span class="sw" style="background:var(--panel2)"></span>À publier (déplaçable)</span>
       <span style="opacity:.75">${icon('lock', 11)} Déjà programmée sur YouTube</span>
       <span style="opacity:.6">${icon('check', 11)} Publiée</span>
-      <span>${icon('alert', 11)} Trop proche d'une autre vidéo (&lt; ${calData.spacing_hours} h)</span>
+      <span style="color:#f5c56d">${icon('alert', 11)} Jaune = moins de ${calData.spacing_hours} h d'écart avec une autre vidéo de la même chaîne (conseil, non bloquant — survole pour le détail)</span>
+      <span style="color:var(--danger)">Cadre rouge = plus de ${calData.max_daily_uploads} vidéos le même jour</span>
     </div>`;
 
   box.querySelector('[data-cal="prev"]').addEventListener('click', () => { calUserNavigated = true; calWeekStart = addDays(calWeekStart, -7); renderCalendar(); });
@@ -1944,12 +1953,21 @@ function renderCalendar(){
   wireCalendar(box, all);
 }
 
+function gapLabel(ms){
+  const h = Math.round(ms / 3600000);
+  return h >= 1 ? `${h} h` : `${Math.max(1, Math.round(ms / 60000))} min`;
+}
+
 function slotHtml(i, tooClose){
   const movable = i.kind === 'pending' && !i.publish_now;
   const lead = i.publish_now ? icon('globe', 10) : i.kind === 'scheduled' ? icon('lock', 10) : i.kind === 'published' ? icon('check', 10) : '';
-  const tip = i.kind === 'pending'
+  let tip = i.kind === 'pending'
     ? (i.publish_now ? 'Publication immédiate au prochain « Publier tout »' : 'Clique pour modifier, ou glisse vers un autre jour')
     : i.kind === 'scheduled' ? 'Déjà programmée sur YouTube (non modifiable ici)' : 'Déjà publiée';
+  if (tooClose){
+    tip = `⚠ À ${gapLabel(tooClose.gap)} de « ${tooClose.other.title || 'une autre vidéo'} » sur la même chaîne.\n`
+      + `Écart conseillé : ${calData.spacing_hours} h minimum (réglage spacing_hours de config.yaml) — simple avertissement, rien n'est bloqué.\n\n${tip}`;
+  }
   return `<button type="button" class="slot ${i.kind} ${tooClose ? 'close' : ''}" style="--ch:${channelColor(i.channel)}"
       data-video="${esc(i.video_id)}" data-channel="${esc(i.channel)}" ${movable ? 'draggable="true"' : ''} title="${esc(tip)}">
     <span class="t">${lead}${i.publish_now ? 'Immédiate' : hhmm(i.date)}${tooClose ? icon('alert', 11).replace('<svg', '<svg class="warn"') : ''}</span>
