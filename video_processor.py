@@ -144,31 +144,71 @@ CROP_SAFETY_MARGIN = 20  # px kept around detected content so text/logos sitting
                          # right at the edge of a black border (e.g. a caption)
                          # aren't left touching the crop line with zero breathing room
 
-def crop_black_borders(video_path):
+CROP_SAMPLES = 8          # frames looked at, spread from 5 % to 95 % of the video
+CROP_BLACK_LEVEL = 20    # gray level under which a pixel counts as black
+CROP_MIN_CONTENT = 0.02  # a row/column is picture when >= 2 % of it isn't black
+                         # (a stray pixel or a tiny watermark doesn't count)
+CROP_MIN_SIDE = 0.2      # content narrower/shorter than 20 % of the frame is
+                         # suspicious (a lone caption on black): don't crop at all
+
+
+def _sample_frames(video_path, count=CROP_SAMPLES):
+    cap = cv2.VideoCapture(video_path)
     try:
-        cap = cv2.VideoCapture(video_path)
-        ret, frame = cap.read()
+        total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        positions = [int(total * (0.05 + 0.9 * i / (count - 1))) for i in range(count)] if total > count else [None]
+        frames = []
+        for pos in positions:
+            if pos is not None:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, min(pos, total - 1))
+            ret, frame = cap.read()
+            if ret:
+                frames.append(frame)
+            if pos is None:  # short or unknown length: read through it
+                while len(frames) < count:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
+                    frames.append(frame)
+        return frames
+    finally:
         cap.release()
 
-        if not ret:
-            return None
 
-        frame_h, frame_w = frame.shape[:2]
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, 20, 255, cv2.THRESH_BINARY)
-        coords = cv2.findNonZero(thresh)
-        if coords is None:
-            return None
-        x, y, w, h = cv2.boundingRect(coords)
+def crop_black_borders(video_path):
+    """The area where the video actually is, without its black borders.
 
-        x2, y2 = x + w, y + h
+    Looked at over several frames spread across the whole video, not just
+    the first one: many clips open on a black screen with only a caption,
+    and judging from that frame alone cropped everything down to the
+    caption's band. A row/column is kept if it shows picture in ANY sampled
+    frame — real black bars stay black all along, so they're still cut.
+    Returns (x, y, w, h), or None when nothing should be cropped."""
+    try:
+        frames = _sample_frames(video_path)
+        if not frames:
+            return None
+        frame_h, frame_w = frames[0].shape[:2]
+        content = np.zeros((frame_h, frame_w), dtype=bool)
+        for frame in frames:
+            if frame.shape[:2] == (frame_h, frame_w):
+                content |= cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) > CROP_BLACK_LEVEL
+
+        rows = np.flatnonzero(content.mean(axis=1) >= CROP_MIN_CONTENT)
+        cols = np.flatnonzero(content.mean(axis=0) >= CROP_MIN_CONTENT)
+        if not len(rows) or not len(cols):
+            return None  # all black: nothing to go by
+        y, y2 = rows[0], rows[-1] + 1
+        x, x2 = cols[0], cols[-1] + 1
+        if (x2 - x) < frame_w * CROP_MIN_SIDE or (y2 - y) < frame_h * CROP_MIN_SIDE:
+            return None  # a lone caption or logo on black, not a picture: leave it whole
+
         x = max(0, x - CROP_SAFETY_MARGIN)
         y = max(0, y - CROP_SAFETY_MARGIN)
         x2 = min(frame_w, x2 + CROP_SAFETY_MARGIN)
         y2 = min(frame_h, y2 + CROP_SAFETY_MARGIN)
-
-        return x, y, x2 - x, y2 - y
-    except:
+        return int(x), int(y), int(x2 - x), int(y2 - y)
+    except Exception:
         return None
 
 def compute_frame_scale(frame_mode, bg_mode, specific_bg, video_w, video_h, target_w, target_h):
