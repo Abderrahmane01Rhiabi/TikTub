@@ -591,6 +591,21 @@ def channel_performance(channel_name: str):
     return performance.analyze(videos, history)
 
 
+@app.get("/api/suggestions")
+def suggestions():
+    """Accueil's "idée de la semaine": per generation channel, the winning
+    style worth relaunching (see performance.suggest). Local data only."""
+    out = []
+    for ch in channel_manager.list_channels():
+        if not ch.get("generation_mode"):
+            continue  # "Refaire ce style" writes new scripts: generation channels only
+        import performance
+        s = performance.suggest(channel_performance(ch["name"]))
+        if s:
+            out.append({"channel": ch["name"], **s})
+    return out
+
+
 @app.post("/api/sync_youtube_statuses")
 def sync_youtube_statuses_now():
     """Runs the YouTube status resync right away (it also runs hourly in the

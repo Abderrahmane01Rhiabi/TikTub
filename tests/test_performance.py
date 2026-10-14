@@ -115,3 +115,27 @@ def test_retention_is_shown_per_video_and_as_a_median_per_group():
     assert result["median_retention_7d"] == 50.0
     groups = {g["value"]: g for g in next(i for i in result["insights"] if i["dimension"] == "script_format")["groups"]}
     assert groups["B"]["median_retention_7d"] == 55.0 and groups["D"]["median_retention_7d"] == 20.0
+
+
+def test_suggestion_picks_a_clear_well_backed_winning_style_with_a_model_video():
+    items = [make("b1", 900, "B"), make("b2", 800, "B"), make("b3", 700, "B"),
+             make("d1", 100, "D"), make("d2", 120, "D"), make("d3", 110, "D"), make("d4", 90, "D")]
+    s = performance.suggest(run(items))
+    assert s["dimension"] == "script_format" and s["value"] == "B" and s["count"] == 3
+    assert s["video"]["video_id"] == "b1"  # the best remakeable video of that style is the model
+
+    # only 2 videos in the winning group: weak evidence, no suggestion
+    assert performance.suggest(run(items[1:])) is None
+    # a winning style made only of imports can't be remade
+    imported = [make(f"b{i}", 900, "B", source="import") for i in range(3)] + items[3:]
+    assert performance.suggest(run(imported)) is None
+
+
+def test_suggestions_endpoint_only_covers_generation_channels(client, project, monkeypatch):
+    import performance as perf
+    from webapp import main
+    monkeypatch.setattr(main.channel_manager, "list_channels", lambda: [
+        {"name": "gen", "generation_mode": True}, {"name": "imp", "generation_mode": False}])
+    monkeypatch.setattr(main, "channel_performance", lambda name: {"name": name})
+    monkeypatch.setattr(perf, "suggest", lambda a: {"score": 2.0, "from": a["name"]})
+    assert client.get("/api/suggestions").json() == [{"channel": "gen", "score": 2.0, "from": "gen"}]

@@ -151,3 +151,28 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
     return {"analyzed": len(rows), "too_recent": too_recent, "median_views_7d": base,
             "median_retention_7d": _median_or_none(r["retention_7d"] for r in rows),
             "videos": rows, "insights": insights}
+
+
+# What "Refaire ce style" carries over to new scripts: only these choices
+# can be suggested (a publish weekday isn't something a remake reuses).
+REMAKE_DIMENSIONS = {"script_format", "background", "music", "caption_style"}
+SUGGEST_MIN_SCORE = 1.5  # the style must clearly beat the channel's usual
+
+
+def suggest(analysis: Dict) -> Optional[Dict]:
+    """The Accueil's "idée de la semaine": the strongest well-backed winning
+    style on the channel, with its best remakeable video as the model.
+    None when nothing clearly stands out."""
+    best = None
+    for ins in analysis.get("insights", []):
+        top = ins["best"]
+        if ins["dimension"] not in REMAKE_DIMENSIONS or not top["reliable"] \
+                or top["score"] < SUGGEST_MIN_SCORE or top["score"] <= ins["worst"]["score"]:
+            continue
+        model = next((r for r in analysis["videos"]  # already sorted by 7-day views
+                      if r["remakeable"] and r["attrs"].get(ins["dimension"]) == top["value"]), None)
+        if model and (best is None or top["score"] > best["score"]):
+            best = {"dimension": ins["dimension"], "dimension_label": ins["label"], "value": top["value"],
+                    "label": top["label"], "score": top["score"], "count": top["count"],
+                    "median_retention_7d": top.get("median_retention_7d"), "video": model}
+    return best

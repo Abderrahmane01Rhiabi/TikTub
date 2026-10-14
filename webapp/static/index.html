@@ -470,6 +470,8 @@
   .rank-row .chips span{font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .rank-row .views{text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
   .rank-row .views b{display:block;color:var(--text);font-size:13px;}
+  .suggest-card{margin-bottom:16px;border-color:color-mix(in srgb, var(--accent) 40%, var(--border));}
+  .suggest-card .dot{display:inline-block;width:8px;height:8px;border-radius:50%;vertical-align:middle;}
   .rank-row .views .ret{display:block;font-size:11.5px;margin-top:2px;}
   @media (max-width:760px){
     .rank-row{grid-template-columns:26px 42px minmax(0,1fr);}
@@ -525,6 +527,7 @@
       <div class="actions"><button class="btn secondary small" id="homeRefreshBtn" data-icon="refresh">Actualiser</button></div>
     </div>
     <div class="statbar" id="homeKpis"></div>
+    <div id="homeSuggest"></div>
     <div class="home-grid" id="homeChannels"></div>
   </section>
 
@@ -1113,6 +1116,52 @@ async function loadHome(){
 
   grid.innerHTML = data.channels.map(c => channelHomeCard(c)).join('');
   wireHomeCards(grid, data.channels);
+  loadHomeSuggestion().catch(() => {});  // a bonus: never blocks or breaks the home screen
+}
+
+// ---------- "Idée de la semaine" (winning style worth relaunching) ----------
+function isoWeek(d = new Date()){
+  const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+  t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+  const w = Math.ceil(((t - Date.UTC(t.getUTCFullYear(), 0, 1)) / 864e5 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${w}`;
+}
+function suggestionKey(s){ return `tiktub.suggest.${s.channel}`; }
+function suggestionDismissed(s){
+  try { return localStorage.getItem(suggestionKey(s)) === `${isoWeek()}:${s.dimension}:${s.value}`; } catch { return false; }
+}
+
+async function loadHomeSuggestion(){
+  const box = document.getElementById('homeSuggest');
+  const list = (await api('/api/suggestions')).filter(s => !suggestionDismissed(s));
+  if (!list.length){ box.innerHTML = ''; return; }
+  const s = list.sort((a, b) => b.score - a.score)[0];  // one idea at a time: the strongest
+  const ch = channels.find(c => c.name === s.channel) || { display_name: s.channel };
+  box.innerHTML = `
+    <article class="chcard suggest-card">
+      <div class="chcard-head">
+        <div class="who"><div class="name">${icon('sparkle', 15)} Idée de la semaine</div></div>
+        <span class="pill ok">${fmtScore(s.score)} la médiane</span>
+      </div>
+      <div class="chcard-body">
+        <div>Sur <b><span class="dot" style="background:${channelColor(s.channel)}"></span> ${esc(ch.display_name)}</b>, les vidéos
+          <b>${esc(s.dimension_label.toLowerCase())} « ${esc(s.label)} »</b> font <b>${fmtScore(s.score)}</b> les vues habituelles
+          (${s.count} vidéos${s.median_retention_7d != null ? `, ${fmtPct(s.median_retention_7d)} regardé` : ''}).
+          Lancer 3 nouvelles vidéos dans ce style ?</div>
+        <div class="tiny">Modèle : « ${esc(s.video.title)} » · ${s.video.views_7d.toLocaleString('fr-FR')} vues à 7 j. Rien n'est envoyé à ElevenLabs avant que tu valides les scripts.</div>
+      </div>
+      <div class="chcard-foot">
+        <button class="btn ghost small" data-act="later">Pas cette semaine</button>
+        <button class="btn secondary small" data-act="see">Voir « Ce qui marche »</button>
+        <button class="btn primary small push" data-act="go">${icon('sparkle', 13)} Lancer 3 vidéos</button>
+      </div>
+    </article>`;
+  box.querySelector('[data-act="go"]').addEventListener('click', () => openRemakeDialog(s.channel, s.video));
+  box.querySelector('[data-act="see"]').addEventListener('click', () => { dashboardChannel = s.channel; dashView = 'perf'; openSpace('dashboard'); });
+  box.querySelector('[data-act="later"]').addEventListener('click', () => {
+    try { localStorage.setItem(suggestionKey(s), `${isoWeek()}:${s.dimension}:${s.value}`); } catch {}
+    loadHomeSuggestion().catch(() => {});  // maybe another channel has an idea
+  });
 }
 
 function channelHomeCard(c){
