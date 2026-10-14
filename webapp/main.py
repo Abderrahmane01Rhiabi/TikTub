@@ -471,6 +471,11 @@ def connection_status(channel_name: str):
     from youtube_uploader import get_connection_health, has_edit_scope
     health = get_connection_health(channel_name)
     connected = health["state"] == "connected"
+    try:
+        import alerts
+        alerts.connection_state(channel_name, health["state"], health["reason"])
+    except Exception:
+        pass
     return {
         "connected": connected,
         "state": health["state"],
@@ -1588,6 +1593,7 @@ def publish(req: PublishRequest):
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
     from youtube_uploader import upload_channel_schedule
     results = upload_channel_schedule(req.channel_name, auto_confirm=True)
+    _alert_publish_results(results, req.channel_name)
     return {"results": results}
 
 
@@ -1599,7 +1605,30 @@ def publish_all():
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
     from youtube_uploader import upload_all_channels_schedule
     results = upload_all_channels_schedule(auto_confirm=True)
+    _alert_publish_results(results)
     return {"results": results}
+
+
+def _alert_publish_results(results, channel_name=None):
+    import alerts
+    for r in results:
+        try:
+            alerts.publish_result(channel_name or r.get("channel"), r)
+        except Exception:
+            pass
+
+
+@app.get("/api/alerts")
+def list_alerts():
+    import alerts
+    return alerts.active()
+
+
+@app.post("/api/alerts/{key:path}/dismiss")
+def dismiss_alert(key: str):
+    import alerts
+    alerts.dismiss(key)
+    return {"dismissed": key}
 
 
 # ---------------------------------------------------------------------------

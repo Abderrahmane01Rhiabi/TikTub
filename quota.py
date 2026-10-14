@@ -95,7 +95,13 @@ def record_upload(channel_name: str, config_path: str = "config.yaml"):
 
 def mark_exhausted(channel_name: str):
     """À appeler quand YouTube a RÉELLEMENT répondu quotaExceeded."""
-    _db.set_quota_exhausted(project_key_for_channel(channel_name), quota_day())
+    key, day = project_key_for_channel(channel_name), quota_day()
+    _db.set_quota_exhausted(key, day)
+    try:
+        import alerts
+        alerts.quota_exhausted(channel_name, key, day)
+    except Exception:
+        pass  # an alert must never break the upload flow
 
 
 def is_exhausted(channel_name: str) -> bool:

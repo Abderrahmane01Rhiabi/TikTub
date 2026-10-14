@@ -37,6 +37,17 @@
   .space .badge{display:inline-block;min-width:16px;padding:0 5px;margin-left:5px;border-radius:999px;background:rgba(255,255,255,.18);font-size:10.5px;line-height:16px;text-align:center;}
   .space:not(.active) .badge{background:rgba(109,141,253,.2);color:var(--accent);}
   .subnav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .alert-bar{display:flex;flex-direction:column;gap:8px;margin:10px 0 0;}
+  .alert-bar:empty{display:none;}
+  .alert-item{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:12px;border:1px solid color-mix(in srgb, var(--danger) 45%, var(--border));background:color-mix(in srgb, var(--danger) 9%, var(--panel));}
+  .alert-item.quota{border-color:color-mix(in srgb, #f5b94a 50%, var(--border));background:color-mix(in srgb, #f5b94a 9%, var(--panel));}
+  .alert-item > svg{flex:none;color:var(--danger);}
+  .alert-item.quota > svg{color:#f5b94a;}
+  .alert-item .txt{flex:1;min-width:0;}
+  .alert-item .txt b{display:block;font-size:13.5px;}
+  .alert-item .txt span{font-size:12.5px;color:var(--muted);overflow-wrap:anywhere;}
+  .alert-item .acts{display:flex;gap:6px;flex:none;flex-wrap:wrap;justify-content:flex-end;}
+  .alert-notif{align-self:flex-end;font-size:12px;}
   .subnav:empty{display:none;}
   .subnav .subnav-label{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em;margin-right:4px;}
 
@@ -516,6 +527,8 @@
     <button class="step" data-i="6" data-space="publication">2 · Planning</button>
     <button class="step" data-i="7" data-space="publication">3 · Publier</button>
   </div>
+  <!-- Open alerts (expired connection, quota, failed upload...), on every screen -->
+  <div class="alert-bar" id="alertBar"></div>
 
   <!-- Accueil : where every channel stands, one click from the right step -->
   <section class="screen" id="homeScreen">
@@ -1006,6 +1019,7 @@ const ICONS = {
   calendar: '<path d="M8 2v4M16 2v4M3 10h18"/><rect x="3" y="4" width="18" height="18" rx="2"/>',
   gauge: '<path d="M12 14l4-4"/><path d="M3.3 19a10 10 0 1 1 17.4 0"/>',
   alert: '<path d="M12 9v4M12 17h.01"/><path d="M10.3 3.9L1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   check: '<path d="M20 6L9 17l-5-5"/>',
   chevron: '<path d="M9 18l6-6-6-6"/>',
   link: '<path d="M15 3h6v6M10 14L21 3M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
@@ -3687,6 +3701,66 @@ async function loadStorage(){
 
 // ---------- Boot ----------
 
+// ---------- Alerts (polled; also shown as Windows notifications if allowed) ----------
+const ALERT_POLL_MS = 60000;
+const ALERT_ACTIONS = {
+  connection: { label: 'Reconnecter', run: () => goTo(0) },
+  publish: { label: 'Voir Publier', run: () => goTo(7) },
+  deleted: { label: 'Voir le Dashboard', run: a => { if (a.channel) dashboardChannel = a.channel; openSpace('dashboard'); } },
+};
+
+function notifiedAlerts(){
+  try { return new Set(JSON.parse(localStorage.getItem('tiktub.alerts.notified') || '[]')); } catch { return new Set(); }
+}
+function notifyNewAlerts(list){
+  const seen = notifiedAlerts();
+  const fresh = list.filter(a => !seen.has(a.key + a.created_at));
+  if (!fresh.length) return;
+  if ('Notification' in window && Notification.permission === 'granted'){
+    fresh.slice(0, 3).forEach(a => {
+      try {
+        const n = new Notification(`TikTub — ${a.title}`, { body: a.message || '', tag: a.key });
+        n.onclick = () => { window.focus(); n.close(); };
+      } catch {}
+    });
+  }
+  fresh.forEach(a => seen.add(a.key + a.created_at));
+  try { localStorage.setItem('tiktub.alerts.notified', JSON.stringify([...seen].slice(-200))); } catch {}
+}
+
+async function loadAlerts(){
+  const bar = document.getElementById('alertBar');
+  let list;
+  try { list = await api('/api/alerts'); } catch { return; }  // a hiccup must not blank the bar
+  notifyNewAlerts(list);
+  const canAsk = list.length && 'Notification' in window && Notification.permission === 'default';
+  bar.innerHTML = list.map((a, i) => {
+    const act = ALERT_ACTIONS[a.kind];
+    return `
+    <div class="alert-item ${esc(a.kind)}" data-i="${i}">
+      ${icon('alert', 18)}
+      <div class="txt"><b>${esc(a.title)}</b><span>${esc(a.message || '')}</span></div>
+      <div class="acts">
+        ${act ? `<button class="btn secondary small" data-act="go">${esc(act.label)}</button>` : ''}
+        <button class="btn ghost small" data-act="ok" title="Masquer — elle reviendra si le problème réapparaît après avoir été réglé">OK</button>
+      </div>
+    </div>`;
+  }).join('') + (canAsk ? `<button class="btn ghost small alert-notif" data-act="notif">${icon('bell', 13)} Recevoir aussi ces alertes en notification Windows</button>` : '');
+  bar.querySelectorAll('.alert-item').forEach(el => {
+    const a = list[+el.dataset.i];
+    el.querySelector('[data-act="go"]')?.addEventListener('click', () => ALERT_ACTIONS[a.kind].run(a));
+    el.querySelector('[data-act="ok"]').addEventListener('click', async () => {
+      el.remove();
+      try { await api(`/api/alerts/${encodeURIComponent(a.key)}/dismiss`, { method: 'POST' }); } catch {}
+      loadAlerts();
+    });
+  });
+  bar.querySelector('[data-act="notif"]')?.addEventListener('click', async () => {
+    try { await Notification.requestPermission(); } catch {}
+    loadAlerts();
+  });
+}
+
 async function boot(){
   hydrateIcons(); // tabs + static buttons declared with data-icon
   channels = await api('/api/channels');
@@ -3694,6 +3768,8 @@ async function boot(){
   renderUrlsGrid();
   await refreshDownloadedRow();
   openSpace('home');
+  loadAlerts();
+  setInterval(loadAlerts, ALERT_POLL_MS);
 }
 boot()
   .catch(e => log(e.message, 'error'))

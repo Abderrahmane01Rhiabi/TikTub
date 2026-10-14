@@ -97,6 +97,11 @@ def sync_youtube_statuses(batch_processor) -> Dict[str, int]:
             if live is None:
                 url_manager.update_video_status(video["video_id"], "youtube_deleted")
                 summary["deleted"] += 1
+                try:
+                    import alerts
+                    alerts.video_deleted(video)
+                except Exception:
+                    pass
                 continue
             privacy, publish_at = live.get("privacy_status"), live.get("publish_at")
             if privacy == "private" and publish_at and _local_naive(publish_at) > now:
@@ -183,6 +188,11 @@ def start_background_tracker(batch_processor, interval_seconds: int = 3600):
                     print(f"🧹 Nettoyage automatique : {cleaned['freed_total'] / 1024 / 1024:.1f} Mo libérés")
             except Exception as e:
                 print(f"⚠️ Daily cleanup failed: {e}")
+            try:
+                import alerts
+                alerts.check_connections()
+            except Exception as e:
+                print(f"⚠️ Connection check failed: {e}")
             try:
                 sync_retention(batch_processor)
             except Exception as e:

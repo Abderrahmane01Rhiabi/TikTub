@@ -78,6 +78,19 @@ CREATE TABLE IF NOT EXISTS quota_usage (
     exhausted INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (project_key, day)
 );
+
+-- Problems worth interrupting for (expired connection, quota hit, failed
+-- upload, video gone from YouTube) — see alerts.py. One row per problem.
+CREATE TABLE IF NOT EXISTS alerts (
+    key TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,
+    channel TEXT,
+    title TEXT NOT NULL,
+    message TEXT,
+    created_at TEXT NOT NULL,
+    dismissed_at TEXT,
+    resolved_at TEXT
+);
 """
 
 
