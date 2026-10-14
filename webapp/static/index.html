@@ -505,6 +505,7 @@
     <button class="step" data-i="0" data-space="settings">Connexion</button>
     <button class="step" data-i="1" data-space="settings">Fonds</button>
     <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
+    <button class="step" data-i="9" data-space="settings">Stockage</button>
     <button class="step" data-i="2" data-space="import">1 · URLs</button>
     <button class="step" data-i="3" data-space="import">2 · Sélection</button>
     <button class="step" data-i="4" data-space="import">3 · Cadrage</button>
@@ -596,7 +597,7 @@
     <div class="grid-3" id="connectGrid"></div>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 3</span>
+      <span class="progress-text">Réglages · 1 sur 4</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -612,7 +613,7 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 3</span>
+      <span class="progress-text">Réglages · 2 sur 4</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -630,7 +631,23 @@
     <div class="stack" id="backupList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 3</span>
+      <span class="progress-text">Réglages · 3 sur 4</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 9 : Storage (Réglages, last) -->
+  <section class="screen" data-idx="9">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Stockage</h1>
+        <p class="sub">La place prise par les vidéos, et ce qui peut être effacé sans risque.</p>
+      </div>
+    </div>
+    <div class="stack" id="storageView"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 4 sur 4</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -868,7 +885,7 @@ const stepBtns = document.querySelectorAll('#stepnav .step');
 // Spaces: two sources of videos (Import, Génération) feeding ONE publishing
 // pipeline (Publication), plus Accueil / Dashboard / one-time Réglages.
 // Numbered screens (data-idx) belong to the space whose range contains them.
-const STEP_SPACES = { settings: [0, 1, 8], import: [2, 3, 4], publication: [5, 6, 7] };
+const STEP_SPACES = { settings: [0, 1, 8, 9], import: [2, 3, 4], publication: [5, 6, 7] };
 const lastStep = { settings: 0, import: 2, publication: 5 };
 function spaceOfStep(i){
   return Object.keys(STEP_SPACES).find(k => STEP_SPACES[k].includes(i));
@@ -939,6 +956,7 @@ const SCREEN_LOADERS = {
   6: [() => loadPlanningScreen(), 'scheduleSections'],
   7: [() => loadSummaryFromSchedule(), 'summarySections'],
   8: [() => loadBackups(), 'backupList'],
+  9: [() => loadStorage(), 'storageView'],
 };
 function onEnterScreen(i){
   const loader = SCREEN_LOADERS[i];
@@ -3560,6 +3578,57 @@ document.getElementById('backupNowBtn').addEventListener('click', async () => {
   } catch (e){ log(e.message, 'error'); }
   finally { btn.disabled = false; btn.innerHTML = label; }
 });
+
+
+// ---------- Réglages → Stockage ----------
+
+function mo(bytes){ return `${(bytes / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo`; }
+
+async function loadStorage(){
+  const box = document.getElementById('storageView');
+  box.innerHTML = spinnerHtml('Analyse du disque…');
+  const d = await api('/api/storage');
+  const t = d.totals;
+  const freeable = t.published.size + t.orphans.size;
+  const rows = [
+    { label: 'Restes de vidéos déjà publiées', hint: 'fichiers de travail et vidéos finales déjà envoyées sur YouTube', v: t.published, cls: 'ok', free: true },
+    { label: 'Fichiers orphelins', hint: 'ne correspondent plus à aucune vidéo (effacés après 24 h)', v: t.orphans, cls: 'ok', free: true },
+    { label: 'Vidéos décochées', hint: 'tu les as décochées dans Sélection — effaçables à la demande', v: t.rejected, cls: 'warn' },
+    { label: 'Vidéos en cours (gardées)', hint: 'à trier, prêtes, en échec qu\'on peut retraiter, brouillons…', v: t.in_use, cls: 'wait' },
+    { label: 'Fonds et musiques des chaînes', hint: 'tes assets de génération — jamais touchés', v: { size: d.assets }, cls: 'wait' },
+    { label: 'Sauvegardes', hint: 'les 14 dernières', v: { size: d.backups }, cls: 'wait' },
+    { label: 'Base de données', hint: '', v: { size: d.database }, cls: 'wait' },
+  ];
+  const max = Math.max(...rows.map(r => r.v.size), 1);
+  box.innerHTML = `
+    <article class="chcard">
+      <div class="chcard-head">
+        <div class="who"><div class="name">Récupérable maintenant</div>
+          <div class="meta" style="margin-left:0">Fait aussi automatiquement chaque jour (restes publiés et orphelins de plus de 24 h).</div></div>
+        <span class="pill ${freeable ? 'ok' : 'wait'}">${mo(freeable)}</span>
+      </div>
+      <div class="gbars">${rows.map(r => `
+        <div class="gbar">
+          <div class="lbl"><span title="${esc(r.hint)}">${esc(r.label)}${r.v.count != null ? ` <span class="tiny">(${r.v.count})</span>` : ''}</span>
+            <div class="track"><div class="fill ${r.free ? '' : 'low'}" style="width:${Math.max(2, r.v.size / max * 100).toFixed(0)}%"></div></div></div>
+          <span class="x">${mo(r.v.size)}</span>
+        </div>`).join('')}</div>
+      <div class="chcard-foot">
+        <button class="btn primary small" data-clean="safe" ${freeable ? '' : 'disabled'}>Libérer ${mo(freeable)}</button>
+        ${t.rejected.size ? `<button class="btn ghost small danger push" data-clean="rejected" title="Leur fichier source sera effacé : elles disparaîtront de Sélection et ne pourront plus être recochées.">Effacer aussi les ${t.rejected.count} vidéo(s) décochée(s) (${mo(t.rejected.size)})</button>` : ''}
+      </div>
+    </article>`;
+  box.querySelectorAll('[data-clean]').forEach(btn => btn.addEventListener('click', async () => {
+    const withRejected = btn.dataset.clean === 'rejected';
+    if (withRejected && !confirm('Effacer définitivement les vidéos décochées ? Elles disparaîtront de Sélection et ne pourront plus être recochées (il faudra réimporter le lien).')) return;
+    btn.disabled = true;
+    try {
+      const r = await api('/api/storage/cleanup', { method: 'POST', body: JSON.stringify({ include_rejected: withRejected }) });
+      log(`${mo(r.freed_total)} libérés (${r.removed} élément(s))`, 'success');
+      safeLoad(loadStorage, 'storageView');
+    } catch (e){ btn.disabled = false; log(e.message, 'error'); }
+  }));
+}
 
 // ---------- Boot ----------
 

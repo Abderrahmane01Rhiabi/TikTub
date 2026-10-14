@@ -177,6 +177,13 @@ def start_background_tracker(batch_processor, interval_seconds: int = 3600):
             except Exception as e:
                 print(f"⚠️ Daily backup failed: {e}")
             try:
+                import storage
+                cleaned = storage.cleanup_if_due()  # daily: published leftovers + old orphans
+                if cleaned and cleaned["freed_total"]:
+                    print(f"🧹 Nettoyage automatique : {cleaned['freed_total'] / 1024 / 1024:.1f} Mo libérés")
+            except Exception as e:
+                print(f"⚠️ Daily cleanup failed: {e}")
+            try:
                 run_snapshot_cycle(batch_processor)
             except Exception as e:
                 print(f"⚠️ Stats tracker cycle failed: {e}")

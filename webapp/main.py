@@ -159,6 +159,24 @@ def _daily_backup_on_startup():
     threading.Thread(target=run, daemon=True).start()
 
 
+@app.get("/api/storage")
+def storage_overview():
+    import storage
+    report = storage.scan()
+    report.pop("items")
+    return report
+
+
+class CleanupRequest(BaseModel):
+    include_rejected: bool = False
+
+
+@app.post("/api/storage/cleanup")
+def storage_cleanup(req: CleanupRequest):
+    import storage
+    return storage.cleanup(include_rejected=req.include_rejected)
+
+
 @app.get("/api/backups")
 def list_backups():
     import backup
