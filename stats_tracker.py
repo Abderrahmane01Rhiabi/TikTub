@@ -184,9 +184,54 @@ def start_background_tracker(batch_processor, interval_seconds: int = 3600):
             except Exception as e:
                 print(f"⚠️ Daily cleanup failed: {e}")
             try:
+                sync_retention(batch_processor)
+            except Exception as e:
+                print(f"⚠️ Retention sync failed: {e}")
+            try:
                 run_snapshot_cycle(batch_processor)
             except Exception as e:
                 print(f"⚠️ Stats tracker cycle failed: {e}")
             time.sleep(interval_seconds)
 
     threading.Thread(target=_loop, daemon=True).start()
+
+
+RETENTION_DELAY = timedelta(days=9)  # first week + YouTube Analytics' ~2-3 days of processing
+
+
+def sync_retention(batch_processor, limit: int = 60) -> int:
+    """Measures each published video's first-week retention once (stored on
+    the row as retention_7d), past videos included — at most `limit` per
+    run, so a big backlog is spread over a few hourly cycles."""
+    from youtube_uploader import get_first_week_retention
+
+    url_manager = batch_processor.url_manager
+    now = datetime.now()
+    due: Dict[str, List[Dict]] = {}
+    for video in url_manager.list_videos():
+        if not video.get("youtube_id") or video.get("retention_7d"):
+            continue
+        published = published_moment(video)
+        if published and published + RETENTION_DELAY <= now:
+            due.setdefault(video.get("channel", "default"), []).append(video)
+
+    measured = 0
+    for channel, videos in due.items():
+        batch = videos[:max(0, limit - measured)]
+        if not batch:
+            break
+        try:
+            found = get_first_week_retention(channel, [
+                {"youtube_id": v["youtube_id"], "start": published_moment(v).strftime("%Y-%m-%d")} for v in batch])
+        except Exception as e:
+            print(f"⚠️ Retention sync failed for {channel}: {e}")
+            continue
+        for v in batch:
+            r = found.get(v["youtube_id"])
+            if r:
+                url_manager.update_video_status(v["video_id"], v["status"],
+                                                retention_7d={**r, "measured_at": now.isoformat()})
+                measured += 1
+    if measured:
+        print(f"📈 Rétention 1re semaine mesurée pour {measured} vidéo(s)")
+    return measured

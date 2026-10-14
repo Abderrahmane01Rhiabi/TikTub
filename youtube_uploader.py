@@ -316,6 +316,41 @@ def get_video_analytics(channel_name: str, youtube_video_id: str) -> Dict:
     }
 
 
+def get_first_week_retention(channel_name: str, videos: List[Dict]) -> Dict[str, Dict]:
+    """Retention of each video over ITS OWN first 7 days after publication
+    (YouTube Analytics, one query per video): average % watched and average
+    view duration — the same age for every video, like the 7-day views of
+    "Ce qui marche". videos: [{"youtube_id", "start": "YYYY-MM-DD"}].
+    Returns {youtube_id: {...}}; a video Analytics has no data for is left
+    out. Needs the yt-analytics.readonly scope."""
+    token_path = get_token_path(channel_name)
+    if not os.path.exists(token_path) or not has_analytics_scope(channel_name):
+        return {}
+    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        with open(token_path, 'w') as f:
+            f.write(creds.to_json())
+    yta = build('youtubeAnalytics', 'v2', credentials=creds)
+
+    out = {}
+    for v in videos:
+        start = datetime.strptime(v["start"], "%Y-%m-%d")
+        end = (start + timedelta(days=6)).strftime("%Y-%m-%d")
+        try:
+            resp = yta.reports().query(
+                ids='channel==MINE', startDate=v["start"], endDate=end,
+                metrics='views,averageViewPercentage,averageViewDuration',
+                filters=f'video=={v["youtube_id"]}').execute()
+        except HttpError:
+            continue
+        rows = resp.get('rows') or []
+        if rows and rows[0][0]:
+            out[v["youtube_id"]] = {"views": rows[0][0], "average_view_percentage": rows[0][1],
+                                    "average_view_duration": rows[0][2]}
+    return out
+
+
 def get_channel_analytics(channel_name: str, days: int = 30) -> Dict:
     """Channel-wide YouTube Analytics over the last `days` days: totals, a
     day-by-day view trend, traffic sources, and the top-performing videos

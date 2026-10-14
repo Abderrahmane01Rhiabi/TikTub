@@ -595,8 +595,11 @@ def channel_performance(channel_name: str):
 def sync_youtube_statuses_now():
     """Runs the YouTube status resync right away (it also runs hourly in the
     background, see stats_tracker) — the Dashboard's "Synchroniser" button."""
-    from stats_tracker import sync_youtube_statuses
-    return sync_youtube_statuses(get_batch_processor())
+    from stats_tracker import sync_youtube_statuses, sync_retention
+    bp = get_batch_processor()
+    result = sync_youtube_statuses(bp)
+    result["retention_measured"] = sync_retention(bp)
+    return result
 
 
 @app.get("/api/channels/{channel_name}/channel_analytics")

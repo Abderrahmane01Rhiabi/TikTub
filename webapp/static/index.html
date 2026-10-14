@@ -470,6 +470,7 @@
   .rank-row .chips span{font-size:10.5px;padding:1px 7px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .rank-row .views{text-align:right;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;white-space:nowrap;}
   .rank-row .views b{display:block;color:var(--text);font-size:13px;}
+  .rank-row .views .ret{display:block;font-size:11.5px;margin-top:2px;}
   @media (max-width:760px){
     .rank-row{grid-template-columns:26px 42px minmax(0,1fr);}
     .rank-row .views, .rank-row > .btn{grid-column:3;justify-self:start;text-align:left;}
@@ -3370,6 +3371,9 @@ async function loadPerformance(channelName){
       <div class="facts">
         <div class="fact">${icon('clock')}<span>Toutes comparées au même âge : <b style="color:var(--text)">7 jours après leur publication</b>.</span></div>
         <div class="fact">${icon('gauge')}<span>Une vidéo « habituelle » de la chaîne fait <b style="color:var(--text)">${Math.round(d.median_views_7d).toLocaleString('fr-FR')} vues</b> en 7 jours (médiane) — « ×2 » = deux fois plus.</span></div>
+        ${d.median_retention_7d != null
+          ? `<div class="fact">${icon('eye')}<span>En moyenne, les gens regardent <b style="color:var(--text)">${fmtPct(d.median_retention_7d)}</b> d'une vidéo la 1re semaine (rétention) — plus c'est haut, plus YouTube la pousse.</span></div>`
+          : `<div class="fact">${icon('eye')}<span>Rétention (% regardé) : mesurée automatiquement 9 jours après chaque publication — il faut que la chaîne ait autorisé les statistiques YouTube.</span></div>`}
         ${d.too_recent ? `<div class="fact">${icon('calendar')}<span>${d.too_recent} vidéo(s) trop récente(s) pas encore comptée(s).</span></div>` : ''}
       </div>
     </article>`;
@@ -3391,6 +3395,8 @@ async function loadPerformance(channelName){
     openRemakeDialog(channelName, d.videos.find(v => v.video_id === btn.dataset.remake))));
 }
 
+function fmtPct(x){ return `${Math.round(x)} %`; }
+
 function insightCardHtml(ins){
   const max = Math.max(...ins.groups.map(g => g.score), 1);
   const best = ins.best;
@@ -3402,7 +3408,7 @@ function insightCardHtml(ins){
     </div>
     <div class="best">
       <span class="v" title="${esc(best.label)}">${esc(best.label)}</span>
-      <span class="s">${fmtScore(best.score)} la médiane · ${best.count} vidéos · ${Math.round(best.median_views_7d).toLocaleString('fr-FR')} vues typiques</span>
+      <span class="s">${fmtScore(best.score)} la médiane · ${best.count} vidéos · ${Math.round(best.median_views_7d).toLocaleString('fr-FR')} vues typiques${best.median_retention_7d != null ? ` · ${fmtPct(best.median_retention_7d)} regardé` : ''}</span>
     </div>
     <div class="gbars">
       ${ins.groups.slice(0, 5).map(g => `
@@ -3429,7 +3435,7 @@ function rankRowHtml(v, i){
       ${v.youtube_url ? `<a href="${v.youtube_url}" target="_blank" rel="noopener" title="${esc(v.title)}">${esc(v.title)}</a>` : `<a title="${esc(v.title)}">${esc(v.title)}</a>`}
       <div class="chips">${chips.map(c => `<span title="${esc(c)}">${esc(c)}</span>`).join('')}</div>
     </div>
-    <div class="views"><b>${v.views_7d.toLocaleString('fr-FR')}</b>vues à 7 j ${scoreBadge(v.score)}</div>
+    <div class="views"><b>${v.views_7d.toLocaleString('fr-FR')}</b>vues à 7 j ${scoreBadge(v.score)}${v.retention_7d != null ? `<span class="ret" title="Part moyenne de la vidéo regardée la 1re semaine">${fmtPct(v.retention_7d)} regardé</span>` : ''}</div>
     ${v.remakeable ? `<button class="btn secondary small" data-remake="${esc(v.video_id)}">${icon('sparkle', 13)} Refaire ce style</button>` : '<span></span>'}
   </div>`;
 }

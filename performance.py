@@ -11,6 +11,9 @@ orders of magnitude, so a raw view count says nothing across channels.
 Then every attribute we know about a video (script format, décor, caption
 style, publish weekday/hour, scheduling method, content type) is grouped,
 and each group's median score shows which choices beat the channel's usual.
+Alongside views, the first-week retention (average % of the video watched,
+measured once per video by stats_tracker.sync_retention) says whether the
+people who came stayed — what YouTube itself pushes on.
 """
 
 from statistics import median
@@ -61,6 +64,7 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
     published = published_moment(video)
     views, likes = snap.get("view_count") or 0, snap.get("like_count")
     latest = history[-1] if history else snap
+    retention = video.get("retention_7d") or {}
     return {
         "video_id": video["video_id"],
         "title": ai.get("optimized_title") or video.get("original_title") or video.get("title") or video["video_id"],
@@ -71,6 +75,9 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
         "likes_7d": likes,
         "like_rate": round(likes / views, 4) if likes is not None and views else None,
         "views_latest": latest.get("view_count"),
+        # first-week % watched (YouTube Analytics), None until measured
+        "retention_7d": retention.get("average_view_percentage"),
+        "avg_view_duration_7d": retention.get("average_view_duration"),
         "published": published.isoformat() if published else None,
         "attrs": {
             "script_format": video.get("script_format") or None,
@@ -93,6 +100,11 @@ def label(dimension: str, value: str) -> str:
     return value
 
 
+def _median_or_none(values) -> Optional[float]:
+    values = [v for v in values if v is not None]
+    return round(median(values), 1) if values else None
+
+
 def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict:
     """videos: one channel's published videos (rows from the videos table)."""
     rows, too_recent = [], 0
@@ -105,7 +117,7 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
 
     if not rows:
         return {"analyzed": 0, "too_recent": too_recent, "median_views_7d": None,
-                "videos": [], "insights": []}
+                "median_retention_7d": None, "videos": [], "insights": []}
 
     base = median(r["views_7d"] for r in rows)
     for r in rows:
@@ -123,6 +135,7 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
             {"value": v, "label": label(dim, v), "count": len(g),
              "score": round(median(x["score"] for x in g), 2),
              "median_views_7d": median(x["views_7d"] for x in g),
+             "median_retention_7d": _median_or_none(x["retention_7d"] for x in g),
              "reliable": len(g) >= RELIABLE_GROUP_SIZE}
             for v, g in groups.items() if len(g) >= MIN_GROUP_SIZE
         ]
@@ -136,4 +149,5 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
     # strongest contrasts: where the choice matters most.
     insights.sort(key=lambda i: (i["best"]["reliable"], i["best"]["score"] - i["worst"]["score"]), reverse=True)
     return {"analyzed": len(rows), "too_recent": too_recent, "median_views_7d": base,
+            "median_retention_7d": _median_or_none(r["retention_7d"] for r in rows),
             "videos": rows, "insights": insights}

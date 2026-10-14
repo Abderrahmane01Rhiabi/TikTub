@@ -74,3 +74,44 @@ def test_sync_endpoint(client, project, monkeypatch):
 
     assert client.post("/api/sync_youtube_statuses").json()["published"] == 1
     assert db.get_video("pub")["status"] == "uploaded"
+
+
+def test_retention_is_measured_once_over_each_videos_own_first_week(project, bp, monkeypatch):
+    project.add_video("old", status="uploaded", youtube_id="Yold", youtube_published_at="2026-01-10T17:00:00")
+    project.add_video("fresh", status="uploaded", youtube_id="Yfresh",
+                      youtube_published_at=(datetime.now() - timedelta(days=3)).isoformat())
+    calls = []
+    def fake(channel, videos):
+        calls.append(videos)
+        return {v["youtube_id"]: {"views": 50, "average_view_percentage": 42.5, "average_view_duration": 17} for v in videos}
+    monkeypatch.setattr(yu, "get_first_week_retention", fake)
+
+    assert stats_tracker.sync_retention(bp) == 1
+    assert calls == [[{"youtube_id": "Yold", "start": "2026-01-10"}]]  # the fresh one waits for its week + processing
+    assert db.get_video("old")["retention_7d"]["average_view_percentage"] == 42.5
+
+    assert stats_tracker.sync_retention(bp) == 0 and len(calls) == 1  # never measured twice
+
+
+def test_first_week_retention_queries_a_7_day_window(monkeypatch, tmp_path):
+    seen = []
+    class Q:
+        def __init__(self, kw): self.kw = kw
+        def execute(self):
+            seen.append(self.kw)
+            return {"rows": [[80, 37.2, 15.0]]} if "Ya" in self.kw["filters"] else {"rows": []}
+    class Yta:
+        def reports(self): return self
+        def query(self, **kw): return Q(kw)
+    token = tmp_path / "token.json"
+    token.write_text("{}")
+    monkeypatch.setattr(yu, "get_token_path", lambda c: str(token))
+    monkeypatch.setattr(yu, "has_analytics_scope", lambda c: True)
+    monkeypatch.setattr(yu.Credentials, "from_authorized_user_file", lambda *a: type("C", (), {"expired": False})())
+    monkeypatch.setattr(yu, "build", lambda *a, **k: Yta())
+
+    out = yu.get_first_week_retention("chanA", [{"youtube_id": "Ya", "start": "2026-03-30"},
+                                                {"youtube_id": "Yb", "start": "2026-03-30"}])
+
+    assert out == {"Ya": {"views": 80, "average_view_percentage": 37.2, "average_view_duration": 15.0}}  # no data: left out
+    assert (seen[0]["startDate"], seen[0]["endDate"]) == ("2026-03-30", "2026-04-05")

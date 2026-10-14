@@ -99,3 +99,19 @@ def test_prompt_asks_for_same_format_new_topic():
     prompt = _build_prompt({}, ["ex"], ["Ancien titre"], ["A", "B"], {"format": "B", "title": "Gagnant", "script_text": "Jour 1..."})
     assert "Gagnant" in prompt and 'même format ("B")' in prompt and "SUJET doit être différent" in prompt
     assert "sous-représenté" not in prompt  # the least-used-format nudge would fight the winner's format
+
+
+def test_retention_is_shown_per_video_and_as_a_median_per_group():
+    items = [make("b1", 400, "B", retention_7d={"average_view_percentage": 60.0, "average_view_duration": 24}),
+             make("b2", 300, "B", retention_7d={"average_view_percentage": 50.0}),
+             make("d1", 100, "D", retention_7d={"average_view_percentage": 20.0}),
+             make("d2", 120, "D")]  # not measured yet: ignored in medians, never counted as 0
+
+    result = run(items)
+
+    rows = {r["video_id"]: r for r in result["videos"]}
+    assert rows["b1"]["retention_7d"] == 60.0 and rows["b1"]["avg_view_duration_7d"] == 24
+    assert rows["d2"]["retention_7d"] is None
+    assert result["median_retention_7d"] == 50.0
+    groups = {g["value"]: g for g in next(i for i in result["insights"] if i["dimension"] == "script_format")["groups"]}
+    assert groups["B"]["median_retention_7d"] == 55.0 and groups["D"]["median_retention_7d"] == 20.0
