@@ -227,3 +227,49 @@ def test_interrupted_download_says_why(client, project):
     project.add_video("d", status="downloading")
     m.recover_interrupted()
     assert "redémarrage" in db.get_video("d")["error_message"]
+
+
+@pytest.fixture(scope="module")
+def tiny_mp4(tmp_path_factory):
+    """A real, readable 1-second video."""
+    from moviepy.editor import ColorClip
+    path = tmp_path_factory.mktemp("media") / "clip.mp4"
+    ColorClip(size=(90, 160), color=(20, 40, 60), duration=1).write_videofile(str(path), fps=5, codec="libx264", audio=False, logger=None)
+    return path
+
+
+def test_dropping_a_file_for_a_failed_link_continues_like_a_download(client, project, tiny_mp4):
+    import progress, webapp.main as m
+    project.add_video("f1", status="download_failed", url="https://www.instagram.com/p/X/", error_message="Publication à accès restreint")
+    progress.start(m.DOWNLOAD_JOB, items=[{"id": "f1", "state": "failed", "message": "restreinte"}])
+    progress.finish(m.DOWNLOAD_JOB)
+
+    r = client.post("/api/videos/f1/upload_source", files={"file": ("ma vidéo.mp4", tiny_mp4.read_bytes(), "video/mp4")})
+
+    assert r.status_code == 200 and r.json()["width"] == 90
+    v = db.get_video("f1")
+    assert v["status"] == "selected" and v["error_message"] is None and v["source_uploaded"]
+    assert Path(v["raw_video_path"]).exists() and v["original_title"] == "ma vidéo"
+    assert progress.get(m.DOWNLOAD_JOB)["items"][0]["state"] == "done"  # the live list shows it fixed
+
+
+def test_dropped_file_is_refused_when_it_cannot_be_a_video(client, project):
+    project.add_video("f2", status="download_failed")
+    project.add_video("ok", status="selected")
+
+    assert client.post("/api/videos/f2/upload_source", files={"file": ("x.pdf", b"%PDF", "application/pdf")}).status_code == 400
+    bad = client.post("/api/videos/f2/upload_source", files={"file": ("x.mp4", b"not a video at all", "video/mp4")})
+    assert bad.status_code == 400 and "vidéo" in bad.json()["detail"]
+    assert not Path("temp/f2/source.mp4").exists()            # the unreadable file isn't kept
+    assert db.get_video("f2")["status"] == "download_failed"
+    assert client.post("/api/videos/ok/upload_source", files={"file": ("a.mp4", b"x", "video/mp4")}).status_code == 400
+
+
+def test_video_dimensions_of_an_unreadable_file_are_none(tmp_path):
+    """Regression: cv2 reports -1 x -1 for an unreadable file, which the
+    helper used to return as real dimensions (also used to suggest framing)."""
+    from test3_script import get_video_dimensions, is_decodable_video
+    fake = tmp_path / "fake.mp4"
+    fake.write_bytes(b"not a video")
+    assert get_video_dimensions(str(fake)) == (None, None)
+    assert not is_decodable_video(str(fake))

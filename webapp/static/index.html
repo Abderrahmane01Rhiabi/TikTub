@@ -107,7 +107,7 @@
   .err-title{font-size:12px;color:#c7cbd4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
   .err-title a{color:inherit;text-decoration:none;} .err-title a:hover{color:var(--accent);}
   .err-why{grid-column:1 / 2;font-size:11px;color:var(--dim);overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
-  .err-item .btn{grid-row:1 / span 2;grid-column:2;}
+  .err-item .err-actions{grid-row:1 / span 2;grid-column:2;display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;}
 
   .home-empty{display:flex;align-items:center;gap:10px;padding:14px 16px;border:1px dashed var(--border);border-radius:12px;font-size:12.5px;color:var(--muted);}
 
@@ -387,6 +387,8 @@
   .dl-item{display:flex;align-items:center;flex-wrap:wrap;gap:2px 8px;font-size:11.5px;min-width:0;}
   .dl-item .why{flex-basis:100%;padding-left:22px;font-size:11px;line-height:1.4;overflow-wrap:anywhere;}
   .dl-item.failed .why{color:#f3b4b4;} .dl-item.duplicate .why{color:#f5c56d;}
+  .dl-item .fix{flex-basis:100%;padding-left:22px;margin:2px 0 4px;}
+  .dl-item .fix .btn{padding:4px 10px;font-size:11.5px;}
   .dl-item .ic{width:14px;flex:none;text-align:center;font-weight:700;color:var(--dim);}
   .dl-item .ic .spinner{width:10px;height:10px;border-width:2px;}
   .dl-item .u{flex:none;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c7cbd4;}
@@ -742,6 +744,7 @@
   </details>
 </div>
 <div id="toasts" aria-live="polite"></div>
+<input type="file" id="sourceFileInput" accept=".mp4,.mov,.m4v,.webm,video/mp4,video/quicktime,video/webm" hidden>
 
 <script>
 const CHANNEL_COLORS = {
@@ -1096,7 +1099,10 @@ function channelHomeCard(c){
               ? `<a href="${esc(e.url)}" target="_blank" rel="noopener" title="${esc(e.url)}">${esc(e.title || sourceLabel(e.url))} ${icon('link', 11)}</a>`
               : esc(e.title || e.video_id)}</div>
             <div class="err-why">${esc(STATUS_LABELS[e.status] || e.status)} · ${esc(e.message || 'raison non enregistrée (échec antérieur à cette version)')}</div>
-            <button class="btn secondary small" data-dismiss>Retirer</button>
+            <div class="err-actions">
+              ${e.status === 'download_failed' ? `<button class="btn secondary small" data-upload-source="${esc(e.video_id)}" title="Tu as la vidéo sur ton ordinateur ? Dépose-la, elle continuera normalement.">${icon('upload', 12)} Déposer</button>` : ''}
+              <button class="btn ghost small" data-dismiss>Retirer</button>
+            </div>
           </div>`).join('')}
       </div>
     </details>` : '';
@@ -1401,6 +1407,8 @@ function renderDownloadJob(job){
           ${i.message && i.state === 'running' ? `<span class="m">${esc(i.message)}</span>` : ''}
           ${i.message && (i.state === 'failed' || i.state === 'duplicate')
             ? `<span class="why" title="${esc(i.detail || i.message)}">${esc(i.message)}</span>` : ''}
+          ${i.state === 'failed'
+            ? `<span class="fix"><button class="btn secondary small" data-upload-source="${esc(i.id)}" title="Tu as la vidéo sur ton ordinateur ? Dépose-la ici, elle continuera comme si le téléchargement avait marché.">${icon('upload', 12)} Déposer le fichier</button></span>` : ''}
         </div>`).join('')}</div>`;
     statusEl.textContent = finished < mine.length
       ? `${finished}/${mine.length} terminée(s)…`
@@ -3429,6 +3437,45 @@ function openRemakeDialog(channelName, v){
   });
   dlg.showModal();
 }
+
+
+// ---------- "Déposer le fichier" (failed download → local file) ----------
+// One file input for the whole page, outside every re-rendered list (the
+// download list redraws every second — an input inside it would vanish
+// while the file dialog is open). Buttons just say which video it's for.
+let uploadTargetVideo = null;
+
+document.addEventListener('click', ev => {
+  const btn = ev.target.closest('[data-upload-source]');
+  if (!btn) return;
+  ev.preventDefault();
+  uploadTargetVideo = btn.dataset.uploadSource;
+  const input = document.getElementById('sourceFileInput');
+  input.value = '';
+  input.click();
+});
+
+document.getElementById('sourceFileInput').addEventListener('change', async ev => {
+  const file = ev.target.files[0];
+  const videoId = uploadTargetVideo;
+  uploadTargetVideo = null;
+  if (!file || !videoId) return;
+  toast(`Envoi de « ${file.name} »…`);
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const res = await fetch(`/api/videos/${encodeURIComponent(videoId)}/upload_source`, { method: 'POST', body: form });
+    checkBuild(res);
+    if (!res.ok){
+      let detail = await res.text();
+      try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
+      throw new Error(detail);
+    }
+    log('Fichier déposé — la vidéo continue dans Import → Sélection.', 'success');
+    if (currentSpace === 'home') safeLoad(loadHome, 'homeKpis');
+    else { pollDownloads(); safeLoad(refreshDownloadedRow, 'downloadedRow'); }
+  } catch (e){ log(e.message, 'error'); }
+});
 
 // ---------- Boot ----------
 

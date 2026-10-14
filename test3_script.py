@@ -128,14 +128,27 @@ def get_video_dimensions(video_path: str):
     (no decoding), or (None, None) if it can't be read."""
     try:
         cap = cv2.VideoCapture(video_path)
+        opened = cap.isOpened()
         w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         cap.release()
-        if w and h:
+        # an unreadable file reports -1 x -1, which `if w and h` used to accept
+        if opened and w > 0 and h > 0:
             return w, h
     except Exception:
         pass
     return None, None
+
+
+def is_decodable_video(video_path: str) -> bool:
+    """Stricter than get_video_dimensions: actually decodes one frame."""
+    try:
+        cap = cv2.VideoCapture(video_path)
+        ok = cap.isOpened() and cap.read()[0]
+        cap.release()
+        return bool(ok)
+    except Exception:
+        return False
 
 def suggest_frame_mode(video_path: str) -> str:
     """Best-guess framing mode for a video, based only on how close its native

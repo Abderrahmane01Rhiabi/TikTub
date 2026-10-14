@@ -630,6 +630,49 @@ def start_downloads(req: DownloadRequest):
     return {"started": True, "total": len(items)}
 
 
+UPLOAD_VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm"}
+
+
+@app.post("/api/videos/{video_id}/upload_source")
+async def upload_source_file(video_id: str, file: UploadFile = File(...)):
+    """"Déposer le fichier": for a link whose download failed (restricted or
+    private post...), the user provides the video file from their computer.
+    It's saved where a download would have put it, checked to be a readable
+    video, and the video goes on exactly like a downloaded one ('selected' →
+    Sélection, Cadrage, IA)."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if video.get("status") != "download_failed":
+        raise HTTPException(status_code=400, detail="Un fichier ne peut être déposé que pour un lien dont le téléchargement a échoué.")
+
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in UPLOAD_VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Format non pris en charge ({ext or 'sans extension'}) — dépose un fichier .mp4, .mov, .m4v ou .webm.")
+
+    folder = Path("temp") / video_id
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"source{ext}"
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+
+    from test3_script import get_video_dimensions, is_decodable_video
+    width, height = get_video_dimensions(str(dest))
+    if not width or not is_decodable_video(str(dest)):
+        dest.unlink(missing_ok=True)
+        raise HTTPException(status_code=400, detail="Ce fichier ne se lit pas comme une vidéo — vérifie qu'il n'est pas abîmé.")
+
+    title = video.get("original_title") or Path(file.filename).stem[:60]
+    get_batch_processor().url_manager.update_video_status(
+        video_id, "selected", raw_video_path=str(dest), original_title=title,
+        error_message=None, error_detail=None, source_uploaded=True,
+    )
+    import progress
+    progress.update_item(DOWNLOAD_JOB, video_id, state="done", message="fichier déposé")
+    return {"uploaded": True, "width": width, "height": height}
+
+
 @app.get("/api/download_status")
 def download_status():
     import progress
