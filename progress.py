@@ -77,11 +77,30 @@ def get(key: str) -> Optional[Dict]:
         if not job:
             return None
         job = dict(job)
+        if isinstance(job.get("items"), list):
+            job["items"] = [dict(i) for i in job["items"]]  # snapshot, not the live list
     elapsed = time.time() - job["started_at"]
     f = job["fraction"]
     job["elapsed_seconds"] = round(elapsed)
     job["eta_seconds"] = round(elapsed * (1 - f) / f) if not job["done"] and f >= 0.05 else None
     return job
+
+
+def update_item(key: str, item_id: str, **fields):
+    """Updates one entry of a job's "items" list (matched on item["id"]),
+    then recomputes the job fraction as the share of finished items."""
+    with _lock:
+        job = _jobs.get(key)
+        if not job:
+            return
+        items = job.get("items") or []
+        for item in items:
+            if item.get("id") == item_id:
+                item.update(fields)
+                break
+        finished = sum(1 for i in items if i.get("state") in ("done", "failed", "duplicate"))
+        job["fraction"] = finished / len(items) if items else 0.0
+        job["updated_at"] = time.time()
 
 
 def is_running(key: str) -> bool:

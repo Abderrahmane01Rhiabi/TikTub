@@ -380,6 +380,19 @@
   .pbar{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;border:1px solid var(--border-soft);}
   .pbar > div{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--ok));transition:width .5s ease;}
 
+  /* Import → URLs: per-link download tracking */
+  .dl-progress:empty{display:none;}
+  .dl-progress{display:flex;flex-direction:column;gap:8px;}
+  .dl-items{display:flex;flex-direction:column;gap:3px;}
+  .dl-item{display:flex;align-items:center;gap:8px;font-size:11.5px;min-width:0;}
+  .dl-item .ic{width:14px;flex:none;text-align:center;font-weight:700;color:var(--dim);}
+  .dl-item .ic .spinner{width:10px;height:10px;border-width:2px;}
+  .dl-item .u{flex:none;max-width:55%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#c7cbd4;}
+  .dl-item .m{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);}
+  .dl-item.done .ic{color:var(--ok);}
+  .dl-item.failed .ic, .dl-item.failed .m{color:var(--danger);}
+  .dl-item.duplicate .ic, .dl-item.duplicate .m{color:#f5c56d;}
+
   /* Dashboard overview: collapsible */
   .overview-summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;user-select:none;}
   .overview-summary::-webkit-details-marker{display:none;}
@@ -891,7 +904,7 @@ document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', 
 const SCREEN_LOADERS = {
   0: [() => loadConnectionScreen(), 'connectGrid'],
   1: [() => loadBackgrounds(), 'backgroundsGrid'],
-  2: [() => refreshDownloadedRow(), 'downloadedRow'],
+  2: [() => { pollDownloads(); return refreshDownloadedRow(); }, 'downloadedRow'],
   3: [() => loadSelection(), 'selectionSections'],
   4: [() => loadFrameStep(), 'frameGrid'],
   5: [() => loadResultsScreen(), 'resultsList'],
@@ -983,17 +996,30 @@ function icon(name, size = 14){
   return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
 }
 
-// "TikTok · @user" instead of an 80-character URL
+// Short, DISTINCT label for a source URL instead of an 80-character link:
+// "TikTok · @user · …1234" / "Instagram · DcxcO8TsXk-" (posts have no
+// username in the URL — the post code is what tells two apart).
 function sourceLabel(url){
   try {
     const u = new URL(url);
     const host = u.hostname.replace(/^www\./, '');
-    const platform = host.includes('tiktok') ? 'TikTok' : host.includes('instagram') ? 'Instagram'
-      : (host.includes('facebook') || host.startsWith('fb.')) ? 'Facebook' : host;
-    const user = u.pathname.match(/@([^/]+)/);
-    const kind = /\/photo\//.test(u.pathname) ? 'photo' : /\/reels?\//.test(u.pathname) ? 'reel'
-      : /^\/p\//.test(u.pathname) ? 'publication' : 'vidéo';
-    return `${platform} · ${user ? '@' + user[1] : kind}${user && kind === 'photo' ? ' (photo)' : ''}`;
+    const parts = u.pathname.split('/').filter(Boolean);
+    if (host.includes('tiktok')){
+      const user = parts.find(p => p.startsWith('@'));
+      const id = parts[parts.length - 1] || '';
+      const kind = parts.includes('photo') ? ' (photo)' : '';
+      if (!user) return `TikTok · ${id || 'vidéo'}`; // short links: vm.tiktok.com/ZMabc/
+      return `TikTok · ${user}${/^\d{6,}$/.test(id) ? ' · …' + id.slice(-4) : ''}${kind}`;
+    }
+    if (host.includes('instagram')){
+      const i = parts.findIndex(p => ['p', 'reel', 'reels', 'tv'].includes(p));
+      return `Instagram · ${i >= 0 && parts[i + 1] ? parts[i + 1] : 'publication'}`;
+    }
+    if (host.includes('facebook') || host.startsWith('fb.')){
+      const id = parts[parts.length - 1];
+      return `Facebook · ${id && id.length <= 24 ? id : 'vidéo'}`;
+    }
+    return host;
   } catch (_) { return url || 'vidéo'; }
 }
 
@@ -1291,6 +1317,7 @@ function renderUrlsGrid(){
       </div>
       <div class="chcard-body">
         <textarea class="urls" data-channel="${ch.name}" placeholder="https://www.tiktok.com/@.../video/...&#10;https://www.instagram.com/reel/..."></textarea>
+        <div class="dl-progress" id="dlprog-${ch.name}"></div>
       </div>
       <div class="chcard-foot"><span class="note" id="status-${ch.name}">${ch.ready ? 'Rien à télécharger.' : '⚠ Pas de credentials OAuth pour cette chaîne'}</span></div>
     </article>
@@ -1303,34 +1330,106 @@ function renderUrlsGrid(){
   }));
 }
 
+// Downloads run in the background (POST /api/downloads); each channel card
+// follows its own links live from GET /api/download_status — also after a
+// page reload, since the job lives on the server.
+let downloadPollTimer = null;
+let downloadSeenRunning = false;
+
 document.getElementById('downloadAllBtn').addEventListener('click', async () => {
   const areas = Array.from(document.querySelectorAll('#urlsGrid textarea.urls')).filter(t => t.value.trim());
   if (!areas.length){ log('Colle au moins un lien dans une chaîne.', 'error'); return; }
   const dlBtn = document.getElementById('downloadAllBtn');
-  const dlLabel = dlBtn.innerHTML;
   dlBtn.disabled = true;
   dlBtn.innerHTML = '<span class="spinner"></span> Téléchargement…';
 
+  const batchIds = [];
   for (const area of areas){
     const channelName = area.dataset.channel;
     const statusEl = document.getElementById(`status-${channelName}`);
     try {
-      statusEl.innerHTML = spinnerHtml('Envoi des liens...');
       const { batch_id } = await api(`/api/channels/${channelName}/urls`, { method:'POST', body: JSON.stringify({ text: area.value }) });
-      statusEl.innerHTML = spinnerHtml('Téléchargement en cours...');
-      const { videos, duplicates_skipped } = await api(`/api/batches/${batch_id}/download`, { method:'POST' });
-      const dupNote = duplicates_skipped ? ` (+ ${duplicates_skipped} doublon(s) ignoré(s))` : '';
-      statusEl.textContent = `✓ ${videos.length} vidéo(s) téléchargée(s)${dupNote}`;
-      log(`${channelName}: ${videos.length} vidéo(s) téléchargée(s)${dupNote}`, 'success');
+      batchIds.push(batch_id);
+      area.value = '';
+      area.dispatchEvent(new Event('input')); // reset the "N liens" pill
     } catch (e){
-      statusEl.textContent = 'Échec du téléchargement';
+      statusEl.textContent = 'Liens refusés';
       log(`${channelName}: ${e.message}`, 'error');
     }
   }
-  dlBtn.disabled = false;
-  dlBtn.innerHTML = dlLabel;
-  safeLoad(refreshDownloadedRow, 'downloadedRow');
+  if (!batchIds.length){ resetDownloadButton(); return; }
+  try {
+    const r = await api('/api/downloads', { method:'POST', body: JSON.stringify({ batch_ids: batchIds }) });
+    if (!r.started && !r.running){ log('Aucun lien à télécharger.', 'error'); resetDownloadButton(); return; }
+    downloadSeenRunning = true;
+    pollDownloads();
+  } catch (e){ log(e.message, 'error'); resetDownloadButton(); }
 });
+
+function resetDownloadButton(){
+  const dlBtn = document.getElementById('downloadAllBtn');
+  dlBtn.disabled = false;
+  dlBtn.innerHTML = `${icon('download', 15)} Télécharger`;
+}
+
+const DL_ICONS = { waiting: '·', running: null, done: '✓', failed: '✗', duplicate: '↺' };
+
+function renderDownloadJob(job){
+  const items = job.items || [];
+  channels.forEach(ch => {
+    const mine = items.filter(i => i.channel === ch.name);
+    const box = document.getElementById(`dlprog-${ch.name}`);
+    const statusEl = document.getElementById(`status-${ch.name}`);
+    if (!box || !statusEl) return;
+    if (!mine.length){ box.innerHTML = ''; return; }
+    const finished = mine.filter(i => ['done', 'failed', 'duplicate'].includes(i.state)).length;
+    const ok = mine.filter(i => i.state === 'done').length;
+    const failed = mine.filter(i => i.state === 'failed').length;
+    const dup = mine.filter(i => i.state === 'duplicate').length;
+    const pct = Math.round(finished / mine.length * 100);
+    box.innerHTML = `
+      <div class="pjob">
+        <div class="pjob-line"><span>${finished < mine.length ? 'Téléchargement…' : 'Terminé'}</span><b>${finished}/${mine.length}</b></div>
+        <div class="pbar"><div style="width:${pct}%"></div></div>
+      </div>
+      <div class="dl-items">${mine.map(i => `
+        <div class="dl-item ${i.state}">
+          <span class="ic">${i.state === 'running' ? '<span class="spinner"></span>' : DL_ICONS[i.state]}</span>
+          <span class="u" title="${esc(i.url)}">${esc(sourceLabel(i.url))}</span>
+          ${i.message && i.state !== 'done' ? `<span class="m" title="${esc(i.message)}">${esc(i.message)}</span>` : ''}
+        </div>`).join('')}</div>`;
+    statusEl.textContent = finished < mine.length
+      ? `${finished}/${mine.length} terminée(s)…`
+      : [ok && `✓ ${ok} téléchargée(s)`, failed && `✗ ${failed} échec(s)`, dup && `↺ ${dup} doublon(s)`].filter(Boolean).join(' · ');
+  });
+}
+
+async function pollDownloads(){
+  clearTimeout(downloadPollTimer);
+  let job;
+  try { job = await api('/api/download_status'); }
+  catch (e){ downloadPollTimer = setTimeout(pollDownloads, 3000); return; }
+  if (!job.key) return;
+  renderDownloadJob(job);
+  if (!job.done){
+    const dlBtn = document.getElementById('downloadAllBtn');
+    dlBtn.disabled = true;
+    dlBtn.innerHTML = '<span class="spinner"></span> Téléchargement…';
+    downloadSeenRunning = true;
+    downloadPollTimer = setTimeout(pollDownloads, 1000);
+    return;
+  }
+  resetDownloadButton();
+  if (downloadSeenRunning){
+    downloadSeenRunning = false;
+    const items = job.items || [];
+    const ok = items.filter(i => i.state === 'done').length;
+    const failed = items.filter(i => i.state === 'failed').length;
+    if (job.error) log(`Téléchargement interrompu : ${job.error}`, 'error');
+    else log(`${ok} vidéo(s) téléchargée(s)${failed ? ` · ${failed} échec(s), voir les cartes` : ''}`, failed ? 'error' : 'success');
+    safeLoad(refreshDownloadedRow, 'downloadedRow');
+  }
+}
 
 async function refreshDownloadedRow(){
   const videos = await api('/api/videos?status=selected');

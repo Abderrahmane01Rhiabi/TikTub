@@ -233,15 +233,19 @@ class BatchProcessor:
         
         print(f"\n🎉 Batch traité: {processed_count}/{len(batch_videos)} vidéos")
 
-    def download_batch(self, batch_id: str) -> List[Dict]:
+    def download_batch(self, batch_id: str, on_item=None) -> List[Dict]:
         """Télécharge uniquement les vidéos d'un batch (pas d'IA, pas de background).
 
         Les vidéos téléchargées sont marquées 'selected' par défaut (l'UI affiche
         leurs cases cochées d'emblée) — décocher une case dans l'étape suivante la
         repasse à 'rejected'.
+
+        on_item(video_id, state, message), si fourni : l'état de CHAQUE lien au
+        fil de l'eau ('running' + étape, puis 'done' / 'failed' + raison /
+        'duplicate'), pour le suivi lien par lien de l'UI.
         """
-        db = self.url_manager.load_database()
-        batch_videos = [v for v in db['videos'].values() if v['batch_id'] == batch_id]
+        notify = on_item or (lambda *a, **k: None)
+        batch_videos = sorted(self.list_batch_videos(batch_id), key=lambda v: v.get('line_number') or 0)
 
         if not batch_videos:
             print("❌ Batch introuvable")
@@ -252,6 +256,7 @@ class BatchProcessor:
         for video in batch_videos:
             if video['status'] != 'pending':
                 continue
+            notify(video['video_id'], 'running', 'vérification…')
 
             duplicate = self.url_manager.find_duplicate(
                 video['url'], exclude_video_id=video['video_id'], channel=video.get('channel')
@@ -265,15 +270,20 @@ class BatchProcessor:
                 )
                 print(f"⏭️ Déjà traité (chaîne {duplicate.get('channel', 'default')}, statut {duplicate['status']}) — ignoré: {video['url']}")
                 skipped_duplicates += 1
+                notify(video['video_id'], 'duplicate', 'déjà importée sur cette chaîne')
                 continue
 
             self.url_manager.update_video_status(video['video_id'], 'downloading')
-            video_path, title, tiktok_meta = self.download_tiktok_video(video['url'], video_id=video['video_id'])
+            notify(video['video_id'], 'running', 'connexion…')
+            video_path, title, tiktok_meta = self.download_tiktok_video(
+                video['url'], video_id=video['video_id'],
+                on_status=lambda message, vid=video['video_id']: notify(vid, 'running', message),
+            )
 
             if not video_path:
-                self.url_manager.update_video_status(
-                    video['video_id'], 'download_failed', error_message=tiktok_meta.get('download_error')
-                )
+                reason = tiktok_meta.get('download_error')
+                self.url_manager.update_video_status(video['video_id'], 'download_failed', error_message=reason)
+                notify(video['video_id'], 'failed', reason or 'échec du téléchargement')
                 continue
 
             self.url_manager.update_video_status(
@@ -282,6 +292,7 @@ class BatchProcessor:
                 **tiktok_meta
             )
             downloaded.append(video)
+            notify(video['video_id'], 'done', title)
 
         print(f"✅ {len(downloaded)}/{len(batch_videos)} vidéos téléchargées"
               f"{f', {skipped_duplicates} doublon(s) ignoré(s)' if skipped_duplicates else ''}")
@@ -480,7 +491,7 @@ class BatchProcessor:
         else:
             return 'random'
     
-    def download_tiktok_video(self, url: str, video_id: str = None) -> tuple:
+    def download_tiktok_video(self, url: str, video_id: str = None, on_status=None) -> tuple:
         """Downloads a TikTok, Facebook (reel) or Instagram (post/reel) video —
         yt-dlp handles all three the same way, only the format filter differs
         (TikTok's own height-capped format string 404s on Facebook/Instagram,
@@ -515,13 +526,27 @@ class BatchProcessor:
             # need the plain "best" — their formats 404 against the height filter.
             video_format = 'best[height<=1920]' if 'tiktok.com' in url else 'best'
 
+            def progress_hook(d):
+                # yt-dlp's own progress: bytes as they arrive, then "finished"
+                if not on_status:
+                    return
+                if d.get('status') == 'downloading':
+                    total = d.get('total_bytes') or d.get('total_bytes_estimate')
+                    done = d.get('downloaded_bytes') or 0
+                    on_status(f"téléchargement {int(done * 100 / total)} %" if total else "téléchargement…")
+                elif d.get('status') == 'finished':
+                    on_status("finalisation…")
+
             ydl_opts = {
                 'outtmpl': f"{temp_path}/%(id)s.%(ext)s",
                 'format': video_format,
                 'writeinfojson': True,
+                'progress_hooks': [progress_hook],
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                if on_status:
+                    on_status("lecture de la publication…")
                 info = ydl.extract_info(url, download=False)
                 caption = info.get('description') or info.get('title') or 'video'
                 # Collapse newlines/tabs/repeated spaces BEFORE stripping symbols — \s in the

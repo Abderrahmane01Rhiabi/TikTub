@@ -118,6 +118,7 @@ INTERRUPTED_STATUSES = {
     # thread and progress live in this process) — put those videos back
     # where the user can relaunch them instead of leaving them stuck
     "assembling": "audio_generated",
+    "downloading": "download_failed",
     "processing": "selected",
     "generating_tags": "selected",
 }
@@ -581,6 +582,56 @@ def download_batch(batch_id: str):
         "videos": [serialize_video(v) for v in videos],
         "duplicates_skipped": len(duplicates)
     }
+
+
+DOWNLOAD_JOB = "download"
+_download_start_lock = threading.Lock()
+
+
+class DownloadRequest(BaseModel):
+    batch_ids: list
+
+
+@app.post("/api/downloads")
+def start_downloads(req: DownloadRequest):
+    """Downloads the given batches (one per channel, created by
+    POST /channels/{name}/urls) in a background thread and returns at
+    once. GET /api/download_status follows EVERY link: waiting, its current
+    step (reading the post, bytes received...), then ✓ / ✗ + reason /
+    duplicate — instead of one long request that only said at the end how
+    many worked."""
+    import progress
+    bp = get_batch_processor()
+    with _download_start_lock:
+        if progress.is_running(DOWNLOAD_JOB):
+            return {"started": False, "running": True}
+        items = []
+        for batch_id in req.batch_ids:
+            for v in sorted(bp.list_batch_videos(batch_id), key=lambda v: v.get("line_number") or 0):
+                if v.get("status") == "pending":
+                    items.append({"id": v["video_id"], "channel": v.get("channel"), "url": v.get("url"),
+                                  "state": "waiting", "message": None})
+        if not items:
+            return {"started": False, "running": False, "total": 0}
+        progress.start(DOWNLOAD_JOB, kind="download", items=items, total=len(items))
+
+    def run():
+        try:
+            for batch_id in req.batch_ids:
+                bp.download_batch(batch_id, on_item=lambda vid, state, message: progress.update_item(
+                    DOWNLOAD_JOB, vid, state=state, message=message))
+            progress.finish(DOWNLOAD_JOB)
+        except Exception as e:
+            progress.finish(DOWNLOAD_JOB, error=str(e))
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True, "total": len(items)}
+
+
+@app.get("/api/download_status")
+def download_status():
+    import progress
+    return progress.get(DOWNLOAD_JOB) or {"key": None, "done": True, "items": []}
 
 
 @app.get("/api/batches/{batch_id}/videos")

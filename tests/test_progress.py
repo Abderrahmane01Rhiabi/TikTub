@@ -133,3 +133,42 @@ def test_restart_puts_interrupted_videos_back_where_they_can_be_relaunched(clien
     assert db.get_video("a")["status"] == "audio_generated"
     assert db.get_video("p")["status"] == "selected" and db.get_video("t")["status"] == "selected"
     assert db.get_video("ok")["status"] == "ready_for_upload"
+
+
+def test_downloads_run_in_background_and_report_every_link(client, project, monkeypatch):
+    import webapp.main as m
+    bp = m.get_batch_processor()
+    project.add_video("old", status="ready_for_upload", url="https://t/dup")       # already imported on chanA
+    for n, url in ((1, "https://t/ok"), (2, "https://t/photo"), (3, "https://t/dup")):
+        project.add_video(f"b_{n}", batch_id="B", status="pending", url=url, line_number=n)
+    gate = threading.Event()
+
+    def fake_download(url, video_id=None, on_status=None):
+        on_status("téléchargement 50 %")
+        if url.endswith("photo"):
+            return None, None, {"download_error": "Aucune vidéo .mp4 récupérée (publication photo/diaporama ?)"}
+        gate.wait(5)
+        return f"temp/{video_id}/v.mp4", "Titre", {}
+    monkeypatch.setattr(bp, "download_tiktok_video", fake_download)
+
+    assert client.post("/api/downloads", json={"batch_ids": ["B"]}).json() == {"started": True, "total": 3}
+    assert wait_until(lambda: client.get("/api/download_status").json()["items"][0]["message"] == "téléchargement 50 %")
+    running = client.get("/api/download_status").json()
+    assert not running["done"] and running["items"][0]["state"] == "running"
+    assert client.post("/api/downloads", json={"batch_ids": ["B"]}).json()["running"] is True
+
+    gate.set()
+    assert wait_until(lambda: client.get("/api/download_status").json()["done"])
+    items = {i["url"]: i for i in client.get("/api/download_status").json()["items"]}
+    assert items["https://t/ok"]["state"] == "done"
+    assert items["https://t/photo"]["state"] == "failed" and "photo" in items["https://t/photo"]["message"]
+    assert items["https://t/dup"]["state"] == "duplicate"
+    assert client.get("/api/download_status").json()["fraction"] == 1.0
+    assert db.get_video("b_1")["status"] == "selected" and db.get_video("b_2")["status"] == "download_failed"
+
+
+def test_interrupted_download_ends_as_a_visible_failure(client, project):
+    import webapp.main as m
+    project.add_video("d", status="downloading")
+    m.recover_interrupted()
+    assert db.get_video("d")["status"] == "download_failed"
