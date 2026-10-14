@@ -53,6 +53,40 @@ from typing import Dict, List, Optional  # add any other needed types here
 # from youtube_uploader import authenticate_youtube, upload_video
 
 logging.basicConfig(level=logging.INFO)
+
+import re as _re
+
+# yt-dlp error texts → what it means for the user, in French. Checked in
+# order; the first matching pattern wins. The raw text is kept alongside.
+DOWNLOAD_ERROR_HINTS = [
+    (r"isn't available to everyone|certain audiences|age.?restrict|inappropriate for some users|confirm your age",
+     "Publication à accès restreint (âge ou audience limitée) : la plateforme ne la montre pas sans connexion à un compte."),
+    (r"private|login required|log in|requested content is not available|rate-limit reached or login",
+     "Publication privée, ou connexion au compte requise pour la voir."),
+    (r"no video formats|there is no video|no video in this post|Aucune vidéo \.mp4",
+     "Pas de vidéo dans cette publication (photo ou diaporama)."),
+    (r"unsupported url",
+     "Lien non reconnu : ce n'est pas une vidéo TikTok, Instagram ou Facebook."),
+    (r"http error 429|too many requests",
+     "Trop de requêtes : la plateforme limite temporairement les téléchargements, réessaie plus tard."),
+    (r"404|not found|has been removed|deleted|no longer available|video unavailable|post isn't available",
+     "Publication introuvable ou supprimée."),
+    (r"timed out|connection|network|temporary failure in name resolution",
+     "Problème de connexion réseau pendant le téléchargement."),
+]
+
+
+def explain_download_error(raw: str):
+    """(French explanation, cleaned raw message) for a yt-dlp failure. The
+    raw text loses its terminal color codes and its "ERROR: [Site] id:"
+    prefix."""
+    text = _re.sub(r"\x1b\[[0-9;]*m", "", raw or "").strip()
+    text = _re.sub(r"^(ERROR:\s*)+", "", text)
+    text = _re.sub(r"^\[[^\]]+\]\s*[\w-]+:\s*", "", text).strip()
+    for pattern, hint in DOWNLOAD_ERROR_HINTS:
+        if _re.search(pattern, text, _re.IGNORECASE):
+            return hint, text
+    return (text[:300] or "Échec du téléchargement"), text
 logger = logging.getLogger(__name__)
 
 class BatchProcessor:
@@ -244,7 +278,9 @@ class BatchProcessor:
         fil de l'eau ('running' + étape, puis 'done' / 'failed' + raison /
         'duplicate'), pour le suivi lien par lien de l'UI.
         """
-        notify = on_item or (lambda *a, **k: None)
+        def notify(video_id, state, message=None, detail=None):
+            if on_item:
+                on_item(video_id, state, message, detail)
         batch_videos = sorted(self.list_batch_videos(batch_id), key=lambda v: v.get('line_number') or 0)
 
         if not batch_videos:
@@ -282,8 +318,10 @@ class BatchProcessor:
 
             if not video_path:
                 reason = tiktok_meta.get('download_error')
-                self.url_manager.update_video_status(video['video_id'], 'download_failed', error_message=reason)
-                notify(video['video_id'], 'failed', reason or 'échec du téléchargement')
+                detail = tiktok_meta.get('download_error_detail')
+                self.url_manager.update_video_status(video['video_id'], 'download_failed',
+                                                     error_message=reason, error_detail=detail)
+                notify(video['video_id'], 'failed', reason or 'échec du téléchargement', detail)
                 continue
 
             self.url_manager.update_video_status(
@@ -542,6 +580,7 @@ class BatchProcessor:
                 'format': video_format,
                 'writeinfojson': True,
                 'progress_hooks': [progress_hook],
+                'no_color': True,  # its error texts reach the UI: no terminal color codes
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -570,13 +609,15 @@ class BatchProcessor:
                 if temp_files:
                     return str(temp_files[0]), safe_title, tiktok_meta
                 # yt-dlp "succeeded" but produced no .mp4 (photo post, slideshow...)
-                return None, None, {'download_error': "Aucune vidéo .mp4 récupérée (publication photo/diaporama ?)"}
+                hint, detail = explain_download_error("Aucune vidéo .mp4 récupérée (publication photo/diaporama ?)")
+                return None, None, {'download_error': hint, 'download_error_detail': detail}
 
         except Exception as e:
             logger.error(f"Erreur téléchargement: {e}")
             # Kept on the video row (error_message) so the UI can say WHY,
-            # not just "téléchargement échoué".
-            return None, None, {'download_error': str(e)[:500]}
+            # in plain French, not just "téléchargement échoué".
+            hint, detail = explain_download_error(str(e))
+            return None, None, {'download_error': hint, 'download_error_detail': detail[:500]}
 
         return None, None, {}
 

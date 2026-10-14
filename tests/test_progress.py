@@ -143,7 +143,7 @@ def test_downloads_run_in_background_and_report_every_link(client, project, monk
         project.add_video(f"b_{n}", batch_id="B", status="pending", url=url, line_number=n)
     gate = threading.Event()
 
-    def fake_download(url, video_id=None, on_status=None):
+    def fake_download(url, video_id=None, on_status=None):  # noqa: same signature as the real one
         on_status("téléchargement 50 %")
         if url.endswith("photo"):
             return None, None, {"download_error": "Aucune vidéo .mp4 récupérée (publication photo/diaporama ?)"}
@@ -172,3 +172,23 @@ def test_interrupted_download_ends_as_a_visible_failure(client, project):
     project.add_video("d", status="downloading")
     m.recover_interrupted()
     assert db.get_video("d")["status"] == "download_failed"
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("\x1b[0;31mERROR:\x1b[0m [Instagram] DcjiGFGsI37: This content isn't available to everyone: It can't be seen by certain audiences.", "accès restreint"),
+    ("ERROR: [Instagram] abc: Requested content is not available, rate-limit reached or login required", "privée"),
+    ("ERROR: [TikTok] 123: Unable to extract webpage video data; HTTP Error 404: Not Found", "introuvable"),
+    ("ERROR: Unsupported URL: https://example.com/x", "Lien non reconnu"),
+    ("Aucune vidéo .mp4 récupérée (publication photo/diaporama ?)", "Pas de vidéo"),
+])
+def test_download_errors_are_explained_in_french_without_color_codes(raw, expected):
+    from batch_processor import explain_download_error
+    hint, detail = explain_download_error(raw)
+    assert expected in hint
+    assert "\x1b" not in detail and not detail.startswith("ERROR") and not detail.startswith("[")
+
+
+def test_unknown_error_keeps_the_cleaned_text():
+    from batch_processor import explain_download_error
+    hint, detail = explain_download_error("\x1b[0;31mERROR:\x1b[0m [Instagram] x1: Something odd happened")
+    assert hint == detail == "Something odd happened"

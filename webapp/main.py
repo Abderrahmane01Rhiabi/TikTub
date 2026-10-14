@@ -618,8 +618,8 @@ def start_downloads(req: DownloadRequest):
     def run():
         try:
             for batch_id in req.batch_ids:
-                bp.download_batch(batch_id, on_item=lambda vid, state, message: progress.update_item(
-                    DOWNLOAD_JOB, vid, state=state, message=message))
+                bp.download_batch(batch_id, on_item=lambda vid, state, message, detail=None: progress.update_item(
+                    DOWNLOAD_JOB, vid, state=state, message=message, detail=detail))
             progress.finish(DOWNLOAD_JOB)
         except Exception as e:
             progress.finish(DOWNLOAD_JOB, error=str(e))
