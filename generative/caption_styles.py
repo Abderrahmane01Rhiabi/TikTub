@@ -371,15 +371,21 @@ def typewriter_build_clips(words: WordTimings, size, accent_color: str = None) -
         prefix = ""
         for i, (text, start, end) in enumerate(line):
             next_start = line[i + 1][1] if i + 1 < len(line) else (lines[li + 1][0][1] if li + 1 < len(lines) else end)
-            word_dur = max(end - start, 0.05)
+            # Each letter step ends exactly where the next begins, with no 50 ms
+            # floor: the floor stretched short letter steps over the next one,
+            # and word timings can overlap (a word "ends" after the next starts)
+            # — both showed two versions of the line at once (doubled text).
+            word_end = max(next_start, start)  # a zero-length "word" (e.g. «) appears with the next one
+            typing_end = min(end, word_end) if end > start else word_end
             steps = max(len(text), 1)
-            step_dur = word_dur / steps
+            bounds = [start + (typing_end - start) * k / steps for k in range(steps)] + [word_end]
             for ci in range(1, steps + 1):
                 partial = prefix + text[:ci]
-                clip_start = start + (ci - 1) * step_dur
-                clip_dur = step_dur if ci < steps else max(next_start - clip_start, 0.05)
+                clip_start, clip_end = bounds[ci - 1], bounds[ci]
+                if clip_end <= clip_start:
+                    continue
                 arr = _typewriter_frame(partial, True, font, cursor_color)
-                clips.append(_clip_from_array(arr, clip_start, clip_dur))
+                clips.append(ImageClip(arr).set_start(clip_start).set_duration(clip_end - clip_start).set_position("center"))
             prefix += text + " "
     return clips
 
