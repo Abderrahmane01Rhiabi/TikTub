@@ -221,3 +221,18 @@ def test_page_is_never_cached_and_api_tells_its_build(client):
     build = m.frontend_build()
     assert f"const PAGE_BUILD = '{build}'" in page.text
     assert client.get("/api/channels").headers["x-tiktub-build"] == build
+
+
+def test_links_sent_for_several_channels_in_the_same_second_all_get_a_batch(client, project, monkeypatch):
+    """Regression: batch ids were timestamp-only (to the second), so the
+    second channel submitted in the same second crashed with a 500."""
+    import channel_manager
+    for ch in ("chanA", "chanB"):
+        (project.root / "channels" / ch / "urls_input").mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(channel_manager.ChannelManager, "get_urls_input_dir",
+                        lambda self, ch: str(project.root / "channels" / ch / "urls_input"))
+
+    ids = [client.post(f"/api/channels/{ch}/urls", json={"text": "https://www.instagram.com/p/X/"}).json()["batch_id"]
+           for ch in ("chanA", "chanB", "chanA")]
+
+    assert len(set(ids)) == 3

@@ -125,7 +125,11 @@ https://www.tiktok.com/@user/video/999
 
     def add_batch(self, batch_name: str, videos: List[Dict]):
         """Ajoute un batch de vidéos à la base (une seule transaction atomique)"""
-        batch_id = f"{batch_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        # A random suffix keeps ids unique: two batches created in the same
+        # second (e.g. "Télécharger" sending every channel's links in a row,
+        # or a double click) used to get the same id → UNIQUE constraint error.
+        import uuid
+        batch_id = f"{batch_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
         batch = {
             'name': batch_name,
             'created_at': datetime.now().isoformat(),
