@@ -211,3 +211,13 @@ def test_abandon_removes_the_video_from_the_schedule(client, project):
     assert ids == ["keep"]  # "Publier tout" can no longer pick it up
     project.add_video("pub", status="uploaded")
     assert client.post("/api/videos/pub/abandon").status_code == 400
+
+
+def test_page_is_never_cached_and_api_tells_its_build(client):
+    page = client.get("/")
+    assert "no-cache" in page.headers["cache-control"]
+    assert "__TIKTUB_BUILD__" not in page.text  # the build id is baked in
+    import webapp.main as m
+    build = m.frontend_build()
+    assert f"const PAGE_BUILD = '{build}'" in page.text
+    assert client.get("/api/channels").headers["x-tiktub-build"] == build

@@ -67,6 +67,11 @@ async def log_actions_middleware(request: Request, call_next):
         request._receive = receive
 
     response = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        try:
+            response.headers["X-TikTub-Build"] = frontend_build()
+        except OSError:
+            pass
 
     if is_action:
         details = None
@@ -1416,9 +1421,20 @@ def get_action_log(limit: int = 200):
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+def frontend_build() -> str:
+    """Identifies the current page version (index.html's last modification).
+    Sent with every API response (X-TikTub-Build) and baked into the page
+    when served, so a tab still running an older page — server restarted
+    with new code, page not reloaded — notices and asks for a reload
+    instead of failing on a changed API answer."""
+    return str(int((STATIC_DIR / "index.html").stat().st_mtime))
+
+
 @app.get("/")
 def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    html = (STATIC_DIR / "index.html").read_text(encoding="utf-8").replace("__TIKTUB_BUILD__", frontend_build())
+    # never let the browser reuse a stale copy of the app itself
+    return HTMLResponse(html, headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -767,6 +767,22 @@ function toast(msg, cls){
 // (POST/PATCH/...) get no timeout — downloads, processing and publishing
 // legitimately run for minutes.
 const GET_TIMEOUT_MS = 20000;
+// Replaced by the server when it serves the page (webapp/main.py: index()).
+const PAGE_BUILD = '__TIKTUB_BUILD__';
+let staleNoticeShown = false;
+function checkBuild(res){
+  const serverBuild = res.headers.get('X-TikTub-Build');
+  if (staleNoticeShown || !serverBuild || PAGE_BUILD.startsWith('__') || serverBuild === PAGE_BUILD) return;
+  staleNoticeShown = true;
+  const box = document.getElementById('toasts');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.style.cursor = 'default';
+  el.innerHTML = `<b>Nouvelle version de TikTub</b><br>Cette page est plus ancienne que le serveur — recharge-la pour éviter des erreurs.
+    <div style="margin-top:8px"><button class="btn primary small">Recharger maintenant</button></div>`;
+  el.querySelector('button').addEventListener('click', () => location.reload());
+  box.prepend(el);
+}
 async function api(path, options = {}){
   const method = (options.method || 'GET').toUpperCase();
   const controller = new AbortController();
@@ -781,6 +797,7 @@ async function api(path, options = {}){
   } finally {
     clearTimeout(timer);
   }
+  checkBuild(res);
   if (!res.ok){
     const text = await res.text();
     let detail = text;
