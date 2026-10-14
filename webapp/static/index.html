@@ -504,6 +504,7 @@
   <div class="subnav" id="stepnav">
     <button class="step" data-i="0" data-space="settings">Connexion</button>
     <button class="step" data-i="1" data-space="settings">Fonds</button>
+    <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
     <button class="step" data-i="2" data-space="import">1 · URLs</button>
     <button class="step" data-i="3" data-space="import">2 · Sélection</button>
     <button class="step" data-i="4" data-space="import">3 · Cadrage</button>
@@ -595,7 +596,7 @@
     <div class="grid-3" id="connectGrid"></div>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 2</span>
+      <span class="progress-text">Réglages · 1 sur 3</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -611,7 +612,25 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 2</span>
+      <span class="progress-text">Réglages · 2 sur 3</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 8 : Backups (Réglages, after Fonds) -->
+  <section class="screen" data-idx="8">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Sauvegardes</h1>
+        <p class="sub">Copie de la base (vidéos, plannings, historique des stats) et des réglages des chaînes. Les identifiants YouTube n'y sont pas copiés.</p>
+      </div>
+      <div class="actions"><button class="btn primary" id="backupNowBtn" data-icon="download">Sauvegarder maintenant</button></div>
+    </div>
+    <div class="toolbar"><div class="fact" id="backupStatus"></div></div>
+    <div class="stack" id="backupList"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 3 sur 3</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -849,10 +868,10 @@ const stepBtns = document.querySelectorAll('#stepnav .step');
 // Spaces: two sources of videos (Import, Génération) feeding ONE publishing
 // pipeline (Publication), plus Accueil / Dashboard / one-time Réglages.
 // Numbered screens (data-idx) belong to the space whose range contains them.
-const STEP_SPACES = { settings: [0, 1], import: [2, 4], publication: [5, 7] };
+const STEP_SPACES = { settings: [0, 1, 8], import: [2, 3, 4], publication: [5, 6, 7] };
 const lastStep = { settings: 0, import: 2, publication: 5 };
 function spaceOfStep(i){
-  return Object.keys(STEP_SPACES).find(k => i >= STEP_SPACES[k][0] && i <= STEP_SPACES[k][1]);
+  return Object.keys(STEP_SPACES).find(k => STEP_SPACES[k].includes(i));
 }
 
 function render(){
@@ -867,7 +886,9 @@ function render(){
     const i = +btn.dataset.i;
     btn.style.display = btn.dataset.space === stepSpace ? '' : 'none';
     btn.classList.remove('current','done','todo');
-    btn.classList.add(i === current ? 'current' : (i < current ? 'done' : 'todo'));
+    const order = stepSpace ? STEP_SPACES[stepSpace] : [];
+    const a = order.indexOf(i), b = order.indexOf(current);
+    btn.classList.add(i === current ? 'current' : (a < b ? 'done' : 'todo'));
   });
   document.querySelectorAll('#spacenav .space').forEach(btn =>
     btn.classList.toggle('active', btn.dataset.space === currentSpace));
@@ -897,13 +918,15 @@ stepBtns.forEach(btn => btn.addEventListener('click', () => goTo(+btn.dataset.i)
 // screen returns to Accueil. (Cadrage → Publication goes through its own
 // "Traiter" button, which processes the videos first.)
 document.querySelectorAll('.next').forEach(btn => btn.addEventListener('click', () => {
-  const range = STEP_SPACES[currentSpace];
-  if (!range || current >= range[1]){ openSpace('home'); return; }
-  goTo(current + 1);
+  const steps = STEP_SPACES[currentSpace];
+  const pos = steps ? steps.indexOf(current) : -1;
+  if (pos < 0 || pos >= steps.length - 1){ openSpace('home'); return; }
+  goTo(steps[pos + 1]);
 }));
 document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', () => {
-  const range = STEP_SPACES[currentSpace];
-  if (range && current > range[0]) goTo(current - 1);
+  const steps = STEP_SPACES[currentSpace];
+  const pos = steps ? steps.indexOf(current) : -1;
+  if (pos > 0) goTo(steps[pos - 1]);
 }));
 
 const SCREEN_LOADERS = {
@@ -915,6 +938,7 @@ const SCREEN_LOADERS = {
   5: [() => loadResultsScreen(), 'resultsList'],
   6: [() => loadPlanningScreen(), 'scheduleSections'],
   7: [() => loadSummaryFromSchedule(), 'summarySections'],
+  8: [() => loadBackups(), 'backupList'],
 };
 function onEnterScreen(i){
   const loader = SCREEN_LOADERS[i];
@@ -3475,6 +3499,66 @@ document.getElementById('sourceFileInput').addEventListener('change', async ev =
     if (currentSpace === 'home') safeLoad(loadHome, 'homeKpis');
     else { pollDownloads(); safeLoad(refreshDownloadedRow, 'downloadedRow'); }
   } catch (e){ log(e.message, 'error'); }
+});
+
+
+// ---------- Réglages → Sauvegardes ----------
+
+const BACKUP_REASON = { auto: ['wait', 'Automatique'], manuelle: ['ok', 'Manuelle'], 'avant restauration': ['warn', 'Avant restauration'] };
+
+async function loadBackups(){
+  const box = document.getElementById('backupList');
+  box.innerHTML = spinnerHtml('Chargement...');
+  const data = await api('/api/backups');
+  const status = document.getElementById('backupStatus');
+  const age = data.last_age_hours;
+  status.className = `fact ${age == null || age > 36 ? 'warn' : ''}`;
+  status.innerHTML = `${icon('clock')}<span>${age == null ? 'Aucune sauvegarde pour l\'instant.'
+    : `Dernière sauvegarde il y a ${age < 1 ? 'moins d\'une heure' : Math.round(age) + ' h'}.`} Une copie automatique est faite chaque jour ; les ${data.keep} dernières sont gardées.</span>`;
+  if (!data.backups.length){
+    box.innerHTML = emptyState('Aucune sauvegarde', 'Clique « Sauvegarder maintenant » pour créer la première.', 'inbox');
+    return;
+  }
+  box.innerHTML = `<article class="chcard"><div>${data.backups.map(b => {
+    const [cls, label] = BACKUP_REASON[b.reason] || ['wait', b.reason || '—'];
+    return `
+      <div class="publish-row" data-backup="${esc(b.name)}">
+        <span class="name">${esc(formatWhen(b.created_at))}</span>
+        <div class="info">
+          <span class="pill ${cls}">${esc(label)}</span>
+          <span class="when">${(b.size / 1024 / 1024).toFixed(1)} Mo</span>
+        </div>
+        <div class="row-actions">
+          <a class="btn ghost small" style="text-decoration:none" href="/api/backups/${encodeURIComponent(b.name)}/download">${icon('download', 12)} Télécharger</a>
+          <button class="btn secondary small" data-restore>${icon('refresh', 12)} Restaurer</button>
+        </div>
+      </div>`;
+  }).join('')}</div></article>`;
+
+  box.querySelectorAll('[data-restore]').forEach(btn => btn.addEventListener('click', async () => {
+    const row = btn.closest('[data-backup]');
+    const when = row.querySelector('.name').textContent;
+    if (!confirm(`Revenir à l'état du ${when} ?\n\nTout ce qui a changé depuis sera remplacé (vidéos, planning, réglages des chaînes). L'état actuel est d'abord sauvegardé : tu pourras revenir en arrière.`)) return;
+    btn.disabled = true;
+    try {
+      const r = await api(`/api/backups/${encodeURIComponent(row.dataset.backup)}/restore`, { method: 'POST' });
+      log(`Restauré. L'état d'avant est gardé dans « ${r.safety_backup} ». Recharge de la page…`, 'success');
+      setTimeout(() => location.reload(), 1500);
+    } catch (e){ btn.disabled = false; log(e.message, 'error'); }
+  }));
+}
+
+document.getElementById('backupNowBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('backupNowBtn');
+  const label = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Sauvegarde…';
+  try {
+    const b = await api('/api/backups', { method: 'POST' });
+    log(`Sauvegarde créée (${(b.size / 1024 / 1024).toFixed(1)} Mo)`, 'success');
+    safeLoad(loadBackups, 'backupList');
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = label; }
 });
 
 // ---------- Boot ----------

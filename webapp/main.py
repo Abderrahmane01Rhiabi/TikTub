@@ -147,6 +147,54 @@ def _recover_interrupted_jobs():
 
 
 @app.on_event("startup")
+def _daily_backup_on_startup():
+    def run():
+        try:
+            import backup
+            done = backup.backup_if_due()
+            if done:
+                print(f"💾 Sauvegarde automatique : {done['name']}")
+        except Exception as e:
+            print(f"⚠️ Sauvegarde automatique impossible : {e}")
+    threading.Thread(target=run, daemon=True).start()
+
+
+@app.get("/api/backups")
+def list_backups():
+    import backup
+    age = backup.latest_backup_age()
+    return {"backups": backup.list_backups(), "keep": backup.KEEP,
+            "last_age_hours": round(age.total_seconds() / 3600, 1) if age is not None else None}
+
+
+@app.post("/api/backups")
+def create_backup_now():
+    import backup
+    return backup.create_backup("manuelle")
+
+
+@app.post("/api/backups/{name}/restore")
+def restore_backup(name: str):
+    import backup
+    try:
+        return backup.restore_backup(name)
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Sauvegarde introuvable")
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/backups/{name}/download")
+def download_backup(name: str):
+    import backup
+    try:
+        path = backup._safe_name(name)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="Sauvegarde introuvable")
+    return FileResponse(path, filename=name, media_type="application/zip")
+
+
+@app.on_event("startup")
 def _start_stats_tracker():
     """Launches the background performance-snapshot loop (stats_tracker.py)
     — best-effort: config.yaml missing or any init hiccup shouldn't ever

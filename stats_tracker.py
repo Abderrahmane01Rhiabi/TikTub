@@ -172,6 +172,11 @@ def start_background_tracker(batch_processor, interval_seconds: int = 3600):
             except Exception as e:
                 print(f"⚠️ Status sync failed: {e}")
             try:
+                import backup
+                backup.backup_if_due()  # daily: only when the last backup is over 24 h old
+            except Exception as e:
+                print(f"⚠️ Daily backup failed: {e}")
+            try:
                 run_snapshot_cycle(batch_processor)
             except Exception as e:
                 print(f"⚠️ Stats tracker cycle failed: {e}")
