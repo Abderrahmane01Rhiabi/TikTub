@@ -122,3 +122,6 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Montage auto: shared drone-shot library (Pixabay downloads, hundreds of MB)
+assets/broll/
