@@ -132,6 +132,7 @@ INTERRUPTED_STATUSES = {
     "downloading": "download_failed",
     "processing": "selected",
     "generating_tags": "selected",
+    "montage_planning": "selected",
 }
 
 
@@ -268,7 +269,36 @@ def serialize_video(video: dict) -> dict:
         "error_message": video.get("error_message"),
         "frame_mode": video.get("frame_mode"),
         "rounded_corners": video.get("rounded_corners", False),
+        **serialize_montage(video),
     }
+
+
+def serialize_montage(video: dict) -> dict:
+    """Montage auto fields: the resolved mode and settings (channel default
+    + this video's overrides), and for a planned video everything the
+    Import → Montage step shows and edits."""
+    from montage import pipeline as mp, recipes
+    try:
+        profile = channel_manager.get_channel_profile(video.get("channel", "default"))
+    except Exception:
+        profile = {}
+    out = {"edit_mode": recipes.edit_mode(profile, video),
+           "montage_overrides": video.get("montage_overrides") or {},
+           "montage_settings": recipes.resolve_settings(profile, video)}
+    m = video.get("montage")
+    if m:
+        preview = m.get("preview_path")
+        out["montage"] = {
+            "validated": bool(m.get("validated")), "error": m.get("error"), "unsuitable": m.get("unsuitable"),
+            "hooks": m.get("hooks") or [], "hook": m.get("hook") or "",
+            "keywords": m.get("keywords") or [], "words": [w[0] for w in m.get("words") or []],
+            "brolls": [{"id": i, "thumb_url": f"/api/broll/{i}/thumb", "video_url": f"/api/broll/{i}/video"}
+                       for i in m.get("brolls") or []],
+            "preview_url": video_media_url({"video_path": preview}) if preview and os.path.exists(preview) else None,
+            "summary": (m.get("plan") or {}).get("resume"),
+            "timeline": mp.timeline(video, profile),
+        }
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -281,10 +311,10 @@ def list_channels():
 
 
 OVERVIEW_BUCKETS = {
-    "to_sort": {"selected"},  # downloaded, waiting for Sélection/Cadrage/Traiter
+    "to_sort": {"selected", "montage_review"},  # downloaded, waiting for Sélection/Cadrage/Montage/Traiter
     "generating": {"awaiting_script", "script_generated", "audio_generated", "assembling"},
     "ready": {"ready_for_upload"},  # waiting for Résultats IA → Planning → Publier
-    "in_progress": {"pending", "downloading", "processing", "generating_tags"},
+    "in_progress": {"pending", "downloading", "processing", "generating_tags", "montage_planning"},
     "errors": {"download_failed", "processing_failed", "error", "rendering_failed"},
 }
 
@@ -892,6 +922,234 @@ def update_frame_mode(video_id: str, update: FrameModeUpdate):
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
     return serialize_video(video)
+
+
+# ---------------------------------------------------------------------------
+# Montage auto — Import → Cadrage (simple / montage + per-video style),
+# Import → Montage (review a planned video before its real render),
+# Réglages → Montage (channel defaults) and Réglages → Drones (shot library)
+# ---------------------------------------------------------------------------
+
+def _video_or_404(video_id: str) -> dict:
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    return video
+
+
+def _montage_or_400(video: dict) -> dict:
+    m = video.get("montage")
+    if not m or not m.get("plan"):
+        raise HTTPException(status_code=400, detail="Cette vidéo n'a pas encore de plan de montage.")
+    return dict(m)
+
+
+class MontageUpdate(BaseModel):
+    edit_mode: Optional[str] = None     # "simple" | "montage"
+    overrides: Optional[dict] = None    # replaces this video's style overrides ({} = follow the channel)
+    hook: Optional[str] = None
+    keywords: Optional[list] = None     # word indices drawn in the accent style
+
+
+@app.patch("/api/videos/{video_id}/montage")
+def update_video_montage(video_id: str, update: MontageUpdate):
+    from montage import recipes
+    video = _video_or_404(video_id)
+    status, fields = video.get("status"), {}
+    if update.edit_mode is not None:
+        if update.edit_mode not in recipes.EDIT_MODES:
+            raise HTTPException(status_code=400, detail="edit_mode: simple ou montage")
+        fields["edit_mode"] = update.edit_mode
+        if update.edit_mode == "simple" and status == "montage_review":
+            status = "selected"           # back to Cadrage, rendered the simple way
+    if update.overrides is not None:
+        fields["montage_overrides"] = recipes.clean_settings(update.overrides)
+    m = video.get("montage")
+    if m and (update.hook is not None or update.keywords is not None or update.overrides is not None):
+        m = dict(m)
+        if update.hook is not None:
+            m["hook"] = update.hook.strip()[:120]
+        if update.keywords is not None:
+            n = len(m.get("words") or [])
+            m["keywords"] = sorted({int(i) for i in update.keywords if isinstance(i, int) and 0 <= i < n})
+        m["preview_path"] = None          # the preview no longer shows what will be rendered
+        fields["montage"] = m
+    get_batch_processor().url_manager.update_video_status(video_id, status, **fields)
+    return serialize_video(_video_or_404(video_id))
+
+
+@app.post("/api/videos/{video_id}/montage/swap_broll/{slot}")
+def swap_video_broll(video_id: str, slot: int):
+    from montage import pipeline as mp
+    video = _video_or_404(video_id)
+    m = _montage_or_400(video)
+    if slot not in (0, 1):
+        raise HTTPException(status_code=400, detail="slot: 0 ou 1")
+    m["brolls"], m["preview_path"] = mp.swap_broll(video, slot), None
+    get_batch_processor().url_manager.update_video_status(video_id, video["status"], montage=m)
+    return serialize_video(_video_or_404(video_id))
+
+
+@app.post("/api/videos/{video_id}/montage/preview")
+def preview_video_montage(video_id: str):
+    """A quick low-resolution render (540x960, fast encode) of exactly what
+    the real render will produce — seconds instead of a full render."""
+    from montage import pipeline as mp
+    video = _video_or_404(video_id)
+    m = _montage_or_400(video)
+    bp = get_batch_processor()
+    try:
+        path = mp.render_preview(video, bp._channel_profile(video.get("channel", "default")),
+                                 bp.music_dir(video.get("channel", "default")))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Aperçu impossible : {e}")
+    m = dict(_video_or_404(video_id).get("montage") or m)
+    m["preview_path"], m["brolls"] = path, video["montage"]["brolls"]
+    bp.url_manager.update_video_status(video_id, video["status"], montage=m)
+    out = serialize_video(_video_or_404(video_id))
+    if out.get("montage", {}).get("preview_url"):    # same path every time: defeat the browser cache
+        out["montage"]["preview_url"] += f"?v={int(os.path.getmtime(path))}"
+    return out
+
+
+@app.post("/api/videos/{video_id}/montage/validate")
+def validate_video_montage(video_id: str):
+    """The person approved the plan: back to 'selected', and the next
+    Traiter run does the real render, then the usual AI pass."""
+    video = _video_or_404(video_id)
+    m = _montage_or_400(video)
+    if video.get("status") != "montage_review":
+        raise HTTPException(status_code=400, detail="Seule une vidéo en attente de validation peut être validée.")
+    m["validated"] = True
+    get_batch_processor().url_manager.update_video_status(video_id, "selected", montage=m)
+    return serialize_video(_video_or_404(video_id))
+
+
+@app.post("/api/videos/{video_id}/montage/replan")
+def replan_video_montage(video_id: str):
+    """Asks Gemini for a new plan (it rarely gives the same one twice), in a
+    background thread — the video shows 'montage_planning' meanwhile."""
+    from montage import pipeline as mp
+    video = _video_or_404(video_id)
+    if video.get("status") != "montage_review":
+        raise HTTPException(status_code=400, detail="Seule une vidéo en attente de validation peut être réanalysée.")
+    bp = get_batch_processor()
+    bp.url_manager.update_video_status(video_id, "montage_planning")
+
+    def run():
+        try:
+            montage = mp.prepare_review(video, video.get("channel", "default"))
+        except Exception as e:
+            montage = {**(video.get("montage") or {}), "error": f"Analyse impossible : {e}"}
+        bp.url_manager.update_video_status(video_id, "montage_review", montage=montage)
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True}
+
+
+def _montage_channel_payload(channel_name: str) -> dict:
+    from montage import recipes
+    profile = channel_manager.get_channel_profile(channel_name)
+    music_dir = Path(channel_manager.get_assets_dirs(channel_name)["music"])
+    music = sorted(p.name for p in music_dir.iterdir() if p.suffix.lower() in MUSIC_EXTENSIONS) \
+        if music_dir.exists() else []
+    return {"settings": recipes.channel_settings(profile), "music_files": music,
+            "recipes": {k: r["label"] for k, r in recipes.RECIPES.items()},
+            "caption_styles": list(recipes.CAPTION_STYLES), "volumes": list(recipes.VOLUMES)}
+
+
+MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
+
+
+@app.get("/api/channels/{channel_name}/montage")
+def get_channel_montage(channel_name: str):
+    return _montage_channel_payload(channel_name)
+
+
+class ChannelMontageUpdate(BaseModel):
+    settings: dict
+
+
+@app.put("/api/channels/{channel_name}/montage")
+def update_channel_montage(channel_name: str, update: ChannelMontageUpdate):
+    from montage import recipes
+    profile = channel_manager.get_channel_profile(channel_name)
+    profile["montage"] = recipes.clean_settings(update.settings)
+    channel_manager.save_channel_profile(channel_name, profile)
+    return _montage_channel_payload(channel_name)
+
+
+@app.post("/api/channels/{channel_name}/assets/music")
+async def upload_channel_music(channel_name: str, file: UploadFile = File(...)):
+    """Adds a song to the channel's music folder (what Montage auto and the
+    generative pipeline pick their background music from)."""
+    name = Path(file.filename or "").name
+    if Path(name).suffix.lower() not in MUSIC_EXTENSIONS or name.startswith("."):
+        raise HTTPException(status_code=400, detail="Formats acceptés : mp3, wav, m4a, aac, ogg, flac.")
+    dest = Path(channel_manager.get_assets_dirs(channel_name)["music"]) / name
+    with open(dest, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+    return _montage_channel_payload(channel_name)
+
+
+def _serialize_broll(clip: dict) -> dict:
+    return {**{k: clip.get(k) for k in ("id", "query", "tags", "duration", "w", "h", "page")},
+            "thumb_url": f"/api/broll/{clip['id']}/thumb", "video_url": f"/api/broll/{clip['id']}/video"}
+
+
+@app.get("/api/broll")
+def list_broll():
+    from montage import broll
+    return {"clips": [_serialize_broll(c) for c in broll.list_clips()], "themes": broll.DEFAULT_THEMES,
+            "has_key": bool(os.getenv("PIXABAY_API_KEY"))}
+
+
+class BrollFetch(BaseModel):
+    theme: str
+    count: int = 3
+
+
+@app.post("/api/broll/fetch")
+def fetch_broll(req: BrollFetch):
+    from montage import broll
+    theme = req.theme.strip()[:60]
+    if not theme:
+        raise HTTPException(status_code=400, detail="Thème vide")
+    try:
+        added = broll.fetch(theme, max(1, min(req.count, 6)))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Pixabay : {e}")
+    return {"added": [_serialize_broll(c) for c in added], **list_broll()}
+
+
+@app.delete("/api/broll/{clip_id}")
+def delete_broll(clip_id: str):
+    from montage import broll
+    if not broll.delete(clip_id):
+        raise HTTPException(status_code=404, detail="Plan introuvable")
+    return list_broll()
+
+
+@app.get("/api/broll/{clip_id}/thumb")
+def broll_thumbnail(clip_id: str):
+    from montage import broll
+    clip = broll.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="Plan introuvable")
+    path = broll.make_thumbnail(clip)
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Miniature indisponible")
+    return FileResponse(path, media_type="image/jpeg")
+
+
+@app.get("/api/broll/{clip_id}/video")
+def broll_video(clip_id: str):
+    from montage import broll
+    clip = broll.get_clip(clip_id)
+    if not clip:
+        raise HTTPException(status_code=404, detail="Plan introuvable")
+    return FileResponse(broll.clip_path(clip), media_type="video/mp4")
 
 
 @app.post("/api/batches/{batch_id}/process")

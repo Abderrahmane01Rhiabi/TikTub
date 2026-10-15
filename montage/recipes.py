@@ -10,6 +10,7 @@ song entry point, volume). Settings resolve in three layers:
 so a channel sets its look once and a single video can still differ.
 """
 
+import os
 from typing import Dict, Optional
 
 RECIPES: Dict[str, Dict] = {
@@ -31,8 +32,10 @@ RECIPES: Dict[str, Dict] = {
 DEFAULT_RECIPE = "hopecore"
 CAPTION_STYLES = ("cascade", "accent")
 VOLUMES = ("doux", "marque")
+EDIT_MODES = ("simple", "montage")
 
 DEFAULT_SETTINGS = {
+    "default_mode": "simple",      # what a freshly downloaded video of the channel starts as
     "recipe": DEFAULT_RECIPE,
     "caption_style": "accent",
     "music_file": None,            # file name inside the channel's assets/music folder
@@ -42,7 +45,7 @@ DEFAULT_SETTINGS = {
 }
 
 
-def _clean(raw: Optional[Dict]) -> Dict:
+def clean_settings(raw: Optional[Dict]) -> Dict:
     """Keep only known keys with valid values — a hand-edited profile.json or
     an old override never reaches the renderer as garbage."""
     out = {}
@@ -55,6 +58,12 @@ def _clean(raw: Optional[Dict]) -> Dict:
             continue
         if key == "volume" and value not in VOLUMES:
             continue
+        if key == "default_mode" and value not in EDIT_MODES:
+            continue
+        if key == "music_file":
+            value = os.path.basename(str(value))   # a name inside the channel's music folder, never a path
+            if not value:
+                continue
         if key == "music_entry":
             try:
                 value = max(0.0, float(value))
@@ -68,12 +77,18 @@ def _clean(raw: Optional[Dict]) -> Dict:
 
 def channel_settings(profile: Optional[Dict]) -> Dict:
     """Recipe defaults overlaid with the channel's own montage settings."""
-    return {**DEFAULT_SETTINGS, **_clean((profile or {}).get("montage"))}
+    return {**DEFAULT_SETTINGS, **clean_settings((profile or {}).get("montage"))}
 
 
 def resolve_settings(profile: Optional[Dict], video: Optional[Dict]) -> Dict:
     """What a given video is actually rendered with."""
-    return {**channel_settings(profile), **_clean((video or {}).get("montage_overrides"))}
+    return {**channel_settings(profile), **clean_settings((video or {}).get("montage_overrides"))}
+
+
+def edit_mode(profile: Optional[Dict], video: Optional[Dict]) -> str:
+    """'montage' or 'simple' — the video's own choice, else its channel's default."""
+    mode = (video or {}).get("edit_mode")
+    return mode if mode in EDIT_MODES else channel_settings(profile)["default_mode"]
 
 
 def recipe(settings: Dict) -> Dict:

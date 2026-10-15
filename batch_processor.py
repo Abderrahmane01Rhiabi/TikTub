@@ -15,6 +15,8 @@ import logging
 from url_manager import URLManager
 from ai_tags_generator import AITagsGenerator  
 from youtube_scheduler import YouTubeScheduler
+from montage import pipeline as montage_pipeline
+from montage import recipes as montage_recipes
 
 # Import multi-channel support
 try:
@@ -272,14 +274,28 @@ class BatchProcessor:
                     self.url_manager.update_video_status(video['video_id'], 'processing_failed')
                     continue
 
-                bg_mode, specific_bg = self.get_background_for_video(video)
-                frame_mode = video.get('frame_mode')
-                rounded_corners = video.get('rounded_corners', False)
-                processed_path = self.process_tiktok_video(
-                    raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
-                    output_name=video['video_id'],  # unique per video, see video_processor
-                    progress_cb=lambda f: report('encodage', self.PROCESS_ENCODE_SHARE * f),
-                )
+                profile = self._channel_profile(channel_name)
+                if montage_recipes.edit_mode(profile, video) == 'montage':
+                    if not (video.get('montage') or {}).get('validated'):
+                        # Montage auto, first pass: plan only, then wait for
+                        # the person in Import → Montage (nothing rendered yet)
+                        self.url_manager.update_video_status(video['video_id'], 'montage_planning',
+                                                             edit_mode='montage')
+                        montage = montage_pipeline.prepare_review(
+                            video, channel_name, report=lambda phase, f: report(phase, f))
+                        self.url_manager.update_video_status(video['video_id'], 'montage_review', montage=montage)
+                        continue
+                    processed_path = self.render_montage(
+                        video, profile, progress_cb=lambda f: report('montage', self.PROCESS_ENCODE_SHARE * f))
+                else:
+                    bg_mode, specific_bg = self.get_background_for_video(video)
+                    frame_mode = video.get('frame_mode')
+                    rounded_corners = video.get('rounded_corners', False)
+                    processed_path = self.process_tiktok_video(
+                        raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
+                        output_name=video['video_id'],  # unique per video, see video_processor
+                        progress_cb=lambda f: report('encodage', self.PROCESS_ENCODE_SHARE * f),
+                    )
 
                 if not processed_path:
                     self.url_manager.update_video_status(video['video_id'], 'processing_failed')
@@ -448,6 +464,25 @@ class BatchProcessor:
             return None, None, {'download_error': hint, 'download_error_detail': detail[:500]}
 
         return None, None, {}
+
+    def _channel_profile(self, channel_name: str) -> Dict:
+        return self.channel_manager.get_channel_profile(channel_name) if MULTI_CHANNEL_SUPPORT else {}
+
+    def music_dir(self, channel_name: str) -> Optional[str]:
+        return self.channel_manager.get_assets_dirs(channel_name)["music"] if MULTI_CHANNEL_SUPPORT else None
+
+    def render_montage(self, video: Dict, profile: Dict, progress_cb=None) -> Optional[str]:
+        """Montage auto, second pass (plan validated in Import → Montage): the
+        real render, to the same output path a simple render would use."""
+        from video_processor import processed_output_paths
+        out_path, _ = processed_output_paths(video.get('original_title', 'video'), 'montage', video['video_id'])
+        os.makedirs(os.path.dirname(out_path), exist_ok=True)
+        summary = montage_pipeline.render_final(video, profile, self.music_dir(video.get('channel', 'default')),
+                                                out_path, progress_cb=progress_cb)
+        # brolls may have been replaced (a shot deleted from the library since the review)
+        self.url_manager.update_video_status(video['video_id'], 'processing',
+                                             montage={**video['montage'], 'summary': summary})
+        return out_path
 
     def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False, output_name: str = None, progress_cb=None) -> str:
         """Interface avec le traitement vidéo existant"""
