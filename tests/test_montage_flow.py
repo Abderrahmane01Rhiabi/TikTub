@@ -46,6 +46,7 @@ def test_traiter_plans_a_montage_video_and_stops_for_review(client, project, mon
     assert shown["edit_mode"] == "montage" and shown["montage"]["hooks"][0] == "Hook A 😂"
     kinds = [s["kind"] for s in shown["montage"]["timeline"]["segments"]]
     assert kinds == ["noir", "drone", "drone"] and shown["montage"]["words"][3] == "w3"
+    assert shown["montage"]["timeline"]["kept_words"] == list(range(20))   # all kept: 0-10 s
 
 
 def test_validated_montage_is_rendered_then_goes_through_the_ai_pass(client, project, monkeypatch):
@@ -138,3 +139,12 @@ def test_restart_puts_a_video_stuck_in_planning_back_to_cadrage(client, project)
     project.add_video("p", status="montage_planning")
     m.recover_interrupted()
     assert db.get_video("p")["status"] == "selected"
+
+
+def test_only_words_still_heard_in_the_montage_are_offered_as_keywords(client, project):
+    montage_channel(project)
+    add_downloaded(project)
+    plan = {**PLAN, "garder": [{"debut_s": 0, "fin_s": 4}, {"debut_s": 7, "fin_s": 10}]}
+    db.upsert_video("v1", {**db.get_video("v1"), "status": "montage_review", "montage": fake_montage(plan=plan)})
+    kept = client.get("/api/videos?status=montage_review").json()[0]["montage"]["timeline"]["kept_words"]
+    assert kept == list(range(0, 8)) + list(range(14, 20))

@@ -201,19 +201,21 @@ def frame_overlay(hook: Optional[str], path: str, rec: Dict) -> str:
     if hook:
         efont = ImageFont.truetype(EMOJI_FONT, 109) if os.path.exists(EMOJI_FONT) else None
         d = ImageDraw.Draw(img)
+        words = hook.split()
         for size in (84, 76, 68, 60, 52):
             font = ImageFont.truetype(FONT, size)
-            lines, cur = [], ""
-            for word in hook.split():
-                cand = (cur + " " + word).strip()
-                if _text_width(d, cand, font, size) <= bw - 80 or not cur:
-                    cur = cand
-                else:
-                    lines.append(cur)
-                    cur = word
-            lines.append(cur)
-            if len(lines) <= 2:
+            fits = lambda text: _text_width(d, text, font, size) <= bw - 80
+            if fits(hook):
+                lines = [hook]
                 break
+            # two lines, balanced: "$100 if you can / say B 😂", never "... say / B 😂"
+            splits = [(" ".join(words[:i]), " ".join(words[i:])) for i in range(1, len(words))]
+            splits = [s for s in splits if fits(s[0]) and fits(s[1])]
+            if splits:
+                lines = list(min(splits, key=lambda s: max(_text_width(d, t, font, size) for t in s)))
+                break
+        else:
+            lines = [hook]          # one huge word: let it overflow rather than vanish
         line_h = int(size * 1.2)
         text = Image.new("RGBA", (W, H), (0, 0, 0, 0))
         td = ImageDraw.Draw(text)

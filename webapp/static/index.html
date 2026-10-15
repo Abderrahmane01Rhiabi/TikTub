@@ -502,6 +502,60 @@
   .score.down{color:var(--dim);}
   #remakeDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(480px,calc(100vw - 32px));}
   #remakeDialog::backdrop{background:rgba(0,0,0,.55);}
+  /* ---------- Montage auto ---------- */
+  .mode-seg{align-self:stretch;}
+  .mode-seg .seg-opt{flex:1;}
+  .mstyle{display:flex;flex-direction:column;gap:8px;}
+  .mstyle-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .mstyle-row > span{font-size:11px;color:var(--muted);min-width:74px;}
+  .mstyle-row .seg-opt{padding:5px 11px;}
+  .mstate{font-size:12px;color:var(--muted);line-height:1.45;}
+  .mstate.ok{color:var(--ok);}
+  .mlayout{display:grid;grid-template-columns:200px minmax(0,1fr);gap:18px;align-items:start;}
+  @media (max-width:720px){.mlayout{grid-template-columns:minmax(0,1fr);}}
+  .mvideo{position:relative;width:100%;aspect-ratio:9/16;border-radius:10px;overflow:hidden;background:#000;}
+  .mvideo video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;}
+  .mvideo .mvideo-tag{position:absolute;top:6px;left:6px;font-size:10px;font-weight:700;padding:2px 7px;border-radius:99px;background:rgba(0,0,0,.65);color:#fff;}
+  .mfields{display:flex;flex-direction:column;gap:14px;min-width:0;}
+  .mfields > div > label.f{margin-bottom:6px;}
+  .tl{position:relative;height:26px;border-radius:6px;background:#2a3b5c;overflow:hidden;}
+  .tl .seg-noir{position:absolute;top:0;bottom:0;background:#000;border-left:1px solid #555;border-right:1px solid #555;}
+  .tl .seg-drone{position:absolute;top:0;bottom:0;background:linear-gradient(135deg,#2f8f6b,#3a7fb8);border-left:1px solid rgba(255,255,255,.35);}
+  .tl .chute{position:absolute;top:0;bottom:0;width:3px;background:#f5c56d;}
+  .tl .cut{position:absolute;top:0;bottom:0;width:2px;background:repeating-linear-gradient(#fff 0 3px,transparent 3px 6px);}
+  .tl-legend{display:flex;gap:12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);margin-top:5px;}
+  .tl-legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:4px;vertical-align:-1px;}
+  .hooks{display:flex;flex-direction:column;gap:6px;}
+  .hook-opt{display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;}
+  .hook-opt input[type=radio]{accent-color:var(--accent);}
+  .kw-words{display:flex;flex-wrap:wrap;gap:4px;max-height:150px;overflow:auto;padding:2px;}
+  .kw{all:unset;cursor:pointer;font-size:12px;padding:2px 6px;border-radius:5px;color:#c7cbd4;background:var(--panel2);border:1px solid var(--border-soft);}
+  .kw:hover{border-color:var(--border);}
+  .kw.on{color:#f7f25c;font-family:Georgia,"Times New Roman",serif;font-style:italic;border-color:rgba(247,242,92,.45);background:rgba(247,242,92,.08);text-shadow:0 0 6px rgba(247,242,92,.45);}
+  .drones{display:flex;gap:10px;}
+  .drone{position:relative;width:74px;aspect-ratio:9/16;border-radius:8px;overflow:hidden;background:#000 center/cover;}
+  .drone button{position:absolute;bottom:4px;right:4px;}
+  .warnbox{font-size:12px;color:#f5c56d;background:rgba(245,197,109,.08);border:1px solid rgba(245,197,109,.3);border-radius:8px;padding:8px 10px;}
+  .errbox{font-size:12px;color:var(--danger);background:rgba(248,113,113,.07);border:1px solid rgba(248,113,113,.3);border-radius:8px;padding:8px 10px;}
+  .capsample{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;height:118px;border-radius:8px;background:linear-gradient(160deg,#3a4256,#14171e);font:600 19px/1.02 "Montserrat",-apple-system,"Segoe UI",sans-serif;color:#fff;text-shadow:0 2px 6px rgba(0,0,0,.6);}
+  .capsample .l1{transform:translateX(-26px);} .capsample .l2{transform:translateX(30px);} .capsample .l3{transform:translateX(-6px);}
+  .capsample .k{font:italic 400 24px/1 Georgia,"Times New Roman",serif;color:#f7f25c;text-shadow:0 0 8px rgba(247,242,92,.6);}
+  .capstyle-pick{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+  .capstyle-pick button{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:5px;padding:5px;border-radius:10px;border:2px solid transparent;}
+  .capstyle-pick button.active{border-color:var(--accent);}
+  .capstyle-pick button span{font-size:11.5px;font-weight:600;color:var(--muted);text-align:center;}
+  .capstyle-pick button.active span{color:var(--text);}
+  .entry-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .entry-row input.f{width:86px;}
+  .entry-row audio{height:32px;flex:1;min-width:200px;}
+  .broll-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:12px;}
+  .bcard{position:relative;aspect-ratio:9/16;border-radius:10px;overflow:hidden;background:#000 center/cover;border:1px solid var(--border);cursor:pointer;}
+  .bcard video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
+  .bcard .bdel{position:absolute;top:5px;right:5px;width:24px;height:24px;border-radius:50%;border:none;background:rgba(0,0,0,.7);color:#fff;cursor:pointer;font-size:13px;line-height:24px;padding:0;}
+  .bcard .bdel:hover{background:var(--danger);}
+  .bcard .bq{position:absolute;left:0;right:0;bottom:0;padding:14px 6px 5px;font-size:10px;color:#ddd;background:linear-gradient(transparent,rgba(0,0,0,.8));white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  .chipbtn{all:unset;cursor:pointer;font-size:11.5px;padding:4px 10px;border-radius:99px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);}
+  .chipbtn:hover{color:var(--text);border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -526,11 +580,14 @@
   <div class="subnav" id="stepnav">
     <button class="step" data-i="0" data-space="settings">Connexion</button>
     <button class="step" data-i="1" data-space="settings">Fonds</button>
+    <button class="step" data-i="11" data-space="settings">Montage</button>
+    <button class="step" data-i="12" data-space="settings">Drones</button>
     <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
     <button class="step" data-i="9" data-space="settings">Stockage</button>
     <button class="step" data-i="2" data-space="import">1 · URLs</button>
     <button class="step" data-i="3" data-space="import">2 · Sélection</button>
     <button class="step" data-i="4" data-space="import">3 · Cadrage</button>
+    <button class="step" data-i="10" data-space="import">4 · Montage</button>
     <button class="step" data-i="5" data-space="publication">1 · Résultats IA</button>
     <button class="step" data-i="6" data-space="publication">2 · Planning</button>
     <button class="step" data-i="7" data-space="publication">3 · Publier</button>
@@ -622,7 +679,7 @@
     <div class="grid-3" id="connectGrid"></div>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 4</span>
+      <span class="progress-text">Réglages · 1 sur 6</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -638,7 +695,7 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 4</span>
+      <span class="progress-text">Réglages · 2 sur 6</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -656,7 +713,7 @@
     <div class="stack" id="backupList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 4</span>
+      <span class="progress-text">Réglages · 5 sur 6</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -672,7 +729,7 @@
     <div class="stack" id="storageView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 4 sur 4</span>
+      <span class="progress-text">Réglages · 6 sur 6</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -693,7 +750,7 @@
     </article>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Import · étape 1 sur 3</span>
+      <span class="progress-text">Import · étape 1 sur 4</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -709,7 +766,7 @@
     <div class="stack" id="selectionSections"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text" id="selCountText">Import · étape 2 sur 3</span>
+      <span class="progress-text" id="selCountText">Import · étape 2 sur 4</span>
       <button class="btn primary next">Suivant (cadrage) →</button>
     </div>
   </section>
@@ -719,14 +776,69 @@
     <div class="page-head">
       <div>
         <h1 class="h1">Cadrage de chaque vidéo</h1>
-        <p class="sub">Un mode est déjà suggéré selon le format de la vidéo — l'aperçu montre le vrai rendu.</p>
+        <p class="sub">Habillage simple (fond + cadrage, l'aperçu montre le vrai rendu) ou Montage auto (écran noir, drones, sous-titres, musique — préparé par l'IA, puis vérifié par toi à l'étape 4).</p>
       </div>
     </div>
     <div id="frameGrid" class="grid-3"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Import · étape 3 sur 3</span>
+      <span class="progress-text">Import · étape 3 sur 4</span>
       <button class="btn primary" id="toResultsBtn">Suivant (lancer l'IA) →</button>
+    </div>
+  </section>
+
+  <!-- Screen 10 : Montage auto review (Import, after Cadrage) -->
+  <section class="screen" data-idx="10">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Vérifie chaque montage</h1>
+        <p class="sub">L'IA a préparé le montage de chaque vidéo. Choisis l'accroche, ajuste si besoin, regarde l'aperçu, puis valide. Rien n'est monté avant ta validation.</p>
+      </div>
+    </div>
+    <div class="stack" id="montageList"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text" id="montageCountText">Import · étape 4 sur 4</span>
+      <button class="btn primary" id="renderMontagesBtn">Monter les vidéos validées →</button>
+    </div>
+  </section>
+
+  <!-- Screen 11 : Montage auto defaults per channel (Réglages) -->
+  <section class="screen" data-idx="11">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Montage auto de chaque chaîne</h1>
+        <p class="sub">Le style par défaut de chaque chaîne. Une vidéo peut toujours s'en écarter, au Cadrage ou à l'étape Montage.</p>
+      </div>
+    </div>
+    <div class="grid-3" id="montageSettingsGrid"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 3 sur 6</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 12 : drone-shot library (Réglages) -->
+  <section class="screen" data-idx="12">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Plans de drone</h1>
+        <p class="sub">Les paysages vus du ciel que le Montage auto glisse avant la chute. Gratuits (Pixabay). Supprime ceux qui ne te plaisent pas ; chaque chaîne évite de réutiliser ses derniers.</p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <input class="f" id="brollTheme" placeholder="Thème en anglais, ex : drone mountain lake" style="max-width:320px">
+      <button class="btn primary small" id="brollFetchBtn" data-icon="download">Ajouter 3 plans</button>
+      <span class="spacer"></span>
+      <span class="tiny" id="brollCount"></span>
+    </div>
+    <div class="toolbar" id="brollThemes"></div>
+    <div id="brollGrid" class="broll-grid"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 4 sur 6</span>
+      <button class="btn primary next">Suivant →</button>
     </div>
   </section>
 
@@ -910,7 +1022,7 @@ const stepBtns = document.querySelectorAll('#stepnav .step');
 // Spaces: two sources of videos (Import, Génération) feeding ONE publishing
 // pipeline (Publication), plus Accueil / Dashboard / one-time Réglages.
 // Numbered screens (data-idx) belong to the space whose range contains them.
-const STEP_SPACES = { settings: [0, 1, 8, 9], import: [2, 3, 4], publication: [5, 6, 7] };
+const STEP_SPACES = { settings: [0, 1, 11, 12, 8, 9], import: [2, 3, 4, 10], publication: [5, 6, 7] };
 const lastStep = { settings: 0, import: 2, publication: 5 };
 function spaceOfStep(i){
   return Object.keys(STEP_SPACES).find(k => STEP_SPACES[k].includes(i));
@@ -982,6 +1094,9 @@ const SCREEN_LOADERS = {
   7: [() => loadSummaryFromSchedule(), 'summarySections'],
   8: [() => loadBackups(), 'backupList'],
   9: [() => loadStorage(), 'storageView'],
+  10: [() => enterMontageStep(), 'montageList'],
+  11: [() => loadMontageSettings(), 'montageSettingsGrid'],
+  12: [() => loadBrollLibrary(), 'brollGrid'],
 };
 function onEnterScreen(i){
   const loader = SCREEN_LOADERS[i];
@@ -1655,7 +1770,7 @@ async function loadSelection(){
 function updateSelCount(){
   const total = document.querySelectorAll('.sel-check').length;
   const selected = document.querySelectorAll('.sel-check:not(.off)').length;
-  document.getElementById('selCountText').textContent = `Import · étape 2 sur 3 · ${selected}/${total} sélectionnées`;
+  document.getElementById('selCountText').textContent = `Import · étape 2 sur 4 · ${selected}/${total} sélectionnées`;
   document.querySelectorAll('#selectionSections .chcard').forEach(card => {
     const t = card.querySelectorAll('.sel-check').length;
     const n = card.querySelectorAll('.sel-check:not(.off)').length;
@@ -1689,7 +1804,10 @@ async function loadFrameStep(){
           <div class="meta">${esc(ch.display_name)}</div>
         </div>
       </div>
-      <div class="chcard-body frame-body">
+      <div class="chcard-body">
+        ${segHtml('mode-seg', { simple: 'Habillage simple', montage: 'Montage auto' }, v.edit_mode)}
+      </div>
+      <div class="chcard-body frame-body simple-only">
         <div class="fpreview-box">
           <div class="fpreview-spinner"><span class="spinner"></span></div>
           <img class="fpreview-img" alt="Aperçu du cadrage">
@@ -1698,12 +1816,26 @@ async function loadFrameStep(){
           ${FRAME_MODES.map(m => `<button class="seg-opt" data-mode="${m.key}" title="${esc(m.title)}">${m.label}</button>`).join('')}
         </div>
       </div>
-      <div class="chcard-foot"><label class="switch"><input type="checkbox" class="rounded-check"> Coins arrondis</label></div>
+      <div class="chcard-foot simple-only"><label class="switch"><input type="checkbox" class="rounded-check"> Coins arrondis</label></div>
+      <div class="chcard-body montage-only"></div>
     </article>`;
   }).join('');
 
   for (const v of videos){
     const card = grid.querySelector(`[data-video="${v.video_id}"]`);
+    let cur = v;
+    const showMode = (mode) => {
+      card.querySelectorAll('.simple-only').forEach(el => el.style.display = mode === 'simple' ? '' : 'none');
+      card.querySelectorAll('.montage-only').forEach(el => el.style.display = mode === 'montage' ? '' : 'none');
+      if (mode === 'montage') fillMontageCadrage(card, cur, u => { cur = u; });
+    };
+    showMode(v.edit_mode);
+    wireSeg(card, 'mode-seg', async mode => {
+      showMode(mode);
+      try { cur = await api(`/api/videos/${v.video_id}/montage`, { method:'PATCH', body: JSON.stringify({edit_mode: mode}) }); }
+      catch (e){ log(e.message, 'error'); }
+      if (mode === 'montage') fillMontageCadrage(card, cur, u => { cur = u; });
+    });
     let mode = v.frame_mode;
     try {
       const s = await api(`/api/videos/${v.video_id}/frame_suggestion`);
@@ -1749,6 +1881,403 @@ function renderFrameCard(card, videoId, mode, rounded){
   };
 }
 
+// ---------- Montage auto (shared pieces) ----------
+
+const MONTAGE_CAPTION_LABELS = { cascade: 'Cascade', accent: 'Accent' };
+const MONTAGE_VOLUME_LABELS = { doux: 'Doux', marque: 'Marqué' };
+
+function segHtml(cls, options, active){
+  return `<div class="seg ${cls}">${Object.entries(options).map(([k, l]) =>
+    `<button class="seg-opt ${k === active ? 'active' : ''}" data-v="${k}">${esc(l)}</button>`).join('')}</div>`;
+}
+function wireSeg(root, cls, onPick){
+  root.querySelectorAll(`.${cls} .seg-opt`).forEach(b => b.onclick = () => {
+    root.querySelectorAll(`.${cls} .seg-opt`).forEach(x => x.classList.toggle('active', x === b));
+    onPick(b.dataset.v);
+  });
+}
+function fmtSec(x){
+  const n = Math.max(0, Number(x) || 0), m = Math.floor(n / 60), s = Math.round((n - m * 60) * 10) / 10;
+  return `${m}:${s < 10 ? '0' : ''}${s}`;
+}
+function capSampleHtml(style){
+  return style === 'accent'
+    ? '<div class="capsample"><span class="l1">Why</span><span class="l2 k">hackers</span><span class="l3">never</span></div>'
+    : '<div class="capsample"><span class="l1">never</span><span class="l2">do</span><span class="l3">anything</span></div>';
+}
+
+// Style of ONE video: caption style + music volume, starting from its
+// channel's defaults (Réglages → Montage); a change becomes an override.
+function montageStyleHtml(v){
+  const s = v.montage_settings || {};
+  const custom = Object.keys(v.montage_overrides || {}).length;
+  return `<div class="mstyle">
+    <div class="mstyle-row"><span>Sous-titres</span>${segHtml('ms-cap', MONTAGE_CAPTION_LABELS, s.caption_style)}</div>
+    <div class="mstyle-row"><span>Musique</span>${segHtml('ms-vol', MONTAGE_VOLUME_LABELS, s.volume)}
+      <span class="tiny">${s.music_file ? `${esc(s.music_file)} · à ${fmtSec(s.music_entry)}` : 'aucune (Réglages → Montage)'}</span></div>
+    ${custom ? '<div class="mstyle-row"><span></span><button class="btn ghost small ms-reset">↺ Revenir au style de la chaîne</button></div>' : ''}
+  </div>`;
+}
+function wireMontageStyle(root, v, onChange){
+  const patch = async body => {
+    try { onChange(await api(`/api/videos/${v.video_id}/montage`, { method:'PATCH', body: JSON.stringify(body) })); }
+    catch (e){ log(e.message, 'error'); }
+  };
+  wireSeg(root, 'ms-cap', val => patch({ overrides: { ...(v.montage_overrides || {}), caption_style: val } }));
+  wireSeg(root, 'ms-vol', val => patch({ overrides: { ...(v.montage_overrides || {}), volume: val } }));
+  const reset = root.querySelector('.ms-reset');
+  if (reset) reset.onclick = () => patch({ overrides: {} });
+}
+
+function fillMontageCadrage(card, v, onUpdate){
+  const box = card.querySelector('.montage-only');
+  const validated = v.montage && v.montage.validated;
+  box.innerHTML = `
+    <div class="mlayout" style="grid-template-columns:120px minmax(0,1fr)">
+      <div class="mvideo">${v.media_url ? `<video src="${v.media_url}" muted controls preload="metadata"></video>` : ''}</div>
+      <div class="mfields" style="gap:10px">
+        ${montageStyleHtml(v)}
+        <div class="mstate ${validated ? 'ok' : ''}">${validated
+          ? '✓ Montage validé : il sera monté au prochain « Traiter ».'
+          : "L'IA préparera le montage quand tu cliqueras « Traiter ». Tu le vérifieras ensuite à l'étape 4 · Montage."}</div>
+      </div>
+    </div>`;
+  wireMontageStyle(box, v, u => { onUpdate(u); fillMontageCadrage(card, u, onUpdate); });
+}
+
+// ---------- Step 4 · Montage : review each planned montage ----------
+// Cards are re-rendered only when a video's state changes (planning →
+// review, validated...), never on a poll tick, so a hook being typed or a
+// preview playing isn't wiped every few seconds.
+let montagePollTimer = null;
+const montageCardState = {};
+const montageCardKey = v => `${v.status}|${v.montage ? v.montage.error || '' : ''}|${v.montage && v.montage.hooks ? v.montage.hooks.join('/') : ''}`;
+
+function enterMontageStep(){
+  // entering the screen: rebuild every card from the server state
+  document.getElementById('montageList').innerHTML =
+    '<div id="montageProgress"></div><div class="stack" id="montageCards"></div><div id="montageValidated"></div>';
+  for (const k in montageCardState) delete montageCardState[k];
+  return loadMontageStep();
+}
+
+async function loadMontageStep(){
+  clearTimeout(montagePollTimer);
+  if (!document.getElementById('montageCards')) return enterMontageStep();
+  const [status, all] = await Promise.all([api('/api/process_status'), api('/api/videos')]);
+  const running = status.key && !status.done;
+  document.getElementById('montageProgress').innerHTML = running ? `
+    <article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${spin('')} Traitement en cours</div>
+      <div class="meta" style="margin-left:0">${esc(status.title || '')}</div></div>
+      <span class="pill wait">vidéo ${Math.min(status.index + 1, status.total)} sur ${status.total}</span></div>
+      <div class="chcard-body">${progressBarHtml(status, PROCESS_PHASES[status.phase] || 'Traitement')}</div></article>` : '';
+
+  const shown = all.filter(v => ['montage_planning', 'montage_review'].includes(v.status));
+  const cards = document.getElementById('montageCards');
+  for (const id of Object.keys(montageCardState)){
+    if (!shown.some(v => v.video_id === id)){ cards.querySelector(`[data-video="${id}"]`)?.remove(); delete montageCardState[id]; }
+  }
+  for (const v of shown){
+    const key = montageCardKey(v);
+    if (montageCardState[v.video_id] === key) continue;
+    montageCardState[v.video_id] = key;
+    let card = cards.querySelector(`[data-video="${v.video_id}"]`);
+    if (!card){ card = document.createElement('article'); card.className = 'chcard mcard'; card.dataset.video = v.video_id; cards.appendChild(card); }
+    renderMontageCard(card, v);
+  }
+  if (!shown.length && !running){
+    cards.innerHTML = emptyState('Aucun montage à vérifier', "Choisis « Montage auto » pour une vidéo à l'étape 3 · Cadrage, puis clique « Traiter ».", 'film');
+  } else if (cards.querySelector('.empty-state') && shown.length){ cards.querySelector('.empty-state').remove(); }
+
+  const validated = all.filter(v => v.status === 'selected' && v.edit_mode === 'montage' && v.montage && v.montage.validated);
+  document.getElementById('montageValidated').innerHTML = validated.length ? `
+    <article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('check', 14)} ${validated.length} montage${validated.length > 1 ? 's validés' : ' validé'}, prêt${validated.length > 1 ? 's' : ''} à être monté${validated.length > 1 ? 's' : ''}</div>
+      <div class="meta" style="margin-left:0">${validated.map(v => esc(v.title)).join(' · ')}</div></div></div></article>` : '';
+  const btn = document.getElementById('renderMontagesBtn');
+  btn.disabled = !validated.length || running;
+  btn.textContent = validated.length ? `Monter ${validated.length} vidéo${validated.length > 1 ? 's' : ''} validée${validated.length > 1 ? 's' : ''} →` : 'Monter les vidéos validées →';
+  document.getElementById('montageCountText').textContent =
+    `Import · étape 4 sur 4 · ${shown.filter(v => v.status === 'montage_review').length} à vérifier`;
+
+  if (running || shown.some(v => v.status === 'montage_planning')){
+    montagePollTimer = setTimeout(() => { if (currentSpace === 'import' && current === 10) safeLoad(loadMontageStep, 'montageCards'); }, 2500);
+  }
+}
+
+function timelineHtml(t){
+  if (!t || !t.total) return '';
+  const pct = x => `${Math.max(0, Math.min(100, x / t.total * 100)).toFixed(2)}%`;
+  const segs = t.segments.map(sg => `<div class="seg-${sg.kind}" style="left:${pct(sg.start)};width:calc(${pct(sg.end)} - ${pct(sg.start)})" title="${sg.kind === 'noir' ? 'Écran noir' : 'Drone'} ${fmtSec(sg.start)} → ${fmtSec(sg.end)}"></div>`).join('');
+  const cuts = (t.cuts || []).map(c => `<div class="cut" style="left:${pct(c)}" title="Coupe à ${fmtSec(c)}"></div>`).join('');
+  const chute = t.chute != null ? `<div class="chute" style="left:${pct(t.chute)}" title="Chute à ${fmtSec(t.chute)}"></div>` : '';
+  return `<div class="tl">${segs}${cuts}${chute}</div>
+    <div class="tl-legend"><span><i style="background:#2a3b5c"></i>Vidéo</span><span><i style="background:#000;border:1px solid #555"></i>Écran noir</span>
+      <span><i style="background:#3a7fb8"></i>Drones</span><span><i style="background:#f5c56d"></i>Chute</span>${cuts ? '<span>┊ coupe</span>' : ''}</div>`;
+}
+
+function renderMontageCard(card, v){
+  const ch = channels.find(c => c.name === v.channel) || { display_name: v.channel };
+  const m = v.montage || {};
+  const head = `<div class="chcard-head"><div class="who">
+      <div class="name" style="font-size:13px"><span class="dot" style="background:${channelColor(v.channel)}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(v.title || 'Vidéo')}</span></div>
+      <div class="meta">${esc(ch.display_name)}${m.timeline ? ` · ${fmtSec(m.timeline.total)}` : ''}</div></div>
+      ${v.status === 'montage_planning' ? `<span class="pill wait">${spin('')} analyse…</span>` : m.error ? '<span class="pill bad">plan impossible</span>' : m.unsuitable ? '<span class="pill warn">à vérifier</span>' : '<span class="pill ok">à valider</span>'}</div>`;
+  if (v.status === 'montage_planning'){
+    card.innerHTML = `${head}<div class="chcard-body"><span class="muted">${spin('')} Transcription et plan de l'IA en cours (1 à 3 minutes)…</span></div>`;
+    return;
+  }
+  if (m.error){
+    card.innerHTML = `${head}<div class="chcard-body"><div class="errbox">${esc(m.error)}</div></div>
+      <div class="chcard-foot"><button class="btn secondary small m-replan" data-icon="refresh">Réessayer</button><button class="btn ghost small m-simple">Passer en habillage simple</button></div>`;
+    wireMontageCardActions(card, v);
+    hydrateIcons(card);
+    return;
+  }
+  const hooks = m.hooks || [];
+  const custom = m.hook && !hooks.includes(m.hook);
+  const accent = (v.montage_settings || {}).caption_style === 'accent';
+  const kw = new Set(m.keywords || []);
+  card.innerHTML = `${head}
+    <div class="chcard-body"><div class="mlayout">
+      <div>
+        <div class="mvideo">${m.preview_url ? `<video src="${m.preview_url}" controls playsinline></video><span class="mvideo-tag">Aperçu</span>`
+          : v.media_url ? `<video src="${v.media_url}" controls muted preload="metadata"></video><span class="mvideo-tag">Original</span>` : ''}</div>
+        <button class="btn secondary small full m-preview" style="margin-top:8px" data-icon="film">${m.preview_url ? "Refaire l'aperçu" : 'Aperçu rapide'}</button>
+      </div>
+      <div class="mfields">
+        ${m.summary ? `<div class="muted" style="font-size:12.5px">${esc(m.summary)}</div>` : ''}
+        ${m.unsuitable ? `<div class="warnbox">${esc(m.unsuitable)}</div>` : ''}
+        <div><label class="f">Montage prévu par l'IA</label>${timelineHtml(m.timeline)}
+          ${(m.timeline && m.timeline.notes.length) ? `<div class="tiny" style="margin-top:4px">${m.timeline.notes.map(esc).join(' · ')}</div>` : ''}</div>
+        <div><label class="f">Accroche en haut de l'écran</label><div class="hooks">
+          ${hooks.map((h, i) => `<label class="hook-opt"><input type="radio" name="hook-${v.video_id}" value="${i}" ${h === m.hook ? 'checked' : ''}>${esc(h)}</label>`).join('')}
+          <label class="hook-opt"><input type="radio" name="hook-${v.video_id}" value="custom" ${custom ? 'checked' : ''}>
+            <input class="f m-hook-custom" placeholder="Écrire la mienne…" value="${custom ? esc(m.hook) : ''}" style="padding:5px 8px;font-size:12.5px"></label>
+        </div></div>
+        <div><label class="f">Style de cette vidéo</label>${montageStyleHtml(v)}</div>
+        ${accent ? `<div><label class="f">Mots en jaune — clique un mot pour l'ajouter ou l'enlever</label>
+          <div class="kw-words">${(m.words || []).map((w, i) => (!m.timeline || m.timeline.kept_words.includes(i))
+            ? `<button class="kw ${kw.has(i) ? 'on' : ''}" data-i="${i}">${esc(w)}</button>` : '').join('')}</div></div>` : ''}
+        <div><label class="f">Plans de drone</label><div class="drones">
+          ${(m.brolls || []).map((b, i) => `<div class="drone" style="background-image:url('${b.thumb_url}')"><button class="btn secondary small m-swap" data-slot="${i}" title="Changer ce plan">⟳</button></div>`).join('') || '<span class="tiny">Aucun plan : ajoute-en dans Réglages → Drones.</span>'}
+        </div></div>
+      </div>
+    </div></div>
+    <div class="chcard-foot">
+      <button class="btn ghost small m-replan" data-icon="refresh" title="Gemini propose rarement deux fois le même montage">Nouveau plan (IA)</button>
+      <button class="btn ghost small m-simple">Passer en habillage simple</button>
+      <button class="btn primary small push m-validate" data-icon="check">Valider ce montage</button>
+    </div>`;
+  hydrateIcons(card);
+  wireMontageCardActions(card, v);
+}
+
+function wireMontageCardActions(card, v){
+  const id = v.video_id;
+  const patch = body => api(`/api/videos/${id}/montage`, { method:'PATCH', body: JSON.stringify(body) });
+  const rerender = u => { montageCardState[id] = montageCardKey(u); renderMontageCard(card, u); };
+  card.querySelector('.m-replan')?.addEventListener('click', async () => {
+    try { await api(`/api/videos/${id}/montage/replan`, { method:'POST' }); montageCardState[id] = null; safeLoad(loadMontageStep, 'montageCards'); }
+    catch (e){ log(e.message, 'error'); }
+  });
+  card.querySelector('.m-simple')?.addEventListener('click', async () => {
+    try { await patch({ edit_mode: 'simple' }); toast('Vidéo renvoyée au Cadrage, en habillage simple.'); safeLoad(loadMontageStep, 'montageCards'); }
+    catch (e){ log(e.message, 'error'); }
+  });
+  card.querySelector('.m-validate')?.addEventListener('click', async () => {
+    try { await api(`/api/videos/${id}/montage/validate`, { method:'POST' }); toast('Montage validé ✓', 'success'); safeLoad(loadMontageStep, 'montageCards'); }
+    catch (e){ log(e.message, 'error'); }
+  });
+  card.querySelector('.m-preview')?.addEventListener('click', async ev => {
+    const btn = ev.currentTarget;
+    btn.disabled = true; btn.innerHTML = spin('Aperçu en cours…');
+    try {
+      const u = await api(`/api/videos/${id}/montage/preview`, { method:'POST' });
+      rerender(u);
+      card.querySelector('.mvideo video')?.play().catch(() => {});
+    } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.textContent = 'Aperçu rapide'; }
+  });
+  card.querySelectorAll('.m-swap').forEach(b => b.addEventListener('click', async () => {
+    b.disabled = true;
+    try { rerender(await api(`/api/videos/${id}/montage/swap_broll/${b.dataset.slot}`, { method:'POST' })); }
+    catch (e){ log(e.message, 'error'); b.disabled = false; }
+  }));
+  // hook: a proposal, or my own text (saved as I type)
+  const custom = card.querySelector('.m-hook-custom');
+  let hookTimer = null;
+  const saveHook = text => { clearTimeout(hookTimer); hookTimer = setTimeout(() => patch({ hook: text }).catch(e => log(e.message, 'error')), 500); };
+  card.querySelectorAll(`input[name="hook-${id}"]`).forEach(r => r.addEventListener('change', () => {
+    if (r.value === 'custom'){ custom.focus(); if (custom.value.trim()) saveHook(custom.value); }
+    else saveHook(v.montage.hooks[+r.value]);
+  }));
+  custom?.addEventListener('input', () => {
+    card.querySelector(`input[name="hook-${id}"][value="custom"]`).checked = true;
+    saveHook(custom.value);
+  });
+  // keywords
+  let kwTimer = null;
+  card.querySelectorAll('.kw').forEach(b => b.addEventListener('click', () => {
+    b.classList.toggle('on');
+    clearTimeout(kwTimer);
+    kwTimer = setTimeout(() => {
+      const shown = new Set([...card.querySelectorAll('.kw')].map(x => +x.dataset.i));
+      const keywords = [...(v.montage.keywords || []).filter(i => !shown.has(i)),
+                        ...[...card.querySelectorAll('.kw.on')].map(x => +x.dataset.i)];
+      patch({ keywords }).catch(e => log(e.message, 'error'));
+    }, 600);
+  }));
+  wireMontageStyle(card, v, rerender);
+}
+
+document.getElementById('renderMontagesBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('renderMontagesBtn');
+  btn.disabled = true;
+  try {
+    const r = await api('/api/process_selected', { method:'POST' });
+    if (!r.started && !r.running){ log('Aucune vidéo à monter.', 'error'); return; }
+    goTo(5);
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; }
+});
+
+// ---------- Réglages → Montage : each channel's default style ----------
+
+async function loadMontageSettings(){
+  const grid = document.getElementById('montageSettingsGrid');
+  if (!channels.length){ grid.innerHTML = emptyState('Aucune chaîne', 'Ajoute une chaîne dans config.yaml.', 'settings'); return; }
+  grid.innerHTML = channels.map(ch => `<article class="chcard" data-channel="${ch.name}">${spinnerHtml('Chargement...')}</article>`).join('');
+  await Promise.all(channels.map(async ch => {
+    const card = grid.querySelector(`[data-channel="${ch.name}"]`);
+    try { renderMontageSettingsCard(card, ch, await api(`/api/channels/${ch.name}/montage`)); }
+    catch (e){ showLoadError(card, e, () => loadMontageSettings()); }
+  }));
+}
+
+function renderMontageSettingsCard(card, ch, data){
+  const s = data.settings;
+  const musicUrl = f => `/api/channels/${ch.name}/assets/music/${encodeURIComponent(f)}`;
+  card.innerHTML = `
+    <div class="chcard-head">
+      <div class="who"><div class="name"><span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}</div></div>
+      <label class="switch" title="Les vidéos téléchargées pour cette chaîne arrivent au Cadrage déjà en Montage auto"><input type="checkbox" class="ms-default" ${s.default_mode === 'montage' ? 'checked' : ''}> Montage auto par défaut</label>
+    </div>
+    <div class="chcard-body">
+      <label class="f">Sous-titres</label>
+      <div class="capstyle-pick">${Object.entries(MONTAGE_CAPTION_LABELS).map(([k, l]) =>
+        `<button class="${k === s.caption_style ? 'active' : ''}" data-v="${k}">${capSampleHtml(k)}<span>${l}${k === 'accent' ? ' — mots-clés en jaune' : ' — tout en blanc'}</span></button>`).join('')}</div>
+    </div>
+    <div class="chcard-body">
+      <label class="f">Musique de fond</label>
+      <div style="display:flex;gap:8px">
+        <select class="f ms-music">
+          <option value="">— aucune —</option>
+          ${data.music_files.map(f => `<option ${f === s.music_file ? 'selected' : ''}>${esc(f)}</option>`).join('')}
+        </select>
+        <button class="btn secondary small ms-upload" data-icon="upload" title="Ajouter un morceau (mp3, wav, m4a...)">Ajouter</button>
+        <input type="file" class="ms-file" accept=".mp3,.wav,.m4a,.aac,.ogg,.flac,audio/*" hidden>
+      </div>
+      ${s.music_file ? `
+      <label class="f" style="margin-top:4px">Moment du morceau qui démarre quand l'image revient après l'écran noir</label>
+      <audio class="ms-audio" controls preload="metadata" src="${musicUrl(s.music_file)}"></audio>
+      <div class="entry-row">
+        <input class="f ms-entry" type="number" min="0" step="0.5" value="${s.music_entry}" title="secondes">
+        <span class="tiny">s (${fmtSec(s.music_entry)})</span>
+        <button class="btn secondary small ms-take" title="Met l'instant où en est le lecteur">Prendre l'instant du lecteur</button>
+        <button class="btn ghost small ms-listen">▶ Écouter ce moment</button>
+      </div>` : '<div class="tiny">Choisis un morceau, ou ajoute-le avec « Ajouter ».</div>'}
+      <div class="mstyle-row" style="margin-top:6px"><span>Volume</span>${segHtml('ms-vol', MONTAGE_VOLUME_LABELS, s.volume)}
+        <span class="tiny">${s.volume === 'marque' ? 'bien présente, ~5 dB sous la voix' : 'discrète, ~9 dB sous la voix'}</span></div>
+    </div>
+    <div class="chcard-foot">
+      <label class="switch"><input type="checkbox" class="ms-hook" ${s.hook ? 'checked' : ''}> Accroche en haut de l'écran</label>
+      <span class="note push ms-saved"></span>
+    </div>`;
+  hydrateIcons(card);
+
+  const save = async patch => {
+    try {
+      const d = await api(`/api/channels/${ch.name}/montage`, { method:'PUT', body: JSON.stringify({ settings: { ...data.settings, ...patch } }) });
+      renderMontageSettingsCard(card, ch, d);
+      card.querySelector('.ms-saved').textContent = 'Enregistré ✓';
+    } catch (e){ log(e.message, 'error'); }
+  };
+  card.querySelector('.ms-default').onchange = e => save({ default_mode: e.target.checked ? 'montage' : 'simple' });
+  card.querySelector('.ms-hook').onchange = e => save({ hook: e.target.checked });
+  card.querySelectorAll('.capstyle-pick button').forEach(b => b.onclick = () => save({ caption_style: b.dataset.v }));
+  wireSeg(card, 'ms-vol', v => save({ volume: v }));
+  card.querySelector('.ms-music').onchange = e => save({ music_file: e.target.value || null });
+  const fileInput = card.querySelector('.ms-file');
+  card.querySelector('.ms-upload').onclick = () => fileInput.click();
+  fileInput.onchange = async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch(`/api/channels/${ch.name}/assets/music`, { method:'POST', body: form });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.detail || 'Envoi impossible');
+      data.music_files = d.music_files;
+      await save({ music_file: file.name });
+      toast(`« ${file.name} » ajouté`, 'success');
+    } catch (e){ log(e.message, 'error'); }
+  };
+  const audio = card.querySelector('.ms-audio');
+  const entry = card.querySelector('.ms-entry');
+  if (audio && entry){
+    entry.onchange = () => save({ music_entry: Math.max(0, parseFloat(entry.value) || 0) });
+    card.querySelector('.ms-take').onclick = () => save({ music_entry: Math.round(audio.currentTime * 2) / 2 });
+    card.querySelector('.ms-listen').onclick = () => { audio.currentTime = parseFloat(entry.value) || 0; audio.play(); };
+  }
+}
+
+// ---------- Réglages → Drones : the shared drone-shot library ----------
+
+async function loadBrollLibrary(){
+  const grid = document.getElementById('brollGrid');
+  const data = await api('/api/broll');
+  document.getElementById('brollCount').textContent = `${data.clips.length} plan${data.clips.length > 1 ? 's' : ''}`;
+  const themes = document.getElementById('brollThemes');
+  themes.innerHTML = (data.has_key ? '<span class="tiny">Idées :</span>' + data.themes.map(t => `<button class="chipbtn" data-t="${esc(t)}">${esc(t)}</button>`).join('')
+    : `<span class="fact warn">${icon('alert', 14)} Clé PIXABAY_API_KEY absente du fichier .env : impossible d'ajouter des plans.</span>`);
+  themes.querySelectorAll('.chipbtn').forEach(b => b.onclick = () => { document.getElementById('brollTheme').value = b.dataset.t; fetchBroll(); });
+  document.getElementById('brollFetchBtn').disabled = !data.has_key;
+  grid.innerHTML = data.clips.length ? data.clips.map(c => `
+    <div class="bcard" data-id="${c.id}" style="background-image:url('${c.thumb_url}')" title="${esc(c.tags || c.query || '')}">
+      <button class="bdel" title="Supprimer ce plan">✕</button>
+      <div class="bq">${esc(c.query || '')}</div>
+    </div>`).join('') : emptyState('Bibliothèque vide', "Ajoute des plans avec un thème ci-dessus : le Montage auto en a besoin d'au moins 2.", 'film');
+  grid.querySelectorAll('.bcard').forEach(card => {
+    const clip = data.clips.find(c => String(c.id) === card.dataset.id);
+    card.onclick = () => {   // play / stop the shot in place
+      const playing = card.querySelector('video');
+      if (playing){ playing.remove(); return; }
+      card.insertAdjacentHTML('afterbegin', `<video src="${clip.video_url}" autoplay muted loop playsinline></video>`);
+    };
+    card.querySelector('.bdel').onclick = async ev => {
+      ev.stopPropagation();
+      if (!confirm('Supprimer ce plan de la bibliothèque ?')) return;
+      try { await api(`/api/broll/${card.dataset.id}`, { method:'DELETE' }); loadBrollLibrary(); }
+      catch (e){ log(e.message, 'error'); }
+    };
+  });
+}
+
+async function fetchBroll(){
+  const theme = document.getElementById('brollTheme').value.trim();
+  if (!theme){ document.getElementById('brollTheme').focus(); return; }
+  const btn = document.getElementById('brollFetchBtn');
+  btn.disabled = true; btn.innerHTML = spin('Téléchargement…');
+  try {
+    const r = await api('/api/broll/fetch', { method:'POST', body: JSON.stringify({ theme, count: 3 }) });
+    toast(r.added.length ? `${r.added.length} plan(s) ajouté(s)` : 'Aucun nouveau plan Full HD pour ce thème', r.added.length ? 'success' : undefined);
+    await loadBrollLibrary();
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = 'Ajouter 3 plans'; }
+}
+document.getElementById('brollFetchBtn').addEventListener('click', fetchBroll);
+document.getElementById('brollTheme').addEventListener('keydown', e => { if (e.key === 'Enter') fetchBroll(); });
+
 // ---------- Step 3 : AI results ----------
 
 // Import processing runs in the background (POST /api/process_selected
@@ -1761,12 +2290,19 @@ document.getElementById('toResultsBtn').addEventListener('click', async () => {
   const btn = document.getElementById('toResultsBtn');
   btn.disabled = true;
   try {
+    const selected = await api('/api/videos?status=selected');
+    const toReview = selected.some(v => v.edit_mode === 'montage' && !(v.montage && v.montage.validated));
     const r = await api('/api/process_selected', { method:'POST' });
     if (!r.started && !r.running){ log('Aucune vidéo sélectionnée à traiter.', 'error'); return; }
-    goTo(5);
+    goTo(toReview ? 10 : 5);
   } catch (e){ log(e.message, 'error'); }
   finally { btn.disabled = false; }
 });
+
+const PROCESS_PHASES = {
+  ia: 'Analyse IA (titre, description, tags)', encodage: 'Encodage (fond + cadrage)',
+  transcription: 'Montage auto : transcription', 'plan IA': "Montage auto : plan de l'IA", montage: 'Montage auto : rendu',
+};
 
 function formatEta(seconds){
   if (seconds == null) return '';
@@ -1791,7 +2327,7 @@ async function loadResultsScreen(){
   const status = await api('/api/process_status');
   if (status.key && !status.done){
     processSeenRunning = true;
-    const phase = status.phase === 'ia' ? 'Analyse IA (titre, description, tags)' : 'Encodage (fond + cadrage)';
+    const phase = PROCESS_PHASES[status.phase] || 'Encodage (fond + cadrage)';
     list.innerHTML = `
       <article class="chcard">
         <div class="chcard-head">
@@ -1814,8 +2350,12 @@ async function loadResultsScreen(){
     else log(`${status.processed} vidéo(s) traitée(s)`, 'success');
   }
   list.innerHTML = spinnerHtml('Chargement...');
-  const videos = await api('/api/videos?status=ready_for_upload');
+  const [videos, waiting] = await Promise.all([api('/api/videos?status=ready_for_upload'), api('/api/videos?status=montage_review')]);
   renderResults(videos);
+  if (waiting.length){
+    list.insertAdjacentHTML('afterbegin', `<div class="toolbar"><span class="fact warn">${icon('alert', 14)} ${waiting.length} montage${waiting.length > 1 ? 's attendent' : ' attend'} ta validation.</span><span class="spacer"></span><button class="btn secondary small" id="toMontageBtn">Aller à Import → 4 · Montage</button></div>`);
+    document.getElementById('toMontageBtn').onclick = () => goTo(10);
+  }
 }
 
 function renderResults(videos){

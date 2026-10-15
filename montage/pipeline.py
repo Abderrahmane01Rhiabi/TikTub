@@ -143,4 +143,12 @@ def timeline(video: Dict, profile: Dict) -> Optional[Dict]:
     chute = edit.to_out(edit.chute) if edit.chute is not None else None
     return {"total": round(edit.total, 2), "segments": segments,
             "chute": round(chute, 2) if chute is not None else None,
-            "cuts": [round(edit.to_out(a), 2) for a, _ in edit.keep[1:]], "notes": edit.notes}
+            "cuts": [round(edit.to_out(a), 2) for a, _ in edit.keep[1:]], "notes": edit.notes,
+            # words still heard in the montage (the review only offers those as keywords)
+            "kept_words": [i for i, (w, a, b) in enumerate(words) if _heard(edit, a, b)]}
+
+
+def _heard(edit, a: float, b: float) -> bool:
+    """Same rule as the captions: the word fits inside a kept range."""
+    oa, ob = edit.to_out(a), edit.to_out(b)
+    return oa is not None and ob is not None and ob > oa
