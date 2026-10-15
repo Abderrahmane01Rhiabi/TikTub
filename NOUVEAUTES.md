@@ -1,6 +1,6 @@
 # Nouveautés TikTub
 
-Ce document présente les 6 améliorations ajoutées à TikTub (branche `feature/backup-and-growth`) : ce que fait chacune, où la trouver et comment s'en servir.
+Ce document présente les 7 améliorations ajoutées à TikTub (branches `feature/backup-and-growth` et `feature/montage-auto`) : ce que fait chacune, où la trouver et comment s'en servir.
 
 ---
 
@@ -133,6 +133,18 @@ Cette partie ne change rien de visible, mais le projet devient plus clair et plu
 
 ---
 
+## 7. Montage auto
+
+**Où :** Import → 3 · Cadrage et 4 · Montage ; Réglages → Montage et Drones
+
+**Pourquoi :** reproduire automatiquement le style d'un créateur de Shorts, sur des vidéos importées, sans savoir monter.
+
+**Ce que ça fait :** l'IA prépare un montage (écran noir, puis deux plans de drone avant la chute, sous-titres en cascade, accroche, musique coupée sur l'écran noir puis relancée sur son meilleur moment). Tu le vérifies et tu le valides avant le vrai rendu.
+
+Le mode d'emploi complet est dans **[MONTAGE_AUTO.md](MONTAGE_AUTO.md)**.
+
+---
+
 ## Tester
 
 ```bash
@@ -146,3 +158,4 @@ Puis **Ctrl + F5** sur http://127.0.0.1:8000.
 2. Dashboard → Ce qui marche : le « % regardé ».
 3. Accueil : la carte « Idée de la semaine » et son bouton « Lancer 3 vidéos ».
 4. Le bandeau d'alertes, s'il y a un problème en cours.
+5. Réglages → Montage et Drones, puis une vidéo en Montage auto de l'import jusqu'à Publication.
