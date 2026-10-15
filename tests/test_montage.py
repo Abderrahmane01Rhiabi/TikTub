@@ -191,3 +191,50 @@ def test_preview_render_end_to_end(tmp_path):
     assert [s["kind"] for s in r["shots"]] == ["noir", "drone", "drone"]
     assert r["music"]["keypoints"][2][1] == 0.0 and progress[-1] == 1.0
     assert not (tmp_path / "out.mp4.part.mp4").exists()
+
+
+# ------------------------------------------------- drone usage (database)
+
+def test_shots_reserved_by_waiting_videos_of_the_channel_are_skipped(project):
+    _fake_library(6)
+    project.add_video("a", channel="chanA", status="montage_review", montage={"brolls": [0, 1]})
+    project.add_video("b", channel="chanA", status="selected", montage={"brolls": [2, 3], "validated": True})
+    project.add_video("c", channel="chanB", status="montage_review", montage={"brolls": [4, 5]})
+    for seed in range(10):
+        assert {c["id"] for c in broll.pick("chanA", 2, seed=seed)} == {4, 5}
+    # a video never blocks itself (re-plan / swap of its own shots)
+    assert {0, 1} & {c["id"] for s in range(10) for c in broll.pick("chanA", 2, seed=s, video_id="a")}
+
+
+def test_a_channel_remembers_its_last_20_shots():
+    _fake_library(24)
+    for v in range(10):                                   # 10 videos x 2 shots
+        broll.record_usage("chanA", [2 * v, 2 * v + 1], f"v{v}")
+    for seed in range(10):                                # only the 4 never-used shots are fresh
+        assert all(c["id"] >= 20 for c in broll.pick("chanA", 2, seed=seed))
+
+
+def test_rendering_a_video_again_does_not_count_its_shots_twice():
+    _fake_library(3)
+    broll.record_usage("chanA", [0, 1], "v1")
+    broll.record_usage("chanA", [0, 2], "v1")             # re-render with a swapped shot
+    counts = broll.usage_counts()
+    assert counts["0"]["total"] == 1 and "1" not in counts and counts["2"]["total"] == 1
+
+
+def test_old_usage_file_is_moved_into_the_database_once():
+    _fake_library(4)
+    (Path(broll.BROLL_DIR) / "usage.json").write_text(json.dumps({"chanA": ["0", "1"]}))
+    assert {c["id"] for s in range(10) for c in broll.pick("chanA", 2, seed=s)} == {2, 3}
+    assert not (Path(broll.BROLL_DIR) / "usage.json").exists()
+    assert broll.usage_counts()["0"]["channels"] == {"chanA": 1}
+
+
+def test_library_lists_how_many_times_each_shot_served(client):
+    _fake_library(2)
+    broll.record_usage("chanA", [0], "v1")
+    broll.record_usage("chanB", [0], "v2")
+    data = client.get("/api/broll").json()
+    shot = next(c for c in data["clips"] if c["id"] == 0)
+    assert shot["uses"] == 2 and shot["uses_by_channel"] == {"chanA": 1, "chanB": 1}
+    assert data["healthy_size"] == 30 and data["videos_without_repeat"] == 10

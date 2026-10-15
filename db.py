@@ -91,6 +91,20 @@ CREATE TABLE IF NOT EXISTS alerts (
     dismissed_at TEXT,
     resolved_at TEXT
 );
+
+-- Montage auto: one row per drone shot used in a RENDERED video (see
+-- montage/broll.py). Keeps a channel from reusing its recent shots, and
+-- says how often each shot has served. Previews and plans awaiting review
+-- are not usage: those are read from the videos themselves.
+CREATE TABLE IF NOT EXISTS broll_usage (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    channel TEXT NOT NULL,
+    clip_id TEXT NOT NULL,
+    video_id TEXT,
+    used_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_broll_usage_channel ON broll_usage(channel, used_at);
+CREATE INDEX IF NOT EXISTS idx_broll_usage_clip ON broll_usage(clip_id);
 """
 
 
@@ -352,5 +366,61 @@ def insert_batch(batch_id: str, batch: Dict, videos: Dict[str, Dict], db_path: s
             )
             for video_id, video in videos.items():
                 _upsert_video(conn, video_id, video)
+    finally:
+        conn.close()
+
+
+def record_broll_usage(channel: str, clip_ids: List, video_id: Optional[str] = None,
+                       used_at: Optional[str] = None, db_path: str = DB_PATH):
+    """The drone shots a rendered video used. Rendering the same video again
+    replaces its rows instead of counting the shots twice."""
+    from datetime import datetime
+    when = used_at or datetime.now().isoformat()
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            if video_id:
+                conn.execute("DELETE FROM broll_usage WHERE channel = ? AND video_id = ?", (channel, video_id))
+            conn.executemany(
+                "INSERT INTO broll_usage (channel, clip_id, video_id, used_at) VALUES (?, ?, ?, ?)",
+                [(channel, str(c), video_id, when) for c in clip_ids],
+            )
+    finally:
+        conn.close()
+
+
+def recent_broll_clips(channel: str, limit: int, db_path: str = DB_PATH) -> List[str]:
+    """The channel's last `limit` different shots, most recently used first."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute(
+            "SELECT clip_id, MAX(used_at) AS last FROM broll_usage WHERE channel = ? "
+            "GROUP BY clip_id ORDER BY last DESC LIMIT ?", (channel, limit)).fetchall()
+        return [r["clip_id"] for r in rows]
+    finally:
+        conn.close()
+
+
+def broll_last_used(channel: str, db_path: str = DB_PATH) -> Dict[str, str]:
+    """clip_id -> last time this channel used it."""
+    conn = get_connection(db_path)
+    try:
+        rows = conn.execute("SELECT clip_id, MAX(used_at) AS last FROM broll_usage WHERE channel = ? "
+                            "GROUP BY clip_id", (channel,)).fetchall()
+        return {r["clip_id"]: r["last"] for r in rows}
+    finally:
+        conn.close()
+
+
+def broll_usage_counts(db_path: str = DB_PATH) -> Dict[str, Dict]:
+    """clip_id -> {"total": n, "channels": {channel: n}}"""
+    conn = get_connection(db_path)
+    try:
+        out: Dict[str, Dict] = {}
+        for r in conn.execute("SELECT clip_id, channel, COUNT(*) AS n FROM broll_usage GROUP BY clip_id, channel"):
+            entry = out.setdefault(r["clip_id"], {"total": 0, "channels": {}})
+            entry["total"] += r["n"]
+            entry["channels"][r["channel"]] = r["n"]
+        return out
     finally:
         conn.close()

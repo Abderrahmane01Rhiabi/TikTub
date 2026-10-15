@@ -1093,16 +1093,23 @@ async def upload_channel_music(channel_name: str, file: UploadFile = File(...)):
     return _montage_channel_payload(channel_name)
 
 
-def _serialize_broll(clip: dict) -> dict:
+def _serialize_broll(clip: dict, counts: Optional[dict] = None) -> dict:
+    used = (counts or {}).get(str(clip["id"]), {"total": 0, "channels": {}})
     return {**{k: clip.get(k) for k in ("id", "query", "tags", "duration", "w", "h", "page")},
+            "uses": used["total"], "uses_by_channel": used["channels"],
             "thumb_url": f"/api/broll/{clip['id']}/thumb", "video_url": f"/api/broll/{clip['id']}/video"}
 
 
 @app.get("/api/broll")
 def list_broll():
+    """The drone library, how many times each shot has been used (rendered
+    videos only), and whether it's big enough for a channel not to see a
+    shot again before ~10 of its videos."""
     from montage import broll
-    return {"clips": [_serialize_broll(c) for c in broll.list_clips()], "themes": broll.DEFAULT_THEMES,
-            "has_key": bool(os.getenv("PIXABAY_API_KEY"))}
+    clips, counts = broll.list_clips(), broll.usage_counts()
+    return {"clips": [_serialize_broll(c, counts) for c in clips], "themes": broll.DEFAULT_THEMES,
+            "has_key": bool(os.getenv("PIXABAY_API_KEY")),
+            "healthy_size": broll.HEALTHY_LIBRARY, "videos_without_repeat": broll.RECENT_PER_CHANNEL // 2}
 
 
 class BrollFetch(BaseModel):

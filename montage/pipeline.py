@@ -58,7 +58,8 @@ def prepare_review(video: Dict, channel: str, report: Optional[Report] = None) -
         montage["keywords"] = planner.pick_keywords(words)
         montage["hooks"] = plan.get("accroches") or []
         montage["hook"] = montage["hooks"][0] if montage["hooks"] else ""
-        montage["brolls"] = [c["id"] for c in broll.pick(channel, 2, seed=video["video_id"])]
+        montage["brolls"] = [c["id"] for c in broll.pick(channel, 2, seed=video["video_id"],
+                                                         video_id=video["video_id"])]
         montage["unsuitable"] = planner.unsuitable_reason(plan)
         if len(montage["brolls"]) < 2:
             montage["unsuitable"] = (montage["unsuitable"] or "") + \
@@ -69,7 +70,7 @@ def prepare_review(video: Dict, channel: str, report: Optional[Report] = None) -
     return montage
 
 
-def _broll_files(montage: Dict, channel: str) -> List[str]:
+def _broll_files(montage: Dict, channel: str, video_id: str) -> List[str]:
     """Paths of the chosen shots; a shot deleted from the library since the
     review is replaced by a fresh pick instead of failing the render."""
     files, ids = [], []
@@ -79,7 +80,7 @@ def _broll_files(montage: Dict, channel: str) -> List[str]:
             files.append(broll.clip_path(clip))
             ids.append(clip["id"])
     if len(files) < 2:
-        for clip in broll.pick(channel, 2 - len(files), seed=time.time(), exclude=ids):
+        for clip in broll.pick(channel, 2 - len(files), seed=time.time(), exclude=ids, video_id=video_id):
             files.append(broll.clip_path(clip))
             ids.append(clip["id"])
     montage["brolls"] = ids
@@ -95,7 +96,7 @@ def _render(video: Dict, profile: Dict, music_dir: Optional[str], out_path: str,
     channel = video.get("channel", "default")
     return render.render(
         video["raw_video_path"], [tuple(w) for w in m.get("words") or []], m["plan"], settings, out_path,
-        broll_paths=_broll_files(m, channel), keywords=m.get("keywords") or [], hook=m.get("hook"),
+        broll_paths=_broll_files(m, channel, video["video_id"]), keywords=m.get("keywords") or [], hook=m.get("hook"),
         music_path=music_path(settings, music_dir), work_dir=work_dir(video["video_id"]),
         preview=preview, progress_cb=progress_cb)
 
@@ -109,7 +110,7 @@ def render_preview(video: Dict, profile: Dict, music_dir: Optional[str]) -> str:
 def render_final(video: Dict, profile: Dict, music_dir: Optional[str], out_path: str,
                  progress_cb=None) -> Dict:
     summary = _render(video, profile, music_dir, out_path, preview=False, progress_cb=progress_cb)
-    broll.record_usage(video.get("channel", "default"), video["montage"]["brolls"])
+    broll.record_usage(video.get("channel", "default"), video["montage"]["brolls"], video["video_id"])
     return summary
 
 
@@ -119,7 +120,8 @@ def swap_broll(video: Dict, slot: int) -> List:
     ids = list(m.get("brolls") or [])
     while len(ids) < 2:
         ids.append(None)
-    fresh = broll.pick(video.get("channel", "default"), 1, seed=time.time(), exclude=[i for i in ids if i])
+    fresh = broll.pick(video.get("channel", "default"), 1, seed=time.time(), exclude=[i for i in ids if i],
+                       video_id=video["video_id"])
     if fresh:
         ids[slot] = fresh[0]["id"]
     return [i for i in ids if i is not None]

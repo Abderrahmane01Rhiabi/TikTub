@@ -47,7 +47,9 @@ La bibliothèque des plans de drone, partagée par toutes les chaînes.
 - Clique sur un plan pour le voir bouger, et sur **✕** pour le supprimer.
 - Pour en ajouter : tape un thème en anglais (ex. `drone mountain lake`) ou clique une idée, puis **Ajouter 3 plans**. Les plans viennent de Pixabay : ils sont gratuits et utilisables commercialement.
 - Il faut la clé `PIXABAY_API_KEY` dans le fichier `.env`.
-- Chaque chaîne évite de réutiliser ses 8 derniers plans. YouTube pourrait sinon juger les vidéos répétitives.
+- Chaque miniature indique **« neuf »** ou combien de fois le plan a servi (**×2**). Passe la souris dessus pour voir quelles chaînes l'ont utilisé.
+- Chaque chaîne évite les plans de ses **10 dernières vidéos**, ainsi que ceux déjà réservés par ses autres vidéos en attente de validation : deux vidéos d'un même lot ne tombent pas sur le même plan.
+- Si la bibliothèque a **moins de 30 plans**, un message te dit combien en ajouter pour que chaque chaîne attende au moins 10 vidéos avant de revoir un plan. Sinon, un spectateur qui enchaîne tes Shorts remarquerait les répétitions, et YouTube pourrait juger les vidéos répétitives.
 
 ---
 
@@ -80,5 +82,6 @@ La bibliothèque des plans de drone, partagée par toutes les chaînes.
 
 - Le moteur est dans le dossier `montage/` du projet. Les plans de drone sont dans `assets/broll/`, qui n'est pas dans git (trop lourd).
 - La transcription utilise Whisper **medium** : plus lent que small, mais nettement plus juste. Il a par exemple bien entendu « Carolina Reaper », que small transformait en « Carolina repurchased ».
+- Les utilisations des plans de drone sont notées dans la base (table `broll_usage`) : elles sont donc incluses dans les sauvegardes.
 - Les fichiers de travail de chaque vidéo (`temp/<vidéo>/montage/`) sont supprimés par le nettoyage automatique une fois la vidéo publiée.
 - **Idée gardée pour plus tard** : caler le passage entre les deux drones sur un temps fort de la musique.

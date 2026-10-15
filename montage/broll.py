@@ -3,9 +3,12 @@ Shared library of drone / nature shots for the montage, fetched from Pixabay
 (free to use, commercial included) and kept under assets/broll/.
 
     index.json   one entry per clip (id, file, theme, size, Pixabay page)
-    usage.json   per channel, the clips its last videos used — picking skips
-                 them, so a channel doesn't post the same waves ten times
-                 (YouTube reads that as repetitive content)
+
+Usage lives in the database (table broll_usage, so it is in the backups):
+picking skips the shots a channel used in its last ~10 rendered videos AND
+the ones other videos of the channel have reserved (planned, not rendered
+yet), so a channel doesn't post the same waves over and over — a viewer
+notices, and YouTube may read it as repetitive content.
 """
 
 import json
@@ -16,9 +19,13 @@ from typing import Dict, List, Optional
 
 import requests
 
+import db
+
 BROLL_DIR = "assets/broll"
 MIN_WIDTH = 1920           # 960x540 clips look soft once cropped and blown up to the 9:16 box
-RECENT_PER_CHANNEL = 8     # clips remembered per channel
+RECENT_PER_CHANNEL = 20    # different shots remembered per channel = its last 10 videos (2 shots each)
+HEALTHY_LIBRARY = 30       # below this, a channel's shots come back sooner than every 10 videos
+WAITING_STATUSES = {"montage_planning", "montage_review"}
 DEFAULT_THEMES = ["aerial forest river", "drone mountain cliff", "aerial snowy forest",
                   "drone coastline waves", "aerial winding road hills", "drone lake",
                   "aerial waterfall", "drone canyon"]
@@ -121,30 +128,62 @@ def delete(clip_id) -> bool:
     return True
 
 
-def pick(channel: str, n: int = 2, seed=None, exclude=()) -> List[Dict]:
-    """n different clips, avoiding the ones this channel used recently and
-    `exclude` (e.g. the shot being swapped out). Falls back to recently used
-    ones only when the library is too small."""
+def reserved(channel: str, except_video: Optional[str] = None) -> List[str]:
+    """Shots already chosen by the channel's videos that are planned but not
+    rendered yet (waiting for review, or validated and waiting for Traiter):
+    a batch of several videos must not all land on the same waves."""
+    out = []
+    for v in db.query_videos(channel=channel):
+        m = v.get("montage") or {}
+        waiting = v.get("status") in WAITING_STATUSES or (v.get("status") == "selected" and m.get("validated"))
+        if waiting and v.get("video_id") != except_video:
+            out += [str(i) for i in m.get("brolls") or []]
+    return out
+
+
+def pick(channel: str, n: int = 2, seed=None, exclude=(), video_id: Optional[str] = None) -> List[Dict]:
+    """n different clips, skipping what the channel used recently, what its
+    other waiting videos reserved, and `exclude` (e.g. the shot being
+    swapped out). When the library is too small, falls back to the shots
+    this channel used longest ago (never-used ones first)."""
+    _migrate_usage_json()
     clips = list_clips()
     if not clips:
         return []
     rng = random.Random(seed)
-    recent = [str(i) for i in _read("usage.json", {}).get(channel, [])]
     excluded = {str(e) for e in exclude}
-    fresh = [c for c in clips if str(c["id"]) not in recent and str(c["id"]) not in excluded]
+    busy = set(db.recent_broll_clips(channel, RECENT_PER_CHANNEL)) | set(reserved(channel, except_video=video_id))
+    fresh = [c for c in clips if str(c["id"]) not in busy and str(c["id"]) not in excluded]
     rng.shuffle(fresh)
     chosen = fresh[:n]
     if len(chosen) < n:
-        # oldest-used first, so the most recent ones are reused last
+        last = db.broll_last_used(channel)
         rest = [c for c in clips if c not in chosen and str(c["id"]) not in excluded]
-        rest.sort(key=lambda c: recent.index(str(c["id"])) if str(c["id"]) in recent else -1)
+        rest.sort(key=lambda c: last.get(str(c["id"]), ""))
         chosen += rest[: n - len(chosen)]
     return chosen
 
 
-def record_usage(channel: str, clip_ids: List) -> None:
+def record_usage(channel: str, clip_ids: List, video_id: Optional[str] = None) -> None:
+    db.record_broll_usage(channel, clip_ids, video_id)
+
+
+def usage_counts() -> Dict[str, Dict]:
+    _migrate_usage_json()
+    return db.broll_usage_counts()
+
+
+def _migrate_usage_json() -> None:
+    """The first version kept usage in assets/broll/usage.json: moved into
+    the database once, then the file is renamed out of the way."""
+    path = os.path.join(BROLL_DIR, "usage.json")
+    if not os.path.exists(path):
+        return
     with _lock:
-        usage = _read("usage.json", {})
-        seen = [str(i) for i in usage.get(channel, []) if str(i) not in {str(c) for c in clip_ids}]
-        usage[channel] = (seen + [str(c) for c in clip_ids])[-RECENT_PER_CHANNEL:]
-        _write("usage.json", usage)
+        if not os.path.exists(path):
+            return
+        try:
+            for channel, ids in _read("usage.json", {}).items():
+                db.record_broll_usage(channel, ids, used_at="2000-01-01T00:00:00")
+        finally:
+            os.replace(path, path + ".migrated")
