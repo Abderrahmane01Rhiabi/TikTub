@@ -263,17 +263,29 @@ def test_finder_credit_links_and_suggest():
     assert sc["liens"][1]["url"] == "https://www.tiktok.com/search?q=tram+crash"
 
 
-def test_finder_check_reads_the_verdict():
+def test_finder_check_judges_every_scene_and_accepts_equivalent_footage():
     from adaptation import finder
+    scenes = [{"scene": "un homme coupe une piscine", "indices": "bananier"}, {"scene": "une piscine cède"},
+              {"scene": "pub IPoolGo"}]
 
     class G:
         def _generate_content(self, parts, **kw):
             assert parts[0]["file_data"]["file_uri"].startswith("https://www.youtube.com/")
-            return {"verdict": "Probable", "moments": [{"debut": 4, "fin": 9}, "x"], "raison": "même tram"}
-    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", {"scene": "un tram"}, gemini=G())
-    assert r["verdict"] == "probable" and r["moments"] == [{"debut": 4, "fin": 9}]
+            text = parts[1]["text"]
+            assert "0. un homme coupe une piscine (indices : bananier)" in text and "equivalente" in text
+            return {"scenes": [{"scene": 0, "niveau": "rien", "moments": [{"debut": 1}], "raison": "autre chose"},
+                               {"scene": "1", "niveau": "Équivalente", "moments": [{"debut": 40, "fin": 47}, "x"],
+                                "raison": "une autre piscine cède"},
+                               {"scene": 9, "niveau": "exacte"}],
+                    "resume": "compilation de piscines"}
+    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", scenes, gemini=G())
+    assert r["verdict"] == "probable" and r["raison"] == "compilation de piscines"
+    assert r["par_scene"]["0"] == {"niveau": "rien", "moments": [], "raison": "autre chose"}
+    assert r["par_scene"]["1"]["niveau"] == "equivalente" and r["moments"] == [{"debut": 40, "fin": 47}]
+    assert "9" not in r["par_scene"]
+    assert finder.sections(r, 207) == [[34.0, 53.0]]
     with pytest.raises(finder.FinderError):
-        finder.check("https://www.tiktok.com/@a/video/1", {"scene": "x"}, gemini=G())
+        finder.check("https://www.tiktok.com/@a/video/1", scenes, gemini=G())
 
 
 def test_finder_sort_out_keeps_what_gemini_keeps_and_everything_on_failure():

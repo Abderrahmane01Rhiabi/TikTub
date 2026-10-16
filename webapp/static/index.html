@@ -2662,22 +2662,34 @@ function adViews(n){
   return n >= 1e6 ? (n / 1e6).toFixed(1) + ' M vues' : n >= 1e3 ? Math.round(n / 1e3) + ' k vues' : n + ' vues';
 }
 
-const AD_VERDICT = { oui: ['ok', 'contient la scène'], probable: ['warn', 'probablement'], non: ['bad', 'pas la bonne vidéo'] };
+const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images équivalentes'], rien: ['bad', 'rien pour cette scène'] };
+const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'], non: ['bad', 'rien d\'utile'] };
+
+function adVerifHtml(v, scene, long){
+  const per = v.par_scene || {};
+  const useful = Object.entries(per).filter(([, e]) => e.niveau !== 'rien').map(([i]) => +i);
+  const here = scene >= 0 ? (per[scene] || { niveau: 'rien', moments: [], raison: '' }) : null;
+  const [cls, label] = here ? AD_LEVEL[here.niveau] : AD_VERDICT[v.verdict];
+  const ms = here ? here.moments : v.moments;
+  const others = useful.filter(i => i !== scene).map(i => i + 1);
+  return `<span class="pill ${cls}">${esc(label)}</span>
+    <span>${esc((here && here.raison) || v.raison)}${(ms || []).length ? ' · à ' + ms.map(m => adDuration(m.debut) || '0:00').join(', ') : ''}</span>
+    ${others.length ? `<span style="color:var(--ok)">utile aussi pour ${others.length > 1 ? 'les scènes' : 'la scène'} ${others.join(', ')}</span>` : ''}
+    ${long && useful.length ? '<span style="color:var(--ok)">seuls les passages utiles seront téléchargés</span>' : ''}`;
+}
 
 function adCandHtml(c, scene, sug, have){
-  const v = (sug.verifs || {})[c.url], already = have.has(c.url), picked = already || adPicked.has(c.url);
+  const raw = (sug.verifs || {})[c.url], v = raw && raw.par_scene ? raw : null;    // older checks: one scene only, redo
+  const already = have.has(c.url), picked = already || adPicked.has(c.url);
   const long = (c.duration || 0) >= 150;
-  const parts = v && v.verdict !== 'non' && long && (v.moments || []).length;
-  return `<div class="ad-clip ad-cand ${picked ? 'picked' : ''}" data-url="${esc(c.url)}" data-scene="${scene}">
+  return `<div class="ad-clip ad-cand ${picked ? 'picked' : ''}" data-url="${esc(c.url)}">
     <a href="${esc(c.url)}" target="_blank" rel="noopener"><img src="${esc(c.thumb)}" loading="lazy" alt=""></a>
     <div class="meta"><label><input type="checkbox" class="ad-pick" ${picked ? 'checked' : ''} ${already ? 'disabled' : ''}> ${already ? 'déjà ajoutée' : 'prendre'}</label>
       <span class="title">${esc(c.title)}</span>
       <span>${esc(c.channel)}${c.duration ? ' · ' + adDuration(c.duration) : ''}${c.views ? ' · ' + adViews(c.views) : ''}</span>
-      ${v ? `<span class="pill ${AD_VERDICT[v.verdict][0]}" title="${esc(v.raison)}">${esc(AD_VERDICT[v.verdict][1])}</span>
-        <span>${esc(v.raison)}${(v.moments || []).length ? ' · à ' + v.moments.map(m => adDuration(m.debut) || '0:00').join(', ') : ''}</span>
-        ${parts ? '<span style="color:var(--ok)">seuls ces passages seront téléchargés</span>' : ''}`
-        : `${long ? '<span style="color:#f5c56d">vidéo longue : vérifie-la, seuls les bons passages seront pris</span>' : ''}
-           <button class="btn ghost small ad-check" title="Gemini regarde la vidéo (30 s à 1 min)">Vérifier avec l'IA</button>`}
+      ${v ? adVerifHtml(v, scene, long)
+        : `${long ? '<span style="color:#f5c56d">vidéo longue : vérifie-la, seuls les passages utiles seront pris</span>' : ''}
+           <button class="btn ghost small ad-check" title="L'IA regarde la vidéo et cherche toutes les scènes (30 s à 1 min)">Vérifier avec l'IA</button>`}
     </div></div>`;
 }
 
@@ -2724,7 +2736,7 @@ function renderAdFinder(box, p){
       chk.disabled = true; chk.innerHTML = spin('l\'IA regarde…');
       try {
         const np = await api(`/api/adaptations/${p.project_id}/suggestions/check`, { method:'POST',
-          body: JSON.stringify({ scene: +card.dataset.scene, url }) });
+          body: JSON.stringify({ url }) });
         adProject = np; renderAdFinder(box, np);
       } catch (e){ log(e.message, 'error'); chk.disabled = false; chk.textContent = 'Vérifier avec l\'IA'; }
     };

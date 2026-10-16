@@ -196,16 +196,23 @@ def suggest(ref: Dict, reference_url: str = "", search: Callable = None, search_
 
 # --------------------------------------------------------------- the Gemini check
 
-CHECK_PROMPT = """On cherche la video d'origine de cette scene, vue dans un Short viral :
-"{scene}"
-Indices vus a l'ecran : {indices}
+CHECK_PROMPT = """On refait un Short viral avec d'autres images. Voici les scenes dont on a besoin :
+{scenes}
 
-Regarde cette video. Contient-elle CETTE scene (le meme evenement filme, pas juste le meme sujet) ?
+Regarde cette video et dis, POUR CHAQUE scene, si elle peut servir :
+- "exacte" : c'est la video d'origine (le meme evenement filme) ;
+- "equivalente" : une AUTRE video qui montre la meme action de facon comparable et pourrait la remplacer
+  dans le montage (ex. une autre piscine qui cede sous des gens qui sautent). Pas besoin du meme lieu,
+  des memes personnes ni des memes indices ;
+- "rien" : rien d'utilisable pour cette scene (seulement le meme theme general, ou une action differente).
+Pour "exacte" et "equivalente", donne les moments ou on la voit (en secondes depuis le debut de la video).
 JSON uniquement :
-{{"verdict": "oui | probable | non",
-  "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}],
+{{"scenes": [{{"scene": numero, "niveau": "exacte | equivalente | rien",
+              "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais"}}],
   "qualite": "bonne | moyenne | mauvaise (resolution, filigranes, texte incruste)",
-  "raison": "une phrase en francais"}}"""
+  "resume": "une phrase en francais : ce que contient la video et a quoi elle peut servir"}}"""
+
+LEVELS = ("exacte", "equivalente", "rien")
 
 
 def sections(verif: Optional[Dict], duration: Optional[float], pad: float = 6.0) -> Optional[List[List[float]]]:
@@ -232,18 +239,37 @@ def sections(verif: Optional[Dict], duration: Optional[float], pad: float = 6.0)
     return merged or None
 
 
-def check(url: str, scene: Dict, gemini=None) -> Dict:
-    """Gemini watches a YouTube candidate (by link, nothing downloaded)."""
+def check(url: str, scenes: List[Dict], gemini=None) -> Dict:
+    """Gemini watches a YouTube candidate (by link, nothing downloaded) and
+    says, scene by scene, whether it holds the original or equivalent
+    footage, and where. verdict/moments sum it up for the download."""
     if not _video_id(url):
         raise FinderError("La vérification ne marche que sur un lien YouTube.")
     from gemini_ai_generator import GeminiAIGenerator
     g = gemini or GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
-    prompt = CHECK_PROMPT.format(scene=scene.get("scene", ""), indices=scene.get("indices") or "aucun")
-    r = g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": 1}}, {"text": prompt}],
-                            max_tokens=4000, timeout=240, temperature=0.1)
-    if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or "verdict" not in r:
+    listing = "\n".join(f"{i}. {s.get('scene', '')}" + (f" (indices : {s['indices']})" if s.get("indices") else "")
+                         for i, s in enumerate(scenes))
+    r = g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": 1}},
+                             {"text": CHECK_PROMPT.format(scenes=listing)}],
+                            max_tokens=6000, timeout=240, temperature=0.1)
+    if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or not isinstance(r.get("scenes"), list):
         raise FinderError(f"Vérification impossible : {str(r)[:160]}")
-    verdict = str(r.get("verdict")).lower().strip()
-    return {"verdict": verdict if verdict in {"oui", "probable", "non"} else "probable",
-            "moments": [m for m in (r.get("moments") or []) if isinstance(m, dict)][:5],
-            "qualite": str(r.get("qualite") or ""), "raison": str(r.get("raison") or "")}
+    per, moments = {}, []
+    for e in r["scenes"]:
+        if not isinstance(e, dict):
+            continue
+        try:
+            i = int(e.get("scene"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= i < len(scenes):
+            continue
+        level = str(e.get("niveau") or "").lower().strip().replace("é", "e")
+        level = level if level in LEVELS else "rien"
+        ms = [m for m in (e.get("moments") or []) if isinstance(m, dict)][:5] if level != "rien" else []
+        per[str(i)] = {"niveau": level, "moments": ms, "raison": str(e.get("raison") or "")}
+        moments += ms
+    levels = {v["niveau"] for v in per.values()}
+    verdict = "oui" if "exacte" in levels else "probable" if "equivalente" in levels else "non"
+    return {"verdict": verdict, "par_scene": per, "moments": moments, "qualite": str(r.get("qualite") or ""),
+            "raison": str(r.get("resume") or "")}

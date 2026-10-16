@@ -196,24 +196,19 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
     return save(p)
 
 
-def check_candidate(pid: str, scene: int, url: str) -> Dict:
-    """Gemini watches one suggested video: does it really contain the scene
-    (scene -1: any scene of the model — for a credited account's videos)?"""
+def check_candidate(pid: str, url: str) -> Dict:
+    """Gemini watches one suggested video against every scene of the model:
+    the original or equivalent footage, and where."""
     p = load(pid)
     scenes = (p.get("suggestions") or {}).get("scenes") or []
-    if scene == -1 and scenes:
-        wanted = {"scene": " ; OU ".join(s["scene"] for s in scenes),
-                  "indices": " ; ".join(s["indices"] for s in scenes if s.get("indices"))}
-    elif 0 <= scene < len(scenes):
-        wanted = scenes[scene]
-    else:
-        raise PipelineError("Scène inconnue.")
+    if not scenes:
+        raise PipelineError("Aucune scène à chercher dans ce projet.")
     try:
-        result = finder.check(url, wanted)
+        result = finder.check(url, scenes)
     except finder.FinderError as e:
         raise PipelineError(str(e))
     p = load(pid)
-    p["suggestions"].setdefault("verifs", {})[url] = {**result, "scene": scene}
+    p["suggestions"].setdefault("verifs", {})[url] = result
     return save(p)
 
 

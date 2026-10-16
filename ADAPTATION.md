@@ -41,7 +41,12 @@ L'app analyse le modèle, puis te montre :
 - des **vidéos trouvées sur YouTube**, déjà triées par l'IA (les résultats hors sujet sont retirés) ;
 - les **comptes crédités** dans le modèle (souvent l'auteur des vidéos d'origine) : leur profil YouTube, TikTok et Instagram, et leurs vidéos YouTube sur le sujet.
 
-**Vérifier avec l'IA** (30 secondes environ) : l'IA regarde la vidéo et dit si elle contient **vraiment** la scène (« contient la scène », « probablement », « pas la bonne vidéo »), et **à quel moment**. Pour une longue compilation vérifiée, l'app ne télécharge que **les bons passages**, et pas les 10 minutes.
+**Vérifier avec l'IA** (30 secondes environ) : l'IA regarde la vidéo et cherche **toutes les scènes d'un coup**. Pour chacune, elle répond :
+- **« vidéo exacte »** : c'est la vidéo d'origine ;
+- **« images équivalentes »** : une autre vidéo qui montre la même action, par exemple une autre piscine qui cède, et peut la remplacer ;
+- **« rien pour cette scène »**.
+
+Elle donne aussi **les moments** où on voit la scène, et signale si la vidéo est « utile aussi pour la scène 3 ». Pour une longue compilation vérifiée, l'app ne télécharge que **les passages utiles**, et pas les 10 minutes.
 
 Coche les vidéos qui conviennent, ajoute tes propres liens si besoin (TikTok, Instagram…), puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit.
 

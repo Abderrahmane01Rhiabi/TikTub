@@ -1428,16 +1428,15 @@ def add_adaptation_sources(pid: str, req: AdaptationAddSources):
 
 
 class AdaptationCheck(BaseModel):
-    scene: int
     url: str
 
 
 @app.post("/api/adaptations/{pid}/suggestions/check")
 def check_adaptation_candidate(pid: str, req: AdaptationCheck):
-    """Gemini watches one suggested video (30 s to 1 min)."""
+    """Gemini watches one suggested video against every scene (30 s to 1 min)."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
-    return _serialize_adaptation(_adaptation_call(ap.check_candidate, pid, req.scene, req.url))
+    return _serialize_adaptation(_adaptation_call(ap.check_candidate, pid, req.url))
 
 
 @app.post("/api/adaptations/{pid}/scripts")
