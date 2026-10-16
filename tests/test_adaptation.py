@@ -315,3 +315,13 @@ def test_download_errors_are_explained():
     assert "robot" in sources.explain("u", "ERROR: Sign in to confirm you're not a bot")
     msg = sources.explain("u", "\x1b[0;31mERROR:\x1b[0m [youtube] jlQv41qROxk: This video is not available")
     assert "bloquée dans ton pays" in msg and "\x1b" not in msg
+
+
+def test_check_match_does_not_step_over_a_sharp_peak():
+    from adaptation import checks
+    rng = np.random.default_rng(3)
+    smooth = lambda x: np.convolve(x, np.ones(5) / 5, mode="same")   # like speech at 8 kHz: a peak a few samples wide
+    ref = smooth(rng.normal(size=800))
+    win = np.concatenate([smooth(rng.normal(size=1003)) * 0.3, ref, smooth(rng.normal(size=500)) * 0.3])
+    best, at = checks._match(win, ref)
+    assert at == 1003 and best > 0.99
