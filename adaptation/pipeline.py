@@ -1,8 +1,11 @@
 """
 An adaptation project, step by step.
 
-    analysing        Gemini reads the reference Short; sources are downloaded
-                     and cut into clips                              (background)
+    analysing        Gemini reads the reference Short (once) and lists the
+                     scenes to find, with YouTube candidates; the sources
+                     given are downloaded and cut into clips         (background)
+    sources_search   no source yet: the person picks candidates / pastes links
+                     (sources can also be added later, at sources_review)
     sources_review   the person unticks clips, fixes the credits
     scripting        one script per target channel, re-read by gemini-pro (background)
     script_review    the person reads/edits/approves EVERY script (mandatory)
@@ -24,7 +27,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 import db
-from adaptation import checks, langs, reference, render, script, settings, sources, voices
+from adaptation import checks, finder, langs, reference, render, script, settings, sources, voices
 
 BUSY = {"analysing", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
@@ -68,8 +71,6 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict]) -> 
     urls = [u.strip() for u in source_urls if u and u.strip()]
     if not reference_url.strip():
         raise PipelineError("Il faut le lien du Short modèle.")
-    if not urls:
-        raise PipelineError("Il faut au moins un lien de vidéo source.")
     if not channels:
         raise PipelineError("Choisis au moins une chaîne cible.")
     targets = []
@@ -84,7 +85,8 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict]) -> 
                         "validated": False, "video_id": None})
     pid = "ad_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
     return save({"project_id": pid, "status": "analysing", "reference_url": reference_url.strip(),
-                 "source_urls": urls, "reference": None, "sources": [], "clips": {}, "credits": "",
+                 "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
+                 "credits": "", "credits_auto": "",
                  "targets": targets, "error": None, "failed_step": None})
 
 
@@ -122,31 +124,97 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
 
 
 def run_analysis(pid: str, report: Optional[Report] = None):
+    """The reference and the suggestions are made once; only the sources not
+    analysed yet are downloaded (sources can be added in several goes)."""
     report = report or (lambda phase, f: None)
     p = load(pid)
     try:
-        report("analyse du Short modèle", 0.02)
-        p["reference"] = reference.analyse(p["reference_url"])
-        save(p)
+        if not p.get("reference"):
+            report("analyse du Short modèle", 0.02)
+            p["reference"] = reference.analyse(p["reference_url"])
+            save(p)
+        if not p.get("suggestions"):
+            p["suggestions"] = finder.suggest(p["reference"], p["reference_url"],
+                                              report=lambda ph, f: report(ph, 0.1 + 0.1 * f))
+            save(p)
+        if not p["source_urls"]:
+            p.update(status="sources_search", error=None, failed_step=None)
+            save(p)
+            report("terminé", 1.0)
+            return
         base = project_dir(pid)
-        ids, clips, metas = sources._ids(), {}, []
-        n = len(p["source_urls"])
-        for i, url in enumerate(p["source_urls"]):
-            report(f"source {i + 1}/{n} : téléchargement", 0.1 + 0.85 * i / n)
-            path = sources.download(url, os.path.join(base, "src"), f"src{i}")
-            metas.append(sources.source_meta(path))
-            report(f"source {i + 1}/{n} : découpage et analyse", 0.1 + 0.85 * (i + 0.3) / n)
+        clips, metas = dict(p.get("clips") or {}), list(p.get("sources") or [])
+        ids = (i for i in sources._ids() if i not in clips)
+        todo = list(range(len(metas), len(p["source_urls"])))
+        for k, i in enumerate(todo):
+            url, n = p["source_urls"][i], len(todo)
+            report(f"source {k + 1}/{n} : téléchargement", 0.2 + 0.75 * k / n)
+            path = sources.download(url, os.path.join(base, "src"), f"src{i}",
+                                    (p.get("source_sections") or {}).get(url))
+            meta = sources.source_meta(path)
+            report(f"source {k + 1}/{n} : découpage et analyse", 0.2 + 0.75 * (k + 0.3) / n)
             for c in sources.analyse_source(path, i, os.path.join(base, "work"), ids):
                 clips[c["id"]] = c
+            metas.append(meta)
         p = load(pid)
-        p.update(clips=clips, sources=metas, credits=guess_credits(metas, clips), status="sources_review",
-                 error=None, failed_step=None)
+        guess = guess_credits(metas, clips)
+        if not p.get("credits") or p.get("credits") == p.get("credits_auto"):     # never overwrite a correction
+            p["credits"] = guess
+        p.update(clips=clips, sources=metas, credits_auto=guess, status="sources_review", error=None,
+                 failed_step=None)
         if not any(c["usable"] for c in clips.values()):
             p.update(status="error", error="Aucun clip utilisable dans ces sources.", failed_step="analysing")
         save(p)
     except Exception as e:
         fail(pid, "analysing", e)
     report("terminé", 1.0)
+
+
+def add_sources(pid: str, urls: List[str]) -> Dict:
+    """Links picked among the suggestions (or pasted): analysed on top of the
+    clips already there."""
+    p = load(pid)
+    _expect(p, "sources_search", "sources_review")
+    have = set(p["source_urls"])
+    new = []
+    for u in urls:
+        u = (u or "").strip()
+        if u and u not in have:
+            have.add(u)
+            new.append(u)
+    if not new:
+        raise PipelineError("Aucun nouveau lien : coche une vidéo proposée ou colle un lien.")
+    p["source_urls"] = p["source_urls"] + new
+    sug = p.get("suggestions") or {}
+    durations = {c["url"]: c.get("duration") for s in sug.get("scenes") or [] for c in s.get("candidats") or []}
+    durations.update({v["url"]: v.get("duration") for a in sug.get("comptes") or [] for v in a.get("videos") or []})
+    for u in new:                       # a long video checked by Gemini: only its good moments
+        sec = finder.sections((sug.get("verifs") or {}).get(u), durations.get(u))
+        if sec:
+            p.setdefault("source_sections", {})[u] = sec
+    p["status"] = "analysing"
+    return save(p)
+
+
+def check_candidate(pid: str, scene: int, url: str) -> Dict:
+    """Gemini watches one suggested video: does it really contain the scene
+    (scene -1: any scene of the model — for a credited account's videos)?"""
+    p = load(pid)
+    scenes = (p.get("suggestions") or {}).get("scenes") or []
+    if scene == -1 and scenes:
+        wanted = {"scene": " ; OU ".join(s["scene"] for s in scenes),
+                  "indices": " ; ".join(s["indices"] for s in scenes if s.get("indices"))}
+    elif 0 <= scene < len(scenes):
+        wanted = scenes[scene]
+    else:
+        raise PipelineError("Scène inconnue.")
+    try:
+        result = finder.check(url, wanted)
+    except finder.FinderError as e:
+        raise PipelineError(str(e))
+    p = load(pid)
+    p["suggestions"].setdefault("verifs", {})[url] = {**result, "scene": scene}
+    return save(p)
 
 
 def set_sources(pid: str, usable: Optional[Dict[str, bool]] = None, credits: Optional[str] = None) -> Dict:

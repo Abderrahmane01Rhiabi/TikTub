@@ -9,7 +9,8 @@ import tempfile
 from typing import Dict
 
 PROMPT = """Tu analyses un YouTube Short viral de type "explication" (une voix off explique des images).
-On veut reproduire sa RECETTE (pas ses images) dans d'autres langues.
+On veut reproduire sa RECETTE (pas ses images) dans d'autres langues, a partir des videos d'origine de ses clips.
+Dans "a_chercher", regroupe les plans qui viennent de la meme video d'origine (meme camera, meme evenement) en une seule scene.
 JSON uniquement :
 {"sujet": "de quoi parle la video, en une phrase",
  "question": "la question implicite a laquelle la video repond",
@@ -22,6 +23,11 @@ JSON uniquement :
  "faits": ["chaque affirmation factuelle du script, une par ligne"],
  "faits_douteux": ["affirmations exagerees ou fausses a ne pas reprendre telles quelles"],
  "fin_reboucle": true/false,
+ "recherche_courte": "1 ou 2 mots anglais du theme, pour chercher dans la chaine des comptes credites (ex. tram)",
+ "a_chercher": [{"scene": "en francais, la video d'origine a retrouver, concrete et visuelle (ex. un tram qui percute une voiture noire, filme depuis la cabine du conducteur, de nuit)",
+                 "plans": [indices des plans de cette scene, 0 = premier],
+                 "indices": "filigranes, logos de media, lieu, date ou textes visibles qui aident a retrouver l'original",
+                 "recherches": ["2 ou 3 recherches YouTube en anglais pour retrouver cette video ou une equivalente"]}],
  "style": {"cadre": "", "bandeaux": "", "sous_titres": "", "musique": "", "bruitages": ""}}"""
 
 

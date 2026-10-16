@@ -224,3 +224,81 @@ def test_channel_adaptation_settings_language_voice_music(client, project, monke
     assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0}
     assert [v["voice_id"] for v in r["voices"]] == ["v1"]                    # only voices of its language
     assert client.put("/api/channels/chanA/adaptation", json={"language": "xx"}).status_code == 400
+
+
+# ---------------------------------------------------------------- finder
+
+def test_finder_scenes_fall_back_on_the_shots():
+    from adaptation import finder
+    ref = {"plans": [{"visuel": "Un tram percute une voiture"}, {"visuel": "un tram percute une voiture"},
+                     {"visuel": "Interview"}]}
+    assert [s["scene"] for s in finder.scenes(ref)] == ["Un tram percute une voiture", "Interview"]
+    ref["a_chercher"] = [{"scene": "Un SUV contre un tram", "plans": [1, 2], "recherches": ["suv tram crash", " "]},
+                         {"scene": ""}]
+    s = finder.scenes(ref)
+    assert len(s) == 1 and s[0]["recherches"] == ["suv tram crash"] and s[0]["plans"] == [1, 2]
+
+
+def test_finder_credit_links_and_suggest():
+    from adaptation import finder
+    links = finder.credit_links(["Credits: @adrenalinejunkie4661", "9News", "9news"])
+    assert [c["name"] for c in links] == ["Credits: @adrenalinejunkie4661", "9News"]
+    assert links[0]["links"][1]["url"] == "https://www.tiktok.com/@adrenalinejunkie4661"
+    assert "search_query=9News" in links[1]["links"][0]["url"]
+
+    def search(q):
+        return [{"id": vid, "url": f"https://www.youtube.com/watch?v={vid}"} for vid in ("refrefrefre", "aaaaaaaaaaa")]
+    def search_in(handle, q):
+        assert (handle, q) == ("adrenalinejunkie4661", "tram")
+        return [{"id": "ccccccccccc", "url": "https://www.youtube.com/watch?v=ccccccccccc"}]
+
+    def sort(found):
+        found[0]["candidats"] = found[0]["candidats"][:1]
+    ref = {"credits": ["@adrenalinejunkie4661"], "recherche_courte": "tram",
+           "a_chercher": [{"scene": "Un tram", "recherches": ["tram crash", "tram cabin"]}]}
+    out = finder.suggest(ref, "https://youtube.com/shorts/refrefrefre", search=search, search_in=search_in, sort=sort)
+    sc = out["scenes"][0]
+    assert [c["id"] for c in sc["candidats"]] == ["aaaaaaaaaaa"]      # the reference itself and duplicates are left out
+    assert out["comptes"][0]["videos"][0]["id"] == "ccccccccccc" and out["verifs"] == {}
+    assert sc["liens"][1]["url"] == "https://www.tiktok.com/search?q=tram+crash"
+
+
+def test_finder_check_reads_the_verdict():
+    from adaptation import finder
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            assert parts[0]["file_data"]["file_uri"].startswith("https://www.youtube.com/")
+            return {"verdict": "Probable", "moments": [{"debut": 4, "fin": 9}, "x"], "raison": "même tram"}
+    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", {"scene": "un tram"}, gemini=G())
+    assert r["verdict"] == "probable" and r["moments"] == [{"debut": 4, "fin": 9}]
+    with pytest.raises(finder.FinderError):
+        finder.check("https://www.tiktok.com/@a/video/1", {"scene": "x"}, gemini=G())
+
+
+def test_finder_sort_out_keeps_what_gemini_keeps_and_everything_on_failure():
+    from adaptation import finder
+    found = [{"scene": "tram", "candidats": [{"title": t, "channel": "c"} for t in ("tram crash", "kangourou", "tram 2")]}]
+
+    class G:
+        def __init__(self, r): self.r = r
+        def _generate_content(self, parts, **kw): return self.r
+    finder.sort_out(found, gemini=G({"error": "quota"}))
+    assert len(found[0]["candidats"]) == 3
+    finder.sort_out(found, gemini=G({"garder": {"0": [2, 0, 0, 9]}}))
+    assert [c["title"] for c in found[0]["candidats"]] == ["tram 2", "tram crash"]
+
+
+def test_finder_sections_pad_and_merge_the_verified_moments():
+    from adaptation import finder
+    v = {"verdict": "oui", "moments": [{"debut": 100, "fin": 110}, {"debut": 118, "fin": 125}, {"debut": 400, "fin": 405}]}
+    assert finder.sections(v, 600) == [[94.0, 131.0], [394.0, 411.0]]
+    assert finder.sections(v, 60) is None                    # a short video is taken whole
+    assert finder.sections({**v, "verdict": "non"}, 600) is None
+    assert finder.sections(None, 600) is None
+
+
+def test_download_errors_are_explained():
+    from adaptation import sources
+    assert "robot" in sources.explain("u", "ERROR: Sign in to confirm you're not a bot")
+    assert "indisponible" in sources.explain("u", "Video unavailable")

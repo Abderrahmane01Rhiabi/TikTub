@@ -578,6 +578,14 @@
   .ad-passage .fields{display:flex;flex-direction:column;gap:6px;min-width:0;}
   .ad-passage textarea.f{min-height:52px;font-size:14px;}
   .ad-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+  .ad-scene{border-top:1px solid var(--border-soft);padding-top:12px;display:flex;flex-direction:column;gap:8px;}
+  .ad-scene:first-child{border-top:none;padding-top:0;}
+  .ad-scene .what{font-size:15px;color:var(--text);font-weight:600;}
+  .ad-links{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11.5px;}
+  .ad-links a{padding:3px 9px;border-radius:99px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);text-decoration:none;}
+  .ad-links a:hover{color:var(--text);border-color:var(--accent);}
+  .ad-cand.picked{border-color:var(--accent);}
+  .ad-cand .title{color:var(--text);font-size:11.5px;line-height:1.3;max-height:3.9em;overflow:hidden;}
   .ad-row select.f{width:auto;}
   .ad-preview{display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px;align-items:start;}
   @media (max-width:720px){.ad-preview{grid-template-columns:minmax(0,1fr);}}
@@ -2465,9 +2473,9 @@ function renderAdaptationChannel(card, ch, data){
 
 let adCurrent = null, adPoll = null, adProject = null;
 const AD_BUSY = ['analysing', 'scripting', 'voicing', 'rendering'];
-const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_review']], ['Script', ['scripting', 'script_review']],
+const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STATUS = { analysing: 'analyse…', sources_review: 'sources à vérifier', scripting: 'écriture…',
+const AD_STATUS = { analysing: 'analyse…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
   script_review: 'scripts à relire', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
@@ -2516,7 +2524,7 @@ async function renderNewAdaptation(){
       <div class="chcard-body">
         <label class="f">1. Le Short viral modèle (YouTube, TikTok…)</label>
         <input class="f" id="adRef" placeholder="https://www.youtube.com/shorts/…">
-        <label class="f" style="margin-top:6px">2. Les vidéos d'origine des clips, une par ligne (souvent citées dans les crédits du modèle)</label>
+        <label class="f" style="margin-top:6px">2. Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
         <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea>
         <label class="f" style="margin-top:6px">3. Les chaînes qui recevront une version (chacune dans sa langue, avec sa voix)</label>
         <div class="stack" style="gap:6px">${channels.map(ch => {
@@ -2565,6 +2573,7 @@ async function loadAdProject(){
     const body = document.getElementById('adBody');
     if (AD_BUSY.includes(p.status)) body.innerHTML = adBusyHtml(p);
     else if (p.status === 'error') renderAdError(body, p);
+    else if (p.status === 'sources_search') renderAdSearch(body, p);
     else if (p.status === 'sources_review') renderAdSources(body, p);
     else if (p.status === 'script_review') renderAdScripts(body, p);
     else if (p.status === 'preview_review') renderAdPreviews(body, p);
@@ -2611,8 +2620,11 @@ function renderAdSources(body, p){
             ${c.low_res ? '<span style="color:#f5c56d">basse résolution</span>' : ''}</div>
         </div>`).join('')}</div></div>
       <div class="chcard-foot"><button class="btn primary push" id="adScripts" data-icon="edit">Écrire les scripts →</button></div>
-    </article>`;
+    </article>
+    ${p.suggestions ? `<details class="chcard" style="padding:12px 14px"><summary style="cursor:pointer;font-weight:600">Il manque des images ? Ajouter d'autres sources (vidéos proposées)</summary>
+      <div id="adFinder" class="stack" style="margin-top:10px"></div></details>` : ''}`;
   hydrateIcons(body);
+  if (p.suggestions) renderAdFinder(document.getElementById('adFinder'), p);
   const patch = b => api(`/api/adaptations/${p.project_id}/sources`, { method:'PATCH', body: JSON.stringify(b) }).catch(e => log(e.message, 'error'));
   document.getElementById('adCredits').onchange = e => patch({ credits: e.target.value });
   body.querySelectorAll('.ad-clip').forEach(card => card.querySelector('.ad-use').onchange = e => {
@@ -2623,6 +2635,107 @@ function renderAdSources(body, p){
     try { await patch({ credits: document.getElementById('adCredits').value });
           await api(`/api/adaptations/${p.project_id}/scripts`, { method:'POST' }); loadAdProject(); }
     catch (e){ log(e.message, 'error'); }
+  };
+}
+
+// ---------- "what to download": the scenes to find, the credited accounts, the YouTube candidates ----------
+
+const adPicked = new Set();
+
+function renderAdSearch(body, p){
+  body.innerHTML = `<article class="chcard"><div class="chcard-body">
+      <div><b>Ce qu'il faut télécharger</b></div>
+      <div class="tiny">Voici ce qu'il faut télécharger pour le refaire. Coche les vidéos qui conviennent (ou colle tes liens en bas), puis lance l'analyse.
+        Pas besoin des vidéos exactes : des images équivalentes suffisent, ton script est réécrit.</div>
+    </div></article><div id="adFinder" class="stack"></div>`;
+  renderAdFinder(document.getElementById('adFinder'), p);
+}
+
+function adDuration(s){
+  if (!s) return '';
+  s = Math.round(s);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+function adViews(n){
+  if (!n) return '';
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + ' M vues' : n >= 1e3 ? Math.round(n / 1e3) + ' k vues' : n + ' vues';
+}
+
+const AD_VERDICT = { oui: ['ok', 'contient la scène'], probable: ['warn', 'probablement'], non: ['bad', 'pas la bonne vidéo'] };
+
+function adCandHtml(c, scene, sug, have){
+  const v = (sug.verifs || {})[c.url], already = have.has(c.url), picked = already || adPicked.has(c.url);
+  const long = (c.duration || 0) >= 150;
+  const parts = v && v.verdict !== 'non' && long && (v.moments || []).length;
+  return `<div class="ad-clip ad-cand ${picked ? 'picked' : ''}" data-url="${esc(c.url)}" data-scene="${scene}">
+    <a href="${esc(c.url)}" target="_blank" rel="noopener"><img src="${esc(c.thumb)}" loading="lazy" alt=""></a>
+    <div class="meta"><label><input type="checkbox" class="ad-pick" ${picked ? 'checked' : ''} ${already ? 'disabled' : ''}> ${already ? 'déjà ajoutée' : 'prendre'}</label>
+      <span class="title">${esc(c.title)}</span>
+      <span>${esc(c.channel)}${c.duration ? ' · ' + adDuration(c.duration) : ''}${c.views ? ' · ' + adViews(c.views) : ''}</span>
+      ${v ? `<span class="pill ${AD_VERDICT[v.verdict][0]}" title="${esc(v.raison)}">${esc(AD_VERDICT[v.verdict][1])}</span>
+        <span>${esc(v.raison)}${(v.moments || []).length ? ' · à ' + v.moments.map(m => adDuration(m.debut) || '0:00').join(', ') : ''}</span>
+        ${parts ? '<span style="color:var(--ok)">seuls ces passages seront téléchargés</span>' : ''}`
+        : `${long ? '<span style="color:#f5c56d">vidéo longue : vérifie-la, seuls les bons passages seront pris</span>' : ''}
+           <button class="btn ghost small ad-check" title="Gemini regarde la vidéo (30 s à 1 min)">Vérifier avec l'IA</button>`}
+    </div></div>`;
+}
+
+function renderAdFinder(box, p){
+  const sug = p.suggestions || { comptes: [], scenes: [] };
+  const have = new Set(p.source_urls || []);
+  const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
+  box.innerHTML = `
+    ${sug.comptes.length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('link', 14)} Comptes crédités dans le modèle</div>
+        <div class="meta" style="margin-left:0">Souvent l'auteur des vidéos d'origine : ouvre son profil et copie le lien de la bonne vidéo en bas.</div></div></div>
+      <div class="chcard-body">${sug.comptes.map(c => `<div class="ad-row"><b>${esc(c.name)}</b>${links(c.links)}</div>
+        ${(c.videos || []).length ? `<div class="tiny">Ses vidéos YouTube sur le sujet :</div>
+          <div class="ad-clips">${c.videos.map(v => adCandHtml(v, -1, sug, have)).join('')}</div>` : ''}`).join('')}</div></article>` : ''}
+    <article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('eye', 14)} Vidéos à chercher · ${sug.scenes.length}</div>
+        <div class="meta" style="margin-left:0">Pour chaque scène : quoi chercher, des liens de recherche tout prêts et des vidéos trouvées sur YouTube.</div></div></div>
+      <div class="chcard-body">${sug.scenes.map((sc, si) => `
+        <div class="ad-scene" data-scene="${si}">
+          <div class="what">${si + 1}. Cherche : ${esc(sc.scene)}</div>
+          ${sc.indices ? `<div class="tiny">Indices : ${esc(sc.indices)}</div>` : ''}
+          <div class="ad-links"><span class="tiny">Recherches :</span>${sc.recherches.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('')}</div>
+          ${links(sc.liens || [])}
+          ${(sc.candidats || []).length ? `<div class="ad-clips">${sc.candidats.map(c => adCandHtml(c, si, sug, have)).join('')}</div>` : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les liens de recherche ci-dessus.</div>'}
+        </div>`).join('') || '<div class="tiny">Le modèle n\'a pas pu être découpé en scènes.</div>'}</div></article>
+    <article class="chcard"><div class="chcard-body">
+      <label class="f">Tes propres liens (TikTok, YouTube, Instagram…), un par ligne</label>
+      <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
+      <div class="chcard-foot"><span class="tiny ad-count"></span>
+        <button class="btn primary push ad-add" data-icon="download">Télécharger et analyser →</button></div></article>`;
+  hydrateIcons(box);
+  const own = box.querySelector('.ad-own'), count = box.querySelector('.ad-count');
+  const urls = () => [...adPicked, ...own.value.split('\n').map(x => x.trim()).filter(Boolean)].filter(u => !have.has(u));
+  const recount = () => { const n = urls().length; count.textContent = n ? `${n} vidéo(s) à télécharger` : 'Coche au moins une vidéo ou colle un lien.'; };
+  recount();
+  own.oninput = recount;
+  box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
+    navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Recherche copiée', 'success')).catch(() => {});
+  });
+  box.querySelectorAll('.ad-cand').forEach(card => {
+    const url = card.dataset.url;
+    const cb = card.querySelector('.ad-pick');
+    cb.onchange = () => { cb.checked ? adPicked.add(url) : adPicked.delete(url); card.classList.toggle('picked', cb.checked); recount(); };
+    const chk = card.querySelector('.ad-check');
+    if (chk) chk.onclick = async () => {
+      chk.disabled = true; chk.innerHTML = spin('l\'IA regarde…');
+      try {
+        const np = await api(`/api/adaptations/${p.project_id}/suggestions/check`, { method:'POST',
+          body: JSON.stringify({ scene: +card.dataset.scene, url }) });
+        adProject = np; renderAdFinder(box, np);
+      } catch (e){ log(e.message, 'error'); chk.disabled = false; chk.textContent = 'Vérifier avec l\'IA'; }
+    };
+  });
+  box.querySelector('.ad-add').onclick = async ev => {
+    const list = urls();
+    if (!list.length){ recount(); return; }
+    const btn = ev.currentTarget; btn.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/sources/add`, { method:'POST', body: JSON.stringify({ urls: list }) });
+          list.forEach(u => adPicked.delete(u)); loadAdProject(); }
+    catch (e){ log(e.message, 'error'); btn.disabled = false; }
   };
 }
 

@@ -30,8 +30,24 @@ La clé ElevenLabs doit avoir les permissions **Text to Speech** et **Voices : R
 ## Un projet : espace Adaptation → Nouveau projet
 
 1. **Modèle** : colle le lien du Short viral (YouTube, TikTok…).
-2. **Sources** : colle les liens des **vidéos d'origine** des clips, un par ligne. Elles sont souvent citées dans les crédits du modèle (« Credits: @… »).
+2. **Sources (facultatif)** : si tu as déjà les liens des **vidéos d'origine** des clips, colle-les, un par ligne. Sinon, **laisse vide** : l'app te dira quoi chercher (voir plus bas).
 3. Coche les **chaînes** qui recevront une version, puis clique **Analyser**.
+
+### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
+
+L'app analyse le modèle, puis te montre :
+- **chaque scène à chercher**, décrite simplement : « Cherche : conductrice de tramway avec lunettes heurtant un break sombre », avec les **indices** vus à l'écran (date, filigrane, lieu) ;
+- pour chaque scène, des **recherches toutes prêtes** (clique pour copier) et des liens directs vers YouTube, TikTok et Google vidéos ;
+- des **vidéos trouvées sur YouTube**, déjà triées par l'IA (les résultats hors sujet sont retirés) ;
+- les **comptes crédités** dans le modèle (souvent l'auteur des vidéos d'origine) : leur profil YouTube, TikTok et Instagram, et leurs vidéos YouTube sur le sujet.
+
+**Vérifier avec l'IA** (30 secondes environ) : l'IA regarde la vidéo et dit si elle contient **vraiment** la scène (« contient la scène », « probablement », « pas la bonne vidéo »), et **à quel moment**. Pour une longue compilation vérifiée, l'app ne télécharge que **les bons passages**, et pas les 10 minutes.
+
+Coche les vidéos qui conviennent, ajoute tes propres liens si besoin (TikTok, Instagram…), puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit.
+
+Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées.
+
+**Si YouTube bloque le téléchargement** (« confirme que tu n'es pas un robot ») : ça passe souvent tout seul après une heure. Sinon, exporte les cookies de ton navigateur, connecté à YouTube, avec l'extension « Get cookies.txt LOCALLY », dans un fichier `youtube_cookies.txt` à la racine de TikTub. Ou prends la même vidéo sur TikTok.
 
 ### Étape 2 · Sources (à vérifier)
 

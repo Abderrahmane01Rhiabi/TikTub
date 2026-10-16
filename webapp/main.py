@@ -1325,6 +1325,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
                          for c in (p.get("clips") or {}).values()]
         base["sources"] = p.get("sources") or []
+        base["source_urls"] = p.get("source_urls") or []
+        base["suggestions"] = p.get("suggestions")
     return base
 
 
@@ -1409,6 +1411,33 @@ def update_adaptation_sources(pid: str, req: AdaptationSources):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.set_sources, pid, req.usable, req.credits))
+
+
+class AdaptationAddSources(BaseModel):
+    urls: list
+
+
+@app.post("/api/adaptations/{pid}/sources/add")
+def add_adaptation_sources(pid: str, req: AdaptationAddSources):
+    """Sources picked among the suggestions (or pasted), analysed on top of the others."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.add_sources, pid, [str(u) for u in req.urls])
+    _start_adaptation_step(pid, "analysing")
+    return _serialize_adaptation(p)
+
+
+class AdaptationCheck(BaseModel):
+    scene: int
+    url: str
+
+
+@app.post("/api/adaptations/{pid}/suggestions/check")
+def check_adaptation_candidate(pid: str, req: AdaptationCheck):
+    """Gemini watches one suggested video (30 s to 1 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.check_candidate, pid, req.scene, req.url))
 
 
 @app.post("/api/adaptations/{pid}/scripts")

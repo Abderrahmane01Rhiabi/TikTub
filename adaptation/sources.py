@@ -31,17 +31,50 @@ class SourceError(RuntimeError):
 
 # --------------------------------------------------------------- download / probe
 
-def download(url: str, dest_dir: str, name: str) -> str:
+COOKIES_FILE = "youtube_cookies.txt"      # a cookies.txt export, when YouTube asks to "confirm you're not a bot"
+
+
+def ytdlp_opts(**extra) -> Dict:
+    """What every yt-dlp call shares: quiet, the cookies file when there is
+    one, node as JavaScript runtime (recent YouTube needs one)."""
+    import shutil as _sh
+    opts = {"quiet": True, "no_warnings": True, "noprogress": True}
+    cookies = os.getenv("YTDLP_COOKIES") or COOKIES_FILE
+    if os.path.exists(cookies):
+        opts["cookiefile"] = cookies
+    if _sh.which("node") and not _sh.which("deno"):
+        opts["js_runtimes"] = {"node": {}}
+    return {**opts, **extra}
+
+
+def explain(url: str, err: str) -> str:
+    """yt-dlp's error, said plainly."""
+    low = err.lower()
+    if "not a bot" in low or "429" in low or "sign in" in low:
+        return (f"YouTube bloque le téléchargement ({url}) : il demande de « confirmer que tu n'es pas un robot ». "
+                f"Ça passe souvent tout seul après une heure. Sinon : exporte les cookies de ton navigateur "
+                f"(extension « Get cookies.txt LOCALLY », en étant connecté à YouTube) dans le fichier "
+                f"{COOKIES_FILE} à la racine de TikTub, ou prends la même vidéo sur TikTok.")
+    if "private" in low or "unavailable" in low or "removed" in low:
+        return f"Vidéo indisponible (supprimée ou privée) : {url}"
+    return f"Téléchargement impossible ({url}) : {err[:200]}"
+
+def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None) -> str:
+    """sections: only these [start, end] spans of a long video (joined, in order)."""
     import yt_dlp
     os.makedirs(dest_dir, exist_ok=True)
-    opts = {"outtmpl": os.path.join(dest_dir, name + ".%(ext)s"), "format": "mp4/best",
-            "quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True}
+    opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format="mp4/best", noplaylist=True)
+    if sections:
+        from yt_dlp.utils import download_range_func
+        if len(sections) > 1:
+            return _download_parts(url, dest_dir, name, sections)
+        opts.update(download_ranges=download_range_func(None, [tuple(sections[0])]), force_keyframes_at_cuts=True)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=True)
             path = ydl.prepare_filename(info)
     except Exception as e:
-        raise SourceError(f"Téléchargement impossible ({url}) : {str(e)[:200]}")
+        raise SourceError(explain(url, str(e)))
     if not os.path.exists(path):
         raise SourceError(f"Téléchargement sans fichier vidéo ({url}).")
     meta = {"url": url, "title": info.get("title"), "uploader": info.get("uploader"),
@@ -50,6 +83,29 @@ def download(url: str, dest_dir: str, name: str) -> str:
     with open(path + ".meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)
     return path
+
+
+def _download_parts(url: str, dest_dir: str, name: str, sections: List[List[float]]) -> str:
+    """Several spans: each downloaded on its own, then joined (the cuts
+    between them become ordinary shot changes)."""
+    parts = [download(url, dest_dir, f"{name}_part{k}", [sec]) for k, sec in enumerate(sections)]
+    out = os.path.join(dest_dir, name + ".mp4")
+    lst = os.path.join(dest_dir, name + "_parts.txt")
+    with open(lst, "w", encoding="utf-8") as f:
+        f.writelines(f"file '{os.path.abspath(p)}'\n" for p in parts)
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c:v", "libx264",
+                        "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-ar", "44100", out], capture_output=True)
+    if r.returncode or not os.path.exists(out):
+        raise SourceError(f"Assemblage des passages impossible ({url}).")
+    meta = {**source_meta(parts[0]), "sections": sections}
+    with open(out + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+    for p in parts:
+        for x in (p, p + ".meta.json"):
+            if os.path.exists(x):
+                os.remove(x)
+    os.remove(lst)
+    return out
 
 
 def source_meta(path: str) -> Dict:

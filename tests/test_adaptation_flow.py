@@ -25,13 +25,28 @@ SCRIPT = {"titre": "Pourquoi ?", "description": "Une explication.", "tags": ["tr
 
 @pytest.fixture
 def fakes(monkeypatch):
-    calls = {"synth": 0}
-    from adaptation import checks, reference, render, script, sources, voices
-    monkeypatch.setattr(reference, "analyse", lambda url: {"sujet": "trams", "question": "pourquoi", "plans": [{}]})
-    monkeypatch.setattr(sources, "download", lambda url, d, name: f"{d}/{name}.mp4")
+    calls = {"synth": 0, "reference": 0, "analysed": []}
+    from adaptation import checks, finder, reference, render, script, sources, voices
+
+    def analyse_ref(url):
+        calls["reference"] += 1
+        return {"sujet": "trams", "question": "pourquoi", "plans": [{}]}
+    monkeypatch.setattr(reference, "analyse", analyse_ref)
+    monkeypatch.setattr(finder, "suggest", lambda ref, url="", report=None: {
+        "comptes": [], "verifs": {},
+        "scenes": [{"scene": "un tram qui percute une voiture", "recherches": ["tram crash"], "indices": "",
+                    "candidats": [{"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "duration": 600}]}]})
+    calls["sections"] = {}
+
+    def download(url, d, name, sections=None):
+        calls["sections"][url] = sections
+        return f"{d}/{name}.mp4"
+    monkeypatch.setattr(sources, "download", download)
     monkeypatch.setattr(sources, "source_meta", lambda p: {"handle": "@reposter"})
-    monkeypatch.setattr(sources, "analyse_source",
-                        lambda path, i, work, ids: [dict(c) for c in CLIPS.values() if c["source"] == i])
+    def analyse_source(path, i, work, ids):
+        calls["analysed"].append(i)
+        return [dict(c) for c in CLIPS.values() if c["source"] == i]
+    monkeypatch.setattr(sources, "analyse_source", analyse_source)
     monkeypatch.setattr(script, "write", lambda ref, clips, lang: json.loads(json.dumps(SCRIPT)))
     monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "corrections": ["fin complète"]})
 
@@ -176,5 +191,59 @@ def test_api_runs_the_analysis_in_the_background(client, project, fakes):
     p = client.get(f"/api/adaptations/{pid}").json()
     assert p["status"] == "sources_review" and {c["id"] for c in p["clips"]} == {"A", "B", "C"}
     assert client.post(f"/api/adaptations/{pid}/voices").status_code == 400       # not at that step
-    assert client.post("/api/adaptations", json={"reference_url": "x", "source_urls": [],
+    assert client.post("/api/adaptations", json={"reference_url": " ", "source_urls": [],
                                                  "channels": ["chanA"]}).status_code == 400
+
+
+def test_without_sources_the_app_says_what_to_download_then_analyses_the_picks(project, fakes, monkeypatch):
+    from adaptation import finder
+    p = ap.create("https://youtube.com/shorts/x", [], [channel(project)])
+    pid = p["project_id"]
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_search" and p["clips"] == {}
+    assert p["suggestions"]["scenes"][0]["scene"] == "un tram qui percute une voiture"
+    with pytest.raises(ap.PipelineError):                    # nothing picked
+        ap.add_sources(pid, ["  "])
+
+    monkeypatch.setattr(finder, "check", lambda url, scene: {"verdict": "oui", "moments": [{"debut": 3, "fin": 6}],
+                                                             "qualite": "bonne", "raison": "même accident"})
+    url = "https://www.youtube.com/watch?v=aaaaaaaaaaa"
+    p = ap.check_candidate(pid, 0, url)
+    assert p["suggestions"]["verifs"][url]["verdict"] == "oui"
+    assert ap.check_candidate(pid, -1, url)["suggestions"]["verifs"][url]["scene"] == -1   # any scene
+
+    ap.add_sources(pid, [url])
+    assert ap.load(pid)["status"] == "analysing"
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_review" and set(p["clips"]) == {"A"}
+    assert fakes["reference"] == 1                           # the reference is read once
+    assert fakes["sections"][url] == [[0.0, 12.0]]            # a verified 10-min video: only its moment
+
+    ap.set_sources(pid, credits="@moi")                      # a correction is never overwritten
+    ap.add_sources(pid, [url, "https://tiktok.com/b"])       # already there: ignored
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert fakes["analysed"] == [0, 1]                       # only the new source was analysed
+    assert set(p["clips"]) == {"A", "B", "C"} and p["credits"] == "@moi"
+    assert p["source_urls"] == [url, "https://tiktok.com/b"]
+
+
+def test_api_add_sources_and_check(client, project, fakes, monkeypatch):
+    from adaptation import finder
+    channel(project)
+    pid = client.post("/api/adaptations", json={"reference_url": "https://youtube.com/shorts/x", "source_urls": [],
+                                                "channels": ["chanA"]}).json()["project_id"]
+    for _ in range(50):
+        if client.get(f"/api/adaptations/{pid}").json()["status"] != "analysing":
+            break
+        time.sleep(0.1)
+    p = client.get(f"/api/adaptations/{pid}").json()
+    assert p["status"] == "sources_search" and p["suggestions"]["scenes"]
+    monkeypatch.setattr(finder, "check", lambda url, scene: (_ for _ in ()).throw(finder.FinderError("lien YouTube")))
+    r = client.post(f"/api/adaptations/{pid}/suggestions/check", json={"scene": 0, "url": "https://tiktok.com/x"})
+    assert r.status_code == 400 and "YouTube" in r.json()["detail"]
+    assert client.post(f"/api/adaptations/{pid}/sources/add", json={"urls": []}).status_code == 400
+    r = client.post(f"/api/adaptations/{pid}/sources/add", json={"urls": ["https://tiktok.com/a"]})
+    assert r.status_code == 200

@@ -37,6 +37,8 @@ token.json
 .env.staging
 config.yaml
 *.key
+youtube_cookies.txt
+cookies.txt
 *.pem
 *.p12
 
