@@ -1,0 +1,333 @@
+"""
+Source videos -> a catalogue of clean clips.
+
+What was done by hand for the tram prototype, made generic:
+  - the clean picture: a vertical video showing a 16:9 TV/camera band on a
+    blurred copy of itself is cropped to that band (logo and subtitles in
+    the blurred zone go away with it)
+  - the cuts: frame-to-frame difference peaks
+  - the crash/peak of each clip: the loudest 50 ms (or, on a quiet clip, the
+    biggest picture jolt)
+  - what each clip shows, whether it's usable, whether its sound has speech:
+    asked to Gemini, clip by clip, on OUR cut times
+  - watermarks / logos / channel names: boxes asked to Gemini on one still
+    per clip; a strip along the top or bottom edge is cropped away, anything
+    else is painted over (ffmpeg delogo)
+"""
+
+import json
+import math
+import os
+import string
+import subprocess
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+
+class SourceError(RuntimeError):
+    pass
+
+
+# --------------------------------------------------------------- download / probe
+
+def download(url: str, dest_dir: str, name: str) -> str:
+    import yt_dlp
+    os.makedirs(dest_dir, exist_ok=True)
+    opts = {"outtmpl": os.path.join(dest_dir, name + ".%(ext)s"), "format": "mp4/best",
+            "quiet": True, "no_warnings": True, "noprogress": True, "noplaylist": True}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            path = ydl.prepare_filename(info)
+    except Exception as e:
+        raise SourceError(f"Téléchargement impossible ({url}) : {str(e)[:200]}")
+    if not os.path.exists(path):
+        raise SourceError(f"Téléchargement sans fichier vidéo ({url}).")
+    return path
+
+
+def probe(path: str) -> Dict:
+    out = json.loads(subprocess.check_output([
+        "ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height:format=duration",
+        "-of", "json", path]))
+    s = out["streams"][0]
+    return {"w": int(s["width"]), "h": int(s["height"]), "duration": float(out["format"]["duration"])}
+
+
+def _gray_frames(path: str, w: int, h: int, fps: float, crop: Optional[str] = None,
+                 ss: float = 0.0, t: Optional[float] = None) -> np.ndarray:
+    vf = (f"crop={crop}," if crop else "") + f"fps={fps},scale={w}:{h}"
+    cmd = ["ffmpeg", "-v", "error", "-ss", f"{ss:.3f}"] + (["-t", f"{t:.3f}"] if t else []) + \
+          ["-i", path, "-vf", vf, "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+    raw = subprocess.run(cmd, capture_output=True).stdout
+    return np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(float)
+
+
+# --------------------------------------------------------------- clean picture
+
+def refine_edges(path: str, info: Dict, times: List[float], top: int, bot: int,
+                 margin: int = 40) -> Tuple[int, int]:
+    """Gemini puts a band edge within a few % — the exact row is the strongest
+    row-to-row jump within +-margin of it, averaged over a few frames."""
+    w, h = info["w"], info["h"]
+    profiles = []
+    for t in times[:4]:
+        f = _gray_frames(path, w, h, 1, ss=max(0.0, t), t=1.0)
+        if len(f):
+            profiles.append(np.abs(np.diff(f[0], axis=0)).mean(1))
+    if not profiles:
+        return top, bot
+    edge = np.mean(profiles, axis=0)
+
+    def best(guess):
+        a, b = max(1, guess - margin), min(h - 2, guess + margin)
+        return a + int(np.argmax(edge[a:b])) + 1 if b > a else guess
+    return best(top) + 4, best(bot) - 4           # a few rows inside: no dark seam
+
+
+def band_from_area(area: Optional[List[int]], w: int, h: int) -> Optional[Tuple[int, int]]:
+    """A Gemini picture-area box (0-1000) -> (top, bottom) rows when it is a
+    full-width landscape band inside a taller frame."""
+    if not area or len(area) != 4:
+        return None
+    y0, x0, y1, x1 = area
+    top, bot = int(y0 * h / 1000), int(y1 * h / 1000)
+    if x1 - x0 < 850 or bot - top > h * 0.85 or bot <= top:
+        return None
+    return (top, bot) if 1.2 <= w / (bot - top) <= 2.6 else None
+
+
+# --------------------------------------------------------------- cuts and peaks
+
+def detect_cuts(path: str, info: Dict, crop: Optional[str], min_len: float = 1.2) -> List[Tuple[float, float]]:
+    """Clip boundaries from frame-difference peaks (25 fps, small frames)."""
+    fps = 25.0
+    f = _gray_frames(path, 96, 96, fps, crop)
+    if len(f) < 3:
+        return [(0.0, info["duration"])]
+    d = np.abs(np.diff(f, axis=0)).mean((1, 2))
+    med = np.median(d) + 1e-6
+    peaks = [i + 1 for i in range(len(d)) if d[i] > 4 * med]
+    small = _gray_frames(path, 16, 16, fps, crop)
+    cuts = []
+    for i in peaks:
+        t = i / fps
+        if cuts and t - cuts[-1] <= 0.3:                       # a fade gives several peaks in a row
+            continue
+        if is_cut(small, i):
+            cuts.append(t)
+    bounds = [0.0] + cuts + [info["duration"]]
+    segs = [(round(a + 0.08, 2), round(b - 0.08, 2)) for a, b in zip(bounds, bounds[1:]) if b - a >= min_len]
+    return segs or [(0.0, info["duration"])]
+
+
+def is_cut(small: np.ndarray, i: int) -> bool:
+    """A real cut changes the whole picture; a crash only shakes it. Measured
+    on 0.2 s before vs 0.3 s after (16x16 frames): cuts differ by 26-57 with a
+    correlation <= 0.81, crash jolts by 6-12 with a correlation >= 0.91."""
+    a, b = small[max(0, i - 6):max(1, i - 1)], small[i + 2:i + 10]
+    if not len(a) or not len(b):
+        return True
+    a, b = a.mean(0), b.mean(0)
+    diff = np.abs(a - b).mean()
+    corr = np.corrcoef(a.ravel(), b.ravel())[0, 1] if a.std() > 0 and b.std() > 0 else 0.0
+    return diff > 18 or corr < 0.85
+
+
+def find_peak(path: str, a: float, b: float, crop: Optional[str]) -> Tuple[float, bool]:
+    """(time, from_sound): the loudest 50 ms of [a, b]; a clip with no clear
+    sound peak gets its biggest picture jolt instead."""
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", path, "-vn",
+                          "-ac", "1", "-ar", "8000", "-f", "s16le", "-"], capture_output=True).stdout
+    x = np.frombuffer(raw, np.int16).astype(float) / 32768
+    if len(x) >= 800:
+        n = len(x) // 400 * 400
+        db = 20 * np.log10(np.sqrt((x[:n].reshape(-1, 400) ** 2).mean(1)) + 1e-6)
+        i = int(np.argmax(db))
+        if db[i] - np.median(db) > 6:
+            return round(a + i / 20, 2), True
+    f = _gray_frames(path, 96, 96, 25, crop, ss=a, t=b - a)
+    if len(f) >= 3:
+        d = np.abs(np.diff(f, axis=0)).mean((1, 2))
+        return round(a + (int(np.argmax(d)) + 1) / 25, 2), False
+    return round((a + b) / 2, 2), False
+
+
+# --------------------------------------------------------------- Gemini
+
+def _gemini():
+    from gemini_ai_generator import GeminiAIGenerator
+    return GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
+
+
+DESCRIBE_PROMPT = """Voici une video source, deja decoupee en passages (secondes) :
+{segments}
+Pour CHAQUE passage, dans le meme ordre, decris-le. JSON uniquement :
+{{"passages": [{{"camera": "cabine | camera avant | surveillance | telephone | plateau TV | autre",
+  "visuel": "description precise : ce qui se passe, vehicules et COULEURS, jour/nuit, personnes",
+  "utilisable": true/false, "pourquoi_pas": "si inutilisable : presentateur, interview, logo, ecran de fin, pub, flou...",
+  "parole_dans_le_son": true/false}}]}}"""
+
+BOXES_PROMPT = """Voici {n} images (une par clip). Pour CHACUNE :
+1. "zone_image" : le rectangle de la VRAIE image filmee, sans le fond flou, les bandes noires ou les cadres
+   ajoutes autour (si la video occupe tout l'ecran, donne [0, 0, 1000, 1000]).
+2. "boites" : les elements AJOUTES par-dessus qu'il faut effacer : filigranes, logos de chaines/reseaux
+   (TikTok, 9News...), noms d'utilisateur (@...), sous-titres ou textes incrustes. PAS les textes naturels
+   de la scene (panneaux, plaques) ni les donnees de camera (heure, vitesse, GPS).
+JSON uniquement : {{"images": [{{"zone_image": [ymin, xmin, ymax, xmax],
+  "boites": [{{"box_2d": [ymin, xmin, ymax, xmax], "quoi": "court"}}]}}]}}
+Coordonnees entre 0 et 1000, sur l'image ENTIERE. "boites" vide si rien a effacer."""
+
+
+def describe(path: str, segments: List[Tuple[float, float]]) -> List[Dict]:
+    g = _gemini()
+    up = g._upload_video_file(path)
+    if not up:
+        raise SourceError("Envoi de la source à Gemini impossible.")
+    try:
+        if not g._wait_for_file_active(up["name"], timeout=180):
+            raise SourceError("Gemini n'a pas fini de lire la source à temps.")
+        listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
+        r = g._generate_content([{"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}},
+                                 {"text": DESCRIBE_PROMPT.format(segments=listing)}],
+                                max_tokens=16000, timeout=180, temperature=0.2)
+    finally:
+        g._delete_file(up["name"])
+    items = r if isinstance(r, list) else (r.get("passages") if isinstance(r, dict) else None)
+    if not isinstance(items, list):
+        raise SourceError(f"Description de la source inutilisable : {str(r)[:200]}")
+    return (items + [{}] * len(segments))[:len(segments)]
+
+
+def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[int]]]]:
+    """Per still: (picture area, boxes to erase), coordinates 0-1000 on the full
+    frame. Best effort: on failure, the whole frame and nothing to erase."""
+    import base64
+    if not stills:
+        return []
+    parts = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(p, "rb").read()).decode()}}
+             for p in stills]
+    imgs = []
+    for _attempt in range(2):          # a long answer (many stills) was once cut off mid-JSON
+        try:
+            r = _gemini()._generate_content(parts + [{"text": BOXES_PROMPT.format(n=len(stills))}],
+                                            max_tokens=24000, timeout=180, temperature=0.1)
+        except Exception:
+            continue
+        imgs = r if isinstance(r, list) else (r.get("images") or [])
+        if imgs:
+            break
+    if not imgs:
+        return [(None, []) for _ in stills]
+    out = []
+    for k in range(len(stills)):
+        item = imgs[k] if k < len(imgs) and isinstance(imgs[k], dict) else {}
+        area = item.get("zone_image") if isinstance(item.get("zone_image"), list) else None
+        boxes = [b["box_2d"] for b in item.get("boites") or [] if isinstance(b, dict) and len(b.get("box_2d") or []) == 4]
+        out.append((area, boxes))
+    return out
+
+
+def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int, List[Tuple[int, int, int, int]]]:
+    """Boxes (0-1000) -> rows to cut at the top/bottom, and boxes to paint over.
+    A thin strip touching the top or bottom 12 % is cropped (cleaner than any
+    painting); a box covering more than a quarter of the frame is ignored
+    (painting it would ruin the clip)."""
+    cut_top, cut_bot, patches = 0, 0, []
+    for y0, x0, y1, x1 in boxes:
+        y0, y1, x0, x1 = y0 * h / 1000, y1 * h / 1000, x0 * w / 1000, x1 * w / 1000
+        bw, bh = x1 - x0, y1 - y0
+        if bw <= 2 or bh <= 2 or bw * bh > 0.25 * w * h:
+            continue
+        if y1 >= h * 0.88 and bh <= h * 0.15:
+            cut_bot = max(cut_bot, int(h - y0) + 4)
+        elif y0 <= h * 0.12 and bh <= h * 0.15:
+            cut_top = max(cut_top, int(y1) + 4)
+        else:
+            m = 6
+            patches.append((int(x0) - m, int(y0) - m, int(bw) + 2 * m, int(bh) + 2 * m))
+    return cut_top, cut_bot, patches
+
+
+# --------------------------------------------------------------- the catalogue
+
+def _ids():
+    letters = string.ascii_uppercase
+    for k in range(10_000):
+        yield letters[k % 26] * (k // 26 + 1)
+
+
+def still(path: str, t: float, crop: Optional[str], out: str) -> str:
+    vf = (f"crop={crop}," if crop else "") + "scale=640:-2"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", path, "-frames:v", "1", "-vf", vf, out],
+                   check=False)
+    return out
+
+
+def _to_band_coords(boxes: List[List[int]], h_full: int, top: int, height: int) -> List[List[int]]:
+    """Boxes given on the full frame (0-1000) -> 0-1000 relative to the band."""
+    out = []
+    for y0, x0, y1, x1 in boxes:
+        a, b = (y0 * h_full / 1000 - top) / height * 1000, (y1 * h_full / 1000 - top) / height * 1000
+        if b > 0 and a < 1000:                 # only what overlaps the band
+            out.append([max(0, int(a)), x0, min(1000, int(b)), x1])
+    return out
+
+
+def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini: bool = True) -> List[Dict]:
+    """Every clip of one source video, ready for the script and the render."""
+    info = probe(path)
+    w_full, h_full = info["w"], info["h"]
+    os.makedirs(work_dir, exist_ok=True)
+
+    # 1. the clean picture area, if the video is a band on a blurred copy of itself
+    band = None
+    if use_gemini and h_full >= w_full * 1.3:
+        times = [info["duration"] * k / 9 for k in range(1, 9)]
+        found = [band_from_area(a, w_full, h_full) for a, _ in
+                 find_boxes([still(path, t, None, os.path.join(work_dir, f"b{index}_{k}.jpg"))
+                             for k, t in enumerate(times)])]
+        found = [(b, t) for b, t in zip(found, times) if b]
+        if len(found) >= 3:
+            top = int(np.median([b[0] for b, _ in found]))
+            bot = int(np.median([b[1] for b, _ in found]))
+            band = refine_edges(path, info, [t for _, t in found], top, bot)
+    base_crop = f"{w_full}:{band[1] - band[0]}:0:{band[0]}" if band else None
+
+    # 2. clips, and what each one shows
+    segments = detect_cuts(path, info, base_crop)
+    descriptions = describe(path, segments) if use_gemini else [{} for _ in segments]
+    stills = [still(path, (a + b) / 2, None, os.path.join(work_dir, f"s{index}_{k}.jpg"))
+              for k, (a, b) in enumerate(segments)]
+    found = find_boxes(stills) if use_gemini else [(None, []) for _ in segments]
+
+    ids = id_gen or _ids()
+    clips = []
+    for (a, b), d, (area, bx) in zip(segments, descriptions, found):
+        own = band_from_area(area, w_full, h_full)
+        on_band = bool(own)
+        if own and band and abs(own[0] - band[0]) <= 60 and abs(own[1] - band[1]) <= 60:
+            own = band                          # the video's usual band, already measured
+        elif own:
+            own = refine_edges(path, info, [(a + b) / 2], *own)
+        top, height = (own[0], own[1] - own[0]) if on_band else (0, h_full)
+        boxes = _to_band_coords(bx, h_full, top, height) if on_band else bx
+        cut_top, cut_bot, patches = edges_and_patches(boxes, w_full, height)
+        h = height - cut_top - cut_bot
+        if h < height * 0.6:                    # cropping would eat the picture: paint instead
+            cut_top = cut_bot = 0
+            h = height
+        crop = f"{w_full}:{h}:0:{top + cut_top}" if (on_band or cut_top or cut_bot) else None
+        patches = [(x, y - cut_top, pw, ph) for x, y, pw, ph in patches if y - cut_top >= 0]
+        peak, from_sound = find_peak(path, a, b, crop)
+        clips.append({
+            "id": next(ids), "source": index, "src": path, "start": a, "end": b, "impact": peak,
+            "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches,
+            "desc": d.get("visuel") or "", "camera": d.get("camera") or "",
+            "usable": bool(d.get("utilisable", True)) and b - a >= 1.5,
+            "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < 1.5 else ""),
+            "audio_ok": from_sound and not d.get("parole_dans_le_son", False),
+            "low_res": min(w_full, h) < 540,
+        })
+    return clips
