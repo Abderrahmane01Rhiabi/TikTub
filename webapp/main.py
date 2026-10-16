@@ -1393,7 +1393,9 @@ def adaptation_clip_thumb(pid: str, cid: str):
     out = os.path.join(ap.project_dir(pid), "thumbs", f"{cid}.jpg")
     if not os.path.exists(out):
         os.makedirs(os.path.dirname(out), exist_ok=True)
-        sources.still(c["src"], c["impact"], c.get("crop"), out)
+        sources.clip_still(c, out)
+    if not os.path.exists(out):
+        raise HTTPException(status_code=404, detail="Miniature indisponible")
     return FileResponse(out, media_type="image/jpeg")
 
 

@@ -294,12 +294,9 @@ def clip_chain(i: int, k: int, c: Dict, s: Dict) -> List[str]:
         pre += f",tpad=stop_mode=clone:stop_duration={pad:.3f}"
     if c.get("crop"):
         pre += f",crop={c['crop']}"
-    for x, y, w, h in c.get("delogo") or []:
-        cw, ch = c["w"], c["h"]
-        x, y = max(1, int(x)), max(1, int(y))
-        w, h = min(int(w), cw - x - 2), min(int(h), ch - y - 2)
-        if w > 4 and h > 4:
-            pre += f",delogo=x={x}:y={y}:w={w}:h={h}"
+    from adaptation.sources import delogo_filters
+    for f in delogo_filters(c.get("delogo"), c["w"], c["h"]):
+        pre += "," + f
     aspect, box_aspect = c["w"] / c["h"], BOX_W / BOX_H
     g = []
     if abs(math.log(aspect / box_aspect)) < 0.25:            # close to the box: fill it

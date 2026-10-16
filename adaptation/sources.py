@@ -189,7 +189,7 @@ BOXES_PROMPT = """Voici {n} images (une par clip). Pour CHACUNE :
    (TikTok, 9News...), noms d'utilisateur (@...), sous-titres ou textes incrustes. PAS les textes naturels
    de la scene (panneaux, plaques) ni les donnees de camera (heure, vitesse, GPS).
 JSON uniquement : {{"images": [{{"zone_image": [ymin, xmin, ymax, xmax],
-  "boites": [{{"box_2d": [ymin, xmin, ymax, xmax], "quoi": "court"}}]}}]}}
+  "boites": [{{"box_2d": [ymin, xmin, ymax, xmax], "quoi": "le TEXTE EXACT lisible (ex. '@azzamyreal', '9NEWS'), sinon une description courte"}}]}}]}}
 Coordonnees entre 0 et 1000, sur l'image ENTIERE. "boites" vide si rien a effacer."""
 
 
@@ -273,10 +273,41 @@ def _ids():
         yield letters[k % 26] * (k // 26 + 1)
 
 
-def still(path: str, t: float, crop: Optional[str], out: str) -> str:
-    vf = (f"crop={crop}," if crop else "") + "scale=640:-2"
+def delogo_filters(boxes, w: int, h: int) -> List[str]:
+    """ffmpeg delogo refuses a box touching or crossing the frame edge: clamp it inside."""
+    out = []
+    for x, y, bw, bh in boxes or []:
+        x, y = max(1, int(x)), max(1, int(y))
+        bw, bh = min(int(bw), w - x - 2), min(int(bh), h - y - 2)
+        if bw > 4 and bh > 4:
+            out.append(f"delogo=x={x}:y={y}:w={bw}:h={bh}")
+    return out
+
+
+def still(path: str, t: float, crop: Optional[str], out: str, delogo=None, size=None) -> str:
+    """size: (w, h) of the frame after the crop — needed to clamp the delogo boxes."""
+    marks = delogo_filters(delogo, *size) if (delogo and size) else []
+    vf = ",".join(([f"crop={crop}"] if crop else []) + marks + ["scale=640:-2"])
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t:.3f}", "-i", path, "-frames:v", "1", "-vf", vf, out],
                    check=False)
+    return out
+
+
+def clip_still(c: Dict, out: str) -> str:
+    """A thumbnail as the render will show it (cropped, marks erased), at the
+    crash — or mid-clip when that frame is dark (replays open on a fade)."""
+    from PIL import Image, ImageStat
+    for t in (c["impact"], (c["start"] + c["end"]) / 2):
+        if os.path.exists(out):
+            os.remove(out)
+        still(c["src"], t, c.get("crop"), out, c.get("delogo"), (c["w"], c["h"]))
+        if not os.path.exists(out):                       # never fail a thumbnail over the clean-up
+            still(c["src"], t, c.get("crop"), out)
+        try:
+            if ImageStat.Stat(Image.open(out).convert("L")).mean[0] > 18:
+                break
+        except OSError:
+            break
     return out
 
 
