@@ -155,6 +155,11 @@ def _recover_interrupted_jobs():
         recover_interrupted()
     except Exception as e:
         print(f"⚠️ Recovery of interrupted jobs skipped: {e}")
+    try:
+        from adaptation import pipeline as adaptation_pipeline
+        adaptation_pipeline.recover_interrupted()
+    except Exception as e:
+        print(f"⚠️ Recovery of interrupted adaptations skipped: {e}")
 
 
 def _daily_backup_on_startup():
@@ -1157,6 +1162,342 @@ def broll_video(clip_id: str):
     if not clip:
         raise HTTPException(status_code=404, detail="Plan introuvable")
     return FileResponse(broll.clip_path(clip), media_type="video/mp4")
+
+
+# ---------------------------------------------------------------------------
+# Adaptation — Réglages → Voix (the ElevenLabs voice library) and each
+# channel's adaptation settings (language, voice, music)
+# ---------------------------------------------------------------------------
+
+def _serialize_voice(v: dict) -> dict:
+    from adaptation import settings as ad
+    return {**{k: v.get(k) for k in ("voice_id", "name", "custom_name", "language", "accent", "gender", "age",
+                                       "use_case", "description", "has_preview")},
+            "display_name": ad.display_name(v), "preview_url": f"/api/voices/{v['voice_id']}/preview"}
+
+
+@app.get("/api/voices")
+def list_voice_library(language: Optional[str] = None):
+    import db as _db
+    from adaptation.langs import LANGS
+    return {"voices": [_serialize_voice(v) for v in _db.list_voices(language)],
+            "languages": {k: v["label"] for k, v in LANGS.items()}}
+
+
+class VoiceAdd(BaseModel):
+    voice_ids: list    # one or several ElevenLabs ids
+
+
+@app.post("/api/voices")
+def add_voices(req: VoiceAdd):
+    """Adds voices by id; each is looked up at ElevenLabs (name, language,
+    accent, preview). Returns what was added and why the others weren't."""
+    from adaptation import settings as ad
+    added, failed = [], []
+    for vid in [str(v).strip() for v in req.voice_ids if str(v).strip()][:50]:
+        try:
+            added.append(_serialize_voice(ad.add_voice(vid)))
+        except Exception as e:
+            failed.append({"voice_id": vid, "error": str(e)[:200]})
+    return {"added": added, "failed": failed, **list_voice_library()}
+
+
+class VoiceRename(BaseModel):
+    name: str
+
+
+@app.patch("/api/voices/{voice_id}")
+def rename_voice(voice_id: str, req: VoiceRename):
+    from adaptation import settings as ad
+    v = ad.rename_voice(voice_id, req.name)
+    if not v:
+        raise HTTPException(status_code=404, detail="Voix introuvable")
+    return _serialize_voice(v)
+
+
+@app.delete("/api/voices/{voice_id}")
+def remove_voice(voice_id: str):
+    from adaptation import settings as ad
+    if not ad.remove_voice(voice_id):
+        raise HTTPException(status_code=404, detail="Voix introuvable")
+    return list_voice_library()
+
+
+@app.get("/api/voices/{voice_id}/preview")
+def voice_preview(voice_id: str):
+    import db as _db
+    from adaptation import settings as ad
+    if not _db.get_voice(voice_id) or not os.path.exists(ad.preview_path(voice_id)):
+        raise HTTPException(status_code=404, detail="Pas d'extrait pour cette voix")
+    return FileResponse(ad.preview_path(voice_id), media_type="audio/mpeg")
+
+
+def _adaptation_channel_payload(channel_name: str) -> dict:
+    from adaptation import settings as ad
+    profile = channel_manager.get_channel_profile(channel_name)
+    s = ad.channel_settings(profile)
+    music_dir = Path(channel_manager.get_assets_dirs(channel_name)["music"])
+    music = sorted(p.name for p in music_dir.iterdir() if p.suffix.lower() in MUSIC_EXTENSIONS) \
+        if music_dir.exists() else []
+    return {"settings": s, "music_files": music, "voices": [_serialize_voice(v) for v in ad.voices_for(s["language"])]}
+
+
+@app.get("/api/channels/{channel_name}/adaptation")
+def get_channel_adaptation(channel_name: str):
+    return _adaptation_channel_payload(channel_name)
+
+
+class ChannelAdaptationUpdate(BaseModel):
+    language: Optional[str] = None
+    settings: dict = Field(default_factory=dict)
+
+
+@app.put("/api/channels/{channel_name}/adaptation")
+def update_channel_adaptation(channel_name: str, update: ChannelAdaptationUpdate):
+    from adaptation import settings as ad
+    from adaptation.langs import LANGS
+    profile = channel_manager.get_channel_profile(channel_name)
+    if update.language is not None:
+        if update.language not in LANGS:
+            raise HTTPException(status_code=400, detail=f"Langue : {', '.join(LANGS)}")
+        profile["language_hint"] = update.language      # also the language of its AI titles
+    profile["adaptation"] = {**(profile.get("adaptation") or {}), **ad.clean_update(update.settings)}
+    channel_manager.save_channel_profile(channel_name, profile)
+    return _adaptation_channel_payload(channel_name)
+
+
+# ---------------------------------------------------------------------------
+# Adaptation projects — the "Adaptation" space: Modèle → Sources → Script
+# (mandatory review) → Aperçu → Rendu, then the videos join Publication
+# ---------------------------------------------------------------------------
+
+def _adaptation_job(pid: str) -> str:
+    return f"adapt:{pid}"
+
+
+def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
+    """Runs one background step of a project, with real progress for the UI."""
+    import progress
+    from adaptation import pipeline as ap
+    key = _adaptation_job(pid)
+    progress.start(key, kind="adaptation", phase=step)
+    runner = ap.RUNNERS[step]
+
+    def run():
+        try:
+            report = lambda phase, f: progress.update(key, f, phase=phase)
+            if step == "voicing":
+                runner(pid, report, only=only)
+            else:
+                runner(pid, report)
+            progress.finish(key)
+        except Exception as e:
+            progress.finish(key, error=str(e))
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _serialize_adaptation(p: dict, full: bool = True) -> dict:
+    import progress
+    from adaptation import langs
+    job = progress.get(_adaptation_job(p["project_id"])) or {}
+    base = {k: p.get(k) for k in ("project_id", "status", "reference_url", "credits", "error", "failed_step",
+                                   "created_at", "updated_at")}
+    base["subject"] = (p.get("reference") or {}).get("sujet")
+    base["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
+    targets = []
+    for t in p.get("targets", []):
+        prev, fin = t.get("preview") or {}, t.get("final") or {}
+        targets.append({
+            "channel": t["channel"], "language": t["language"], "language_label": langs.lang(t["language"])["label"],
+            "rtl": langs.lang(t["language"])["rtl"], "voice_id": t["voice_id"], "approved": t.get("approved"),
+            "validated": t.get("validated"), "video_id": t.get("video_id"), "script": t.get("script"),
+            "problems": t.get("problems") or [], "music": os.path.basename(t["music_path"]) if t.get("music_path") else None,
+            "preview_url": video_media_url({"video_path": prev["path"]}) if prev.get("path") and os.path.exists(prev["path"]) else None,
+            "checks": prev.get("checks"), "final_checks": fin.get("checks"),
+            "duration": (prev.get("summary") or {}).get("duration"),
+        })
+    base["targets"] = targets
+    if full:
+        ref = p.get("reference") or {}
+        base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
+        base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
+                                                  "why_not", "low_res", "audio_ok", "marks")},
+                          "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
+                         for c in (p.get("clips") or {}).values()]
+        base["sources"] = p.get("sources") or []
+    return base
+
+
+def _adaptation_or_404(pid: str) -> dict:
+    import db as _db
+    p = _db.get_adaptation(pid)
+    if not p:
+        raise HTTPException(status_code=404, detail="Projet introuvable")
+    return p
+
+
+def _adaptation_call(fn, *args):
+    from adaptation.pipeline import PipelineError
+    try:
+        return fn(*args)
+    except PipelineError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+class AdaptationCreate(BaseModel):
+    reference_url: str
+    source_urls: list
+    channels: list
+
+
+@app.post("/api/adaptations")
+def create_adaptation(req: AdaptationCreate):
+    from adaptation import pipeline as ap
+    targets = [{"channel": ch, "profile": channel_manager.get_channel_profile(ch),
+                "music_dir": channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
+    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets)
+    _start_adaptation_step(p["project_id"], "analysing")
+    return _serialize_adaptation(p)
+
+
+@app.get("/api/adaptations")
+def list_adaptations():
+    import db as _db
+    return [_serialize_adaptation(p, full=False) for p in _db.list_adaptations()]
+
+
+@app.get("/api/adaptations/{pid}")
+def get_adaptation(pid: str):
+    return _serialize_adaptation(_adaptation_or_404(pid))
+
+
+@app.delete("/api/adaptations/{pid}")
+def delete_adaptation(pid: str):
+    import db as _db
+    from adaptation import pipeline as ap
+    p = _adaptation_or_404(pid)
+    if p["status"] in ap.BUSY:
+        raise HTTPException(status_code=400, detail="Une étape tourne encore : attends sa fin.")
+    shutil.rmtree(ap.project_dir(pid), ignore_errors=True)
+    _db.delete_adaptation(pid)
+    return {"deleted": True}
+
+
+@app.get("/api/adaptations/{pid}/clips/{cid}/thumb")
+def adaptation_clip_thumb(pid: str, cid: str):
+    from adaptation import pipeline as ap, sources
+    p = _adaptation_or_404(pid)
+    c = (p.get("clips") or {}).get(cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Clip introuvable")
+    out = os.path.join(ap.project_dir(pid), "thumbs", f"{cid}.jpg")
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        sources.still(c["src"], c["impact"], c.get("crop"), out)
+    return FileResponse(out, media_type="image/jpeg")
+
+
+class AdaptationSources(BaseModel):
+    usable: dict = Field(default_factory=dict)
+    credits: Optional[str] = None
+
+
+@app.patch("/api/adaptations/{pid}/sources")
+def update_adaptation_sources(pid: str, req: AdaptationSources):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.set_sources, pid, req.usable, req.credits))
+
+
+@app.post("/api/adaptations/{pid}/scripts")
+def start_adaptation_scripts(pid: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_scripts, pid)
+    _start_adaptation_step(pid, "scripting")
+    return _serialize_adaptation(p)
+
+
+class AdaptationScript(BaseModel):
+    script: dict
+
+
+@app.put("/api/adaptations/{pid}/targets/{channel}/script")
+def edit_adaptation_script(pid: str, channel: str, req: AdaptationScript):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.edit_script, pid, channel, req.script))
+
+
+class AdaptationRevise(BaseModel):
+    request: str
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/revise")
+def revise_adaptation_script(pid: str, channel: str, req: AdaptationRevise):
+    from adaptation import pipeline as ap
+    from adaptation.script import ScriptError
+    _adaptation_or_404(pid)
+    if not req.request.strip():
+        raise HTTPException(status_code=400, detail="Écris ce qu'il faut changer.")
+    try:
+        return _serialize_adaptation(_adaptation_call(ap.revise_script, pid, channel, req.request.strip()))
+    except ScriptError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/approve")
+def approve_adaptation_script(pid: str, channel: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.approve_script, pid, channel))
+
+
+@app.post("/api/adaptations/{pid}/voices")
+def start_adaptation_voices(pid: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_voices, pid)
+    _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
+
+
+class AdaptationVoice(BaseModel):
+    voice_id: str
+
+
+@app.patch("/api/adaptations/{pid}/targets/{channel}/voice")
+def change_adaptation_voice(pid: str, channel: str, req: AdaptationVoice):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.change_voice, pid, channel, req.voice_id)
+    _start_adaptation_step(pid, "voicing", only=channel)
+    return _serialize_adaptation(p)
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/validate")
+def validate_adaptation_preview(pid: str, channel: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.validate_preview, pid, channel))
+
+
+@app.post("/api/adaptations/{pid}/render")
+def start_adaptation_render(pid: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_render, pid)
+    _start_adaptation_step(pid, "rendering")
+    return _serialize_adaptation(p)
+
+
+@app.post("/api/adaptations/{pid}/retry")
+def retry_adaptation(pid: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    step = _adaptation_call(ap.retry, pid)
+    _start_adaptation_step(pid, step)
+    return _serialize_adaptation(_adaptation_or_404(pid))
 
 
 @app.post("/api/batches/{batch_id}/process")

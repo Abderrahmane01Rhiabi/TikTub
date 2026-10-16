@@ -105,6 +105,28 @@ CREATE TABLE IF NOT EXISTS broll_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_broll_usage_channel ON broll_usage(channel, used_at);
 CREATE INDEX IF NOT EXISTS idx_broll_usage_clip ON broll_usage(clip_id);
+
+-- Adaptation: the ElevenLabs voices a person can pick for a channel
+-- (Réglages → Voix). name/language/accent are queried columns, the rest
+-- (gender, age, preview...) lives in the JSON.
+-- Adaptation projects: one viral reference Short + its source videos ->
+-- one video per target channel/language (see adaptation/pipeline.py).
+CREATE TABLE IF NOT EXISTS adaptations (
+    project_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS voices (
+    voice_id TEXT PRIMARY KEY,
+    name TEXT,
+    language TEXT,
+    accent TEXT,
+    added_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
 """
 
 
@@ -422,5 +444,93 @@ def broll_usage_counts(db_path: str = DB_PATH) -> Dict[str, Dict]:
             entry["total"] += r["n"]
             entry["channels"][r["channel"]] = r["n"]
         return out
+    finally:
+        conn.close()
+
+
+def upsert_voice(voice: Dict, db_path: str = DB_PATH):
+    from datetime import datetime
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            row = conn.execute("SELECT added_at FROM voices WHERE voice_id = ?", (voice["voice_id"],)).fetchone()
+            conn.execute(
+                "INSERT OR REPLACE INTO voices (voice_id, name, language, accent, added_at, data) VALUES (?, ?, ?, ?, ?, ?)",
+                (voice["voice_id"], voice.get("name"), voice.get("language"), voice.get("accent"),
+                 row["added_at"] if row else datetime.now().isoformat(), json.dumps(voice, ensure_ascii=False)))
+    finally:
+        conn.close()
+
+
+def list_voices(language: Optional[str] = None, db_path: str = DB_PATH) -> List[Dict]:
+    """By language, then name. language='ar' also matches 'ar-EG' etc."""
+    conn = get_connection(db_path)
+    try:
+        if language:
+            rows = conn.execute("SELECT * FROM voices WHERE language = ? OR language LIKE ? ORDER BY name",
+                                (language, language + "-%")).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM voices ORDER BY language, name").fetchall()
+        return [{**json.loads(r["data"]), "added_at": r["added_at"]} for r in rows]
+    finally:
+        conn.close()
+
+
+def get_voice(voice_id: str, db_path: str = DB_PATH) -> Optional[Dict]:
+    conn = get_connection(db_path)
+    try:
+        r = conn.execute("SELECT * FROM voices WHERE voice_id = ?", (voice_id,)).fetchone()
+        return {**json.loads(r["data"]), "added_at": r["added_at"]} if r else None
+    finally:
+        conn.close()
+
+
+def delete_voice(voice_id: str, db_path: str = DB_PATH) -> bool:
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            return conn.execute("DELETE FROM voices WHERE voice_id = ?", (voice_id,)).rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_adaptation(project: Dict, db_path: str = DB_PATH):
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    project = {**project, "updated_at": now}
+    project.setdefault("created_at", now)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO adaptations (project_id, status, created_at, updated_at, data) "
+                         "VALUES (?, ?, ?, ?, ?)", (project["project_id"], project["status"], project["created_at"],
+                                                    now, json.dumps(project, ensure_ascii=False)))
+    finally:
+        conn.close()
+    return project
+
+
+def get_adaptation(project_id: str, db_path: str = DB_PATH) -> Optional[Dict]:
+    conn = get_connection(db_path)
+    try:
+        r = conn.execute("SELECT data FROM adaptations WHERE project_id = ?", (project_id,)).fetchone()
+        return json.loads(r["data"]) if r else None
+    finally:
+        conn.close()
+
+
+def list_adaptations(db_path: str = DB_PATH) -> List[Dict]:
+    conn = get_connection(db_path)
+    try:
+        return [json.loads(r["data"]) for r in conn.execute("SELECT data FROM adaptations ORDER BY created_at DESC")]
+    finally:
+        conn.close()
+
+
+def delete_adaptation(project_id: str, db_path: str = DB_PATH) -> bool:
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            return conn.execute("DELETE FROM adaptations WHERE project_id = ?", (project_id,)).rowcount > 0
     finally:
         conn.close()

@@ -179,3 +179,48 @@ def test_preview_render_passes_the_automatic_checks(tmp_path):
     assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15
     assert all(o is not None and abs(o) <= 0.12 for o in v["measures"]["offsets"])
     assert not (tmp_path / "out.mp4.part.mp4").exists()
+
+
+# ------------------------------------------- voice library & channel settings
+
+def _fake_elevenlabs(monkeypatch, known):
+    from adaptation import voices as el
+
+    def fetch(vid):
+        if vid not in known:
+            raise el.VoiceError(f"Voix {vid} introuvable chez ElevenLabs.")
+        return {"voice_id": vid, "preview_url": None, **known[vid]}
+    monkeypatch.setattr(el, "fetch_info", fetch)
+
+
+def test_voices_are_added_by_id_with_language_and_accent(client, monkeypatch):
+    _fake_elevenlabs(monkeypatch, {"v1": {"name": "Anas", "language": "ar", "accent": "modern standard"},
+                                   "v2": {"name": "Haytham", "language": "ar", "accent": "egyptian"},
+                                   "v3": {"name": "Mélanie", "language": "fr", "accent": "standard"}})
+    r = client.post("/api/voices", json={"voice_ids": ["v1", "v2", "v3", "nope"]}).json()
+    assert {v["voice_id"] for v in r["added"]} == {"v1", "v2", "v3"}          # regional accents kept too
+    assert r["failed"][0]["voice_id"] == "nope" and "introuvable" in r["failed"][0]["error"]
+    arabic = client.get("/api/voices?language=ar").json()["voices"]
+    assert [v["display_name"] for v in arabic] == ["Anas", "Haytham"] and arabic[1]["accent"] == "egyptian"
+
+
+def test_a_voice_can_be_renamed_and_keeps_its_name_when_refreshed(client, monkeypatch):
+    _fake_elevenlabs(monkeypatch, {"v1": {"name": "Anas - Calm", "language": "ar", "accent": "modern standard"}})
+    client.post("/api/voices", json={"voice_ids": ["v1"]})
+    assert client.patch("/api/voices/v1", json={"name": "Arabe calme"}).json()["display_name"] == "Arabe calme"
+    client.post("/api/voices", json={"voice_ids": ["v1"]})                   # refresh from ElevenLabs
+    assert client.get("/api/voices").json()["voices"][0]["display_name"] == "Arabe calme"
+    assert client.delete("/api/voices/v1").json()["voices"] == []
+    assert client.get("/api/voices/v1/preview").status_code == 404
+
+
+def test_channel_adaptation_settings_language_voice_music(client, project, monkeypatch):
+    _fake_elevenlabs(monkeypatch, {"v1": {"name": "Anas", "language": "ar", "accent": "msa"},
+                                   "v3": {"name": "Mélanie", "language": "fr", "accent": "standard"}})
+    client.post("/api/voices", json={"voice_ids": ["v1", "v3"]})
+    project.add_channel("chanA")
+    r = client.put("/api/channels/chanA/adaptation", json={"language": "ar", "settings": {
+        "voice_id": "v1", "music_file": "../x/song.mp3", "music_start": "33", "bogus": 1}}).json()
+    assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0}
+    assert [v["voice_id"] for v in r["voices"]] == ["v1"]                    # only voices of its language
+    assert client.put("/api/channels/chanA/adaptation", json={"language": "xx"}).status_code == 400

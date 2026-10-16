@@ -75,3 +75,18 @@ def test_storage_endpoints(client, project):
     overview = client.get("/api/storage").json()
     assert "items" not in overview and overview["totals"]["published"]["size"] == 3000
     assert client.post("/api/storage/cleanup", json={}).json()["freed_total"] == 3000
+
+
+def test_adaptation_projects_are_kept_while_running_and_freed_once_published(project):
+    from adaptation import pipeline
+    for pid, status, video_status in (("ad_run", "script_review", None), ("ad_done", "done", "uploaded")):
+        folder = Path("temp/adaptations") / pid
+        folder.mkdir(parents=True)
+        (folder / "voice.mp3").write_bytes(b"v" * 100)
+        targets = [{"channel": "chanA", "video_id": f"v_{pid}" if video_status else None}]
+        db.save_adaptation({"project_id": pid, "status": status, "targets": targets})
+        if video_status:
+            project.add_video(f"v_{pid}", status=video_status)
+    Path("temp/adaptations/ad_gone").mkdir()
+    cats = {os.path.basename(i["path"]): i["category"] for i in storage.scan()["items"] if "adaptations" in i["path"]}
+    assert cats == {"ad_run": "in_use", "ad_done": "published", "ad_gone": "orphans"}

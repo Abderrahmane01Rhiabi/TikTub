@@ -64,6 +64,25 @@ def _category(status) -> str:
     return "in_use"
 
 
+def _adaptation_items(root: str, rows: Dict) -> List[Dict]:
+    """temp/adaptations/<project>: kept while the project runs (its sources,
+    voices and previews are being reviewed); published once every video it
+    made is on YouTube; an orphan when the project no longer exists."""
+    out = []
+    for pid in os.listdir(root):
+        path = os.path.join(root, pid)
+        project = _db.get_adaptation(pid)
+        if not project:
+            category = "orphans"
+        else:
+            made = [t.get("video_id") for t in project.get("targets", [])]
+            statuses = [(rows.get(v) or {}).get("status") for v in made if v]
+            category = "published" if (project["status"] == "done" and statuses
+                                       and all(st in PUBLISHED for st in statuses)) else "in_use"
+        out.append({"path": path, "video_id": None, "category": category, "size": _size(path), "age": _age(path)})
+    return out
+
+
 def scan() -> Dict:
     """Every temp/ folder and processed file, sorted by category."""
     rows = {v["video_id"]: v for v in _db.query_videos()}
@@ -76,6 +95,9 @@ def scan() -> Dict:
     if os.path.isdir(TEMP_DIR):
         for name in os.listdir(TEMP_DIR):
             path = os.path.join(TEMP_DIR, name)
+            if name == "adaptations" and os.path.isdir(path):
+                items.extend(_adaptation_items(path, rows))
+                continue
             video = rows.get(name) if os.path.isdir(path) else None
             items.append({"path": path, "video_id": video["video_id"] if video else None,
                           "category": _category(video["status"] if video else None),

@@ -44,7 +44,20 @@ def download(url: str, dest_dir: str, name: str) -> str:
         raise SourceError(f"Téléchargement impossible ({url}) : {str(e)[:200]}")
     if not os.path.exists(path):
         raise SourceError(f"Téléchargement sans fichier vidéo ({url}).")
+    meta = {"url": url, "title": info.get("title"), "uploader": info.get("uploader"),
+            "handle": "@" + str(info.get("uploader_id") or info.get("channel") or "").lstrip("@") or None,
+            "extractor": info.get("extractor_key")}
+    with open(path + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
     return path
+
+
+def source_meta(path: str) -> Dict:
+    try:
+        with open(path + ".meta.json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
 
 
 def probe(path: str) -> Dict:
@@ -200,9 +213,11 @@ def describe(path: str, segments: List[Tuple[float, float]]) -> List[Dict]:
     return (items + [{}] * len(segments))[:len(segments)]
 
 
-def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[int]]]]:
-    """Per still: (picture area, boxes to erase), coordinates 0-1000 on the full
-    frame. Best effort: on failure, the whole frame and nothing to erase."""
+def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[int]], List[str]]]:
+    """Per still: (picture area, boxes to erase, what they are), coordinates
+    0-1000 on the full frame. Best effort: on failure, the whole frame and
+    nothing to erase. What they are ("logo TikTok @azzamyreal") feeds the
+    credits: the real source is often the watermark, not the re-uploader."""
     import base64
     if not stills:
         return []
@@ -219,13 +234,13 @@ def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[i
         if imgs:
             break
     if not imgs:
-        return [(None, []) for _ in stills]
+        return [(None, [], []) for _ in stills]
     out = []
     for k in range(len(stills)):
         item = imgs[k] if k < len(imgs) and isinstance(imgs[k], dict) else {}
         area = item.get("zone_image") if isinstance(item.get("zone_image"), list) else None
-        boxes = [b["box_2d"] for b in item.get("boites") or [] if isinstance(b, dict) and len(b.get("box_2d") or []) == 4]
-        out.append((area, boxes))
+        kept = [b for b in item.get("boites") or [] if isinstance(b, dict) and len(b.get("box_2d") or []) == 4]
+        out.append((area, [b["box_2d"] for b in kept], [str(b.get("quoi") or "") for b in kept]))
     return out
 
 
@@ -285,7 +300,7 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
     band = None
     if use_gemini and h_full >= w_full * 1.3:
         times = [info["duration"] * k / 9 for k in range(1, 9)]
-        found = [band_from_area(a, w_full, h_full) for a, _ in
+        found = [band_from_area(a, w_full, h_full) for a, _, _ in
                  find_boxes([still(path, t, None, os.path.join(work_dir, f"b{index}_{k}.jpg"))
                              for k, t in enumerate(times)])]
         found = [(b, t) for b, t in zip(found, times) if b]
@@ -300,11 +315,11 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
     descriptions = describe(path, segments) if use_gemini else [{} for _ in segments]
     stills = [still(path, (a + b) / 2, None, os.path.join(work_dir, f"s{index}_{k}.jpg"))
               for k, (a, b) in enumerate(segments)]
-    found = find_boxes(stills) if use_gemini else [(None, []) for _ in segments]
+    found = find_boxes(stills) if use_gemini else [(None, [], []) for _ in segments]
 
     ids = id_gen or _ids()
     clips = []
-    for (a, b), d, (area, bx) in zip(segments, descriptions, found):
+    for (a, b), d, (area, bx, marks) in zip(segments, descriptions, found):
         own = band_from_area(area, w_full, h_full)
         on_band = bool(own)
         if own and band and abs(own[0] - band[0]) <= 60 and abs(own[1] - band[1]) <= 60:
@@ -329,5 +344,6 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < 1.5 else ""),
             "audio_ok": from_sound and not d.get("parole_dans_le_son", False),
             "low_res": min(w_full, h) < 540,
+            "marks": [m for m in marks if m],
         })
     return clips
