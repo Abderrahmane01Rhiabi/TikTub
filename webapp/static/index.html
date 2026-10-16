@@ -2627,7 +2627,7 @@ function renderAdSources(body, p){
   if (p.suggestions) renderAdFinder(document.getElementById('adFinder'), p);
   const patch = b => api(`/api/adaptations/${p.project_id}/sources`, { method:'PATCH', body: JSON.stringify(b) }).catch(e => log(e.message, 'error'));
   document.getElementById('adCredits').onchange = e => patch({ credits: e.target.value });
-  body.querySelectorAll('.ad-clip').forEach(card => card.querySelector('.ad-use').onchange = e => {
+  body.querySelectorAll('.ad-clip:not(.ad-cand)').forEach(card => card.querySelector('.ad-use').onchange = e => {
     card.classList.toggle('off', !e.target.checked);
     patch({ usable: { [card.dataset.id]: e.target.checked } });
   });
