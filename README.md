@@ -4,10 +4,11 @@ Application locale pour alimenter plusieurs chaînes YouTube Shorts :
 
 - **Import** : vidéos TikTok / Instagram / Facebook → cadrage 9:16, ou **Montage auto** (écran noir, drones, sous-titres en cascade, musique — voir [MONTAGE_AUTO.md](MONTAGE_AUTO.md)) → titre, description et tags par IA.
 - **Génération** : scripts écrits par IA → voix ElevenLabs → montage avec sous-titres animés (6 styles) et musique.
+- **Adaptation** : un Short viral « explicatif » refait pour tes chaînes, dans leur langue, depuis ses vidéos sources (voir [ADAPTATION.md](ADAPTATION.md)).
 - **Publication** : planning (fixe, analytics ou IA), envoi sur YouTube, suivi du quota.
 - **Dashboard** : statistiques à 24 h / 7 j / 30 j, « Ce qui marche » (vues et rétention comparées au même âge), « Refaire ce style ».
 - **Accueil** : ce qui attend une action, idée de la semaine, alertes (connexion expirée, quota atteint, publication échouée).
-- **Réglages** : connexion des chaînes, fonds, style du Montage auto, plans de drone, sauvegardes quotidiennes avec restauration, stockage et nettoyage.
+- **Réglages** : connexion des chaînes, fonds, style du Montage auto, plans de drone, voix ElevenLabs et langue de chaque chaîne, sauvegardes quotidiennes avec restauration, stockage et nettoyage.
 
 ## Lancer
 
@@ -30,6 +31,7 @@ Première installation : `python -m venv .venv`, puis `pip install -r requiremen
 | `video_processor.py` | Traitement vidéo de l'import (cadrage, fonds, coins arrondis) |
 | `generative/` | Génération : scripts, voix, sous-titres, montage ffmpeg (repli moviepy) |
 | `montage/` | Montage auto de l'import : transcription Whisper, plan Gemini, plans de drone (`assets/broll/`), rendu ffmpeg |
+| `adaptation/` | Adaptation : analyse du Short modèle, clips des sources, scripts (relus par gemini-pro), voix ElevenLabs, rendu, contrôles |
 | `youtube_uploader.py`, `quota.py` | Envoi YouTube, connexion OAuth, statistiques, quota |
 | `stats_tracker.py` | Tâche horaire : statuts YouTube, statistiques, rétention, sauvegarde, nettoyage, alertes |
 | `performance.py` | « Ce qui marche » et idée de la semaine |

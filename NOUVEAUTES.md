@@ -1,6 +1,6 @@
 # Nouveautés TikTub
 
-Ce document présente les 7 améliorations ajoutées à TikTub (branches `feature/backup-and-growth` et `feature/montage-auto`) : ce que fait chacune, où la trouver et comment s'en servir.
+Ce document présente les 8 améliorations ajoutées à TikTub (branches `feature/backup-and-growth`, `feature/montage-auto` et `feature/adaptation`) : ce que fait chacune, où la trouver et comment s'en servir.
 
 ---
 
@@ -145,6 +145,18 @@ Le mode d'emploi complet est dans **[MONTAGE_AUTO.md](MONTAGE_AUTO.md)**.
 
 ---
 
+## 8. Adaptation
+
+**Où :** espace Adaptation ; Réglages → Voix
+
+**Pourquoi :** refaire un Short viral « explicatif » pour tes chaînes, dans leur langue (français, arabe standard…), avec ta voix ElevenLabs, sans copier la vidéo d'origine.
+
+**Ce que ça fait :** l'app analyse le Short modèle, découpe ses vidéos sources en clips propres, écrit et fait relire un script par chaîne, génère la voix, et contrôle automatiquement chaque vidéo. Tu valides les sources, chaque script et chaque aperçu. Les vidéos arrivent ensuite dans Publication.
+
+Le mode d'emploi complet est dans **[ADAPTATION.md](ADAPTATION.md)**.
+
+---
+
 ## Tester
 
 ```bash
@@ -159,3 +171,4 @@ Puis **Ctrl + F5** sur http://127.0.0.1:8000.
 3. Accueil : la carte « Idée de la semaine » et son bouton « Lancer 3 vidéos ».
 4. Le bandeau d'alertes, s'il y a un problème en cours.
 5. Réglages → Montage et Drones, puis une vidéo en Montage auto de l'import jusqu'à Publication.
+6. Réglages → Voix, puis un projet dans l'espace Adaptation jusqu'à Publication.
