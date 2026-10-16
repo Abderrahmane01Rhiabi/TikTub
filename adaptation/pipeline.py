@@ -149,8 +149,12 @@ def run_analysis(pid: str, report: Optional[Report] = None):
         for k, i in enumerate(todo):
             url, n = p["source_urls"][i], len(todo)
             report(f"source {k + 1}/{n} : téléchargement", 0.2 + 0.75 * k / n)
-            path = sources.download(url, os.path.join(base, "src"), f"src{i}",
-                                    (p.get("source_sections") or {}).get(url))
+            try:
+                path = sources.download(url, os.path.join(base, "src"), f"src{i}",
+                                        (p.get("source_sections") or {}).get(url))
+            except sources.SourceError as e:        # one dead link must not block the others
+                metas.append({"url": url, "failed": str(e)})
+                continue
             meta = sources.source_meta(path)
             report(f"source {k + 1}/{n} : découpage et analyse", 0.2 + 0.75 * (k + 0.3) / n)
             for c in sources.analyse_source(path, i, os.path.join(base, "work"), ids):
@@ -163,7 +167,9 @@ def run_analysis(pid: str, report: Optional[Report] = None):
         p.update(clips=clips, sources=metas, credits_auto=guess, status="sources_review", error=None,
                  failed_step=None)
         if not any(c["usable"] for c in clips.values()):
-            p.update(status="error", error="Aucun clip utilisable dans ces sources.", failed_step="analysing")
+            failed = [m["failed"] for m in metas if m.get("failed")]
+            p.update(status="error", failed_step="analysing",
+                     error=" ".join(failed) if failed and not clips else "Aucun clip utilisable dans ces sources.")
         save(p)
     except Exception as e:
         fail(pid, "analysing", e)
@@ -175,7 +181,8 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
     clips already there."""
     p = load(pid)
     _expect(p, "sources_search", "sources_review")
-    have = set(p["source_urls"])
+    dead = [i for i, m in enumerate(p.get("sources") or []) if m.get("failed")]
+    have = set(p["source_urls"]) - {p["source_urls"][i] for i in dead}
     new = []
     for u in urls:
         u = (u or "").strip()

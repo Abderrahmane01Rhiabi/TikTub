@@ -313,4 +313,5 @@ def test_finder_sections_pad_and_merge_the_verified_moments():
 def test_download_errors_are_explained():
     from adaptation import sources
     assert "robot" in sources.explain("u", "ERROR: Sign in to confirm you're not a bot")
-    assert "indisponible" in sources.explain("u", "Video unavailable")
+    msg = sources.explain("u", "\x1b[0;31mERROR:\x1b[0m [youtube] jlQv41qROxk: This video is not available")
+    assert "bloquée dans ton pays" in msg and "\x1b" not in msg

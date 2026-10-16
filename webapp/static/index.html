@@ -2605,6 +2605,7 @@ function renderAdSources(body, p){
   body.innerHTML = `
     <article class="chcard"><div class="chcard-body">
       <div><b>Question du modèle :</b> ${esc(ref.question || '—')}</div>
+      ${(p.sources || []).filter(m => m.failed).map(m => `<div class="warnbox">Ignorée : ${esc(m.failed)}</div>`).join('')}
       ${(ref.faits_douteux || []).length ? `<div class="warnbox">À ne pas reprendre tel quel : ${esc(ref.faits_douteux.join(' · '))}</div>` : ''}
       <label class="f" style="margin-top:4px">Crédits affichés en haut de la vidéo et dans la description</label>
       <input class="f" id="adCredits" value="${esc(p.credits || '')}">
@@ -2695,7 +2696,8 @@ function adCandHtml(c, scene, sug, have){
 
 function renderAdFinder(box, p){
   const sug = p.suggestions || { comptes: [], scenes: [] };
-  const have = new Set(p.source_urls || []);
+  const dead = new Set((p.sources || []).filter(m => m.failed).map(m => m.url));
+  const have = new Set((p.source_urls || []).filter(u => !dead.has(u)));
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
   box.innerHTML = `
     ${sug.comptes.length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('link', 14)} Comptes crédités dans le modèle</div>

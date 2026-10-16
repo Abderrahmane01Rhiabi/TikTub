@@ -247,3 +247,31 @@ def test_api_add_sources_and_check(client, project, fakes, monkeypatch):
     assert client.post(f"/api/adaptations/{pid}/sources/add", json={"urls": []}).status_code == 400
     r = client.post(f"/api/adaptations/{pid}/sources/add", json={"urls": ["https://tiktok.com/a"]})
     assert r.status_code == 200
+
+
+def test_a_dead_link_is_skipped_and_the_others_are_analysed(project, fakes, monkeypatch):
+    from adaptation import sources
+    ok = sources.download
+
+    def download(url, d, name, sections=None):
+        if "dead" in url:
+            raise sources.SourceError("Vidéo impossible à télécharger d'ici : " + url)
+        return ok(url, d, name, sections)
+    monkeypatch.setattr(sources, "download", download)
+    p = ap.create("https://youtube.com/shorts/x", ["https://dead.example/v", "https://tiktok.com/b"], [channel(project)])
+    pid = p["project_id"]
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_review" and set(p["clips"]) == {"B", "C"}
+    assert "impossible" in p["sources"][0]["failed"]
+    ap.add_sources(pid, ["https://dead.example/v"])           # a dead link may be tried again
+    assert ap.load(pid)["source_urls"][-1] == "https://dead.example/v"
+
+
+def test_only_dead_links_is_an_error_that_says_why(project, fakes, monkeypatch):
+    from adaptation import sources
+    monkeypatch.setattr(sources, "download", lambda *a, **k: (_ for _ in ()).throw(sources.SourceError("bloquée")))
+    p = ap.create("https://youtube.com/shorts/x", ["https://dead.example/v"], [channel(project)])
+    ap.run_analysis(p["project_id"])
+    p = ap.load(p["project_id"])
+    assert p["status"] == "error" and p["error"] == "bloquée"

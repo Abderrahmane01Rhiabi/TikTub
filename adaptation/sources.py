@@ -18,6 +18,7 @@ What was done by hand for the tram prototype, made generic:
 import json
 import math
 import os
+import re
 import string
 import subprocess
 from typing import Dict, List, Optional, Tuple
@@ -49,14 +50,15 @@ def ytdlp_opts(**extra) -> Dict:
 
 def explain(url: str, err: str) -> str:
     """yt-dlp's error, said plainly."""
+    err = re.sub(r"\x1b\[[0-9;]*m", "", err).replace("ERROR: ", "")       # yt-dlp's terminal colours
     low = err.lower()
     if "not a bot" in low or "429" in low or "sign in" in low:
         return (f"YouTube bloque le téléchargement ({url}) : il demande de « confirmer que tu n'es pas un robot ». "
                 f"Ça passe souvent tout seul après une heure. Sinon : exporte les cookies de ton navigateur "
                 f"(extension « Get cookies.txt LOCALLY », en étant connecté à YouTube) dans le fichier "
                 f"{COOKIES_FILE} à la racine de TikTub, ou prends la même vidéo sur TikTok.")
-    if "private" in low or "unavailable" in low or "removed" in low:
-        return f"Vidéo indisponible (supprimée ou privée) : {url}"
+    if any(w in low for w in ("private", "unavailable", "not available", "removed", "blocked", "country")):
+        return f"Vidéo impossible à télécharger d'ici (supprimée, privée ou bloquée dans ton pays) : {url}"
     return f"Téléchargement impossible ({url}) : {err[:200]}"
 
 def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None) -> str:
