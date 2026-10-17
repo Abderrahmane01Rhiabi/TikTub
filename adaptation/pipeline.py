@@ -105,7 +105,7 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
     seen, out = set(), []
 
     def add(name):
-        if not name or re.fullmatch(r"@?[\d_.]*", name):    # "@7315046821897962529" is an account number, not a name
+        if not name or re.fullmatch(r"@?[-\d_.]*", name):   # "@7315046821897962529", VK's "@-201897941": numbers, not names
             return
         if name.lower() not in seen:
             seen.add(name.lower())

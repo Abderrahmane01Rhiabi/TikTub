@@ -88,7 +88,7 @@ def _handle(info: Dict) -> Optional[str]:
     """The account's name: TikTok's uploader_id is a number, its uploader the @name."""
     for v in (info.get("uploader_id"), info.get("uploader"), info.get("channel")):
         v = str(v or "").strip().lstrip("@")
-        if v and not v.replace("_", "").isdigit() and " " not in v:
+        if v and not v.replace("_", "").lstrip("-").isdigit() and " " not in v:
             return "@" + v
     return None
 

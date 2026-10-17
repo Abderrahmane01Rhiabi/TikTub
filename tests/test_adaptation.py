@@ -141,6 +141,9 @@ def test_credits_never_show_an_account_number_and_tiktok_names_are_used():
     assert ap.guess_credits([{}], clips) == "@562burke"
     assert ap.guess_credits([{"handle": "@123456789"}], {"A": {"usable": True, "source": 0, "marks": []}}) == ""
     assert sources._handle({"uploader_id": "7556965783809576214", "uploader": "iamklimakov"}) == "@iamklimakov"
+    assert sources._handle({"uploader_id": "-201897941", "uploader": "proprirody"}) == "@proprirody"   # a VK group number
+    assert ap.guess_credits([{"handle": "@-201897941"}, {"handle": "@thetraveller4614"}],
+                            {"A": {"usable": True, "source": 0, "marks": []}, "B": {"usable": True, "source": 1, "marks": []}}) == "@thetraveller4614"
     assert sources._handle({"uploader_id": None, "channel": "Car Crashes Times"}) is None   # a display name, not a handle
     assert sources.MIN_CLIP == 1.0                                           # fast TikTok edits: 1.0-1.4 s shots
 
@@ -331,6 +334,27 @@ def test_finder_check_judges_plan_by_plan_with_a_partial_level():
     assert r["par_plan"]["2"] == {"niveau": "rien", "moments": [], "raison": "pas de pelleteuse", "scene": 0}
     assert r["moments"] == [{"debut": 40, "fin": 47}, {"debut": 90, "fin": 95}]
     assert finder.sections(r, 207) == [[34.0, 53.0], [84.0, 101.0]]
+
+
+def test_finder_check_downloads_a_youtube_video_gemini_may_not_open(monkeypatch):
+    from adaptation import finder
+    asked = []
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            asked.append(parts[0]["file_data"])
+            return {"error": "API error: 403"}
+    import yt_dlp
+
+    class Boom:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def extract_info(self, *a, **k): raise RuntimeError("ERROR: [youtube] x: Private video")
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", Boom)
+    with pytest.raises(finder.FinderError, match="privée"):
+        finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", [{"scene": "x"}], gemini=G())
+    assert asked == [{"file_uri": "https://www.youtube.com/watch?v=aaaaaaaaaaa"}]   # tried by link first
 
 
 def test_finder_check_falls_back_on_scenes_for_an_older_analysis():

@@ -492,9 +492,11 @@ def _watch(url: str, g, prompt: str) -> Dict:
     """Gemini watches a YouTube link directly; anything else (VK, Rutube,
     TikTok…) is downloaded small and sent as a file."""
     if _video_id(url):
-        return {"answer": g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": 1}},
-                                               {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1),
-                "duration": None, "title": _youtube_title(url)}
+        answer = g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": 1}},
+                                      {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1)
+        if not (isinstance(answer, dict) and "403" in str(answer.get("error", ""))):
+            return {"answer": answer, "duration": None, "title": _youtube_title(url)}
+        # 403: Gemini may not open this one by its link (age or region limit): downloaded like the others
     import tempfile
     import yt_dlp
     from adaptation import sources
