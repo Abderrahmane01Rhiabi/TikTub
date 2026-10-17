@@ -53,6 +53,11 @@ def explain(url: str, err: str) -> str:
     """yt-dlp's error, said plainly."""
     err = re.sub(r"\x1b\[[0-9;]*m", "", err).replace("ERROR: ", "")       # yt-dlp's terminal colours
     low = err.lower()
+    youtube = "youtube.com" in url or "youtu.be" in url
+    if not youtube and ("not a bot" in low or "429" in low or "sign in" in low or "log in" in low or "login" in low):
+        from adaptation.imagesearch import platform
+        return (f"{platform(url)} refuse le téléchargement de cette vidéo ({url}) : il demande d'être connecté ou "
+                f"limite les téléchargements. Prends une autre vidéo pour ce plan, ou réessaie plus tard.")
     if "not a bot" in low or "429" in low or "sign in" in low:
         return (f"YouTube bloque le téléchargement ({url}) : il demande de « confirmer que tu n'es pas un robot ». "
                 f"Ça passe souvent tout seul après une heure. Sinon : exporte les cookies de ton navigateur "
