@@ -559,14 +559,18 @@ def run_fetch(pid: str, report: Optional[Report] = None):
     report("terminé", 1.0)
 
 
+# What makes a CHOSEN moment unusable, whatever the cleaning does: only what is seen and can't be removed.
+# Not burnt-in text or a logo (the cleaning crops or paints them), not the sound (replaced by the narration),
+# not "a compilation" (that is where moments come from). Measured: 4 good moments of 7 refused for those.
+REAL_FAULTS = re.compile(r"pr[ée]sentat|presenter|interview|journaliste|plateau|split|[ée]cran (divis|partag|scind)|"
+                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|publicit|\bpub\b|flou|blur|"
+                         r"noir|black|image fixe|photo|diaporama|slide|dessin|anim[ée]|jeu vid[ée]o|t[ée]l[ée]phone film", re.I)
+
+
 def _real_faults(why_not: str) -> str:
-    """What really makes a chosen moment unusable: only what is SEEN. A logo
-    or a watermark is painted over by the cleaning, and the original sound
-    (a voice-over, music) is replaced by the narration (measured: good moments
-    refused for "logo" and for "voix off" alone)."""
+    """The reasons, among Gemini's, that really refuse a chosen moment."""
     parts = [x.strip() for x in re.split(r"[,;/]| et ", why_not or "") if x.strip()]
-    return ", ".join(x for x in parts
-                     if not re.search(r"logo|filigrane|watermark|@|voix|parole|musique|son\b|audio|bruit", x, re.I))
+    return ", ".join(x for x in parts if REAL_FAULTS.search(x))
 
 
 def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:

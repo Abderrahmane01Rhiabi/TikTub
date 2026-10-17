@@ -420,7 +420,10 @@ def test_api_steps_4_and_5(client, project, fakes, monkeypatch):
 def test_a_logo_alone_does_not_refuse_a_chosen_moment():
     assert ap._real_faults("logo") == "" and ap._real_faults("filigrane TikTok @x, logo") == ""
     assert ap._real_faults("presentateur, logo, ecran scinde") == "presentateur, ecran scinde"
-    assert ap._real_faults("logo, texte incrusté") == "texte incrusté"
+    assert ap._real_faults("logo, texte incrusté") == ""                  # the cleaning crops or paints it
+    assert ap._real_faults("montage de clips avec texte incrusté") == "" and ap._real_faults("clip musical") == ""
+    assert ap._real_faults("presentateur, split screen") == "presentateur, split screen"
+    assert ap._real_faults("Écran de fin") == "Écran de fin" and ap._real_faults("image floue") == "image floue"
     assert ap._real_faults("voix off") == "" and ap._real_faults("présentateur, musique forte") == "présentateur"
     clips = {"P1": {"start": 0, "end": 5, "usable": False, "why_not": "voix off"},
              "P2": {"start": 0, "end": 5, "usable": False, "why_not": "présentateur"}}
