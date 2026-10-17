@@ -114,7 +114,7 @@ Les vidéos finales passent à nouveau le contrôle, puis arrivent dans **Public
 
 ## Bon à savoir
 
-- **Le format de la vidéo** : un cadre arrondi sur fond noir, un **bandeau différent pour chaque clip**, de gros **sous-titres** avec un mot-clé coloré (jaune, rose, vert, une couleur par phrase), un petit zoom et un tremblement à chaque choc, la musique de fond et les **vrais bruits de choc**. Si le son d'un clip contient une voix, on emprunte le bruit de choc d'un autre clip.
+- **Le format de la vidéo** : un cadre arrondi sur fond noir, un **bandeau différent pour chaque clip**, de gros **sous-titres** avec un mot-clé coloré (jaune, rose, vert, une couleur par phrase), un petit zoom et un tremblement à chaque choc, la musique de fond et, **seulement quand un vrai choc s'entend** (collision, coup de marteau, explosion), son **vrai bruit**. Si le son de ce clip contient une voix, on emprunte le bruit d'un autre clip de choc. Une vidéo sans choc (paysages, récolte…) n'a aucun bruitage ajouté.
 - **L'arabe** s'écrit de droite à gauche, en arabe standard (fusha), avec la police Tajawal.
 - **Durées** : l'analyse prend 3 à 6 minutes selon le nombre de sources, les scripts 1 à 2 minutes, chaque aperçu environ 1 minute. Tu peux changer d'écran pendant ce temps.
 - **Si une étape échoue** (lien mort, service indisponible, serveur redémarré), le projet l'affiche, et **Réessayer** reprend cette étape.

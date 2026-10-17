@@ -320,6 +320,21 @@ def _filter_path(p: str) -> str:
     return os.path.abspath(p).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
+def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
+    """Whose sound plays at a clip's strong moment. Made for crash Shorts: on
+    a salt-lake Short, the "loudest moment" of a reel's music (a boom) was
+    borrowed and pasted under every sentence. So: a clip with a real shock
+    heard (Gemini's "choc_sonore") plays its own sound, or a clean shock
+    borrowed from another clip; a clip without one stays quiet. An older
+    analysis (no flag) keeps its own clean sound and never borrows."""
+    shock = c.get("shock")
+    if shock is None:
+        return c if c.get("audio_ok") else None
+    if not shock:
+        return None
+    return c if c.get("audio_ok") else donor
+
+
 def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
            preview: bool = False, progress_cb=None) -> Dict:
@@ -364,12 +379,11 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
              "loudnorm=I=-16:TP=-1.5:LRA=7,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[voice]")
     mix = ["[voice]"]
 
-    # crash sounds: the clip's own, or one borrowed from a clip whose sound is clean
-    donor = next((c for c in clips.values() if c.get("audio_ok")), None)
+    # crash sounds: only where a real shock is heard (see impact_sound)
+    donor = next((c for c in clips.values() if c.get("audio_ok") and c.get("shock")), None)
     fx = []
     for s in segs:
-        c = clips[s["clip"]]
-        sound = c if c.get("audio_ok") else donor
+        sound = impact_sound(clips[s["clip"]], donor)
         if not sound:
             continue
         a = max(sound["start"], sound["impact"] - 0.35)

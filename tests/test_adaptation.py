@@ -601,3 +601,16 @@ def test_check_match_does_not_step_over_a_sharp_peak():
     win = np.concatenate([smooth(rng.normal(size=1003)) * 0.3, ref, smooth(rng.normal(size=500)) * 0.3])
     best, at = checks._match(win, ref)
     assert at == 1003 and best > 0.99
+
+
+def test_impact_sounds_only_where_a_real_shock_is_heard():
+    from adaptation import render
+    crash = {"audio_ok": True, "shock": True}
+    salt = {"audio_ok": False, "shock": False}
+    hammer_in_speech = {"audio_ok": False, "shock": True}
+    assert render.impact_sound(crash, None) is crash
+    assert render.impact_sound(salt, crash) is None                    # no borrowed boom under a calm shot
+    assert render.impact_sound(hammer_in_speech, crash) is crash       # a shock drowned in speech: a clean one borrowed
+    assert render.impact_sound({"audio_ok": False}, crash) is None     # older analysis: never borrowed
+    old_clean = {"audio_ok": True}
+    assert render.impact_sound(old_clean, None) is old_clean

@@ -273,7 +273,9 @@ Pour CHAQUE passage, dans le meme ordre, decris-le. JSON uniquement :
 {{"passages": [{{"camera": "cabine | camera avant | surveillance | telephone | plateau TV | autre",
   "visuel": "description precise : ce qui se passe, vehicules et COULEURS, jour/nuit, personnes",
   "utilisable": true/false, "pourquoi_pas": "si inutilisable : presentateur, interview, logo, ecran de fin, pub, flou...",
-  "parole_dans_le_son": true/false}}]}}"""
+  "parole_dans_le_son": true/false,
+  "choc_sonore": true/false (on ENTEND un vrai choc a son moment fort : collision, coup de marteau, explosion, chute,
+                 eclaboussure violente ; pas une musique, un effet de montage ou un bruit d'ambiance)}}]}}"""
 
 BOXES_PROMPT = """Voici {n} images (une par clip). Pour CHACUNE :
 1. "zone_image" : le rectangle de la VRAIE image filmee, sans le fond flou, les bandes noires ou les cadres
@@ -469,6 +471,7 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             "usable": bool(d.get("utilisable", True)) and b - a >= MIN_CLIP,
             "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < MIN_CLIP else ""),
             "audio_ok": from_sound and not d.get("parole_dans_le_son", False),
+            **({"shock": bool(d.get("choc_sonore"))} if use_gemini else {}),
             "low_res": min(w_full, h) < 540,
             "marks": [m for m in marks if m],
         })
