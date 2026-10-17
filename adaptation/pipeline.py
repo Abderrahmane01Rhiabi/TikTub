@@ -10,6 +10,9 @@ An adaptation project, step by step.
     plan_review      "Script d'abord" mode: the storyboard (one image per plan,
                      shared by every language) and its texts, written before any
                      footage, reviewed and approved per language (mandatory)
+    searching        the footage for each plan: the four searches on the plan's
+                     image, Gemini's checks, the best moment picked   (background)
+    images_review    the person sees, plan by plan, the video and moment picked
     scripting        one script per target channel, re-read by gemini-pro (background)
     script_review    the person reads/edits/approves EVERY script (mandatory)
     voicing          narration + a quick preview + automatic checks  (background)
@@ -32,7 +35,7 @@ from typing import Callable, Dict, List, Optional
 import db
 from adaptation import checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
 
-BUSY = {"analysing", "scripting", "voicing", "rendering"}
+BUSY = {"analysing", "searching", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
 
 
@@ -289,6 +292,69 @@ def approve_plan(pid: str, channel: str) -> Dict:
     return save(p)
 
 
+def _judged_plans(p: Dict) -> Optional[List[Dict]]:
+    """What a check compares a video with: the reference's shots, or in
+    "Script d'abord" the storyboard's images themselves (the scenes)."""
+    return None if p.get("mode") == "script" else (p.get("reference") or {}).get("plans")
+
+
+def start_images(pid: str) -> Dict:
+    p = load(pid)
+    _expect(p, "plan_review", "images_review")
+    missing = [t["channel"] for t in p["targets"] if not t.get("approved")]
+    if missing:
+        raise PipelineError("Scripts pas encore validés : " + ", ".join(missing))
+    p["status"] = "searching"
+    return save(p)
+
+
+def run_images(pid: str, report: Optional[Report] = None):
+    """Every plan's footage: search words from its image, the four searches,
+    Gemini's checks (twice as many as plans: each plan's best by words, then
+    by picture), then the best checked moment picked for each plan."""
+    report = report or (lambda phase, f: None)
+    p = load(pid)
+    try:
+        plans = p["storyboard"]["plans"]
+        report("recherches pour chaque plan", 0.02)
+        queries = finder.plan_queries(finder.wanted_from_storyboard(plans, {}))
+        local = lambda found: {i: {"pays": q["pays"], "langue": q["langue"], "recherches": q["locales"]}
+                               for i, q in queries.items() if q.get("locales")}
+        sug = finder.suggest(p["reference"], p["reference_url"], work_dir=os.path.join(project_dir(pid), "finder"),
+                             wanted=finder.wanted_from_storyboard(plans, queries), local=local,
+                             report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
+        finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
+                           n=min(14, 2 * len(plans)),
+                           report=lambda ph, f: report(ph, 0.62 + 0.36 * f))
+        p = load(pid)
+        p.update(suggestions=sug, picks=finder.auto_pick(sug, plans), status="images_review", error=None,
+                 failed_step=None)
+        save(p)
+    except Exception as e:
+        fail(pid, "searching", e)
+    report("terminé", 1.0)
+
+
+def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin: Optional[float] = None) -> Dict:
+    """The person's choice for one plan (url None: no video for this plan)."""
+    p = load(pid)
+    _expect(p, "images_review")
+    picks = p.get("picks") or []
+    if not 0 <= plan < len(picks):
+        raise PipelineError("Plan inconnu.")
+    if url is None:
+        picks[plan] = None
+    else:
+        v = ((p.get("suggestions") or {}).get("verifs") or {}).get(url) or {}
+        e = (v.get("par_scene") or {}).get(str(plan)) or {}
+        c = next((c for c in finder.all_candidates(p.get("suggestions") or {}) if c["url"] == url), {})
+        picks[plan] = {"url": url, "titre": c.get("title") or v.get("title") or url, "niveau": e.get("niveau") or "choisie",
+                       "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
+                       "raison": e.get("raison") or "", "auto": False}
+    p["picks"] = picks
+    return save(p)
+
+
 def add_sources(pid: str, urls: List[str]) -> Dict:
     """Links picked among the suggestions (or pasted): analysed on top of the
     clips already there."""
@@ -324,7 +390,8 @@ def check_candidate(pid: str, url: str) -> Dict:
     if not scenes:
         raise PipelineError("Aucune scène à chercher dans ce projet.")
     try:
-        result = finder.check(url, scenes, (p.get("reference") or {}).get("plans"))
+        model = finder.model_of(p.get("reference"))
+        result = finder.check(url, scenes, _judged_plans(p), **({"model": model} if model else {}))
     except finder.FinderError as e:
         raise PipelineError(str(e))
     p = load(pid)
@@ -350,8 +417,9 @@ def check_own(pid: str, urls: List[str], checker=None) -> Dict:
                              for u in urls if u and u.strip().startswith("http")))
     if not new:
         raise PipelineError("Colle au moins un lien (https://…).")
-    checker = checker or finder.check
-    plans = (p.get("reference") or {}).get("plans")
+    model = finder.model_of(p.get("reference"))
+    checker = checker or (lambda u, sc, pl: finder.check(u, sc, pl, **({"model": model} if model else {})))
+    plans = _judged_plans(p)
 
     def one(u):
         try:
@@ -581,7 +649,8 @@ def run_final(pid: str, report: Optional[Report] = None):
     report("terminé", 1.0)
 
 
-RUNNERS = {"analysing": run_analysis, "scripting": run_scripts, "voicing": run_voices, "rendering": run_final}
+RUNNERS = {"analysing": run_analysis, "searching": run_images, "scripting": run_scripts, "voicing": run_voices,
+           "rendering": run_final}
 
 
 def retry(pid: str) -> str:

@@ -47,7 +47,21 @@ L'IA écrit **un storyboard commun à toutes les langues** et **un texte par lan
 
 Un modèle plus puissant relit (rétention, langue, images, faits, pas de publicité), puis une correction automatique passe s'il reste un problème. **Tu relis et tu valides chaque langue** : modifier le texte d'une langue ne touche pas les autres ; modifier **une image** (commune) demande de revalider toutes les langues. La validation est refusée si l'accroche dépasse 4 secondes, si une phrase dépasse 7 secondes, si deux plans ont la même image, ou si une phrase est incomplète.
 
-**La suite** (chercher les images phrase par phrase, les choisir, les télécharger) est la prochaine étape, en construction.
+#### Script d'abord : les images, plan par plan
+
+Quand chaque langue est validée, **Chercher les images** (3 à 6 minutes). Pour chaque plan, l'app :
+- transforme l'image voulue en recherches, **en anglais et dans la langue du pays** où une telle vidéo a été filmée ;
+- lance les 4 recherches (YouTube, langue locale, **par image** quand le plan vient du modèle, compte crédité) ;
+- fait **vérifier par l'IA** les meilleures vidéos (deux fois plus que de plans) ;
+- **choisit le meilleur moment** pour chaque plan : vidéo exacte, puis équivalente, puis partielle, jamais deux fois le même moment.
+
+Tu vois, plan par plan, **la vidéo choisie et son moment** (« voir ce moment ↗ »), et les autres vidéos trouvées avec un bouton **Choisir · 0:12** pour chaque moment vérifié.
+
+Deux protections :
+- une **copie du Short modèle** (un repost, même dans une autre langue) est marquée en rouge et **jamais choisie** : ce serait reprendre son montage ;
+- un **remontage d'un autre créateur** (son Short explicatif avec voix off sur les mêmes images) est signalé en jaune et choisi **seulement s'il n'y a rien d'autre**.
+
+**La suite** (ton lien par plan, reformuler une phrase sans image, télécharger les moments choisis et monter la vidéo) est la prochaine étape, en construction.
 
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
 

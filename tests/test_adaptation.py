@@ -614,3 +614,22 @@ def test_impact_sounds_only_where_a_real_shock_is_heard():
     assert render.impact_sound({"audio_ok": False}, crash) is None     # older analysis: never borrowed
     old_clean = {"audio_ok": True}
     assert render.impact_sound(old_clean, None) is old_clean
+
+
+def test_a_repost_of_the_reference_short_is_never_usable():
+    from adaptation import finder
+    seen = {}
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            seen["prompt"] = parts[1]["text"]
+            return {"copie_du_modele": True, "plans": [{"plan": 1, "niveau": "exacte", "moments": [{"debut": 0}]}], "resume": "repost"}
+    model = finder.model_of({"script_complet": "Why do people clip horses?", "duree_s": 30})
+    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", [{"scene": "tonte"}], gemini=G(), model=model)
+    assert "Why do people clip horses?" in seen["prompt"] and "30 s" in seen["prompt"]
+    assert r["copie"] and r["verdict"] == "non" and r["par_scene"]["0"]["niveau"] == "rien" and r["moments"] == []
+    assert finder.model_of({"plans": []}) is None
+    calls = []
+    finder.verify_best({"scenes": [{"candidats": [{"url": "a", "score": 1, "origines": ["youtube"]}]}]},
+                       {"script_complet": "x", "duree_s": 30}, checker=lambda u, s, p, **kw: calls.append(kw) or {"verdict": "non"})
+    assert calls == [{"model": {"texte": "x", "duree": 30}}]

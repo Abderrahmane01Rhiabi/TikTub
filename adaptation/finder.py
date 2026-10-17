@@ -238,6 +238,90 @@ def local_queries(found: List[Dict], gemini=None) -> Dict[int, Dict]:
     return out
 
 
+PLAN_QUERIES_PROMPT = """On doit trouver en video (YouTube, TikTok) l'image de chaque plan d'un Short :
+{plans}
+Pour CHAQUE plan :
+- 2 recherches YouTube en ANGLAIS, courtes (3 a 6 mots), comme le titre d'une vraie video qui montrerait cette image ;
+- le pays ou une telle video a le plus de chances d'avoir ete filmee, sa langue, et 2 recherches DANS CETTE LANGUE
+  (comme un habitant titrerait sa video ; si c'est un pays anglophone, 2 autres recherches en anglais).
+JSON uniquement : {{"plans": [{{"plan": numero, "anglais": ["", ""], "pays": "", "langue": "nom en francais",
+  "locales": ["", ""]}}]}}"""
+
+
+def plan_queries(found: List[Dict], gemini=None) -> Dict[int, Dict]:
+    """Search words for the storyboard's images (written in French, as a person
+    would see them): {plan: {"recherches", "pays", "langue", "locales"}}."""
+    if not found:
+        return {}
+    try:
+        from gemini_ai_generator import GeminiAIGenerator
+        g = gemini or GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
+        listing = "\n".join(f"{i + 1}. {s['scene']}" for i, s in enumerate(found))
+        r = g._generate_content([{"text": PLAN_QUERIES_PROMPT.format(plans=listing)}], max_tokens=4000, timeout=90,
+                                temperature=0.3)
+    except Exception:
+        return {}
+    out = {}
+    for e in (r.get("plans") if isinstance(r, dict) else None) or []:
+        try:
+            i = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= i < len(found):
+            out[i] = {"recherches": [str(q).strip() for q in e.get("anglais") or [] if str(q).strip()][:3],
+                      "pays": str(e.get("pays") or ""), "langue": str(e.get("langue") or ""),
+                      "locales": [str(q).strip() for q in e.get("locales") or [] if str(q).strip()][:3]}
+    return out
+
+
+def wanted_from_storyboard(sb_plans: List[Dict], queries: Dict[int, Dict]) -> List[Dict]:
+    """The storyboard's plans as "scenes to find" for suggest(): the image
+    is the scene, the reference shots it draws on bring their pictures."""
+    out = []
+    for i, pl in enumerate(sb_plans):
+        q = queries.get(i) or {}
+        out.append({"scene": pl["image"], "plans": [k - 1 for k in pl.get("plans_modele") or [] if k >= 1],
+                    "indices": "", "recherches": q.get("recherches") or [" ".join(pl["image"].split()[:8])]})
+    return out
+
+
+RANK = {"exacte": 0, "equivalente": 1, "partielle": 2}
+
+
+def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
+    """For each plan, the best checked video and its moment: exact, then
+    equivalent, then partial; the longest moment; never the same moment for
+    two plans. None when nothing checked fits."""
+    verifs, used, picks = sug.get("verifs") or {}, set(), []
+    cands = {c["url"]: c for c in all_candidates(sug)}
+    for i, pl in enumerate(sb_plans):
+        options = []
+        for url, v in verifs.items():
+            e = (v.get("par_scene") or {}).get(str(i))
+            if not e or e.get("niveau") not in RANK:
+                continue
+            for m in e.get("moments") or [{"debut": 0}]:
+                try:
+                    a = float(m.get("debut") or 0)
+                    b = float(m.get("fin") if m.get("fin") is not None else a + 3)
+                except (TypeError, ValueError):
+                    continue
+                if (url, round(a)) in used:
+                    continue
+                # someone else's re-edit (voice-over, captions on others' footage): only when nothing better
+                options.append((RANK[e["niveau"]] + (3 if v.get("remontage") else 0), -(b - a), url, a, b, e))
+        if not options:
+            picks.append(None)
+            continue
+        _, _, url, a, b, e = min(options, key=lambda o: o[:2])
+        used.add((url, round(a)))
+        c = cands.get(url) or {}
+        picks.append({"url": url, "titre": c.get("title") or verifs[url].get("title") or url, "niveau": e["niveau"],
+                      "moment": {"debut": a, "fin": b}, "raison": e.get("raison") or "", "auto": True,
+                      "remontage": bool(verifs[url].get("remontage"))})
+    return picks
+
+
 ORIGINS = {"youtube": "recherche YouTube", "langue": "recherche en langue locale", "image": "trouvée par image",
            "compte": "compte crédité"}
 
@@ -279,7 +363,7 @@ def _image_candidate(h: Dict) -> Dict:
 
 def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, search: Callable = None,
             search_in: Callable = None, sort: Callable = None, local: Callable = None, frames_fn: Callable = None,
-            image_search: Callable = None, sort_image: Callable = None,
+            image_search: Callable = None, sort_image: Callable = None, wanted: Optional[List[Dict]] = None,
             report: Optional[Callable[[str, float], None]] = None) -> Dict:
     """The full "what to download" sheet: every way of finding the videos,
     merged per scene. Each part is best effort — one failing (Yandex blocked,
@@ -292,7 +376,7 @@ def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, 
     report = report or (lambda phase, f: None)
     skip = {_video_id(reference_url)} - {None}
     skip_urls = {f"https://www.youtube.com/watch?v={v}" for v in skip} | {reference_url}
-    found = scenes(ref)
+    found = wanted if wanted is not None else scenes(ref)      # "Script d'abord": the storyboard's images
     by_url = [{} for _ in found]
 
     # 1. text, in English then in the language of where it was filmed
@@ -408,8 +492,10 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
                 picked.add(top["url"])
     todo += [c for c in best(all_candidates(sug)) if c["url"] not in picked][:n - len(todo)]
     scenes_, plans = sug.get("scenes") or [], ref.get("plans") or []
+    model = model_of(ref)
+    extra = {"model": model} if model else {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(checker, c["url"], scenes_, plans): c for c in todo}
+        futures = {pool.submit(checker, c["url"], scenes_, plans, **extra): c for c in todo}
         for k, fut in enumerate(as_completed(futures)):
             c = futures[fut]
             report(f"vérification par l'IA : {k + 1}/{len(todo)}", (k + 1) / max(1, len(todo)))
@@ -434,8 +520,11 @@ Regarde cette video et dis, POUR CHAQUE plan, si elle peut servir :
   du puits, sans la tentative de le boucher) : utile, a regarder ;
 - "rien" : rien d'utilisable pour ce plan (seulement le meme theme general, ou une action differente).
 Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en secondes depuis le debut de la video).
+{modele}"remontage" = true si cette video est elle-meme un montage d'un autre createur PAR-DESSUS les images de quelqu'un
+d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee), false si ce sont des images d'origine.
 JSON uniquement :
-{{"plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
+{{"copie_du_modele": true/false, "remontage": true/false,
+  "plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
              "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais"}}],
   "qualite": "bonne | moyenne | mauvaise (resolution, filigranes, texte incruste)",
   "resume": "une phrase en francais : ce que contient la video et a quoi elle peut servir"}}"""
@@ -536,7 +625,22 @@ def _watch(url: str, g, prompt: str) -> Dict:
                 "title": " · ".join(x for x in (info.get("title"), info.get("uploader")) if x)}
 
 
-def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gemini=None) -> Dict:
+MODEL_PART = """ATTENTION : on ne doit JAMAIS reutiliser le Short viral lui-meme. Il dure {duree} s et dit : "{texte}".
+"copie_du_modele" = true si cette video EST ce Short ou un repost de son montage (meme suite de plans, memes
+textes incrustes ou meme voix, meme duree), meme dans une autre langue ou recadre ; false si c'est une video d'origine
+ou une autre video.
+"""
+
+
+def model_of(ref: Optional[Dict]) -> Optional[Dict]:
+    """What a check needs to recognise a re-post of the reference itself."""
+    if not ref or not (ref.get("script_complet") or "").strip():
+        return None
+    return {"texte": " ".join(str(ref["script_complet"]).split())[:900], "duree": ref.get("duree_s") or "?"}
+
+
+def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gemini=None,
+          model: Optional[Dict] = None) -> Dict:
     """Gemini watches one candidate and judges it plan by plan (exact /
     equivalent / partial / nothing), with the moments; the plans are then
     summed up per scene for the page and the download."""
@@ -545,7 +649,7 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
     units = _units(scenes_, plans or [])
     listing = "\n".join(f"{n}. {u['text']}" + (f" (indices : {u['indices']})" if u["indices"] else "")
                         for n, u in enumerate(units, 1))       # numbered from 1: Gemini's reasons quote them
-    seen = _watch(url, g, CHECK_PROMPT.format(plans=listing))
+    seen = _watch(url, g, CHECK_PROMPT.format(plans=listing, modele=MODEL_PART.format(**model) if model else ""))
     r = seen["answer"]
     items = (r.get("plans") or r.get("scenes")) if isinstance(r, dict) else None
     if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or not isinstance(items, list):
@@ -572,8 +676,13 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
                                           "raison": str(e.get("raison") or "")}
         else:
             have["moments"] += ms
+    copy = bool(model) and r.get("copie_du_modele") is True
+    if copy:                            # the reference re-posted: never to be used, whatever it shows
+        par_scene = {k: {**e, "niveau": "rien", "moments": [], "raison": "copie du Short modèle"} for k, e in par_scene.items()}
+        par_plan = {k: {**e, "niveau": "rien", "moments": []} for k, e in par_plan.items()}
     moments = [m for e in par_plan.values() for m in e["moments"]]
     best = min((LEVELS.index(e["niveau"]) for e in par_plan.values()), default=3)
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
+            "copie": copy, "remontage": r.get("remontage") is True,
             "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
             "title": seen.get("title") or ""}

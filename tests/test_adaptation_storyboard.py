@@ -178,3 +178,122 @@ def test_unknown_mode_and_api(client, project, fakes):
     assert client.put(f"/api/adaptations/{pid}/targets/chanA/plan", json={"plan": plan_}).status_code == 200
     assert client.post(f"/api/adaptations/{pid}/targets/chanA/plan/approve").json()["targets"][0]["approved"]
     assert client.post(f"/api/adaptations/{pid}/targets/chanA/plan/revise", json={"request": " "}).status_code == 400
+
+
+# ---------------------------------------------------------------- step 3: the footage, plan by plan
+
+def test_plan_queries_and_wanted_scenes():
+    from adaptation import finder
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            assert "1. un tram percute une voiture" in parts[0]["text"]
+            return {"plans": [{"plan": 1, "anglais": ["tram hits car cab view", " "], "pays": "Biélorussie",
+                               "langue": "Russe", "locales": ["трамвай авария"]}, {"plan": 9, "anglais": ["x"]}]}
+    plans = [{"image": "un tram percute une voiture", "plans_modele": [1, 3]}, {"image": "le visage du conducteur", "plans_modele": []}]
+    q = finder.plan_queries(finder.wanted_from_storyboard(plans, {}), gemini=G())
+    assert q == {0: {"recherches": ["tram hits car cab view"], "pays": "Biélorussie", "langue": "Russe", "locales": ["трамвай авария"]}}
+    w = finder.wanted_from_storyboard(plans, q)
+    assert w[0] == {"scene": "un tram percute une voiture", "plans": [0, 2], "indices": "", "recherches": ["tram hits car cab view"]}
+    assert w[1]["recherches"] == ["le visage du conducteur"] and w[1]["plans"] == []
+
+
+def test_auto_pick_takes_the_best_level_and_never_the_same_moment_twice():
+    from adaptation import finder
+    v = lambda per: {"verdict": "oui", "par_scene": per, "title": "t"}
+    sug = {"scenes": [{"candidats": [{"url": "A", "title": "Compilation"}]}], "verifs": {
+        "A": v({"0": {"niveau": "exacte", "moments": [{"debut": 10, "fin": 14}]},
+                "1": {"niveau": "exacte", "moments": [{"debut": 10, "fin": 14}, {"debut": 40, "fin": 49}]}}),
+        "B": v({"0": {"niveau": "equivalente", "moments": [{"debut": 3, "fin": 20}]},
+                "2": {"niveau": "partielle", "moments": [{"debut": 5}]}}),
+        "C": v({"2": {"niveau": "rien", "moments": []}})}}
+    picks = finder.auto_pick(sug, [{}, {}, {}, {}])
+    assert (picks[0]["url"], picks[0]["moment"]) == ("A", {"debut": 10.0, "fin": 14.0}) and picks[0]["titre"] == "Compilation"
+    assert (picks[1]["url"], picks[1]["moment"]["debut"]) == ("A", 40.0)       # 0:10 is taken by plan 1
+    assert (picks[2]["url"], picks[2]["niveau"], picks[2]["moment"]) == ("B", "partielle", {"debut": 5.0, "fin": 8.0})
+    assert picks[3] is None
+
+
+def _approved_project(project, fakes):
+    pid = new_project(project)["project_id"]
+    ap.run_analysis(pid)
+    for ch in ("chanA", "chanB"):
+        ap.approve_plan(pid, ch)
+    return pid
+
+
+def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = new_project(project)["project_id"]
+    ap.run_analysis(pid)
+    ap.approve_plan(pid, "chanA")
+    with pytest.raises(ap.PipelineError, match="chanB"):
+        ap.start_images(pid)
+    ap.approve_plan(pid, "chanB")
+    seen = {}
+    monkeypatch.setattr(finder, "plan_queries", lambda found: {0: {"recherches": ["tram crash"], "pays": "Russie",
+                                                                    "langue": "Russe", "locales": ["трамвай"]}})
+
+    def suggest(ref, url, work_dir=None, wanted=None, local=None, report=None):
+        seen["wanted"], seen["local"] = wanted, local(wanted)
+        return {"scenes": [{**w, "candidats": [{"url": "A", "title": "Compil"}]} for w in wanted], "comptes": [], "verifs": {}}
+    monkeypatch.setattr(finder, "suggest", suggest)
+
+    def verify_best(sug, ref, n, report=None):
+        seen["n"], seen["plans"] = n, ref["plans"]
+        sug["verifs"] = {"A": {"verdict": "oui", "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 2, "fin": 6}]}}}}
+        return sug
+    monkeypatch.setattr(finder, "verify_best", verify_best)
+    ap.start_images(pid)
+    assert ap.load(pid)["status"] == "searching"
+    ap.run_images(pid)
+    p = ap.load(pid)
+    assert p["status"] == "images_review" and seen["n"] == 12 and seen["plans"] == []     # judged against the images themselves
+    assert seen["wanted"][0]["recherches"] == ["tram crash"] and seen["local"][0]["recherches"] == ["трамвай"]
+    assert seen["wanted"][0]["scene"] == p["storyboard"]["plans"][0]["image"]
+    assert p["picks"][0]["url"] == "A" and p["picks"][1] is None
+
+    p = ap.choose_pick(pid, 1, "A", 30, 35)
+    assert p["picks"][1] == {"url": "A", "titre": "Compil", "niveau": "choisie", "moment": {"debut": 30.0, "fin": 35.0},
+                             "raison": "", "auto": False}
+    assert ap.choose_pick(pid, 0, None)["picks"][0] is None
+    with pytest.raises(ap.PipelineError):
+        ap.choose_pick(pid, 9, "A")
+
+
+def test_a_failed_search_can_be_retried(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _approved_project(project, fakes)
+    monkeypatch.setattr(finder, "plan_queries", lambda found: (_ for _ in ()).throw(RuntimeError("Gemini HS")))
+    ap.start_images(pid); ap.run_images(pid)
+    p = ap.load(pid)
+    assert p["status"] == "error" and p["failed_step"] == "searching"
+    assert ap.retry(pid) == "searching"
+
+
+def test_api_images_and_picks(client, project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _approved_project(project, fakes)
+    monkeypatch.setattr(finder, "plan_queries", lambda found: {})
+    monkeypatch.setattr(finder, "suggest", lambda *a, **k: {"scenes": [], "comptes": [], "verifs": {}})
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+    import time
+    assert client.post(f"/api/adaptations/{pid}/images").status_code == 200
+    for _ in range(50):
+        if client.get(f"/api/adaptations/{pid}").json()["status"] != "searching":
+            break
+        time.sleep(0.1)
+    p = client.get(f"/api/adaptations/{pid}").json()
+    assert p["status"] == "images_review" and p["picks"] == [None] * 6
+    r = client.put(f"/api/adaptations/{pid}/picks/2", json={"url": "https://youtu.be/aaaaaaaaaaa", "debut": 4})
+    assert r.status_code == 200 and r.json()["picks"][2]["moment"] == {"debut": 4.0, "fin": 8.0}
+
+
+def test_auto_pick_prefers_original_footage_to_someone_elses_re_edit():
+    from adaptation import finder
+    v = lambda lvl, remix: {"verdict": "oui", "remontage": remix, "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}}
+    sug = {"verifs": {"remix": v("exacte", True), "orig": v("equivalente", False)}}
+    assert finder.auto_pick(sug, [{}])[0]["url"] == "orig"
+    sug = {"verifs": {"remix": v("exacte", True)}}
+    pick = finder.auto_pick(sug, [{}])[0]
+    assert pick["url"] == "remix" and pick["remontage"]                       # nothing else: taken, flagged

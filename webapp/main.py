@@ -1330,6 +1330,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         sb = p.get("storyboard")
         base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree")} for pl in sb["plans"]],
                               "corrections": sb.get("corrections") or []} if sb else None
+        base["picks"] = p.get("picks")
         base["suggestions"] = p.get("suggestions")
     return base
 
@@ -1496,6 +1497,29 @@ def approve_adaptation_plan(pid: str, channel: str):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.approve_plan, pid, channel))
+
+
+@app.post("/api/adaptations/{pid}/images")
+def start_adaptation_images(pid: str):
+    """Script d'abord: search the footage for every plan of the storyboard (3 to 6 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_images, pid)
+    _start_adaptation_step(pid, "searching")
+    return _serialize_adaptation(p)
+
+
+class AdaptationPick(BaseModel):
+    url: Optional[str] = None
+    debut: float = 0.0
+    fin: Optional[float] = None
+
+
+@app.put("/api/adaptations/{pid}/picks/{plan}")
+def choose_adaptation_pick(pid: str, plan: int, req: AdaptationPick):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.choose_pick, pid, plan, req.url, req.debut, req.fin))
 
 
 @app.post("/api/adaptations/{pid}/scripts")
