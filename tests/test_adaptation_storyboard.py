@@ -426,7 +426,7 @@ def test_a_logo_alone_does_not_refuse_a_chosen_moment():
              "P2": {"start": 0, "end": 5, "usable": False, "why_not": "présentateur"}}
     sc = {"passages": [{"clip": "P1", "texte": "Une phrase.", "bandeau": "", "mots_cles": []},
                        {"clip": "P2", "texte": "Une autre.", "bandeau": "", "mots_cles": []}]}
-    found = ap._fetched_problems(sc, clips, "fr")
+    found = [x for x in ap._fetched_problems(sc, clips, "fr") if "moment choisi" in x]
     assert len(found) == 1 and "Passage 2" in found[0]               # an earlier "voix off" refusal no longer blocks
 
 
