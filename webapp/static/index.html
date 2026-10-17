@@ -2696,7 +2696,7 @@ function adVerifHtml(v, scene, long){
 
 function adCandHtml(c, scene, sug, have){
   const v = adVerifOf(sug, c.url), err = (sug.verif_errors || {})[c.url];
-  const already = have.has(c.url), picked = already || adPicked.has(c.url);
+  const already = have.has(adKey(c.url)), picked = already || adPicked.has(c.url);
   const long = (c.duration || 0) >= 150;
   const tags = (c.origines || []).map(o => o === 'image' && c.hits > 1 ? `par image ×${c.hits}`
     : o === 'langue' && scene >= 0 && ((sug.scenes[scene] || {}).langue || {}).langue ? sug.scenes[scene].langue.langue.toLowerCase()
@@ -2714,6 +2714,12 @@ function adCandHtml(c, scene, sug, have){
            ${long ? '<span style="color:#f5c56d">vidéo longue : vérifie-la, seuls les passages utiles seront pris</span>' : ''}
            <button class="btn ghost small ad-check" title="L'IA regarde la vidéo et la compare à chaque plan du modèle (15 s sur YouTube, 1 à 2 min ailleurs)">Vérifier avec l'IA</button>`}
     </div></div>`;
+}
+
+function adKey(url){                               // the same video, however it is spelled (as finder.same_video)
+  const yt = /(?:v=|youtu\.be\/|shorts\/)([\w-]{11})/.exec(url || '');
+  if (yt) return 'youtube:' + yt[1];
+  return (url || '').trim().toLowerCase().replace(/^https?:\/\/(www\.|m\.)?/, '').split(/[?#]/)[0].replace(/\/+$/, '');
 }
 
 function adSortCands(cands, scene, sug){
@@ -2746,7 +2752,7 @@ async function adCopyImage(src){
 function renderAdFinder(box, p){
   const sug = p.suggestions || { comptes: [], scenes: [] };
   const dead = new Set((p.sources || []).filter(m => m.failed).map(m => m.url));
-  const have = new Set((p.source_urls || []).filter(u => !dead.has(u)));
+  const have = new Set((p.source_urls || []).filter(u => !dead.has(u)).map(adKey));
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
   const chips = qs => qs.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('');
   const im = sug.images || { frames: [] };
@@ -2798,7 +2804,7 @@ function renderAdFinder(box, p){
         <button class="btn primary push ad-add" data-icon="download">Télécharger et analyser →</button></div></article>`;
   hydrateIcons(box);
   const own = box.querySelector('.ad-own'), count = box.querySelector('.ad-count');
-  const urls = () => [...adPicked, ...own.value.split('\n').map(x => x.trim()).filter(Boolean)].filter(u => !have.has(u));
+  const urls = () => [...adPicked, ...own.value.split('\n').map(x => x.trim()).filter(Boolean)].filter(u => !have.has(adKey(u)));
   const recount = () => { const n = urls().length; count.textContent = n ? `${n} vidéo(s) à télécharger` : 'Coche au moins une vidéo ou colle un lien.'; };
   recount();
   own.oninput = recount;

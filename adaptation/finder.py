@@ -97,6 +97,16 @@ def scenes(ref: Dict) -> List[Dict]:
 
 # --------------------------------------------------------------- YouTube search
 
+def same_video(url: str) -> str:
+    """One key per video, whatever the spelling: http/https, www./m., a
+    trailing slash, YouTube's watch/shorts/youtu.be forms."""
+    vid = _video_id(url)
+    if vid:
+        return "youtube:" + vid
+    u = re.sub(r"^https?://(www\.|m\.)?", "", (url or "").strip().lower())
+    return u.split("?")[0].split("#")[0].rstrip("/")
+
+
 def _video_id(url: str) -> Optional[str]:
     m = re.search(r"(?:v=|youtu\.be/|shorts/)([\w-]{11})", url or "")
     return m.group(1) if m else None

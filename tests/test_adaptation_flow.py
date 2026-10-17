@@ -367,3 +367,25 @@ def test_api_checks_own_links(client, project, fakes, monkeypatch):
     r = client.post(f"/api/adaptations/{pid}/suggestions/own", json={"urls": ["https://vk.com/video-1_2"]})
     assert r.status_code == 200 and r.json()["suggestions"]["perso"][0]["platform"] == "VK"
     assert client.post(f"/api/adaptations/{pid}/suggestions/own", json={"urls": []}).status_code == 400
+
+
+def test_the_same_video_spelled_differently_is_not_downloaded_twice(project, fakes):
+    from adaptation import finder
+    assert finder.same_video("http://instagram.com/reel/DSHX/") == finder.same_video("https://www.instagram.com/reel/DSHX")
+    assert finder.same_video("https://youtu.be/aaaaaaaaaaa") == finder.same_video("https://www.youtube.com/shorts/aaaaaaaaaaa?x=1")
+    pid = ap.create("https://youtube.com/shorts/x", ["https://www.instagram.com/reel/DSHX/"], [channel(project)])["project_id"]
+    ap.run_analysis(pid)
+    with pytest.raises(ap.PipelineError, match="Aucun nouveau lien"):
+        ap.add_sources(pid, ["http://instagram.com/reel/DSHX"])
+    p = ap.check_own(pid, ["http://instagram.com/reel/DSHX"], checker=lambda u, s, pl: {"verdict": "oui", "par_scene": {}, "title": "t"})
+    assert p["suggestions"]["perso"][0]["url"] == "https://www.instagram.com/reel/DSHX/"   # spelled like the source: "déjà ajoutée"
+
+
+def test_checking_one_of_your_links_again_gives_it_its_title(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project)])["project_id"]
+    ap.run_analysis(pid)
+    ap.check_own(pid, ["https://vk.com/video-1_2"], checker=lambda u, s, pl: (_ for _ in ()).throw(RuntimeError("lent")))
+    monkeypatch.setattr(finder, "check", lambda url, scenes, plans=None: {"verdict": "oui", "par_scene": {}, "title": "Nerfs d'acier", "duration": 64})
+    card = ap.check_candidate(pid, "https://vk.com/video-1_2")["suggestions"]["perso"][0]
+    assert card["title"] == "Nerfs d'acier" and card["duration"] == 64

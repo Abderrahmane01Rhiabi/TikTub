@@ -192,13 +192,13 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
     clips already there."""
     p = load(pid)
     _expect(p, "sources_search", "sources_review")
-    dead = [i for i, m in enumerate(p.get("sources") or []) if m.get("failed")]
-    have = set(p["source_urls"]) - {p["source_urls"][i] for i in dead}
+    dead = [i for i, m in enumerate(p.get("sources") or []) if m and m.get("failed")]
+    have = {finder.same_video(u) for u in p["source_urls"]} - {finder.same_video(p["source_urls"][i]) for i in dead}
     new = []
     for u in urls:
         u = (u or "").strip()
-        if u and u not in have:
-            have.add(u)
+        if u and finder.same_video(u) not in have:      # the same video spelled http/https, with/without www
+            have.add(finder.same_video(u))
             new.append(u)
     if not new:
         raise PipelineError("Aucun nouveau lien : coche une vidéo proposée ou colle un lien.")
@@ -228,6 +228,9 @@ def check_candidate(pid: str, url: str) -> Dict:
     p = load(pid)
     p["suggestions"].setdefault("verifs", {})[url] = result
     (p["suggestions"].get("verif_errors") or {}).pop(url, None)
+    for c in p["suggestions"].get("perso") or []:          # one of your links: its real title now
+        if c["url"] == url:
+            c.update(title=result.get("title") or c.get("title"), duration=result.get("duration") or c.get("duration"))
     return save(p)
 
 
@@ -240,7 +243,9 @@ def check_own(pid: str, urls: List[str], checker=None) -> Dict:
     sug = p.get("suggestions")
     if not sug or not sug.get("scenes"):
         raise PipelineError("Aucune scène à chercher dans ce projet.")
-    new = list(dict.fromkeys(u.strip() for u in urls if u and u.strip().startswith("http")))
+    known = {finder.same_video(u): u for u in p["source_urls"] + [c["url"] for c in finder.all_candidates(sug)]}
+    new = list(dict.fromkeys(known.get(finder.same_video(u.strip()), u.strip())     # spelled like the copy already here
+                             for u in urls if u and u.strip().startswith("http")))
     if not new:
         raise PipelineError("Colle au moins un lien (https://…).")
     checker = checker or finder.check
