@@ -357,6 +357,36 @@ def test_finder_check_downloads_a_youtube_video_gemini_may_not_open(monkeypatch)
     assert asked == [{"file_uri": "https://www.youtube.com/watch?v=aaaaaaaaaaa"}]   # tried by link first
 
 
+def test_finder_check_accepts_a_video_without_a_known_duration(monkeypatch, tmp_path):
+    """Instagram gives no duration: the 20-minute filter must let it through."""
+    import yt_dlp
+    from adaptation import finder, sources
+    seen = {}
+
+    class DL:
+        def __init__(self, opts): seen["opts"] = opts
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def extract_info(self, url, download):
+            assert seen["opts"]["match_filter"]({"title": "reel"}, incomplete=False) is None   # no duration: passes
+            path = seen["opts"]["outtmpl"].replace("%(ext)s", "mp4")
+            open(path, "wb").write(b"x")
+            return {"title": "Video by hr_mahto_official", "uploader": "HR MAHTO", "ext": "mp4"}
+        def prepare_filename(self, info): return seen["opts"]["outtmpl"].replace("%(ext)s", "mp4")
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", DL)
+    monkeypatch.setattr(sources, "probe", lambda p: {"w": 576, "h": 1024, "duration": 22.1})
+
+    class G:
+        def _upload_video_file(self, path): return {"name": "f", "uri": "u", "mime_type": "video/mp4"}
+        def _wait_for_file_active(self, *a, **k): return True
+        def _delete_file(self, name): pass
+        def _generate_content(self, parts, **kw):
+            return {"plans": [{"plan": 1, "niveau": "exacte", "moments": [{"debut": 0}]}], "resume": "sel"}
+    r = finder.check("http://instagram.com/reel/DSHXwI3DEug/", [{"scene": "récolte du sel"}], gemini=G())
+    assert r["verdict"] == "oui" and r["duration"] == 22.1 and r["title"] == "Video by hr_mahto_official · HR MAHTO"
+    assert seen["opts"]["match_filter"]({"duration": 3600}, incomplete=False)   # a 1-hour video is still refused
+
+
 def test_finder_check_falls_back_on_scenes_for_an_older_analysis():
     from adaptation import finder
     units = finder._units([{"scene": "un tram"}, {"scene": "une voiture", "indices": "rouge"}], [])

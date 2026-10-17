@@ -502,7 +502,8 @@ def _watch(url: str, g, prompt: str) -> Dict:
     from adaptation import sources
     with tempfile.TemporaryDirectory() as tmp:
         opts = ytdlp_opts(outtmpl=os.path.join(tmp, "c.%(ext)s"), format="best[height<=480]/worst/best",
-                          noplaylist=True, match_filter=yt_dlp.utils.match_filter_func(f"duration <= {MAX_DURATION}"))
+                          noplaylist=True,          # "<=?": Instagram gives no duration, it must not be refused for that
+                          match_filter=yt_dlp.utils.match_filter_func(f"duration <=? {MAX_DURATION}"))
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
@@ -521,7 +522,7 @@ def _watch(url: str, g, prompt: str) -> Dict:
                                           {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1)
         finally:
             g._delete_file(up["name"])
-        return {"answer": answer, "duration": info.get("duration"),
+        return {"answer": answer, "duration": info.get("duration") or sources.probe(path)["duration"],
                 "title": " · ".join(x for x in (info.get("title"), info.get("uploader")) if x)}
 
 
