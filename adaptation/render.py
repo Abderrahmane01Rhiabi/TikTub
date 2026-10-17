@@ -289,6 +289,8 @@ def clip_chain(i: int, k: int, c: Dict, s: Dict) -> List[str]:
     T = s["impact_out"] - s["out"]
     punch = f"(1+0.07*exp(-pow((t-{T:.3f})/0.16,2)))"
     shake = f"9*sin(t*73)*exp(-pow((t-{T:.3f})/0.13,2))"
+    if c.get("shock") is False:         # the zoom + shake is a crash's: a calm shot (no shock heard) stays still
+        punch, shake = "1", "0"
     pre = f"[{i}:v]trim={s['ws']:.3f}:{end:.3f},setpts=PTS-STARTPTS,fps={FPS}"
     if pad > 0.01:
         pre += f",tpad=stop_mode=clone:stop_duration={pad:.3f}"

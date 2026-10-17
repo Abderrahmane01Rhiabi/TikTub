@@ -12,7 +12,10 @@ An adaptation project, step by step.
                      footage, reviewed and approved per language (mandatory)
     searching        the footage for each plan: the four searches on the plan's
                      image, Gemini's checks, the best moment picked   (background)
-    images_review    the person sees, plan by plan, the video and moment picked
+    images_review    the person sees, plan by plan, the video and moment picked; may
+                     give a link for a plan, adapt a plan to an image found, set it aside
+    fetching         only the picked moments are downloaded, one clip per plan
+                     (background), then the usual script_review with clips
     scripting        one script per target channel, re-read by gemini-pro (background)
     script_review    the person reads/edits/approves EVERY script (mandatory)
     voicing          narration + a quick preview + automatic checks  (background)
@@ -30,12 +33,12 @@ import re
 import shutil
 import uuid
 from datetime import datetime
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import db
 from adaptation import checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
 
-BUSY = {"analysing", "searching", "scripting", "voicing", "rendering"}
+BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
 
 
@@ -350,8 +353,238 @@ def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin
         c = next((c for c in finder.all_candidates(p.get("suggestions") or {}) if c["url"] == url), {})
         picks[plan] = {"url": url, "titre": c.get("title") or v.get("title") or url, "niveau": e.get("niveau") or "choisie",
                        "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
-                       "raison": e.get("raison") or "", "auto": False}
+                       "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage"))}
     p["picks"] = picks
+    return save(p)
+
+
+def _active(p: Dict) -> List[int]:
+    return [k for k, pl in enumerate(p["storyboard"]["plans"]) if not pl.get("retire")]
+
+
+def skip_plan(pid: str, plan: int, skip: bool = True) -> Dict:
+    """Set a plan aside (the video is made without it) or bring it back."""
+    p = load(pid)
+    _expect(p, "images_review")
+    plans = p["storyboard"]["plans"]
+    if not 0 <= plan < len(plans):
+        raise PipelineError("Plan inconnu.")
+    if skip and len(_active(p)) <= 3:
+        raise PipelineError("Il faut garder au moins 3 plans.")
+    plans[plan]["retire"] = bool(skip)
+    return save(p)
+
+
+def _best_moment(v: Dict, plan: int) -> Optional[Dict]:
+    e = (v.get("par_scene") or {}).get(str(plan)) or {}
+    if v.get("copie") or e.get("niveau") not in finder.RANK:
+        return None
+    ms = e.get("moments") or [{"debut": 0}]
+    m = max(ms, key=lambda m: float(m.get("fin") or 0) - float(m.get("debut") or 0))
+    a = float(m.get("debut") or 0)
+    return {"debut": a, "fin": float(m["fin"]) if m.get("fin") is not None else a + 4, "niveau": e["niveau"],
+            "raison": e.get("raison") or ""}
+
+
+def check_plan_link(pid: str, plan: int, url: str, checker=None) -> Dict:
+    """Your link for one plan: judged like the others; if it fits this plan,
+    it becomes the plan's pick."""
+    p = load(pid)
+    _expect(p, "images_review")
+    sug = p["suggestions"]
+    if not 0 <= plan < len(sug["scenes"]):
+        raise PipelineError("Plan inconnu.")
+    url = (url or "").strip()
+    if not url.startswith("http"):
+        raise PipelineError("Colle un lien (https://…).")
+    known = {finder.same_video(c["url"]): c["url"] for c in finder.all_candidates(sug)}
+    url = known.get(finder.same_video(url), url)
+    model = finder.model_of(p.get("reference"))
+    try:
+        r = (checker or (lambda u, sc, pl: finder.check(u, sc, pl, **({"model": model} if model else {}))))(
+            url, sug["scenes"], None)
+    except finder.FinderError as e:
+        raise PipelineError(str(e))
+    p = load(pid)
+    sug = p["suggestions"]
+    sug.setdefault("verifs", {})[url] = r
+    cands = sug["scenes"][plan].setdefault("candidats", [])
+    if not any(c["url"] == url for c in cands):
+        from adaptation.imagesearch import platform
+        vid = finder._video_id(url)
+        cands.insert(0, {"url": url, "id": vid or url, "title": r.get("title") or url, "origines": ["perso"],
+                         "platform": platform(url), "duration": r.get("duration"),
+                         "thumb": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else ""})
+    m = _best_moment(r, plan)
+    if m:
+        p["picks"][plan] = {"url": url, "titre": r.get("title") or url, "niveau": m["niveau"],
+                            "moment": {"debut": m["debut"], "fin": m["fin"]}, "raison": m["raison"], "auto": False}
+    return save(p)
+
+
+def adapt_plan(pid: str, plan: int) -> Dict:
+    """A plan nobody filmed: rewritten (every language) around an image
+    already found and checked, which becomes its pick."""
+    p = load(pid)
+    _expect(p, "images_review")
+    b, sug, picks = p["storyboard"], p["suggestions"], p["picks"]
+    used = {(x["url"], round(x["moment"]["debut"])) for k, x in enumerate(picks) if x and k != plan}
+    options = []
+    for url, v in (sug.get("verifs") or {}).items():
+        if v.get("copie"):
+            continue
+        for e in (v.get("par_scene") or {}).values():
+            if e.get("niveau") not in finder.RANK:
+                continue
+            for m in e.get("moments") or []:
+                a = float(m.get("debut") or 0)
+                if (url, round(a)) in used or any(o["url"] == url and abs(o["debut"] - a) < 2 for o in options):
+                    continue
+                options.append({"url": url, "debut": a, "fin": float(m["fin"]) if m.get("fin") is not None else a + 4,
+                                "vu": m.get("ce_qu_on_voit") or e.get("raison") or v.get("raison") or url})
+    options = options[:15]
+    try:
+        choice, new = storyboard.adapt_to(b, plan, options, _codes(p))
+    except script.ScriptError as e:
+        raise PipelineError(str(e))
+    p = load(pid)
+    old = p["storyboard"]["plans"][plan]
+    p["storyboard"]["plans"][plan] = {**new, "role": old["role"], "plans_modele": [], "adapte": True}
+    o = options[choice]
+    p["picks"][plan] = {"url": o["url"], "titre": next((c.get("title") for c in finder.all_candidates(p["suggestions"])
+                                                        if c["url"] == o["url"]), o["url"]),
+                        "niveau": "adaptée", "moment": {"debut": o["debut"], "fin": o["fin"]}, "raison": o["vu"], "auto": False}
+    _refresh_plan(p)
+    for t in p["targets"]:              # reviewed before: only the adapted plan changed, shown on the next screen
+        t["approved"] = True
+    return save(p)
+
+
+def start_fetch(pid: str) -> Dict:
+    p = load(pid)
+    _expect(p, "images_review")
+    missing = [k + 1 for k in _active(p) if not p["picks"][k]]
+    if missing:
+        raise PipelineError("Plans sans vidéo : " + ", ".join(map(str, missing)) +
+                            ". Choisis une vidéo, adapte la phrase ou retire le plan.")
+    left = [x for t in p["targets"] for x in storyboard.problems(       # a plan set aside may make it short: not a blocker
+        {**p["storyboard"], "plans": [pl for pl in p["storyboard"]["plans"] if not pl.get("retire")]}, t["language"])
+        if not x.startswith("Durée totale")]
+    if left:
+        raise PipelineError("À corriger d'abord : " + " ".join(left))
+    p["status"] = "fetching"
+    return save(p)
+
+
+def _spans(items: List[Tuple[int, float, float]]) -> List[List[float]]:
+    spans = []
+    for _, a, b in sorted(items, key=lambda x: x[1]):
+        a, b = max(0.0, a - 1.0), b + 1.0
+        if spans and a <= spans[-1][1] + 2:
+            spans[-1][1] = max(spans[-1][1], b)
+        else:
+            spans.append([a, b])
+    return spans
+
+
+def run_fetch(pid: str, report: Optional[Report] = None):
+    """Only the picked moments are downloaded (a short video whole), then one
+    clean clip per plan, cut on its moment and long enough for its sentence;
+    each language's script gets its clips and goes to the usual review."""
+    report = report or (lambda phase, f: None)
+    p = load(pid)
+    try:
+        plans, picks, sug = p["storyboard"]["plans"], p["picks"], p.get("suggestions") or {}
+        durations = {c["url"]: c.get("duration") for c in finder.all_candidates(sug)}
+        durations.update({u: v.get("duration") for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
+        by_url: Dict[str, List[Tuple[int, float, float]]] = {}
+        for k in _active(p):
+            m = picks[k]["moment"]
+            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], max(m["fin"], m["debut"] + plans[k]["duree"])))
+        base, clips, metas = project_dir(pid), {}, []
+        for i, (url, items) in enumerate(by_url.items()):
+            report(f"vidéo {i + 1}/{len(by_url)} : téléchargement des moments choisis", 0.05 + 0.8 * i / len(by_url))
+            dur = durations.get(url)
+            spans = None if (dur and dur <= 120) else _spans(items)
+            try:
+                path = sources.download(url, os.path.join(base, "src"), f"src{i}", spans)
+            except sources.SourceError:
+                if spans is None:
+                    raise
+                spans = None                    # some sites refuse a section: the whole video, then
+                path = sources.download(url, os.path.join(base, "src"), f"src{i}")
+            metas.append(sources.source_meta(path))
+
+            def file_time(t: float) -> float:
+                if not spans:
+                    return t
+                offset = 0.0
+                for a, b in spans:
+                    if a <= t <= b:
+                        return offset + (t - a)
+                    offset += b - a
+                return t
+            report(f"vidéo {i + 1}/{len(by_url)} : nettoyage des images", 0.05 + 0.8 * (i + 0.6) / len(by_url))
+            times = [(k, file_time(a), file_time(a) + (b - a)) for k, a, b in items]
+            work = os.path.join(base, "work")
+            os.makedirs(work, exist_ok=True)
+            found = sources.find_boxes([sources.still(path, (a + b) / 2, None, os.path.join(work, f"p{k}.jpg"))
+                                        for k, a, b in times])
+            report(f"vidéo {i + 1}/{len(by_url)} : contrôle des moments par l'IA", 0.05 + 0.8 * (i + 0.8) / len(by_url))
+            try:                        # the same check as an analysed source: a presenter, a title, a logo… is refused
+                seen = sources.describe(path, [(a, b) for _, a, b in times])
+            except Exception:
+                seen = [{} for _ in times]
+            for (k, a, b), f, d in zip(times, found, seen):
+                c = sources.clip_at(path, i, f"P{k + 1}", a, b, f, desc=plans[k]["image"])
+                why = _real_faults(d.get("pourquoi_pas") or "")
+                c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
+                         why_not=why, shock=bool(d.get("choc_sonore")))
+                clips[f"P{k + 1}"] = c
+        p = load(pid)
+        p.update(clips=clips, sources=metas, source_urls=list(by_url), status="script_review", error=None,
+                 failed_step=None)
+        guess = guess_credits(metas, clips)
+        names = [n for n in guess.split(" · ") if n] + [m.get("handle") for m in metas if m.get("handle")]
+        guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:4])
+        p["credits"], p["credits_auto"] = guess, guess        # every channel whose footage is used, not only watermarks
+        for t in p["targets"]:
+            full = storyboard.script_for(p["storyboard"], t["language"])
+            sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
+            t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"]))
+            t["approved"] = not t["problems"]
+        save(p)
+    except Exception as e:
+        fail(pid, "fetching", e)
+    report("terminé", 1.0)
+
+
+def _real_faults(why_not: str) -> str:
+    """What really makes a chosen moment unusable: a logo or a watermark is
+    painted over by the cleaning, so it is not one (measured: 3 good moments
+    of 7 refused for "logo" alone)."""
+    parts = [x.strip() for x in re.split(r"[,;/]| et ", why_not or "") if x.strip()]
+    return ", ".join(x for x in parts if not re.search(r"logo|filigrane|watermark|@", x, re.I))
+
+
+def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:
+    out = script.problems(sc, clips, code)
+    for k, x in enumerate(sc["passages"], 1):
+        c = clips.get(x["clip"]) or {}
+        if c and not c.get("usable", True):
+            out.append(f"Passage {k} : le moment choisi ne convient pas ({c.get('why_not') or 'refusé par le contrôle'}) : "
+                       f"choisis un autre clip ou « Revenir aux images ».")
+    return out
+
+
+def back_to_images(pid: str) -> Dict:
+    """"Script d'abord": from the script screen back to the plan-by-plan
+    picks (a moment refused by the check, another one wanted)."""
+    p = load(pid)
+    _expect(p, "script_review")
+    if p.get("mode") != "script":
+        raise PipelineError("Seulement en « Script d'abord ».")
+    p["status"] = "images_review"
     return save(p)
 
 
@@ -506,7 +739,7 @@ def edit_script(pid: str, channel: str, new: Dict) -> Dict:
     t = target(p, channel)
     sc = script.normalise({**(t["script"] or {}), **new}, p["clips"])
     t.update(script={**sc, "corrections": (t["script"] or {}).get("corrections", [])},
-             problems=script.problems(sc, p["clips"], t["language"]), approved=False)
+             problems=_fetched_problems(sc, p["clips"], t["language"]), approved=False)
     return save(p)
 
 
@@ -523,7 +756,7 @@ def approve_script(pid: str, channel: str) -> Dict:
     p = load(pid)
     _expect(p, "script_review")
     t = target(p, channel)
-    problems = script.problems(t["script"] or {}, p["clips"], t["language"])
+    problems = _fetched_problems(t["script"] or {}, p["clips"], t["language"])
     if problems:
         raise PipelineError("À corriger avant de valider : " + " ".join(problems))
     t["approved"] = True
@@ -649,8 +882,8 @@ def run_final(pid: str, report: Optional[Report] = None):
     report("terminé", 1.0)
 
 
-RUNNERS = {"analysing": run_analysis, "searching": run_images, "scripting": run_scripts, "voicing": run_voices,
-           "rendering": run_final}
+RUNNERS = {"analysing": run_analysis, "searching": run_images, "fetching": run_fetch, "scripting": run_scripts,
+           "voicing": run_voices, "rendering": run_final}
 
 
 def retry(pid: str) -> str:

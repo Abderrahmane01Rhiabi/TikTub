@@ -255,7 +255,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
 
     p = ap.choose_pick(pid, 1, "A", 30, 35)
     assert p["picks"][1] == {"url": "A", "titre": "Compil", "niveau": "choisie", "moment": {"debut": 30.0, "fin": 35.0},
-                             "raison": "", "auto": False}
+                             "raison": "", "auto": False, "remontage": False}
     assert ap.choose_pick(pid, 0, None)["picks"][0] is None
     with pytest.raises(ap.PipelineError):
         ap.choose_pick(pid, 9, "A")
@@ -297,3 +297,135 @@ def test_auto_pick_prefers_original_footage_to_someone_elses_re_edit():
     sug = {"verifs": {"remix": v("exacte", True)}}
     pick = finder.auto_pick(sug, [{}])[0]
     assert pick["url"] == "remix" and pick["remontage"]                       # nothing else: taken, flagged
+
+
+# ---------------------------------------------------------------- steps 4-5: your link, adapt, set aside, fetch
+
+def _images_project(project, fakes, monkeypatch, picks=None):
+    from adaptation import finder
+    pid = _approved_project(project, fakes)
+    ap.start_images(pid)
+    monkeypatch.setattr(finder, "plan_queries", lambda found: {})
+    monkeypatch.setattr(finder, "suggest", lambda ref, url, work_dir=None, wanted=None, local=None, report=None: {
+        "scenes": [{**w, "candidats": [{"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "title": "Compil", "duration": 600}]}
+                   for w in wanted], "comptes": [], "verifs": {}})
+    v = {"verdict": "oui", "title": "Compil", "duration": 600, "par_scene": {
+        str(k): {"niveau": "exacte", "moments": [{"debut": 100 + 30 * k, "fin": 104 + 30 * k, "ce_qu_on_voit": f"moment {k}"}]}
+        for k in range(5)}}
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug.update(
+        verifs={"https://www.youtube.com/watch?v=aaaaaaaaaaa": v}) or sug)
+    ap.run_images(pid)
+    return pid
+
+
+def test_set_aside_a_plan_and_your_link_for_a_plan(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    assert [bool(x) for x in p["picks"]] == [True] * 5 + [False]
+    with pytest.raises(ap.PipelineError, match="Plans sans vidéo : 6"):
+        ap.start_fetch(pid)
+    tt = "https://www.tiktok.com/@a/video/1"
+    p = ap.check_plan_link(pid, 5, tt, checker=lambda u, sc, pl: {"verdict": "oui", "title": "Mon TikTok", "par_scene": {
+        "5": {"niveau": "equivalente", "moments": [{"debut": 2, "fin": 3}, {"debut": 8, "fin": 15}], "raison": "pareil"}}})
+    assert p["picks"][5] == {"url": tt, "titre": "Mon TikTok", "niveau": "equivalente", "moment": {"debut": 8.0, "fin": 15.0},
+                             "raison": "pareil", "auto": False}
+    assert p["suggestions"]["scenes"][5]["candidats"][0]["origines"] == ["perso"]
+    p = ap.skip_plan(pid, 5)
+    assert p["storyboard"]["plans"][5]["retire"]
+    for k in (4, 3):
+        ap.skip_plan(pid, k)
+    with pytest.raises(ap.PipelineError, match="au moins 3"):
+        ap.skip_plan(pid, 2)
+    assert not ap.skip_plan(pid, 5, skip=False)["storyboard"]["plans"][5]["retire"]
+
+
+def test_a_plan_without_video_is_adapted_to_an_image_found(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    seen = {}
+
+    def adapt_to(bundle, k, options, codes):
+        seen["options"], seen["k"] = options, k
+        new = {**bundle["plans"][k], "image": "moment 4 vu autrement",
+               "textes": {"fr": {"bandeau": "X : Y 😐", "texte": "Une phrase adaptée et complète.", "mots_cles": []},
+                          "ar": {"bandeau": "س", "texte": "جملة جديدة كاملة.", "mots_cles": []}}}
+        return 0, new
+    monkeypatch.setattr(sb, "adapt_to", adapt_to)
+    ap.choose_pick(pid, 4, None)                              # plan 5's moment is free again
+    p = ap.adapt_plan(pid, 5)
+    assert seen["k"] == 5 and [o["vu"] for o in seen["options"]] == ["moment 4"]       # the moments other plans use are not offered
+    assert p["storyboard"]["plans"][5]["image"] == "moment 4 vu autrement" and p["storyboard"]["plans"][5]["adapte"]
+    assert p["picks"][5]["niveau"] == "adaptée" and p["picks"][5]["moment"] == {"debut": 220.0, "fin": 224.0}
+    assert p["targets"][0]["script"]["passages"][5]["texte"] == "Une phrase adaptée et complète."
+
+
+def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, fakes, monkeypatch):
+    from adaptation import sources
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    got = {}
+
+    def download(url, d, name, sections=None):
+        got["sections"] = sections
+        return f"{d}/{name}.mp4"
+    monkeypatch.setattr(sources, "download", download)
+    monkeypatch.setattr(sources, "source_meta", lambda path: {"handle": "@auteur"})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], ["@auteur"])] * len(stills))
+    made = []
+
+    def clip_at(path, i, cid, a, b, found, desc=""):
+        made.append((cid, round(a, 2), round(b, 2)))
+        return {"id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920,
+                "usable": True, "marks": found[2], "desc": desc, "shock": False}
+    monkeypatch.setattr(sources, "clip_at", clip_at)
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [
+        {"visuel": f"vu {k}", "utilisable": k != 4, "pourquoi_pas": "présentateur" if k == 4 else "", "choc_sonore": False}
+        for k in range(len(segs))])
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert p["status"] == "script_review" and p["source_urls"] == ["https://www.youtube.com/watch?v=aaaaaaaaaaa"]
+    plans = p["storyboard"]["plans"]
+    assert got["sections"][0][0] == 99.0 and len(got["sections"]) == 5         # one span per moment, 1 s around
+    # times in the downloaded file: the spans are joined one after the other
+    lens = [b - a for a, b in got["sections"]]
+    assert made[1][1] == round(lens[0] + 1.0, 2)
+    assert made[0][2] - made[0][1] == pytest.approx(max(4, plans[0]["duree"]))   # long enough for its sentence
+    assert set(p["clips"]) == {"P1", "P2", "P3", "P4", "P5"} and p["credits"] == "@auteur"
+    assert p["clips"]["P1"]["desc"] == "vu 0" and not p["clips"]["P5"]["usable"]
+    t = p["targets"][0]
+    assert [x["clip"] for x in t["script"]["passages"]] == ["P1", "P2", "P3", "P4", "P5"]      # plan 6 set aside
+    assert any("présentateur" in x for x in t["problems"]) and not t["approved"]          # the check refused plan 5's moment
+    p = ap.back_to_images(pid)
+    assert p["status"] == "images_review" and p["picks"][0]                                # pick another moment there
+
+
+def test_spans_merge_close_moments_and_calm_clips_do_not_shake():
+    from adaptation import render
+    assert ap._spans([(0, 10, 14), (1, 15, 18), (2, 100, 104)]) == [[9.0, 19.0], [99.0, 105.0]]
+    seg = {"ws": 0.0, "dur": 3.0, "impact_out": 1.0, "out": 0.0}
+    calm = {"start": 0, "end": 4, "w": 1080, "h": 1920, "shock": False}
+    assert "exp(" not in " ".join(render.clip_chain(0, 0, calm, seg))
+    assert "exp(" in " ".join(render.clip_chain(0, 0, {**calm, "shock": None}, seg))
+
+
+def test_api_steps_4_and_5(client, project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    assert client.post(f"/api/adaptations/{pid}/fetch").status_code == 400          # plan 6 has no video
+    r = client.post(f"/api/adaptations/{pid}/plans/5/skip", json={"skip": True})
+    assert r.status_code == 200 and r.json()["storyboard"]["plans"][5]["retire"]
+    assert client.post(f"/api/adaptations/{pid}/plans/0/link", json={"url": "pas un lien"}).status_code == 400
+
+
+def test_a_logo_alone_does_not_refuse_a_chosen_moment():
+    assert ap._real_faults("logo") == "" and ap._real_faults("filigrane TikTok @x, logo") == ""
+    assert ap._real_faults("presentateur, logo, ecran scinde") == "presentateur, ecran scinde"
+    assert ap._real_faults("logo, texte incrusté") == "texte incrusté"
+
+
+def test_a_re_edit_chosen_by_hand_keeps_its_warning(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["suggestions"]["verifs"]["https://www.youtube.com/watch?v=aaaaaaaaaaa"]["remontage"] = True
+    ap.save(p)
+    assert ap.choose_pick(pid, 5, "https://www.youtube.com/watch?v=aaaaaaaaaaa", 10)["picks"][5]["remontage"]

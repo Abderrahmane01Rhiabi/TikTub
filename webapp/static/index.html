@@ -2481,12 +2481,12 @@ function renderAdaptationChannel(card, ch, data){
 // ---------- Adaptation : project by project ----------
 
 let adCurrent = null, adPoll = null, adProject = null;
-const AD_BUSY = ['analysing', 'searching', 'scripting', 'voicing', 'rendering'];
+const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering'];
 const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review']],
-                         ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STATUS = { analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
+const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
+                         ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
+const AD_STATUS = { analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
   script_review: 'scripts à relire', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
@@ -2969,7 +2969,8 @@ function renderAdPlan(body, p){
   };
 }
 
-const AD_PICK = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images équivalentes'], partielle: ['warn', 'partielle'], choisie: ['wait', 'choisie à la main'] };
+const AD_PICK = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images équivalentes'], partielle: ['warn', 'partielle'],
+  choisie: ['wait', 'choisie à la main'], 'adaptée': ['ok', 'phrase adaptée à l\'image'] };
 
 function adAt(url, sec){
   const t = Math.max(0, Math.floor(sec || 0));
@@ -2979,20 +2980,27 @@ function adAt(url, sec){
 function renderAdImages(body, p){
   const sug = p.suggestions || { scenes: [] }, sb = p.storyboard || { plans: [] }, picks = p.picks || [];
   const t0 = p.targets[0] || {}, texts = ((t0.script || {}).passages || []);
-  const n = sb.plans.length, got = picks.filter(Boolean), green = got.filter(x => x.niveau === 'exacte' || x.niveau === 'equivalente').length;
+  const active = sb.plans.map((pl, k) => k).filter(k => !sb.plans[k].retire);
+  const n = active.length, got = active.map(k => picks[k]).filter(Boolean);
+  const green = got.filter(x => ['exacte', 'equivalente', 'adaptée'].includes(x.niveau)).length;
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
   const chips = qs => qs.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('');
   const im = sug.images || { frames: [] };
   body.innerHTML = `<article class="chcard"><div class="chcard-body">
       <div><b>${got.length}/${n} plans ont une vidéo choisie</b> : ${green} verte(s), ${got.length - green} à regarder, ${n - got.length} sans vidéo.</div>
       <div class="tiny">Pour chaque plan, l'app a cherché l'image voulue (YouTube, langue du pays, recherche par image, compte crédité), fait vérifier les meilleures vidéos par l'IA
-        et choisi <b>le meilleur moment</b>. Tu peux en choisir un autre avec <b>« Choisir »</b>. La suite (tes liens par plan, reformuler une phrase sans image, le téléchargement) arrive à la prochaine étape.</div>
+        et choisi <b>le meilleur moment</b>. Tu peux en choisir un autre avec <b>« Choisir »</b>, donner <b>ton lien</b> pour un plan,
+        <b>adapter la phrase</b> d'un plan sans vidéo à une image trouvée, ou <b>retirer</b> un plan. Quand chaque plan a sa vidéo : <b>Télécharger les images choisies</b>.</div>
     </div></article>` +
   sb.plans.map((pl, k) => {
     const sc = (sug.scenes || [])[k] || { candidats: [], recherches: [] };
     const pick = picks[k];
     const frames = (im.frames || []).filter(f => f.scene === k);
-    const [cls, label] = pick ? (AD_PICK[pick.niveau] || ['wait', pick.niveau]) : ['bad', 'aucune vidéo'];
+    const [cls, label] = pl.retire ? ['wait', 'plan retiré'] : pick ? (AD_PICK[pick.niveau] || ['wait', pick.niveau]) : ['bad', 'aucune vidéo'];
+    if (pl.retire) return `<article class="chcard ad-imgplan" data-plan="${k}" style="opacity:.6"><div class="chcard-head"><div class="who">
+        <div class="name">${k + 1} · ${esc(AD_ROLE[pl.role] || pl.role)} · retiré</div>
+        <div class="meta" style="margin-left:0">« ${esc((texts[k] || {}).texte || '')} »</div></div>
+        <button class="btn ghost small ad-unskip">Remettre ce plan</button></div></article>`;
     return `<article class="chcard ad-imgplan" data-plan="${k}"><div class="chcard-head"><div class="who">
         <div class="name">${k + 1} · ${esc(AD_ROLE[pl.role] || pl.role)} · ≥ ${pl.duree} s</div>
         <div class="meta" style="margin-left:0">« ${esc((texts[k] || {}).texte || '')} »</div></div>
@@ -3004,7 +3012,12 @@ function renderAdImages(body, p){
             ${pick.remontage ? `<span class="pill warn">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
             <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
-          : '<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan : choisis-en une ci-dessous après l\'avoir vérifiée, ou cherche avec les images et les liens.</div>'}
+          : `<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan. Choisis-en une ci-dessous, donne ton lien, ou :</div>
+             <div class="ad-row"><button class="btn secondary small ad-adapt" data-icon="sparkle" title="L'IA réécrit la phrase (toutes les langues) autour d'une image déjà trouvée">Adapter la phrase à une image trouvée</button>
+               <button class="btn ghost small ad-skip">Retirer ce plan</button></div>`}
+        <div class="ad-row"><input class="f ad-plan-link" placeholder="Ton lien pour ce plan (TikTok, YouTube, VK…)" style="flex:1;min-width:220px">
+          <button class="btn secondary small ad-plan-check" title="L'IA vérifie ce lien pour ce plan (15 s à 2 min)">Vérifier pour ce plan</button>
+          ${pick ? '<button class="btn ghost small ad-skip">Retirer ce plan</button>' : ''}</div>
         ${frames.length ? adFramesHtml(p, frames) : ''}
         <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches || [])}</div>
         ${links(sc.liens || [])}
@@ -3013,7 +3026,7 @@ function renderAdImages(body, p){
           <div class="ad-clips" style="margin-top:8px">${adSortCands(sc.candidats, k, sug).map(c => adCandHtml(c, k, sug, new Set(), { plan: k, chosen: pick && pick.url === c.url })).join('')}</div></details>` : ''}
       </div></article>`;
   }).join('') + `<div class="navbar"><span class="progress-text">${got.length}/${n} plan(s) avec une vidéo</span><span></span>
-      <button class="btn primary" disabled title="Prochaine étape, en construction" data-icon="download">Télécharger les images choisies →</button></div>`;
+      <button class="btn primary" id="adFetch" ${got.length === n ? '' : 'disabled'} title="Télécharge seulement les moments choisis et fabrique un clip par plan (1 à 4 min)" data-icon="download">Télécharger les images choisies →</button></div>`;
   hydrateIcons(body);
   body.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
     navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Recherche copiée', 'success')).catch(() => {}));
@@ -3024,8 +3037,31 @@ function renderAdImages(body, p){
     try { const np = await api(`/api/adaptations/${p.project_id}/picks/${k}`, { method:'PUT', body: JSON.stringify(b) });
           adProject = np; renderAdImages(body, np); } catch (e){ log(e.message, 'error'); }
   };
+  const post = async (path, btn, label, payload) => {
+    if (btn){ btn.disabled = true; btn.innerHTML = spin(label); }
+    try { const np = await api(`/api/adaptations/${p.project_id}/${path}`, { method:'POST', body: JSON.stringify(payload || {}) });
+          adProject = np; renderAdImages(body, np); return np; }
+    catch (e){ log(e.message, 'error'); if (btn){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Réessayer'; } }
+  };
+  const fetchBtn = document.getElementById('adFetch');
+  if (fetchBtn) fetchBtn.onclick = async () => {
+    fetchBtn.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/fetch`, { method:'POST' }); adProject = null; loadAdProject(); }
+    catch (e){ log(e.message, 'error'); fetchBtn.disabled = false; }
+  };
   body.querySelectorAll('.ad-imgplan').forEach(card => {
     const k = +card.dataset.plan;
+    card.querySelectorAll('.ad-skip').forEach(b => b.onclick = () => post(`plans/${k}/skip`, null, '', { skip: true }));
+    const unskip = card.querySelector('.ad-unskip');
+    if (unskip) unskip.onclick = () => post(`plans/${k}/skip`, null, '', { skip: false });
+    const adapt = card.querySelector('.ad-adapt');
+    if (adapt){ adapt.dataset.label = adapt.textContent.trim(); adapt.onclick = () => post(`plans/${k}/adapt`, adapt, 'l\'IA réécrit…'); }
+    const chkLink = card.querySelector('.ad-plan-check');
+    if (chkLink){ chkLink.dataset.label = 'Vérifier pour ce plan'; chkLink.onclick = () => {
+      const url = card.querySelector('.ad-plan-link').value.trim();
+      if (!url){ toast('Colle d\'abord un lien', 'error'); return; }
+      post(`plans/${k}/link`, chkLink, 'l\'IA regarde…', { url });
+    }; }
     const un = card.querySelector('.ad-unpick');
     if (un) un.onclick = () => choose(k, { url: null });
     card.querySelectorAll('.ad-choose').forEach(b => b.onclick = () =>
@@ -3075,7 +3111,8 @@ function renderAdScripts(body, p){
         <button class="btn primary small sc-approve" data-icon="check">Valider ce script</button>
       </div>
     </article>`;
-  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.approved).length}/${p.targets.length} script(s) validé(s)</span><span></span>
+  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.approved).length}/${p.targets.length} script(s) validé(s)</span>
+      ${p.mode === 'script' ? '<button class="btn ghost small" id="adBackImages" data-icon="eye">← Revenir aux images</button>' : '<span></span>'}
       <button class="btn primary" id="adVoices" ${allApproved ? '' : 'disabled'} data-icon="mic">Générer les voix et les aperçus →</button></div>`;
   hydrateIcons(body);
   body.querySelectorAll('.ad-target-card').forEach(card => {
@@ -3114,6 +3151,10 @@ function renderAdScripts(body, p){
   const go = document.getElementById('adVoices');
   if (go) go.onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/voices`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
+  };
+  const back = document.getElementById('adBackImages');
+  if (back) back.onclick = async () => {
+    try { await api(`/api/adaptations/${p.project_id}/back-to-images`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };
 }
 

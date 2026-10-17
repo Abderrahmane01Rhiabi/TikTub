@@ -20,7 +20,7 @@ footage exists somewhere), never an idea, a diagram or a text.
 
 import json
 import os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from adaptation.langs import lang as lang_of
 from adaptation.script import LANG_RULES, ScriptError
@@ -222,3 +222,39 @@ def problems(bundle: Dict, code: str) -> List[str]:
     if plans and not TOTAL_S[0] <= total <= TOTAL_S[1]:
         out.append(f"Durée totale : environ {total:.0f} s de voix (viser 25 à 35 s).")
     return out
+
+
+ADAPT_PROMPT = """Storyboard d'un Short (JSON) :
+{bundle}
+Le plan {num} ({role}) n'a pas de video : personne n'a filme "{image}".
+Voici des images DEJA TROUVEES et verifiees, disponibles :
+{options}
+Choisis l'option qui sert le mieux l'histoire a cet endroit, et REECRIS seulement le plan {num} pour qu'il colle a cette
+image : meme role dans l'histoire, l'enchainement avec les plans voisins reste naturel, phrases completes, au plus
+6 secondes de voix, dans chaque langue ({langues}). Ne change aucun autre plan.
+JSON uniquement : {{"choix": numero de l'option, "image": "ce qu'on voit dans l'option choisie",
+  "textes": {{{exemple}}}}}"""
+
+
+def adapt_to(bundle: Dict, k: int, options: List[Dict], codes: List[str], gemini=None) -> Tuple[int, Dict]:
+    """Plan k rewritten around one of the images already found: (option index, new plan)."""
+    if not options:
+        raise ScriptError("Aucune image trouvée à proposer : vérifie d'abord quelques vidéos.")
+    exemple = ", ".join(f'"{c}": {{"bandeau": "", "texte": "", "mots_cles": [""]}}' for c in codes)
+    listing = "\n".join(f"{n}. {o['vu']}" for n, o in enumerate(options, 1))
+    plan = bundle["plans"][k]
+    r = (gemini or _gemini())._generate_content([{"text": ADAPT_PROMPT.format(
+        bundle=json.dumps(_public(bundle), ensure_ascii=False, indent=1), num=k + 1, role=plan["role"],
+        image=plan["image"], options=listing, langues=", ".join(codes), exemple=exemple)}],
+        max_tokens=4000, timeout=120, temperature=0.5)
+    try:
+        choice = int(r.get("choix")) - 1
+    except (TypeError, ValueError, AttributeError):
+        raise ScriptError(f"Réponse inutilisable : {str(r)[:160]}")
+    if not 0 <= choice < len(options):
+        raise ScriptError("L'IA a choisi une image qui n'existe pas.")
+    fixed = normalise({"plans": [{**plan, "image": r.get("image") or options[choice]["vu"], "textes": r.get("textes")}],
+                       "meta": {}}, codes)
+    if not fixed["plans"]:
+        raise ScriptError("L'IA n'a pas réécrit le plan.")
+    return choice, fixed["plans"][0]

@@ -69,7 +69,8 @@ def explain(url: str, err: str) -> str:
 
 def _refused(err: str) -> bool:
     low = err.lower()
-    return "not a bot" in low or "429" in low or "page needs to be reloaded" in low
+    return ("not a bot" in low or "429" in low or "page needs to be reloaded" in low
+            or "http error 403" in low)          # YouTube's 403 on a video it served a minute before: passing
 
 
 def _fetch(url: str, opts: Dict) -> Dict:
@@ -77,14 +78,15 @@ def _fetch(url: str, opts: Dict) -> Dict:
     Short refused, then fetched a minute later), so a refusal is tried once more."""
     import time
     import yt_dlp
-    for attempt in (1, 2):
+    waits = (10, 25)                    # measured: a 403 still there after 8 s was gone a few minutes later
+    for attempt in range(len(waits) + 1):
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=True)
-                return {"info": info, "path": ydl.prepare_filename(info)}
+                return {"info": info, "path": _final_path(ydl, info)}
         except Exception as e:
-            if attempt == 1 and _refused(str(e)):
-                time.sleep(8)
+            if attempt < len(waits) and _refused(str(e)):
+                time.sleep(waits[attempt])
                 continue
             raise SourceError(explain(url, str(e)))
 
@@ -96,6 +98,17 @@ def _handle(info: Dict) -> Optional[str]:
         if v and not v.replace("_", "").lstrip("-").isdigit() and " " not in v:
             return "@" + v
     return None
+
+
+# Picture AND sound: "mp4/best" once took a YouTube video-only stream (398), and the crash sounds need the sound
+VIDEO_FORMAT = "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=1080]+ba/b"
+
+
+def _final_path(ydl, info: Dict) -> str:
+    """Where the file really is: a merged download ends in .mp4 whatever the parts were."""
+    path = ydl.prepare_filename(info)
+    merged = os.path.splitext(path)[0] + ".mp4"
+    return merged if not os.path.exists(path) and os.path.exists(merged) else path
 
 
 def _write_meta(path: str, url: str, info: Dict, **extra):
@@ -111,7 +124,7 @@ def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[fl
     os.makedirs(dest_dir, exist_ok=True)
     if sections and len(sections) > 1:
         return _download_parts(url, dest_dir, name, sections)
-    opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format="mp4/best", noplaylist=True)
+    opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format=VIDEO_FORMAT, merge_output_format="mp4", noplaylist=True)
     if sections:
         from yt_dlp.utils import download_range_func
         opts.update(download_ranges=download_range_func(None, [tuple(sections[0])]), force_keyframes_at_cuts=True)
@@ -129,7 +142,7 @@ def _download_parts(url: str, dest_dir: str, name: str, sections: List[List[floa
     import glob
     from yt_dlp.utils import download_range_func
     pattern = os.path.join(dest_dir, f"{name}_part%(section_start)08.2f.%(ext)s")
-    opts = ytdlp_opts(outtmpl=pattern, format="mp4/best", noplaylist=True, force_keyframes_at_cuts=True,
+    opts = ytdlp_opts(outtmpl=pattern, format=VIDEO_FORMAT, merge_output_format="mp4", noplaylist=True, force_keyframes_at_cuts=True,
                       download_ranges=download_range_func(None, [tuple(sec) for sec in sections]))
     got = _fetch(url, opts)
     parts = sorted(p for p in glob.glob(os.path.join(dest_dir, f"{name}_part*"))
@@ -419,6 +432,35 @@ def _to_band_coords(boxes: List[List[int]], h_full: int, top: int, height: int) 
         if b > 0 and a < 1000:                 # only what overlaps the band
             out.append([max(0, int(a)), x0, min(1000, int(b)), x1])
     return out
+
+
+def clip_at(path: str, index: int, cid: str, a: float, b: float, found, desc: str = "") -> Dict:
+    """"Script d'abord": one clip from a chosen moment [a, b] (already
+    picked and checked), cleaned like the analysed ones — the real picture
+    area, an added strip at an edge cropped, other added marks painted over.
+    found: (area, boxes, marks) from find_boxes on a still of the moment."""
+    info = probe(path)
+    w_full, h_full = info["w"], info["h"]
+    a, b = max(0.0, a), min(b, info["duration"] - 0.05)
+    area, bx, marks = found
+    own = band_from_area(area, w_full, h_full)
+    on_band = bool(own)
+    if own:
+        own = refine_edges(path, info, [(a + b) / 2], *own)
+    top, height = (own[0], own[1] - own[0]) if on_band else (0, h_full)
+    boxes = _to_band_coords(bx, h_full, top, height) if on_band else bx
+    cut_top, cut_bot, patches = edges_and_patches(boxes, w_full, height)
+    h = height - cut_top - cut_bot
+    if h < height * 0.6:
+        cut_top = cut_bot = 0
+        h = height
+    crop = f"{w_full}:{h}:0:{top + cut_top}" if (on_band or cut_top or cut_bot) else None
+    patches = [(x, y - cut_top, pw, ph) for x, y, pw, ph in patches if y - cut_top >= 0]
+    peak, from_sound = find_peak(path, a, b, crop)
+    return {"id": cid, "source": index, "src": path, "start": a, "end": b, "impact": peak,
+            "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches, "desc": desc,
+            "camera": "", "usable": True, "why_not": "", "audio_ok": False, "shock": False,
+            "low_res": min(w_full, h) < 540, "marks": [m for m in marks if m]}
 
 
 def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini: bool = True) -> List[Dict]:

@@ -1328,7 +1328,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         base["sources"] = p.get("sources") or []
         base["source_urls"] = p.get("source_urls") or []
         sb = p.get("storyboard")
-        base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree")} for pl in sb["plans"]],
+        base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree", "retire", "adapte")}
+                                        for pl in sb["plans"]],
                               "corrections": sb.get("corrections") or []} if sb else None
         base["picks"] = p.get("picks")
         base["suggestions"] = p.get("suggestions")
@@ -1520,6 +1521,54 @@ def choose_adaptation_pick(pid: str, plan: int, req: AdaptationPick):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.choose_pick, pid, plan, req.url, req.debut, req.fin))
+
+
+class AdaptationSkip(BaseModel):
+    skip: bool = True
+
+
+@app.post("/api/adaptations/{pid}/plans/{plan}/skip")
+def skip_adaptation_plan(pid: str, plan: int, req: AdaptationSkip):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.skip_plan, pid, plan, req.skip))
+
+
+class AdaptationLink(BaseModel):
+    url: str
+
+
+@app.post("/api/adaptations/{pid}/plans/{plan}/link")
+def check_adaptation_plan_link(pid: str, plan: int, req: AdaptationLink):
+    """Your link for one plan, judged by Gemini (15 s to 2 min); it becomes the pick if it fits."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.check_plan_link, pid, plan, req.url))
+
+
+@app.post("/api/adaptations/{pid}/plans/{plan}/adapt")
+def adapt_adaptation_plan(pid: str, plan: int):
+    """A plan with no video: rewritten around an image already found."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.adapt_plan, pid, plan))
+
+
+@app.post("/api/adaptations/{pid}/back-to-images")
+def back_to_adaptation_images(pid: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.back_to_images, pid))
+
+
+@app.post("/api/adaptations/{pid}/fetch")
+def start_adaptation_fetch(pid: str):
+    """Download only the picked moments and make one clip per plan (1 to 4 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_fetch, pid)
+    _start_adaptation_step(pid, "fetching")
+    return _serialize_adaptation(p)
 
 
 @app.post("/api/adaptations/{pid}/scripts")
