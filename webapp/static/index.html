@@ -576,6 +576,8 @@
   .ad-passage:first-child{border-top:none;}
   .ad-passage img{width:88px;aspect-ratio:16/11;object-fit:cover;border-radius:6px;background:#000;}
   .ad-passage .fields{display:flex;flex-direction:column;gap:6px;min-width:0;}
+  .ad-plan-side{display:flex;flex-direction:column;gap:4px;align-items:flex-start;}
+  .ad-plan-side b{font-size:18px;color:var(--text);}
   .ad-passage textarea.f{min-height:52px;font-size:14px;}
   .ad-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
   .ad-scene{border-top:1px solid var(--border-soft);padding-top:12px;display:flex;flex-direction:column;gap:8px;}
@@ -2481,7 +2483,9 @@ let adCurrent = null, adPoll = null, adProject = null;
 const AD_BUSY = ['analysing', 'scripting', 'voicing', 'rendering'];
 const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STATUS = { analysing: 'analyse…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
+const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', []],
+                         ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
+const AD_STATUS = { analysing: 'analyse…', plan_review: 'storyboard à relire', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
   script_review: 'scripts à relire', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
@@ -2512,9 +2516,10 @@ async function loadAdaptationList(){
 }
 document.getElementById('adNewBtn').addEventListener('click', () => { adCurrent = ''; clearTimeout(adPoll); loadAdaptationList(); });
 
-function adStepsHtml(status){
-  const at = AD_STEPS.findIndex(([, sts]) => sts.includes(status));
-  return `<div class="ad-steps">${AD_STEPS.map(([l], i) =>
+function adStepsHtml(status, mode){
+  const steps = mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS;
+  const at = steps.findIndex(([, sts]) => sts.includes(status));
+  return `<div class="ad-steps">${steps.map(([l], i) =>
     `<div class="ad-step ${i < at || status === 'done' ? 'done' : i === at ? 'active' : ''}"><div class="bar"></div><div class="lbl">${i + 1} · ${l}</div></div>`).join('')}</div>`;
 }
 
@@ -2530,8 +2535,15 @@ async function renderNewAdaptation(){
       <div class="chcard-body">
         <label class="f">1. Le Short viral modèle (YouTube, TikTok…)</label>
         <input class="f" id="adRef" placeholder="https://www.youtube.com/shorts/…">
-        <label class="f" style="margin-top:6px">2. Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
-        <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea>
+        <label class="f" style="margin-top:6px">2. Comment construire la vidéo ?</label>
+        <div class="ad-row">
+          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="sources" checked> <b>Sources d'abord</b>
+            <span class="tiny">trouver les vidéos, puis écrire le script avec les clips trouvés</span></label>
+          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="script"> <b>Script d'abord</b> <span class="pill wait">nouveau</span>
+            <span class="tiny">écrire le meilleur script (rétention) avec l'image voulue de chaque phrase, puis chercher ces images — la recherche par phrase arrive bientôt</span></label>
+        </div>
+        <div id="adSrcBox"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
+        <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
         <label class="f" style="margin-top:6px">3. Les chaînes qui recevront une version (chacune dans sa langue, avec sa voix)</label>
         <div class="stack" style="gap:6px">${channels.map(ch => {
           const d = settingsByChannel[ch.name], s = d && d.settings, v = d && d.voices.find(x => x.voice_id === s.voice_id);
@@ -2545,10 +2557,13 @@ async function renderNewAdaptation(){
     </article>`;
   hydrateIcons(stage);
   document.getElementById('adToVoices').onclick = () => goTo(13);
+  stage.querySelectorAll('input[name="adMode"]').forEach(r => r.onchange = () =>
+    document.getElementById('adSrcBox').style.display = r.value === 'script' && r.checked ? 'none' : '');
   document.getElementById('adCreate').onclick = async ev => {
     const btn = ev.currentTarget;
-    const body = { reference_url: document.getElementById('adRef').value.trim(),
-                   source_urls: document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean),
+    const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value || 'sources';
+    const body = { reference_url: document.getElementById('adRef').value.trim(), mode,
+                   source_urls: mode === 'script' ? [] : document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean),
                    channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value) };
     btn.disabled = true;
     try { const p = await api('/api/adaptations', { method:'POST', body: JSON.stringify(body) }); adCurrent = p.project_id; loadAdaptationList(); }
@@ -2568,7 +2583,7 @@ async function loadAdProject(){
     const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.reference_url)}</span><span class="spacer"></span>
       <a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
       ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>`;
-    stage.innerHTML = adStepsHtml(p.status) + head + '<div id="adBody" class="stack"></div>';
+    stage.innerHTML = adStepsHtml(p.status, p.mode) + head + '<div id="adBody" class="stack"></div>';
     hydrateIcons(stage);
     const del = document.getElementById('adDelete');
     if (del) del.onclick = async () => {
@@ -2580,6 +2595,7 @@ async function loadAdProject(){
     if (AD_BUSY.includes(p.status)) body.innerHTML = adBusyHtml(p);
     else if (p.status === 'error') renderAdError(body, p);
     else if (p.status === 'sources_search') renderAdSearch(body, p);
+    else if (p.status === 'plan_review') renderAdPlan(body, p);
     else if (p.status === 'sources_review') renderAdSources(body, p);
     else if (p.status === 'script_review') renderAdScripts(body, p);
     else if (p.status === 'preview_review') renderAdPreviews(body, p);
@@ -2857,6 +2873,83 @@ function renderAdFinder(box, p){
 function adClipOptions(p, current){
   return p.clips.filter(c => c.usable || c.id === current).map(c =>
     `<option value="${c.id}" ${c.id === current ? 'selected' : ''}>${esc(c.id)} — ${esc((c.desc || '').slice(0, 50))}</option>`).join('');
+}
+
+const AD_ROLE = { accroche: 'Accroche', promesse: 'Promesse', montee: 'Montée', reponse: 'Réponse' };
+
+function renderAdPlan(body, p){
+  const sb = p.storyboard || { plans: [] };
+  const allApproved = p.targets.every(t => t.approved);
+  body.innerHTML = `<article class="chcard"><div class="chcard-body"><div class="tiny">
+      ${icon('sparkle', 12)} Le script est écrit <b>avant</b> les images, pour garder les gens jusqu'à la fin :
+      <b>accroche</b> (2-3 s) → <b>promesse</b> → <b>montée</b> → <b>réponse</b>. Pour chaque phrase, <b>🎬 l'image voulue</b> sera cherchée ensuite :
+      elle est <b>commune à toutes les langues</b>, la modifier demande de revalider chaque langue.
+      ${(sb.corrections || []).length ? `<details style="margin-top:6px"><summary style="cursor:pointer">Relecture automatique : ${sb.corrections.length} correction(s)</summary>
+        <ul>${sb.corrections.map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}</div></div></article>` +
+  p.targets.map(t => {
+    const sc = t.script || { passages: [] };
+    const dir = t.rtl ? 'dir="rtl"' : '';
+    return `
+    <article class="chcard ad-target-card" data-channel="${t.channel}">
+      <div class="chcard-head"><div class="who"><div class="name"><span class="dot" style="background:${channelColor(t.channel)}"></span>
+        ${esc((channels.find(c => c.name === t.channel) || {}).display_name || t.channel)} · ${esc(t.language_label)}</div></div>
+        ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
+      <div class="chcard-body">
+        ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
+        <label class="f">Titre</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
+        <div>${sc.passages.map((ps, i) => { const pl = sb.plans[i] || {}; return `
+          <div class="ad-passage ad-plan" data-i="${i}">
+            <div class="ad-plan-side"><b>${i + 1}</b><span class="pill ${pl.role === 'accroche' || pl.role === 'reponse' ? 'ok' : 'wait'}">${esc(AD_ROLE[pl.role] || pl.role || '')}</span>
+              <span class="tiny">≥ ${pl.duree || '?'} s</span>
+              ${(pl.plans_modele || []).length ? `<span class="tiny">plan${pl.plans_modele.length > 1 ? 's' : ''} ${pl.plans_modele.join(', ')} du modèle</span>` : '<span class="tiny">image nouvelle</span>'}</div>
+            <div class="fields">
+              <label class="tiny">🎬 Image voulue (commune à toutes les langues)</label>
+              <textarea class="f sc-image" rows="2" style="min-height:40px;font-size:12.5px">${esc(pl.image || '')}</textarea>
+              <input class="f sc-banner" ${dir} value="${esc(ps.bandeau)}" placeholder="Bandeau">
+              <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
+              <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
+            </div>
+          </div>`; }).join('')}</div>
+        <label class="f">Description</label><textarea class="f sc-desc" ${dir}>${esc(sc.description || '')}</textarea>
+        <label class="f">Tags</label><input class="f sc-tags" ${dir} value="${esc((sc.tags || []).join(', '))}">
+      </div>
+      <div class="chcard-foot">
+        <div class="askrow" style="flex:1;min-width:240px">${icon('sparkle', 16)}<input class="sc-ask" placeholder="Demande à l'IA, ex : rends l'accroche plus intrigante…">
+          <button class="btn secondary small sc-revise">Envoyer</button></div>
+        <button class="btn secondary small sc-save">Enregistrer</button>
+        <button class="btn primary small sc-approve" data-icon="check">Valider ce script</button>
+      </div>
+    </article>`;
+  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.approved).length}/${p.targets.length} script(s) validé(s)</span><span></span>
+      <button class="btn primary" disabled title="Prochaine étape, en construction : la recherche des images phrase par phrase" data-icon="eye">Chercher les images →</button></div>
+    <div class="tiny" style="text-align:right">${allApproved ? 'Scripts validés. La recherche des images phrase par phrase est la prochaine étape (en construction).' : ''}</div>`;
+  hydrateIcons(body);
+  body.querySelectorAll('.ad-target-card').forEach(card => {
+    const ch = card.dataset.channel;
+    const collect = () => ({
+      titre: card.querySelector('.sc-title').value, description: card.querySelector('.sc-desc').value,
+      tags: card.querySelector('.sc-tags').value.split(',').map(x => x.trim()).filter(Boolean),
+      passages: [...card.querySelectorAll('.ad-plan')].map(row => ({
+        image: row.querySelector('.sc-image').value, bandeau: row.querySelector('.sc-banner').value,
+        texte: row.querySelector('.sc-text').value,
+        mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
+    const refresh = np => { adProject = np; renderAdPlan(body, np); };
+    const save = () => api(`/api/adaptations/${p.project_id}/targets/${ch}/plan`, { method:'PUT', body: JSON.stringify({ plan: collect() }) });
+    card.querySelector('.sc-save').onclick = async () => {
+      try { refresh(await save()); toast('Script enregistré', 'success'); } catch (e){ log(e.message, 'error'); }
+    };
+    card.querySelector('.sc-revise').onclick = async ev => {
+      const req = card.querySelector('.sc-ask').value.trim();
+      if (!req) return;
+      const btn = ev.currentTarget; btn.disabled = true; btn.innerHTML = spin('…');
+      try { await save(); refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/plan/revise`, { method:'POST', body: JSON.stringify({ request: req }) })); }
+      catch (e){ log(e.message, 'error'); btn.disabled = false; btn.textContent = 'Envoyer'; }
+    };
+    card.querySelector('.sc-approve').onclick = async () => {
+      try { await save(); refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/plan/approve`, { method:'POST' })); toast('Script validé', 'success'); }
+      catch (e){ log(e.message, 'error'); }
+    };
+  });
 }
 
 function renderAdScripts(body, p){

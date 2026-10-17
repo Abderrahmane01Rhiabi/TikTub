@@ -7,6 +7,9 @@ An adaptation project, step by step.
     sources_search   no source yet: the person picks candidates / pastes links
                      (sources can also be added later, at sources_review)
     sources_review   the person unticks clips, fixes the credits
+    plan_review      "Script d'abord" mode: the storyboard (one image per plan,
+                     shared by every language) and its texts, written before any
+                     footage, reviewed and approved per language (mandatory)
     scripting        one script per target channel, re-read by gemini-pro (background)
     script_review    the person reads/edits/approves EVERY script (mandatory)
     voicing          narration + a quick preview + automatic checks  (background)
@@ -27,7 +30,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 import db
-from adaptation import checks, finder, langs, reference, render, script, settings, sources, voices
+from adaptation import checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
 
 BUSY = {"analysing", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
@@ -66,9 +69,17 @@ def _expect(p: Dict, *statuses: str):
 
 # ---------------------------------------------------------------- creation
 
-def create(reference_url: str, source_urls: List[str], channels: List[Dict]) -> Dict:
-    """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]"""
+MODES = ("sources", "script")
+
+
+def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources") -> Dict:
+    """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
+    mode: "sources" (find the footage, then write) or "script" (write, then find the footage)."""
     urls = [u.strip() for u in source_urls if u and u.strip()]
+    if mode not in MODES:
+        raise PipelineError("Mode inconnu.")
+    if mode == "script":
+        urls = []                       # the footage is searched for the script, plan by plan
     if not reference_url.strip():
         raise PipelineError("Il faut le lien du Short modèle.")
     if not channels:
@@ -84,7 +95,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict]) -> 
                         "music_start": s["music_start"], "script": None, "approved": False,
                         "validated": False, "video_id": None})
     pid = "ad_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
-    return save({"project_id": pid, "status": "analysing", "reference_url": reference_url.strip(),
+    return save({"project_id": pid, "status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
                  "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
                  "credits": "", "credits_auto": "",
                  "targets": targets, "error": None, "failed_step": None})
@@ -136,6 +147,10 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             report("analyse du Short modèle", 0.02)
             p["reference"] = reference.analyse(p["reference_url"])
             save(p)
+        if p.get("mode") == "script":
+            write_storyboard(p, report)
+            report("terminé", 1.0)
+            return
         if not p.get("suggestions"):
             alone = not p["source_urls"]            # nothing given: the search is the step, give it more room
             share = 0.6 if alone else 0.1
@@ -185,6 +200,93 @@ def run_analysis(pid: str, report: Optional[Report] = None):
     except Exception as e:
         fail(pid, "analysing", e)
     report("terminé", 1.0)
+
+
+# ---------------------------------------------------------------- "Script d'abord": the storyboard
+
+def _codes(p: Dict) -> List[str]:
+    return list(dict.fromkeys(t["language"] for t in p["targets"]))
+
+
+def _refresh_plan(p: Dict, keep_approved: Optional[str] = None):
+    """Durations, each language's script and its problems, from the storyboard."""
+    b, codes = p["storyboard"], _codes(p)
+    storyboard.durations(b, codes)
+    for t in p["targets"]:
+        t["script"] = storyboard.script_for(b, t["language"])
+        t["problems"] = storyboard.problems(b, t["language"])
+        if t["channel"] != keep_approved:
+            t["approved"] = False
+
+
+def write_storyboard(p: Dict, report: Report):
+    codes = _codes(p)
+    report("écriture du storyboard", 0.35)
+    b = storyboard.write(p["reference"], codes)
+    report("relecture (rétention, langue, images)", 0.65)
+    b = storyboard.critique(b, codes)
+    left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
+    if left:                            # what the re-read missed is fixed once more, then shown
+        report("correction", 0.85)
+        try:
+            fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left))
+            if sum(len(storyboard.problems(fixed, c)) for c in codes) < len(left):
+                b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
+        except script.ScriptError:
+            pass
+    p = load(p["project_id"])
+    p["storyboard"] = b
+    _refresh_plan(p)
+    p.update(status="plan_review", error=None, failed_step=None)
+    save(p)
+
+
+def edit_plan(pid: str, channel: str, new: Dict) -> Dict:
+    """new: {titre, description, tags, passages: [{image, bandeau, texte, mots_cles}]} — the
+    images belong to every language: changing one asks every language to be approved again."""
+    p = load(pid)
+    _expect(p, "plan_review")
+    t = target(p, channel)
+    b, code = p["storyboard"], t["language"]
+    passages = new.get("passages") or []
+    if len(passages) != len(b["plans"]):
+        raise PipelineError("Le nombre de plans ne peut pas changer ici : demande-le à l'IA.")
+    images_changed = False
+    for plan, x in zip(b["plans"], passages):
+        image = " ".join(str(x.get("image", plan["image"])).split())
+        images_changed |= image != plan["image"]
+        plan["image"] = image
+        plan["textes"][code] = {"bandeau": str(x.get("bandeau") or "").strip(), "texte": " ".join(str(x.get("texte") or "").split()),
+                                "mots_cles": [str(m) for m in x.get("mots_cles") or [] if str(m).strip()][:3]}
+    b["meta"][code] = {"titre": str(new.get("titre") or "").strip()[:100], "description": str(new.get("description") or "").strip(),
+                       "tags": [str(x).strip() for x in new.get("tags") or [] if str(x).strip()][:15]}
+    approved = {x["channel"] for x in p["targets"] if x.get("approved")} - {channel}
+    _refresh_plan(p)
+    if not images_changed:              # only this language's text changed: the others stay approved
+        for x in p["targets"]:
+            x["approved"] = x["channel"] in approved
+    return save(p)
+
+
+def revise_plan(pid: str, channel: str, request: str) -> Dict:
+    p = load(pid)
+    _expect(p, "plan_review")
+    target(p, channel)
+    b = storyboard.revise(p["storyboard"], _codes(p), request)
+    p["storyboard"] = b
+    _refresh_plan(p)
+    return save(p)
+
+
+def approve_plan(pid: str, channel: str) -> Dict:
+    p = load(pid)
+    _expect(p, "plan_review")
+    t = target(p, channel)
+    left = storyboard.problems(p["storyboard"], t["language"])
+    if left:
+        raise PipelineError("À corriger avant de valider : " + " ".join(left))
+    t["approved"] = True
+    return save(p)
 
 
 def add_sources(pid: str, urls: List[str]) -> Dict:

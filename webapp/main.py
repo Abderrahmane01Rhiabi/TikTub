@@ -1302,6 +1302,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     job = progress.get(_adaptation_job(p["project_id"])) or {}
     base = {k: p.get(k) for k in ("project_id", "status", "reference_url", "credits", "error", "failed_step",
                                    "created_at", "updated_at")}
+    base["mode"] = p.get("mode") or "sources"
     base["subject"] = (p.get("reference") or {}).get("sujet")
     base["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
     targets = []
@@ -1326,6 +1327,9 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
                          for c in (p.get("clips") or {}).values()]
         base["sources"] = p.get("sources") or []
         base["source_urls"] = p.get("source_urls") or []
+        sb = p.get("storyboard")
+        base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree")} for pl in sb["plans"]],
+                              "corrections": sb.get("corrections") or []} if sb else None
         base["suggestions"] = p.get("suggestions")
     return base
 
@@ -1348,8 +1352,9 @@ def _adaptation_call(fn, *args):
 
 class AdaptationCreate(BaseModel):
     reference_url: str
-    source_urls: list
+    source_urls: list = Field(default_factory=list)
     channels: list
+    mode: str = "sources"
 
 
 @app.post("/api/adaptations")
@@ -1357,7 +1362,7 @@ def create_adaptation(req: AdaptationCreate):
     from adaptation import pipeline as ap
     targets = [{"channel": ch, "profile": channel_manager.get_channel_profile(ch),
                 "music_dir": channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
-    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets)
+    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, req.mode)
     _start_adaptation_step(p["project_id"], "analysing")
     return _serialize_adaptation(p)
 
@@ -1456,6 +1461,41 @@ def check_adaptation_own_links(pid: str, req: AdaptationAddSources):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.check_own, pid, [str(u) for u in req.urls]))
+
+
+class AdaptationPlan(BaseModel):
+    plan: dict
+
+
+class AdaptationPlanRevise(BaseModel):
+    request: str
+
+
+@app.put("/api/adaptations/{pid}/targets/{channel}/plan")
+def edit_adaptation_plan(pid: str, channel: str, req: AdaptationPlan):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.edit_plan, pid, channel, req.plan))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/plan/revise")
+def revise_adaptation_plan(pid: str, channel: str, req: AdaptationPlanRevise):
+    from adaptation import pipeline as ap
+    from adaptation.script import ScriptError
+    _adaptation_or_404(pid)
+    if not req.request.strip():
+        raise HTTPException(status_code=400, detail="Écris ce qu'il faut changer.")
+    try:
+        return _serialize_adaptation(_adaptation_call(ap.revise_plan, pid, channel, req.request.strip()))
+    except ScriptError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/plan/approve")
+def approve_adaptation_plan(pid: str, channel: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.approve_plan, pid, channel))
 
 
 @app.post("/api/adaptations/{pid}/scripts")

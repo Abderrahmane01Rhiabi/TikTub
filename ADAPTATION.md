@@ -33,6 +33,22 @@ La clé ElevenLabs doit avoir les permissions **Text to Speech** et **Voices : R
 2. **Sources (facultatif)** : si tu as déjà les liens des **vidéos d'origine** des clips, colle-les, un par ligne. Sinon, **laisse vide** : l'app te dira quoi chercher (voir plus bas).
 3. Coche les **chaînes** qui recevront une version, puis clique **Analyser**.
 
+### Deux façons de construire la vidéo
+
+À la création du projet, choisis :
+- **Sources d'abord** : trouver les vidéos, puis écrire le script avec les clips trouvés (décrit ci-dessous) ;
+- **Script d'abord** (nouveau, en construction) : écrire d'abord **le meilleur script pour la rétention**, avec **l'image voulue** de chaque phrase, puis chercher ces images.
+
+#### Script d'abord : le storyboard
+
+L'IA écrit **un storyboard commun à toutes les langues** et **un texte par langue**, aligné plan par plan :
+- **Accroche** (2 à 3 secondes : une question ou un fait surprenant), **Promesse** (la réponse arrive), **Montée** (chaque plan apporte du nouveau), **Réponse** (une phrase complète qui répond à la question) ;
+- pour chaque plan, **🎬 l'image voulue** : une vidéo concrète, filmable et trouvable, de préférence une image du modèle (« plan 3 du modèle ») ; et sa **durée minimale** (la phrase la plus longue, toutes langues confondues).
+
+Un modèle plus puissant relit (rétention, langue, images, faits, pas de publicité), puis une correction automatique passe s'il reste un problème. **Tu relis et tu valides chaque langue** : modifier le texte d'une langue ne touche pas les autres ; modifier **une image** (commune) demande de revalider toutes les langues. La validation est refusée si l'accroche dépasse 4 secondes, si une phrase dépasse 7 secondes, si deux plans ont la même image, ou si une phrase est incomplète.
+
+**La suite** (chercher les images phrase par phrase, les choisir, les télécharger) est la prochaine étape, en construction.
+
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
 
 L'app analyse le modèle, puis **cherche les vidéos de quatre façons à la fois**. Chaque méthode a gagné sur un cas réel :
