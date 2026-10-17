@@ -353,7 +353,8 @@ def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin
         c = next((c for c in finder.all_candidates(p.get("suggestions") or {}) if c["url"] == url), {})
         picks[plan] = {"url": url, "titre": c.get("title") or v.get("title") or url, "niveau": e.get("niveau") or "choisie",
                        "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
-                       "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage"))}
+                       "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage")),
+                       "defauts": e.get("defauts") or ""}
     p["picks"] = picks
     return save(p)
 
@@ -490,30 +491,43 @@ def _spans(items: List[Tuple[int, float, float]]) -> List[List[float]]:
 def run_fetch(pid: str, report: Optional[Report] = None):
     """Only the picked moments are downloaded (a short video whole), then one
     clean clip per plan, cut on its moment and long enough for its sentence;
-    each language's script gets its clips and goes to the usual review."""
+    each language's script gets its clips and goes to the usual review. Back
+    from the script to change one plan, the clips of the unchanged plans are
+    kept (their pick is the same, their file still there)."""
     report = report or (lambda phase, f: None)
     p = load(pid)
     try:
         plans, picks, sug = p["storyboard"]["plans"], p["picks"], p.get("suggestions") or {}
         durations = {c["url"]: c.get("duration") for c in finder.all_candidates(sug)}
         durations.update({u: v.get("duration") for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
+        def pick_key(k: int) -> List:
+            m = picks[k]["moment"]
+            return [picks[k]["url"], round(m["debut"], 2), round(max(m["fin"], m["debut"] + plans[k]["duree"]), 2)]
+        old = p.get("clips") or {}
+        clips = {f"P{k + 1}": old[f"P{k + 1}"] for k in _active(p)
+                 if (old.get(f"P{k + 1}") or {}).get("pick_key") == pick_key(k) and os.path.exists(old[f"P{k + 1}"]["src"])}
         by_url: Dict[str, List[Tuple[int, float, float]]] = {}
         for k in _active(p):
+            if f"P{k + 1}" in clips:
+                continue
             m = picks[k]["moment"]
             by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], max(m["fin"], m["debut"] + plans[k]["duree"])))
-        base, clips, metas = project_dir(pid), {}, []
+        if clips:
+            report(f"{len(clips)} plan(s) inchangé(s) : clips gardés", 0.03)
+        base, stamp = project_dir(pid), datetime.now().strftime("%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
         for i, (url, items) in enumerate(by_url.items()):
             report(f"vidéo {i + 1}/{len(by_url)} : téléchargement des moments choisis", 0.05 + 0.8 * i / len(by_url))
             dur = durations.get(url)
             spans = None if (dur and dur <= 120) else _spans(items)
+            name = f"src{stamp}_{i}"           # never over a file a kept clip still uses
             try:
-                path = sources.download(url, os.path.join(base, "src"), f"src{i}", spans)
+                path = sources.download(url, os.path.join(base, "src"), name, spans)
             except sources.SourceError:
                 if spans is None:
                     raise
                 spans = None                    # some sites refuse a section: the whole video, then
-                path = sources.download(url, os.path.join(base, "src"), f"src{i}")
-            metas.append(sources.source_meta(path))
+                path = sources.download(url, os.path.join(base, "src"), name)
+            meta = sources.source_meta(path)
 
             def file_time(t: float) -> float:
                 if not spans:
@@ -539,11 +553,16 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 c = sources.clip_at(path, i, f"P{k + 1}", a, b, f, desc=plans[k]["image"])
                 why = _real_faults(d.get("pourquoi_pas") or "")
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
-                         why_not=why, shock=bool(d.get("choc_sonore")))
+                         why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta)
                 clips[f"P{k + 1}"] = c
+        srcs = list(dict.fromkeys(c["src"] for c in clips.values()))        # one entry per file, kept clips included
+        metas = [next(c.get("meta") or {} for c in clips.values() if c["src"] == src) for src in srcs]
+        for c in clips.values():
+            c["source"] = srcs.index(c["src"])
         p = load(pid)
-        p.update(clips=clips, sources=metas, source_urls=list(by_url), status="script_review", error=None,
-                 failed_step=None)
+        p.update(clips=dict(sorted(clips.items(), key=lambda kv: int(kv[0][1:]))), sources=metas,
+                 source_urls=list(dict.fromkeys(picks[k]["url"] for k in _active(p))),
+                 status="script_review", error=None, failed_step=None)
         guess = guess_credits(metas, clips)
         names = [n for n in guess.split(" · ") if n] + [m.get("handle") for m in metas if m.get("handle")]
         guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:4])
@@ -559,18 +578,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
     report("terminé", 1.0)
 
 
-# What makes a CHOSEN moment unusable, whatever the cleaning does: only what is seen and can't be removed.
-# Not burnt-in text or a logo (the cleaning crops or paints them), not the sound (replaced by the narration),
-# not "a compilation" (that is where moments come from). Measured: 4 good moments of 7 refused for those.
-REAL_FAULTS = re.compile(r"pr[ée]sentat|presenter|interview|journaliste|plateau|split|[ée]cran (divis|partag|scind)|"
-                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|publicit|\bpub\b|flou|blur|"
-                         r"noir|black|image fixe|photo|diaporama|slide|dessin|anim[ée]|jeu vid[ée]o|t[ée]l[ée]phone film", re.I)
-
-
-def _real_faults(why_not: str) -> str:
-    """The reasons, among Gemini's, that really refuse a chosen moment."""
-    parts = [x.strip() for x in re.split(r"[,;/]| et ", why_not or "") if x.strip()]
-    return ", ".join(x for x in parts if REAL_FAULTS.search(x))
+REAL_FAULTS = finder.REAL_FAULTS
+_real_faults = finder.real_faults          # what really refuses a chosen moment (shared with the search)
 
 
 def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:

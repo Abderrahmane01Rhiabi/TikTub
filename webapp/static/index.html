@@ -2538,12 +2538,12 @@ async function renderNewAdaptation(){
         <input class="f" id="adRef" placeholder="https://www.youtube.com/shorts/…">
         <label class="f" style="margin-top:6px">2. Comment construire la vidéo ?</label>
         <div class="ad-row">
-          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="sources" checked> <b>Sources d'abord</b>
-            <span class="tiny">trouver les vidéos, puis écrire le script avec les clips trouvés</span></label>
-          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="script"> <b>Script d'abord</b> <span class="pill wait">nouveau</span>
-            <span class="tiny">écrire le meilleur script (rétention) avec l'image voulue de chaque phrase, puis chercher ces images — la recherche par phrase arrive bientôt</span></label>
+          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="script" checked> <b>Script d'abord</b> <span class="pill ok">conseillé</span>
+            <span class="tiny">écrire le meilleur script (rétention) avec l'image voulue de chaque phrase, puis l'app cherche ces images plan par plan</span></label>
+          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="sources"> <b>Sources d'abord</b>
+            <span class="tiny">tu as déjà les vidéos, ou tu préfères les choisir d'abord : le script est écrit avec les clips trouvés</span></label>
         </div>
-        <div id="adSrcBox"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
+        <div id="adSrcBox" style="display:none"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
         <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
         <label class="f" style="margin-top:6px">3. Les chaînes qui recevront une version (chacune dans sa langue, avec sa voix)</label>
         <div class="stack" style="gap:6px">${channels.map(ch => {
@@ -2708,7 +2708,8 @@ function adVerifHtml(v, scene, long){
   const [cls, label] = here ? AD_LEVEL[here.niveau] : AD_VERDICT[v.verdict];
   const ms = here ? here.moments : v.moments;
   const others = useful.filter(i => i !== scene).map(i => i + 1);
-  return `${remix}<span class="pill ${cls}">${esc(label)}</span>
+  const fault = here && here.defauts ? `<span class="pill bad" title="Ce qu'on voit à ce moment : ${esc(here.defauts)}">à l'image : ${esc(here.defauts)}</span>` : '';
+  return `${remix}${fault}<span class="pill ${cls}">${esc(label)}</span>
     <span>${esc((here && here.raison) || v.raison)}${(ms || []).length ? ' · à ' + [...new Set(ms.map(m => adDuration(m.debut) || '0:00'))].join(', ') : ''}</span>
     ${others.length ? `<span style="color:var(--ok)">utile ${scene >= 0 ? 'aussi ' : ''}pour ${others.length > 1 ? 'les scènes' : 'la scène'} ${others.join(', ')}</span>` : ''}
     ${long && useful.length ? '<span style="color:var(--ok)">seuls les passages utiles seront téléchargés</span>' : ''}`;
@@ -3010,6 +3011,7 @@ function renderAdImages(body, p){
         ${pick ? `<div class="ad-chosen">${icon('check', 13)} <b>${esc(pick.titre)}</b> — de ${adDuration(pick.moment.debut) || '0:00'} à ${adDuration(pick.moment.fin) || '0:00'}
             <a href="${esc(adAt(pick.url, pick.moment.debut))}" target="_blank" rel="noopener">voir ce moment ↗</a>
             ${pick.remontage ? `<span class="pill warn">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
+            ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
             <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
           : `<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan. Choisis-en une ci-dessous, donne ton lien, ou :</div>

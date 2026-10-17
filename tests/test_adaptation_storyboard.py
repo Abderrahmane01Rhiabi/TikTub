@@ -255,7 +255,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
 
     p = ap.choose_pick(pid, 1, "A", 30, 35)
     assert p["picks"][1] == {"url": "A", "titre": "Compil", "niveau": "choisie", "moment": {"debut": 30.0, "fin": 35.0},
-                             "raison": "", "auto": False, "remontage": False}
+                             "raison": "", "auto": False, "remontage": False, "defauts": ""}
     assert ap.choose_pick(pid, 0, None)["picks"][0] is None
     with pytest.raises(ap.PipelineError):
         ap.choose_pick(pid, 9, "A")
@@ -439,3 +439,54 @@ def test_a_re_edit_chosen_by_hand_keeps_its_warning(project, fakes, monkeypatch)
     p["suggestions"]["verifs"]["https://www.youtube.com/watch?v=aaaaaaaaaaa"]["remontage"] = True
     ap.save(p)
     assert ap.choose_pick(pid, 5, "https://www.youtube.com/watch?v=aaaaaaaaaaa", 10)["picks"][5]["remontage"]
+
+
+# ---------------------------------------------------------------- improvements: clean moments, kept clips
+
+def test_a_moment_with_a_presenter_is_avoided_already_at_the_pick():
+    from adaptation import finder
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            return {"plans": [{"plan": 1, "niveau": "exacte", "moments": [{"debut": 30, "fin": 41}],
+                               "defauts": "présentateur, logo, texte incrusté"}], "resume": "r"}
+    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", [{"scene": "un cheval fume"}], gemini=G())
+    assert r["par_scene"]["0"]["defauts"] == "présentateur"           # a logo or a text is no fault: it is cleaned
+    v = lambda lvl, fault: {"verdict": "oui", "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}], "defauts": fault}}}
+    sug = {"verifs": {"tv": v("exacte", "présentateur"), "clean": v("partielle", "")}}
+    assert finder.auto_pick(sug, [{}])[0]["url"] == "clean"
+    pick = finder.auto_pick({"verifs": {"tv": v("exacte", "présentateur")}}, [{}])[0]
+    assert pick["url"] == "tv" and pick["defauts"] == "présentateur"     # nothing else: taken, and said
+
+
+def test_fetching_again_keeps_the_clips_of_the_unchanged_plans(project, fakes, monkeypatch):
+    from adaptation import sources
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    downloads = []
+
+    def download(url, d, name, sections=None):
+        downloads.append((name, sections))
+        Path(d).mkdir(parents=True, exist_ok=True)
+        path = f"{d}/{name}.mp4"
+        Path(path).write_bytes(b"x")
+        return path
+    monkeypatch.setattr(sources, "download", download)
+    monkeypatch.setattr(sources, "source_meta", lambda path: {"handle": "@auteur", "url": "u"})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [{} for _ in segs])
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920, "usable": True,
+        "marks": [], "desc": desc})
+    ap.start_fetch(pid); ap.run_fetch(pid)
+    first = ap.load(pid)["clips"]
+    assert len(downloads) == 1
+    ap.back_to_images(pid)
+    ap.choose_pick(pid, 2, "https://www.tiktok.com/@a/video/9", 3, 9)       # only plan 3 changes
+    ap.start_fetch(pid); ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert len(downloads) == 2 and downloads[1][0] != downloads[0][0]     # a new file name, the kept clips' file untouched
+    assert p["clips"]["P1"] == first["P1"] and p["clips"]["P3"]["src"].endswith(downloads[1][0] + ".mp4")
+    assert p["source_urls"] == ["https://www.youtube.com/watch?v=aaaaaaaaaaa", "https://www.tiktok.com/@a/video/9"]
+    assert [m["handle"] for m in p["sources"]] == ["@auteur", "@auteur"] and p["clips"]["P3"]["source"] == 1

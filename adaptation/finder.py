@@ -287,6 +287,18 @@ def wanted_from_storyboard(sb_plans: List[Dict], queries: Dict[int, Dict]) -> Li
 
 RANK = {"exacte": 0, "equivalente": 1, "partielle": 2}
 
+# What makes a moment unusable whatever the cleaning does: only what is seen and can't be removed. Not
+# burnt-in text or a logo (cropped or painted), not the sound (replaced by the narration), not "a compilation".
+REAL_FAULTS = re.compile(r"pr[ée]sentat|presenter|interview|journaliste|plateau|split|[ée]cran (divis|partag|scind)|"
+                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|publicit|\bpub\b|flou|blur|"
+                         r"noir|black|image fixe|photo|diaporama|slide|dessin|anim[ée]|jeu vid[ée]o|t[ée]l[ée]phone film", re.I)
+
+
+def real_faults(text: str) -> str:
+    """The reasons, among Gemini's, that really make a moment unusable."""
+    parts = [x.strip() for x in re.split(r"[,;/]| et ", text or "") if x.strip()]
+    return ", ".join(x for x in parts if REAL_FAULTS.search(x))
+
 
 def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     """For each plan, the best checked video and its moment: exact, then
@@ -308,8 +320,9 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
                     continue
                 if (url, round(a)) in used:
                     continue
-                # someone else's re-edit (voice-over, captions on others' footage): only when nothing better
-                options.append((RANK[e["niveau"]] + (3 if v.get("remontage") else 0), -(b - a), url, a, b, e))
+                # someone else's re-edit, or a presenter / split screen at that moment: only when nothing better
+                penalty = (3 if v.get("remontage") else 0) + (6 if real_faults(e.get("defauts")) else 0)
+                options.append((RANK[e["niveau"]] + penalty, -(b - a), url, a, b, e))
         if not options:
             picks.append(None)
             continue
@@ -318,7 +331,7 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
         c = cands.get(url) or {}
         picks.append({"url": url, "titre": c.get("title") or verifs[url].get("title") or url, "niveau": e["niveau"],
                       "moment": {"debut": a, "fin": b}, "raison": e.get("raison") or "", "auto": True,
-                      "remontage": bool(verifs[url].get("remontage"))})
+                      "remontage": bool(verifs[url].get("remontage")), "defauts": real_faults(e.get("defauts"))})
     return picks
 
 
@@ -525,7 +538,10 @@ d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee),
 JSON uniquement :
 {{"copie_du_modele": true/false, "remontage": true/false,
   "plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
-             "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais"}}],
+             "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais",
+             "defauts": "ce qui SE VOIT a ces moments et rend l'image inutilisable meme nettoyee : presentateur, interview,
+                         ecran partage, ecran de fin, publicite, image fixe, image floue ou noire ; vide si l'image est propre
+                         (un logo, un texte incruste ou le son ne sont PAS des defauts : ils sont effaces ou remplaces)"}}],
   "qualite": "bonne | moyenne | mauvaise (resolution, filigranes, texte incruste)",
   "resume": "une phrase en francais : ce que contient la video et a quoi elle peut servir"}}"""
 
@@ -669,11 +685,12 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         ms = [m for m in (e.get("moments") or []) if isinstance(m, dict)][:5] if level != "rien" else []
         u = units[n]
         par_plan[str(u["plan"])] = {"niveau": level, "moments": ms, "raison": str(e.get("raison") or ""),
-                                    "scene": u["scene"]}
+                                    "scene": u["scene"], "defauts": real_faults(str(e.get("defauts") or ""))}
         have = par_scene.get(str(u["scene"]))
         if not have or LEVELS.index(level) < LEVELS.index(have["niveau"]):
             par_scene[str(u["scene"])] = {"niveau": level, "moments": list(ms) + (have or {}).get("moments", []),
-                                          "raison": str(e.get("raison") or "")}
+                                          "raison": str(e.get("raison") or ""),
+                                          "defauts": real_faults(str(e.get("defauts") or ""))}
         else:
             have["moments"] += ms
     copy = bool(model) and r.get("copie_du_modele") is True

@@ -331,7 +331,7 @@ def test_finder_check_judges_plan_by_plan_with_a_partial_level():
     assert r["verdict"] == "oui" and r["raison"] == "le puits d'Ia Phin"
     assert r["par_scene"]["0"]["niveau"] == "exacte"            # the best of its plans: the excavator's "nothing" can't sink it
     assert r["par_scene"]["1"]["niveau"] == "partielle"
-    assert r["par_plan"]["2"] == {"niveau": "rien", "moments": [], "raison": "pas de pelleteuse", "scene": 0}
+    assert r["par_plan"]["2"] == {"niveau": "rien", "moments": [], "raison": "pas de pelleteuse", "scene": 0, "defauts": ""}
     assert r["moments"] == [{"debut": 40, "fin": 47}, {"debut": 90, "fin": 95}]
     assert finder.sections(r, 207) == [[34.0, 53.0], [84.0, 101.0]]
 
