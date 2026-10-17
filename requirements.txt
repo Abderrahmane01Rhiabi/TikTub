@@ -25,6 +25,8 @@ openai>=1.0.0
 python-dotenv>=1.0.0
 elevenlabs>=2.66.0  # generative pipeline: script -> voice (TTS + word timestamps)
 faster-whisper>=1.0.0  # word timings: generative captions (small model) and Montage auto (medium model)
+PicImageSearch==3.12.11  # Adaptation: reverse image search (Yandex) for the reference Short's shots.
+                         # Pinned: it scrapes the engines' pages, a new release can change what parses.
 
 # Local web UI
 fastapi>=0.110.0

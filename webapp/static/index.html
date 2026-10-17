@@ -585,6 +585,12 @@
   .ad-links a{padding:3px 9px;border-radius:99px;background:var(--panel2);border:1px solid var(--border);color:var(--muted);text-decoration:none;}
   .ad-links a:hover{color:var(--text);border-color:var(--accent);}
   .ad-cand.picked{border-color:var(--accent);}
+  .ad-tags{display:flex;flex-wrap:wrap;gap:4px;} .ad-tags i{font-style:normal;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--panel);border:1px solid var(--border);color:var(--muted);}
+  .ad-noimg{width:100%;aspect-ratio:16/11;display:flex;align-items:center;justify-content:center;background:#000;color:var(--dim);font-size:12px;}
+  .ad-frames{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;}
+  .ad-frames figure{margin:0;flex:0 0 auto;display:flex;flex-direction:column;gap:4px;}
+  .ad-frames img{height:110px;border-radius:6px;background:#000;display:block;}
+  .ad-frames figcaption{display:flex;gap:4px;} .ad-frames .chipbtn{font-size:10.5px;padding:2px 8px;text-decoration:none;}
   .ad-cand .title{color:var(--text);font-size:11.5px;line-height:1.3;max-height:3.9em;overflow:hidden;}
   .ad-row select.f{width:auto;}
   .ad-preview{display:grid;grid-template-columns:220px minmax(0,1fr);gap:16px;align-items:start;}
@@ -2663,8 +2669,17 @@ function adViews(n){
   return n >= 1e6 ? (n / 1e6).toFixed(1) + ' M vues' : n >= 1e3 ? Math.round(n / 1e3) + ' k vues' : n + ' vues';
 }
 
-const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images équivalentes'], rien: ['bad', 'rien pour cette scène'] };
-const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'], non: ['bad', 'rien d\'utile'] };
+const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images équivalentes'],
+  partielle: ['warn', 'partielle : à regarder'], rien: ['bad', 'rien pour cette scène'] };
+const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'],
+  partielle: ['warn', 'partielle : à regarder'], non: ['bad', 'rien d\'utile'] };
+const AD_RANK = { exacte: 0, equivalente: 1, partielle: 2, rien: 4 };
+const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité' };
+
+function adVerifOf(sug, url){
+  const v = (sug.verifs || {})[url];
+  return v && v.par_scene ? v : null;              // an older check judged one scene only: redo it
+}
 
 function adVerifHtml(v, scene, long){
   const per = v.par_scene || {};
@@ -2674,24 +2689,58 @@ function adVerifHtml(v, scene, long){
   const ms = here ? here.moments : v.moments;
   const others = useful.filter(i => i !== scene).map(i => i + 1);
   return `<span class="pill ${cls}">${esc(label)}</span>
-    <span>${esc((here && here.raison) || v.raison)}${(ms || []).length ? ' · à ' + ms.map(m => adDuration(m.debut) || '0:00').join(', ') : ''}</span>
+    <span>${esc((here && here.raison) || v.raison)}${(ms || []).length ? ' · à ' + [...new Set(ms.map(m => adDuration(m.debut) || '0:00'))].join(', ') : ''}</span>
     ${others.length ? `<span style="color:var(--ok)">utile aussi pour ${others.length > 1 ? 'les scènes' : 'la scène'} ${others.join(', ')}</span>` : ''}
     ${long && useful.length ? '<span style="color:var(--ok)">seuls les passages utiles seront téléchargés</span>' : ''}`;
 }
 
 function adCandHtml(c, scene, sug, have){
-  const raw = (sug.verifs || {})[c.url], v = raw && raw.par_scene ? raw : null;    // older checks: one scene only, redo
+  const v = adVerifOf(sug, c.url), err = (sug.verif_errors || {})[c.url];
   const already = have.has(c.url), picked = already || adPicked.has(c.url);
   const long = (c.duration || 0) >= 150;
+  const tags = (c.origines || []).map(o => o === 'image' && c.hits > 1 ? `par image ×${c.hits}`
+    : o === 'langue' && scene >= 0 && ((sug.scenes[scene] || {}).langue || {}).langue ? sug.scenes[scene].langue.langue.toLowerCase()
+    : AD_ORIGIN[o] || o);
+  const platformName = c.platform && c.platform !== 'YouTube' ? c.platform : '';
   return `<div class="ad-clip ad-cand ${picked ? 'picked' : ''}" data-url="${esc(c.url)}">
-    <a href="${esc(c.url)}" target="_blank" rel="noopener"><img src="${esc(c.thumb)}" loading="lazy" alt=""></a>
+    <a href="${esc(c.url)}" target="_blank" rel="noopener">${c.thumb ? `<img src="${esc(c.thumb)}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'ad-noimg', textContent: '${esc(platformName || 'vidéo')}'}))">`
+      : `<div class="ad-noimg">${esc(platformName || 'vidéo')}</div>`}</a>
     <div class="meta"><label><input type="checkbox" class="ad-pick" ${picked ? 'checked' : ''} ${already ? 'disabled' : ''}> ${already ? 'déjà ajoutée' : 'prendre'}</label>
       <span class="title">${esc(c.title)}</span>
-      <span>${esc(c.channel)}${c.duration ? ' · ' + adDuration(c.duration) : ''}${c.views ? ' · ' + adViews(c.views) : ''}</span>
+      <span>${esc(platformName ? platformName + (c.channel && c.channel !== platformName ? ' · ' + c.channel : '') : c.channel)}${c.duration ? ' · ' + adDuration(c.duration) : ''}${c.views ? ' · ' + adViews(c.views) : ''}</span>
+      ${tags.length ? `<span class="ad-tags">${tags.map(t => `<i>${esc(t)}</i>`).join('')}</span>` : ''}
       ${v ? adVerifHtml(v, scene, long)
-        : `${long ? '<span style="color:#f5c56d">vidéo longue : vérifie-la, seuls les passages utiles seront pris</span>' : ''}
-           <button class="btn ghost small ad-check" title="L'IA regarde la vidéo et cherche toutes les scènes (30 s à 1 min)">Vérifier avec l'IA</button>`}
+        : `${err ? `<span style="color:var(--danger)">${esc(err)}</span>` : ''}
+           ${long ? '<span style="color:#f5c56d">vidéo longue : vérifie-la, seuls les passages utiles seront pris</span>' : ''}
+           <button class="btn ghost small ad-check" title="L'IA regarde la vidéo et la compare à chaque plan du modèle (15 s sur YouTube, 1 à 2 min ailleurs)">Vérifier avec l'IA</button>`}
     </div></div>`;
+}
+
+function adSortCands(cands, scene, sug){
+  const rank = c => { const v = adVerifOf(sug, c.url); if (!v) return 3;
+    const e = scene >= 0 ? (v.par_scene || {})[scene] : null; return e ? AD_RANK[e.niveau] : (v.verdict === 'non' ? 4 : 1); };
+  return [...cands].sort((a, b) => rank(a) - rank(b) || (b.score || 0) - (a.score || 0));
+}
+
+const AD_ENGINES = [['Google Lens', 'https://images.google.com/'], ['Yandex', 'https://yandex.com/images/'],
+                    ['Bing', 'https://www.bing.com/visualsearch']];
+
+function adFramesHtml(p, frames){
+  if (!frames.length) return '';
+  return `<div class="ad-frames">${frames.map(f => `<figure><img src="/api/adaptations/${p.project_id}/frames/${esc(f.file)}" alt="" loading="lazy">
+      <figcaption><button class="chipbtn ad-copyimg" data-src="/api/adaptations/${p.project_id}/frames/${esc(f.file)}">Copier</button>
+        <a class="chipbtn" href="/api/adaptations/${p.project_id}/frames/${esc(f.file)}" download="${esc(f.file)}">Enregistrer</a></figcaption></figure>`).join('')}</div>
+    <div class="ad-links"><span class="tiny">Chercher par image :</span>${AD_ENGINES.map(([l, u]) => `<a href="${u}" target="_blank" rel="noopener">${l} ↗</a>`).join('')}
+      <span class="tiny">Copier l'image, coller (Ctrl + V) dans le moteur, puis <b>agrandir le cadre à toute l'image</b> (Google zoome tout seul sur un détail).</span></div>`;
+}
+
+async function adCopyImage(src){
+  const blob = await fetch(src).then(r => r.blob());
+  const bmp = await createImageBitmap(blob);
+  const canvas = Object.assign(document.createElement('canvas'), { width: bmp.width, height: bmp.height });
+  canvas.getContext('2d').drawImage(bmp, 0, 0);
+  const png = await new Promise(r => canvas.toBlob(r, 'image/png'));
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
 }
 
 function renderAdFinder(box, p){
@@ -2699,24 +2748,46 @@ function renderAdFinder(box, p){
   const dead = new Set((p.sources || []).filter(m => m.failed).map(m => m.url));
   const have = new Set((p.source_urls || []).filter(u => !dead.has(u)));
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
+  const chips = qs => qs.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('');
+  const im = sug.images || { frames: [] };
+  const framesOf = si => (im.frames || []).filter(f => f.scene === si);
+  const loose = (im.frames || []).filter(f => f.scene === null || f.scene === undefined);
+  const verified = Object.values(sug.verifs || {}).filter(v => v.par_scene);
+  const imageState = !im.frames || !im.frames.length
+    ? `Pas d'image du Short${im.error ? ' : ' + esc(im.error) : ''}.`
+    : `${im.frames.length} images ${im.source === 'short' ? 'prises dans le Short, une par plan' : 'publiques de YouTube (le Short n\'a pas pu être téléchargé)'}.
+       ${im.search_error ? `<span style="color:#f5c56d">Recherche automatique impossible : ${esc(im.search_error)} — utilise les boutons ci-dessous.</span>`
+         : 'Cherchées automatiquement sur Yandex.'}`;
   box.innerHTML = `
+    <article class="chcard"><div class="chcard-body">
+      <div class="tiny">${icon('image', 12)} ${imageState}
+        ${verified.length ? `${icon('sparkle', 12)} ${verified.length} vidéo(s) déjà vérifiée(s) par l'IA, les meilleures en premier.` : ''}
+        Pour aller plus loin à la main : l'extension <a href="https://www.invid-project.eu/tools-and-services/invid-verification-plugin/" target="_blank" rel="noopener">InVID-WeVerify ↗</a>
+        découpe une vidéo en images et lance toutes les recherches par image.</div>
+    </div></article>
     ${sug.comptes.length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('link', 14)} Comptes crédités dans le modèle</div>
         <div class="meta" style="margin-left:0">Souvent l'auteur des vidéos d'origine : ouvre son profil et copie le lien de la bonne vidéo en bas.</div></div></div>
       <div class="chcard-body">${sug.comptes.map(c => `<div class="ad-row"><b>${esc(c.name)}</b>${links(c.links)}</div>
         ${(c.videos || []).length ? `<div class="tiny">Ses vidéos YouTube sur le sujet :</div>
-          <div class="ad-clips">${c.videos.map(v => adCandHtml(v, -1, sug, have)).join('')}</div>` : ''}`).join('')}</div></article>` : ''}
+          <div class="ad-clips">${adSortCands(c.videos, -1, sug).map(v => adCandHtml(v, -1, sug, have)).join('')}</div>` : ''}`).join('')}</div></article>` : ''}
     <article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('eye', 14)} Vidéos à chercher · ${sug.scenes.length}</div>
-        <div class="meta" style="margin-left:0">Pour chaque scène : quoi chercher, des liens de recherche tout prêts et des vidéos trouvées sur YouTube.</div></div></div>
+        <div class="meta" style="margin-left:0">Pour chaque scène : les images du Short, quoi chercher, et les vidéos trouvées (YouTube, langue locale, par image), les vérifiées en premier.</div></div></div>
       <div class="chcard-body">${sug.scenes.map((sc, si) => `
         <div class="ad-scene" data-scene="${si}">
           <div class="what">${si + 1}. Cherche : ${esc(sc.scene)}</div>
           ${sc.indices ? `<div class="tiny">Indices : ${esc(sc.indices)}</div>` : ''}
-          <div class="ad-links"><span class="tiny">Recherches :</span>${sc.recherches.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('')}</div>
+          ${adFramesHtml(p, framesOf(si))}
+          <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches)}</div>
           ${links(sc.liens || [])}
-          ${(sc.candidats || []).length ? `<div class="ad-clips">${sc.candidats.map(c => adCandHtml(c, si, sug, have)).join('')}</div>` : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les liens de recherche ci-dessus.</div>'}
+          ${sc.langue ? `<div class="ad-links"><span class="tiny">En ${esc(sc.langue.langue.toLowerCase())} (filmé ${esc(sc.langue.pays ? 'en/au ' + sc.langue.pays : 'ailleurs')}) :</span>${chips(sc.langue.recherches)}</div>
+            ${links(sc.liens_langue || [])}` : ''}
+          ${(sc.candidats || []).length ? `<div class="ad-clips">${adSortCands(sc.candidats, si, sug).map(c => adCandHtml(c, si, sug, have)).join('')}</div>` : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les images et les liens de recherche ci-dessus.</div>'}
         </div>`).join('') || '<div class="tiny">Le modèle n\'a pas pu être découpé en scènes.</div>'}</div></article>
+    ${loose.length || (sug.image_videos || []).length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('image', 14)} Trouvées par image (toutes scènes)</div></div></div>
+      <div class="chcard-body">${adFramesHtml(p, loose)}
+        ${(sug.image_videos || []).length ? `<div class="ad-clips">${adSortCands(sug.image_videos, -1, sug).map(c => adCandHtml(c, -1, sug, have)).join('')}</div>` : ''}</div></article>` : ''}
     <article class="chcard"><div class="chcard-body">
-      <label class="f">Tes propres liens (TikTok, YouTube, Instagram…), un par ligne</label>
+      <label class="f">Tes propres liens (TikTok, YouTube, Instagram, VK…), un par ligne</label>
       <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
       <div class="chcard-foot"><span class="tiny ad-count"></span>
         <button class="btn primary push ad-add" data-icon="download">Télécharger et analyser →</button></div></article>`;
@@ -2729,10 +2800,16 @@ function renderAdFinder(box, p){
   box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
     navigator.clipboard.writeText(b.dataset.copy).then(() => toast('Recherche copiée', 'success')).catch(() => {});
   });
+  box.querySelectorAll('.ad-copyimg').forEach(b => b.onclick = () =>
+    adCopyImage(b.dataset.src).then(() => toast('Image copiée : colle-la (Ctrl + V) dans le moteur', 'success'))
+      .catch(() => toast('Copie impossible ici : utilise « Enregistrer » puis glisse le fichier', 'error')));
   box.querySelectorAll('.ad-cand').forEach(card => {
     const url = card.dataset.url;
     const cb = card.querySelector('.ad-pick');
-    cb.onchange = () => { cb.checked ? adPicked.add(url) : adPicked.delete(url); card.classList.toggle('picked', cb.checked); recount(); };
+    cb.onchange = () => {
+      box.querySelectorAll(`.ad-cand[data-url="${CSS.escape(url)}"] .ad-pick`).forEach(x => { x.checked = cb.checked; x.closest('.ad-cand').classList.toggle('picked', cb.checked); });
+      cb.checked ? adPicked.add(url) : adPicked.delete(url); recount();
+    };
     const chk = card.querySelector('.ad-check');
     if (chk) chk.onclick = async () => {
       chk.disabled = true; chk.innerHTML = spin('l\'IA regarde…');

@@ -35,24 +35,41 @@ La clé ElevenLabs doit avoir les permissions **Text to Speech** et **Voices : R
 
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
 
-L'app analyse le modèle, puis te montre :
-- **chaque scène à chercher**, décrite simplement : « Cherche : conductrice de tramway avec lunettes heurtant un break sombre », avec les **indices** vus à l'écran (date, filigrane, lieu) ;
-- pour chaque scène, des **recherches toutes prêtes** (clique pour copier) et des liens directs vers YouTube, TikTok et Google vidéos ;
-- des **vidéos trouvées sur YouTube**, déjà triées par l'IA (les résultats hors sujet sont retirés) ;
-- les **comptes crédités** dans le modèle (souvent l'auteur des vidéos d'origine) : leur profil YouTube, TikTok et Instagram, et leurs vidéos YouTube sur le sujet.
+L'app analyse le modèle, puis **cherche les vidéos de quatre façons à la fois**. Chaque méthode a gagné sur un cas réel :
 
-**Vérifier avec l'IA** (30 secondes environ) : l'IA regarde la vidéo et cherche **toutes les scènes d'un coup**. Pour chacune, elle répond :
+| Méthode | Ce qu'elle fait | Elle a trouvé… |
+|---|---|---|
+| **Compte crédité** | les vidéos du compte cité à l'écran (« Credits: @… ») | la compilation d'origine du tram (6 scènes sur 7) |
+| **Recherche YouTube** | des recherches en anglais, écrites par l'IA | d'autres compilations de trams |
+| **Langue locale** | l'IA devine **le pays** de chaque scène et cherche **dans sa langue** (vietnamien, turc, russe…) | de vraies vidéos de puits au Vietnam et en Turquie, que l'anglais ne trouvait pas |
+| **Par image** | une image propre de **chaque plan** du Short est cherchée sur **Yandex** | des compilations VK et turques avec les scènes exactes |
+
+Puis l'IA **vérifie automatiquement les 8 meilleures vidéos** (la vidéo du compte crédité d'abord, puis la meilleure de chaque scène). Compte **3 à 5 minutes** en tout.
+
+**Pour chaque scène, tu vois :**
+- ce qu'il faut chercher, et les **indices** vus à l'écran (date, filigrane, lieu) ;
+- **les images du Short** (une par plan, trois pour un plan long), déjà nettoyées des bandeaux et sous-titres, avec **Copier** et **Enregistrer** ;
+- les boutons **Google Lens, Yandex et Bing** : copie l'image, colle-la (Ctrl + V) dans le moteur, puis **agrandis le cadre à toute l'image** (Google zoome tout seul sur un détail, par exemple un t-shirt). Google Lens trouve souvent ce que l'automatique ne trouve pas, surtout sur **TikTok et Facebook** : c'est lui qui a trouvé la vidéo d'origine des puits ;
+- les recherches en anglais **et dans la langue du pays** (clique pour copier), avec leurs liens YouTube, TikTok et Google vidéos ;
+- **toutes les vidéos trouvées**, avec leur origine (« YouTube », « langue locale », « par image ×3 », « compte crédité ») : **les vérifiées en premier**.
+
+**Vérifier avec l'IA** : l'IA regarde la vidéo (15 secondes sur YouTube, 1 à 2 minutes sur VK, Rutube, Dailymotion ou TikTok, qu'elle doit d'abord télécharger) et la compare **plan par plan** au modèle :
 - **« vidéo exacte »** : c'est la vidéo d'origine ;
-- **« images équivalentes »** : une autre vidéo qui montre la même action, par exemple une autre piscine qui cède, et peut la remplacer ;
+- **« images équivalentes »** : une autre vidéo qui montre la même action et peut la remplacer ;
+- **« partielle : à regarder »** : le même évènement, mais pas tout ce que montre la scène (par exemple le jet de gaz sans la pelleteuse) ;
 - **« rien pour cette scène »**.
 
-Elle donne aussi **les moments** où on voit la scène, et signale si la vidéo est « utile aussi pour la scène 3 ». Pour une longue compilation vérifiée, l'app ne télécharge que **les passages utiles**, et pas les 10 minutes.
+Elle donne **les moments** (« à 2:24 ») et signale si la vidéo est « utile aussi pour les scènes 3, 5 ». Pour une longue compilation vérifiée, l'app ne télécharge que **les passages utiles**, en une seule demande.
 
-Coche les vidéos qui conviennent, ajoute tes propres liens si besoin (TikTok, Instagram…), puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit.
+Coche les vidéos qui conviennent, ajoute tes propres liens si besoin (TikTok, Instagram, VK…), puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit. Pour aller plus loin à la main, l'extension **InVID-WeVerify** découpe une vidéo en images et lance toutes les recherches par image.
 
-Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées.
+Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées. Une vidéo qui ne se télécharge pas est **ignorée avec un avertissement**, et **Réessayer** la retente.
 
-**Si YouTube bloque le téléchargement** (« confirme que tu n'es pas un robot ») : ça passe souvent tout seul après une heure. Sinon, exporte les cookies de ton navigateur, connecté à YouTube, avec l'extension « Get cookies.txt LOCALLY », dans un fichier `youtube_cookies.txt` à la racine de TikTub. Ou prends la même vidéo sur TikTok.
+**Si YouTube bloque le téléchargement** (« confirme que tu n'es pas un robot ») : l'app réessaie toute seule une fois. Sinon, ça passe souvent après une heure. La vraie solution : un fichier de cookies YouTube, `youtube_cookies.txt`, à la racine de TikTub :
+1. utilise un **compte Google secondaire** (jamais celui de tes chaînes) ;
+2. dans une **fenêtre privée**, connecte-toi à YouTube, va sur `youtube.com/robots.txt`, exporte avec l'extension « Get cookies.txt LOCALLY » ;
+3. **ferme la fenêtre privée sans te déconnecter** ; renomme le fichier `youtube_cookies.txt` et place-le à la racine de TikTub ;
+4. ne le colle jamais dans une conversation : il donne accès au compte. Refais-le quand le blocage revient.
 
 ### Étape 2 · Sources (à vérifier)
 

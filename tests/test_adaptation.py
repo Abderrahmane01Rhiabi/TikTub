@@ -256,38 +256,211 @@ def test_finder_credit_links_and_suggest():
         found[0]["candidats"] = found[0]["candidats"][:1]
     ref = {"credits": ["@adrenalinejunkie4661"], "recherche_courte": "tram",
            "a_chercher": [{"scene": "Un tram", "recherches": ["tram crash", "tram cabin"]}]}
-    out = finder.suggest(ref, "https://youtube.com/shorts/refrefrefre", search=search, search_in=search_in, sort=sort)
+    out = finder.suggest(ref, "https://youtube.com/shorts/refrefrefre", search=search, search_in=search_in, sort=sort,
+                         local=lambda found: {})
     sc = out["scenes"][0]
     assert [c["id"] for c in sc["candidats"]] == ["aaaaaaaaaaa"]      # the reference itself and duplicates are left out
     assert out["comptes"][0]["videos"][0]["id"] == "ccccccccccc" and out["verifs"] == {}
     assert sc["liens"][1]["url"] == "https://www.tiktok.com/search?q=tram+crash"
 
 
-def test_finder_check_judges_every_scene_and_accepts_equivalent_footage():
+def test_finder_check_judges_plan_by_plan_with_a_partial_level():
     from adaptation import finder
-    scenes = [{"scene": "un homme coupe une piscine", "indices": "bananier"}, {"scene": "une piscine cède"},
-              {"scene": "pub IPoolGo"}]
+    scenes = [{"scene": "des hommes bouchent un puits puis une pelleteuse", "plans": [0, 2], "indices": "café"},
+              {"scene": "un geyser de boue", "plans": [1]}]
+    plans = [{"visuel": "des hommes autour d'un jet de gaz"}, {"visuel": "un tube crache de la boue"},
+             {"visuel": "une pelleteuse plante un pieu"}, {"visuel": "générique"}]
 
     class G:
         def _generate_content(self, parts, **kw):
             assert parts[0]["file_data"]["file_uri"].startswith("https://www.youtube.com/")
             text = parts[1]["text"]
-            assert "0. un homme coupe une piscine (indices : bananier)" in text and "equivalente" in text
-            return {"scenes": [{"scene": 0, "niveau": "rien", "moments": [{"debut": 1}], "raison": "autre chose"},
-                               {"scene": "1", "niveau": "Équivalente", "moments": [{"debut": 40, "fin": 47}, "x"],
-                                "raison": "une autre piscine cède"},
-                               {"scene": 9, "niveau": "exacte"}],
-                    "resume": "compilation de piscines"}
-    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", scenes, gemini=G())
-    assert r["verdict"] == "probable" and r["raison"] == "compilation de piscines"
-    assert r["par_scene"]["0"] == {"niveau": "rien", "moments": [], "raison": "autre chose"}
-    assert r["par_scene"]["1"]["niveau"] == "equivalente" and r["moments"] == [{"debut": 40, "fin": 47}]
-    assert "9" not in r["par_scene"]
-    assert finder.sections(r, 207) == [[34.0, 53.0]]
-    with pytest.raises(finder.FinderError):
-        finder.check("https://www.tiktok.com/@a/video/1", scenes, gemini=G())
+            assert "0. des hommes autour d'un jet de gaz (indices : café)" in text and "partielle" in text
+            assert "générique" not in text                      # a plan of no scene is not judged
+            return {"plans": [{"plan": 0, "niveau": "Exacte", "moments": [{"debut": 40, "fin": 47}, "x"], "raison": "même puits"},
+                              {"plan": "1", "niveau": "partielle", "moments": [{"debut": 90, "fin": 95}], "raison": "le jet seul"},
+                              {"plan": 2, "niveau": "rien", "moments": [{"debut": 1}], "raison": "pas de pelleteuse"},
+                              {"plan": 9, "niveau": "exacte"}],
+                    "resume": "le puits d'Ia Phin"}
+    r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", scenes, plans, gemini=G())
+    assert r["verdict"] == "oui" and r["raison"] == "le puits d'Ia Phin"
+    assert r["par_scene"]["0"]["niveau"] == "exacte"            # the best of its plans: the excavator's "nothing" can't sink it
+    assert r["par_scene"]["1"]["niveau"] == "partielle"
+    assert r["par_plan"]["2"] == {"niveau": "rien", "moments": [], "raison": "pas de pelleteuse", "scene": 0}
+    assert r["moments"] == [{"debut": 40, "fin": 47}, {"debut": 90, "fin": 95}]
+    assert finder.sections(r, 207) == [[34.0, 53.0], [84.0, 101.0]]
 
 
+def test_finder_check_falls_back_on_scenes_for_an_older_analysis():
+    from adaptation import finder
+    units = finder._units([{"scene": "un tram"}, {"scene": "une voiture", "indices": "rouge"}], [])
+    assert [(u["plan"], u["scene"], u["text"]) for u in units] == [(0, 0, "un tram"), (1, 1, "une voiture")]
+
+
+def test_finder_merges_every_search_and_ranks_by_how_it_was_found():
+    from adaptation import finder
+    ref = {"credits": [], "plans": [{}, {}],
+           "a_chercher": [{"scene": "un puits crache du gaz", "plans": [0], "recherches": ["gas well"]},
+                          {"scene": "un geyser", "plans": [1], "recherches": ["geyser"]}]}
+    yt = lambda vid, t="": {"id": vid, "url": f"https://www.youtube.com/watch?v={vid}", "title": t or vid, "channel": "c"}
+
+    def search(q):
+        return {"gas well": [yt("aaaaaaaaaaa")], "khoan giếng": [yt("aaaaaaaaaaa"), yt("bbbbbbbbbbb")]}.get(q, [])
+
+    def frames_fn(ref, url, work, found, report=None):
+        return {"frames": [{"file": "f00.jpg", "scene": 0}, {"file": "f01.jpg", "scene": 0},
+                           {"file": "f02.jpg", "scene": None}], "source": "short", "error": None}
+
+    def image_search(files):
+        vk = {"url": "https://vkvideo.ru/video-1_2", "title": "Железные нервы", "thumb": "", "platform": "VK"}
+        short = {"url": "https://www.youtube.com/watch?v=refrefrefre", "title": "le Short lui-même", "thumb": "", "platform": "YouTube"}
+        b = {"url": "https://www.youtube.com/watch?v=bbbbbbbbbbb", "title": "b", "thumb": "", "platform": "YouTube"}
+        garage = {"url": "https://vkvideo.ru/video-9_9", "title": "Garage tour", "thumb": "", "platform": "VK"}
+        return {"hits": {files[0]: [vk, short, b, garage], files[1]: [vk], files[2]: [{**vk, "url": "https://rutube.ru/video/x/"}]},
+                "error": None, "seconds": 1}
+    def sort_image(pools):                                  # the off-topic picture results go (title check)
+        assert pools[-1]["scene"].startswith("n'importe laquelle")
+        pools[0]["candidats"] = [c for c in pools[0]["candidats"] if "Garage" not in c["title"]]
+
+    out = finder.suggest(ref, "https://youtube.com/shorts/refrefrefre", work_dir="w", search=search,
+                         search_in=lambda h, q: [], sort=lambda found: None,
+                         local=lambda found: {0: {"pays": "Viêt Nam", "langue": "Vietnamien", "recherches": ["khoan giếng"]}},
+                         frames_fn=frames_fn, image_search=image_search, sort_image=sort_image)
+    s0 = out["scenes"][0]
+    by = {c["url"]: c for c in s0["candidats"]}
+    assert set(by) == {"https://www.youtube.com/watch?v=aaaaaaaaaaa", "https://www.youtube.com/watch?v=bbbbbbbbbbb",
+                       "https://vkvideo.ru/video-1_2"}           # one card per video, never the Short itself
+    assert by["https://www.youtube.com/watch?v=aaaaaaaaaaa"]["origines"] == ["youtube", "langue"]
+    assert by["https://www.youtube.com/watch?v=bbbbbbbbbbb"]["origines"] == ["langue", "image"]
+    vk = by["https://vkvideo.ru/video-1_2"]
+    assert vk["origines"] == ["image"] and vk["hits"] == 2 and vk["platform"] == "VK"
+    assert by["https://www.youtube.com/watch?v=bbbbbbbbbbb"]["score"] > vk["score"]   # words AND a picture beat pictures alone
+    assert s0["langue"]["langue"] == "Vietnamien" and "khoan" in s0["liens_langue"][0]["url"]
+    assert [c["url"] for c in out["image_videos"]] == ["https://rutube.ru/video/x/"]   # a picture of no known scene
+    assert out["image_videos"][0]["score"] < vk["score"]       # ... ranks lower
+    assert out["scenes"][1]["candidats"] == [] and out["images"]["source"] == "short"
+
+
+def test_finder_survives_a_blocked_image_search_and_no_picture():
+    from adaptation import finder
+    ref = {"a_chercher": [{"scene": "un tram", "recherches": ["tram"]}]}
+    kw = dict(search=lambda q: [], search_in=lambda h, q: [], sort=lambda f: None, local=lambda f: {},
+              sort_image=lambda pools: None)
+    out = finder.suggest(ref, "u", work_dir="w", frames_fn=lambda *a, **k: {"frames": [{"file": "f.jpg", "scene": 0}], "source": "youtube"},
+                         image_search=lambda files: {"hits": {}, "error": "captcha", "seconds": 1}, **kw)
+    assert out["images"]["search_error"] == "captcha" and out["scenes"][0]["candidats"] == []
+    out = finder.suggest(ref, "u", work_dir="w", frames_fn=lambda *a, **k: (_ for _ in ()).throw(RuntimeError("ffmpeg")), **kw)
+    assert "ffmpeg" in out["images"]["error"]
+
+
+def test_verify_best_checks_the_most_promising_and_notes_failures():
+    from adaptation import finder
+    c = lambda u, sc, d=60: {"url": u, "score": sc, "duration": d}
+    sug = {"scenes": [{"scene": "x", "candidats": [c("a", 1), c("b", 9), c("long", 99, 3600), c("e", 7)]}],
+           "comptes": [{"videos": [c("b", 9), c("f", 5)]}], "image_videos": [c("g", 8)],
+           "verifs": {"e": {"verdict": "oui"}}}
+    seen = []
+
+    def checker(url, scenes, plans):
+        seen.append(url)
+        if url == "g":
+            raise finder.FinderError("bloquée")
+        return {"verdict": "probable", "par_scene": {}}
+    finder.verify_best(sug, {"plans": []}, n=3, checker=checker)
+    assert sorted(seen) == ["a", "b", "g"]                   # the account's, the scene's, the best left; checked/too long skipped
+    assert set(sug["verifs"]) == {"a", "b", "e"} and sug["verif_errors"] == {"g": "bloquée"}
+
+
+def test_verify_best_gives_every_scene_a_check_before_the_high_scores():
+    from adaptation import finder
+    c = lambda u, sc, o="langue": {"url": u, "score": sc, "duration": 60, "origines": [o]}
+    sug = {"scenes": [{"candidats": [c("a1", 2), c("a2", 1), c("ai", 4, "image")]}, {"candidats": [c("b1", 1)]}],
+           "image_videos": [c("x", 9, "image"), c("y", 8, "image")]}
+    seen = []
+    finder.verify_best(sug, {}, n=4, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"}, workers=1)
+    assert seen == ["a1", "b1", "ai", "x"]                   # words first per scene, then pictures, then the rest
+    many = {"scenes": [{"candidats": [c(f"t{k}", 2), c(f"i{k}", 1, "image")]} for k in range(7)]}
+    seen.clear()
+    finder.verify_best(many, {}, n=4, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"}, workers=1)
+    assert seen == ["t0", "t1", "i0", "i1"]                  # seven scenes: words can't take the whole budget
+    many["comptes"] = [{"videos": [c("acc0", 2, "compte"), {**c("acc", 2, "compte"), "views": 1_400_000}]}]
+    seen.clear()
+    finder.verify_best(many, {}, n=4, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"}, workers=1)
+    assert seen[0] == "acc"                                  # the credited account first
+
+
+# ---------------------------------------------------------------- image search / frames
+
+def test_imagesearch_keeps_one_spelling_of_each_readable_video():
+    from adaptation import imagesearch as im
+    assert im.canonical("https://www.youtube.com/watch?app=desktop&v=S9xHYqVJ5BM&utm_medium=organic") == \
+        "https://www.youtube.com/watch?v=S9xHYqVJ5BM"
+    assert im.canonical("https://m.vkvideo.ru/video-187008039_456241866?pl=2&utm_source=y") == \
+        "https://vkvideo.ru/video-187008039_456241866"
+    assert im.canonical("https://m.vk.com/video-60130670_456283265") == "https://vkvideo.ru/video-60130670_456283265"
+    assert im.canonical("https://rutube.ru/video/dc9f/?utm_source=x") == "https://rutube.ru/video/dc9f/"
+    assert im.canonical("https://ok.ru/video/353465993834") is None          # yt-dlp can't read it
+    assert im.canonical("https://www.milliyet.com.tr/galeri/kaza-479159") is None
+    assert im.platform("https://vkvideo.ru/video-1_2") == "VK"
+
+
+def test_imagesearch_ranks_by_pictures_and_says_when_blocked(monkeypatch):
+    from adaptation import imagesearch as im
+
+    async def fake(files, pause):
+        return {"a": [{"url": "https://youtu.be/aaaaaaaaaaa", "title": "Tram - YouTube", "thumb": "//x"},
+                      {"url": "https://news.example/article", "title": "", "thumb": ""}],
+                "b": [{"url": "https://rutube.ru/video/r/", "title": "r", "thumb": "https://t"},
+                      {"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa&utm_x=1", "title": "Tram", "thumb": ""}],
+                "c": {"error": "timeout"}}
+    monkeypatch.setattr(im, "_yandex", fake)
+    hits = im.search(["a", "b", "c"], pause=0)
+    assert hits["a"] == [{"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "title": "Tram", "thumb": "", "platform": "YouTube"}]
+    assert im._title("Трамвай не объедет - Видео от Женская Газета VK Видео") == "Трамвай не объедет"
+    assert hits["c"] == []
+    ranked = im.rank(hits, {"0": ["a", "b"], "1": ["c"]})
+    assert [(h["url"], h["hits"]) for h in ranked["0"]] == [("https://www.youtube.com/watch?v=aaaaaaaaaaa", 2),
+                                                           ("https://rutube.ru/video/r/", 1)]
+
+    async def blocked(files, pause):
+        return {f: {"error": "captcha"} for f in files}
+    monkeypatch.setattr(im, "_yandex", blocked)
+    assert im.timed_search(["a"])["error"].startswith("Yandex n'a répondu")
+
+
+def test_frames_clean_crops_the_picture_and_removes_added_text(tmp_path):
+    from PIL import Image
+    from adaptation import frames
+    im = Image.new("RGB", (400, 800), (0, 0, 0))
+    im.paste((200, 30, 30), (0, 200, 400, 600))                 # the real picture: a band in the middle
+    im.paste((255, 255, 255), (0, 200, 400, 250))               # a banner along its top edge
+    im.paste((255, 255, 255), (150, 380, 250, 420))             # a caption in the middle
+    raw, out = tmp_path / "raw.jpg", tmp_path / "out.jpg"
+    im.save(raw)
+    assert frames.clean(str(raw), [250, 0, 750, 1000], [[250, 0, 312, 1000], [475, 375, 525, 625]], str(out))
+    pic = Image.open(out)
+    assert pic.width == 400 and abs(pic.height - 350) <= 1     # band minus the banner
+    assert pic.getpixel((200, 155))[1] < 120                    # the middle caption is painted over, not white
+    assert frames.clean(str(raw), [250, 0, 260, 1000], [], str(out)) is None   # nothing left to search
+
+
+def test_frames_times_scenes_and_the_public_fallback(monkeypatch, tmp_path):
+    from adaptation import frames, sources
+    assert frames._times([(0, 2), (2, 10)]) == [1.0, 4.0, 6.0, 8.0]          # a long shot gives three
+    assert len(frames._times([(k, k + 1) for k in range(40)])) == frames.MAX_FRAMES
+    plans = [{"debut": 0, "fin": 5}, {"debut": 5, "fin": 9}]
+    scenes = [{"plans": [1]}]
+    assert frames._plan_of(6, plans) == 1 and frames._scene_of(1, scenes) == 0 and frames._scene_of(0, scenes) is None
+
+    monkeypatch.setattr(sources, "download", lambda *a, **k: (_ for _ in ()).throw(sources.SourceError("robot")))
+    raw = tmp_path / "public1.jpg"
+    from PIL import Image
+    Image.new("RGB", (640, 360), (90, 90, 90)).save(raw)
+    monkeypatch.setattr(frames, "_public_frames", lambda url, work, d: [(str(raw), 7.5)])
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])])
+    out = frames.reference_frames({"plans": plans}, "https://youtube.com/shorts/x", str(tmp_path), scenes)
+    assert out["source"] == "youtube" and out["error"] == "robot"
+    assert out["frames"] == [{"file": "f00.jpg", "t": 7.5, "plan": None, "scene": None}]   # no shots: not tied to a scene
 def test_finder_sort_out_keeps_what_gemini_keeps_and_everything_on_failure():
     from adaptation import finder
     found = [{"scene": "tram", "candidats": [{"title": t, "channel": "c"} for t in ("tram crash", "kangourou", "tram 2")]}]
@@ -299,6 +472,13 @@ def test_finder_sort_out_keeps_what_gemini_keeps_and_everything_on_failure():
     assert len(found[0]["candidats"]) == 3
     finder.sort_out(found, gemini=G({"garder": {"0": [2, 0, 0, 9]}}))
     assert [c["title"] for c in found[0]["candidats"]] == ["tram 2", "tram crash"]
+
+    class PerScene:                                         # one call per scene: a failed one only spares its scene
+        def _generate_content(self, parts, **kw):
+            return {"garder": {"1": [0]}} if "Scene 1:" in parts[0]["text"] else "cut off"
+    two = [{"scene": "a", "candidats": [{"title": "x"}, {"title": "y"}]}, {"scene": "b", "candidats": [{"title": "z"}, {"title": "w"}]}]
+    finder.sort_out(two, gemini=PerScene())
+    assert [len(s["candidats"]) for s in two] == [2, 1]
 
 
 def test_finder_sections_pad_and_merge_the_verified_moments():

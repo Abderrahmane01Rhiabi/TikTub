@@ -1385,6 +1385,17 @@ def delete_adaptation(pid: str):
     return {"deleted": True}
 
 
+@app.get("/api/adaptations/{pid}/frames/{name}")
+def adaptation_frame(pid: str, name: str):
+    """A clean picture of one of the reference Short's shots (for the manual image search)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    path = os.path.join(ap.project_dir(pid), "finder", os.path.basename(name))
+    if not name.endswith(".jpg") or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Image introuvable")
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @app.get("/api/adaptations/{pid}/clips/{cid}/thumb")
 def adaptation_clip_thumb(pid: str, cid: str):
     from adaptation import pipeline as ap, sources

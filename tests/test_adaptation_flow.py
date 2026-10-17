@@ -32,7 +32,13 @@ def fakes(monkeypatch):
         calls["reference"] += 1
         return {"sujet": "trams", "question": "pourquoi", "plans": [{}]}
     monkeypatch.setattr(reference, "analyse", analyse_ref)
-    monkeypatch.setattr(finder, "suggest", lambda ref, url="", report=None: {
+    calls["verified"] = 0
+
+    def verify_best(sug, ref, **kw):
+        calls["verified"] += 1
+        return sug
+    monkeypatch.setattr(finder, "verify_best", verify_best)
+    monkeypatch.setattr(finder, "suggest", lambda ref, url="", work_dir=None, report=None: {
         "comptes": [], "verifs": {},
         "scenes": [{"scene": "un tram qui percute une voiture", "recherches": ["tram crash"], "indices": "",
                     "candidats": [{"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "duration": 600}]}]})
@@ -85,6 +91,7 @@ def test_full_project_from_link_to_publication(project, fakes):
     ap.run_analysis(p["project_id"])
     p = ap.load(p["project_id"])
     assert p["status"] == "sources_review" and set(p["clips"]) == {"A", "B", "C"}
+    assert fakes["verified"] == 0                            # sources given: no automatic checks to pay for
     assert p["credits"] == "@azzamyreal · 9NEWS"            # the watermark names, not the re-uploader
 
     ap.set_sources(p["project_id"], {"B": False}, "@azzamyreal · 9News")
@@ -203,10 +210,11 @@ def test_without_sources_the_app_says_what_to_download_then_analyses_the_picks(p
     p = ap.load(pid)
     assert p["status"] == "sources_search" and p["clips"] == {}
     assert p["suggestions"]["scenes"][0]["scene"] == "un tram qui percute une voiture"
+    assert fakes["verified"] == 1                             # nothing given: the best candidates are checked
     with pytest.raises(ap.PipelineError):                    # nothing picked
         ap.add_sources(pid, ["  "])
 
-    monkeypatch.setattr(finder, "check", lambda url, scenes: {
+    monkeypatch.setattr(finder, "check", lambda url, scenes, plans=None: {
         "verdict": "probable", "moments": [{"debut": 3, "fin": 6}], "qualite": "bonne", "raison": "des trams",
         "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 3, "fin": 6}], "raison": "autre tram"}}})
     url = "https://www.youtube.com/watch?v=aaaaaaaaaaa"
@@ -226,6 +234,7 @@ def test_without_sources_the_app_says_what_to_download_then_analyses_the_picks(p
     ap.run_analysis(pid)
     p = ap.load(pid)
     assert fakes["analysed"] == [0, 1]                       # only the new source was analysed
+    assert fakes["verified"] == 1                            # the search and its checks are not redone
     assert set(p["clips"]) == {"A", "B", "C"} and p["credits"] == "@moi"
     assert p["source_urls"] == [url, "https://tiktok.com/b"]
 
@@ -241,7 +250,7 @@ def test_api_add_sources_and_check(client, project, fakes, monkeypatch):
         time.sleep(0.1)
     p = client.get(f"/api/adaptations/{pid}").json()
     assert p["status"] == "sources_search" and p["suggestions"]["scenes"]
-    monkeypatch.setattr(finder, "check", lambda url, scenes: (_ for _ in ()).throw(finder.FinderError("lien YouTube")))
+    monkeypatch.setattr(finder, "check", lambda url, scenes, plans=None: (_ for _ in ()).throw(finder.FinderError("lien YouTube")))
     r = client.post(f"/api/adaptations/{pid}/suggestions/check", json={"url": "https://tiktok.com/x"})
     assert r.status_code == 400 and "YouTube" in r.json()["detail"]
     assert client.post(f"/api/adaptations/{pid}/sources/add", json={"urls": []}).status_code == 400
@@ -268,6 +277,25 @@ def test_a_dead_link_is_skipped_and_the_others_are_analysed(project, fakes, monk
     assert ap.load(pid)["source_urls"][-1] == "https://dead.example/v"
 
 
+def test_retry_tries_the_failed_downloads_again(project, fakes, monkeypatch):
+    from adaptation import sources
+    ok, state = sources.download, {"blocked": True}
+
+    def download(url, d, name, sections=None):
+        if state["blocked"]:
+            raise sources.SourceError("robot")
+        return ok(url, d, name, sections)
+    monkeypatch.setattr(sources, "download", download)
+    pid = ap.create("https://youtube.com/shorts/x", ["https://tiktok.com/a"], [channel(project)])["project_id"]
+    ap.run_analysis(pid)
+    assert ap.load(pid)["status"] == "error"
+    state["blocked"] = False                                 # YouTube lets it through a minute later
+    ap.retry(pid)
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_review" and set(p["clips"]) == {"A"} and not p["sources"][0].get("failed")
+
+
 def test_only_dead_links_is_an_error_that_says_why(project, fakes, monkeypatch):
     from adaptation import sources
     monkeypatch.setattr(sources, "download", lambda *a, **k: (_ for _ in ()).throw(sources.SourceError("bloquée")))
@@ -275,3 +303,14 @@ def test_only_dead_links_is_an_error_that_says_why(project, fakes, monkeypatch):
     ap.run_analysis(p["project_id"])
     p = ap.load(p["project_id"])
     assert p["status"] == "error" and p["error"] == "bloquée"
+
+
+def test_api_serves_the_short_pictures_only_from_the_project(client, project, fakes):
+    channel(project)
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project)])["project_id"]
+    d = Path(ap.project_dir(pid)) / "finder"
+    d.mkdir(parents=True)
+    (d / "f00.jpg").write_bytes(b"jpg")
+    assert client.get(f"/api/adaptations/{pid}/frames/f00.jpg").content == b"jpg"
+    assert client.get(f"/api/adaptations/{pid}/frames/..%2F..%2Fdb.jpg").status_code == 404
+    assert client.get(f"/api/adaptations/{pid}/frames/f99.jpg").status_code == 404

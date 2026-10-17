@@ -61,36 +61,66 @@ def explain(url: str, err: str) -> str:
         return f"Vidéo impossible à télécharger d'ici (supprimée, privée ou bloquée dans ton pays) : {url}"
     return f"Téléchargement impossible ({url}) : {err[:200]}"
 
+def _refused(err: str) -> bool:
+    low = err.lower()
+    return "not a bot" in low or "429" in low or "page needs to be reloaded" in low
+
+
+def _fetch(url: str, opts: Dict) -> Dict:
+    """One yt-dlp run; YouTube's "not a bot" refusals come and go (measured: a
+    Short refused, then fetched a minute later), so a refusal is tried once more."""
+    import time
+    import yt_dlp
+    for attempt in (1, 2):
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=True)
+                return {"info": info, "path": ydl.prepare_filename(info)}
+        except Exception as e:
+            if attempt == 1 and _refused(str(e)):
+                time.sleep(8)
+                continue
+            raise SourceError(explain(url, str(e)))
+
+
+def _write_meta(path: str, url: str, info: Dict, **extra):
+    meta = {"url": url, "title": info.get("title"), "uploader": info.get("uploader"),
+            "handle": "@" + str(info.get("uploader_id") or info.get("channel") or "").lstrip("@") or None,
+            "extractor": info.get("extractor_key"), **extra}
+    with open(path + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f, ensure_ascii=False)
+
+
 def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None) -> str:
     """sections: only these [start, end] spans of a long video (joined, in order)."""
-    import yt_dlp
     os.makedirs(dest_dir, exist_ok=True)
+    if sections and len(sections) > 1:
+        return _download_parts(url, dest_dir, name, sections)
     opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format="mp4/best", noplaylist=True)
     if sections:
         from yt_dlp.utils import download_range_func
-        if len(sections) > 1:
-            return _download_parts(url, dest_dir, name, sections)
         opts.update(download_ranges=download_range_func(None, [tuple(sections[0])]), force_keyframes_at_cuts=True)
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            path = ydl.prepare_filename(info)
-    except Exception as e:
-        raise SourceError(explain(url, str(e)))
-    if not os.path.exists(path):
+    got = _fetch(url, opts)
+    if not os.path.exists(got["path"]):
         raise SourceError(f"Téléchargement sans fichier vidéo ({url}).")
-    meta = {"url": url, "title": info.get("title"), "uploader": info.get("uploader"),
-            "handle": "@" + str(info.get("uploader_id") or info.get("channel") or "").lstrip("@") or None,
-            "extractor": info.get("extractor_key")}
-    with open(path + ".meta.json", "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
-    return path
+    _write_meta(got["path"], url, got["info"])
+    return got["path"]
 
 
 def _download_parts(url: str, dest_dir: str, name: str, sections: List[List[float]]) -> str:
-    """Several spans: each downloaded on its own, then joined (the cuts
-    between them become ordinary shot changes)."""
-    parts = [download(url, dest_dir, f"{name}_part{k}", [sec]) for k, sec in enumerate(sections)]
+    """Several spans in ONE yt-dlp run (one request to the site, not one per
+    span: each request is a chance for YouTube to refuse), then joined — the
+    cuts between them become ordinary shot changes."""
+    import glob
+    from yt_dlp.utils import download_range_func
+    pattern = os.path.join(dest_dir, f"{name}_part%(section_start)08.2f.%(ext)s")
+    opts = ytdlp_opts(outtmpl=pattern, format="mp4/best", noplaylist=True, force_keyframes_at_cuts=True,
+                      download_ranges=download_range_func(None, [tuple(sec) for sec in sections]))
+    got = _fetch(url, opts)
+    parts = sorted(p for p in glob.glob(os.path.join(dest_dir, f"{name}_part*"))
+                   if not p.endswith((".json", ".txt", ".part")))
+    if not parts:
+        raise SourceError(f"Téléchargement des passages sans fichier vidéo ({url}).")
     out = os.path.join(dest_dir, name + ".mp4")
     lst = os.path.join(dest_dir, name + "_parts.txt")
     with open(lst, "w", encoding="utf-8") as f:
@@ -99,14 +129,9 @@ def _download_parts(url: str, dest_dir: str, name: str, sections: List[List[floa
                         "-preset", "veryfast", "-crf", "18", "-c:a", "aac", "-ar", "44100", out], capture_output=True)
     if r.returncode or not os.path.exists(out):
         raise SourceError(f"Assemblage des passages impossible ({url}).")
-    meta = {**source_meta(parts[0]), "sections": sections}
-    with open(out + ".meta.json", "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False)
-    for p in parts:
-        for x in (p, p + ".meta.json"):
-            if os.path.exists(x):
-                os.remove(x)
-    os.remove(lst)
+    _write_meta(out, url, got["info"], sections=sections)
+    for p in parts + [lst]:
+        os.remove(p)
     return out
 
 

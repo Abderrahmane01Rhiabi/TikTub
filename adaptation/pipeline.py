@@ -134,9 +134,16 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             p["reference"] = reference.analyse(p["reference_url"])
             save(p)
         if not p.get("suggestions"):
+            alone = not p["source_urls"]            # nothing given: the search is the step, give it more room
+            share = 0.6 if alone else 0.1
             p["suggestions"] = finder.suggest(p["reference"], p["reference_url"],
-                                              report=lambda ph, f: report(ph, 0.1 + 0.1 * f))
+                                              work_dir=os.path.join(project_dir(pid), "finder"),
+                                              report=lambda ph, f: report(ph, 0.1 + share * f))
             save(p)
+            if alone:
+                finder.verify_best(p["suggestions"], p["reference"],
+                                   report=lambda ph, f: report(ph, 0.7 + 0.28 * f))
+                save(p)
         if not p["source_urls"]:
             p.update(status="sources_search", error=None, failed_step=None)
             save(p)
@@ -145,7 +152,8 @@ def run_analysis(pid: str, report: Optional[Report] = None):
         base = project_dir(pid)
         clips, metas = dict(p.get("clips") or {}), list(p.get("sources") or [])
         ids = (i for i in sources._ids() if i not in clips)
-        todo = list(range(len(metas), len(p["source_urls"])))
+        metas += [None] * (len(p["source_urls"]) - len(metas))
+        todo = [i for i, m in enumerate(metas) if m is None or m.get("failed")]    # new ones, and the failed ones again
         for k, i in enumerate(todo):
             url, n = p["source_urls"][i], len(todo)
             report(f"source {k + 1}/{n} : téléchargement", 0.2 + 0.75 * k / n)
@@ -153,13 +161,13 @@ def run_analysis(pid: str, report: Optional[Report] = None):
                 path = sources.download(url, os.path.join(base, "src"), f"src{i}",
                                         (p.get("source_sections") or {}).get(url))
             except sources.SourceError as e:        # one dead link must not block the others
-                metas.append({"url": url, "failed": str(e)})
+                metas[i] = {"url": url, "failed": str(e)}
                 continue
             meta = sources.source_meta(path)
             report(f"source {k + 1}/{n} : découpage et analyse", 0.2 + 0.75 * (k + 0.3) / n)
             for c in sources.analyse_source(path, i, os.path.join(base, "work"), ids):
                 clips[c["id"]] = c
-            metas.append(meta)
+            metas[i] = meta
         p = load(pid)
         guess = guess_credits(metas, clips)
         if not p.get("credits") or p.get("credits") == p.get("credits_auto"):     # never overwrite a correction
@@ -193,8 +201,8 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
         raise PipelineError("Aucun nouveau lien : coche une vidéo proposée ou colle un lien.")
     p["source_urls"] = p["source_urls"] + new
     sug = p.get("suggestions") or {}
-    durations = {c["url"]: c.get("duration") for s in sug.get("scenes") or [] for c in s.get("candidats") or []}
-    durations.update({v["url"]: v.get("duration") for a in sug.get("comptes") or [] for v in a.get("videos") or []})
+    durations = {c["url"]: c.get("duration") for c in finder.all_candidates(sug)}
+    durations.update({u: v["duration"] for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
     for u in new:                       # a long video checked by Gemini: only its good moments
         sec = finder.sections((sug.get("verifs") or {}).get(u), durations.get(u))
         if sec:
@@ -204,18 +212,19 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
 
 
 def check_candidate(pid: str, url: str) -> Dict:
-    """Gemini watches one suggested video against every scene of the model:
-    the original or equivalent footage, and where."""
+    """Gemini watches one suggested video against every plan of the model:
+    the original, equivalent or partial footage, and where."""
     p = load(pid)
     scenes = (p.get("suggestions") or {}).get("scenes") or []
     if not scenes:
         raise PipelineError("Aucune scène à chercher dans ce projet.")
     try:
-        result = finder.check(url, scenes)
+        result = finder.check(url, scenes, (p.get("reference") or {}).get("plans"))
     except finder.FinderError as e:
         raise PipelineError(str(e))
     p = load(pid)
     p["suggestions"].setdefault("verifs", {})[url] = result
+    (p["suggestions"].get("verif_errors") or {}).pop(url, None)
     return save(p)
 
 

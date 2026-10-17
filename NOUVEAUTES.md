@@ -151,7 +151,7 @@ Le mode d'emploi complet est dans **[MONTAGE_AUTO.md](MONTAGE_AUTO.md)**.
 
 **Pourquoi :** refaire un Short viral « explicatif » pour tes chaînes, dans leur langue (français, arabe standard…), avec ta voix ElevenLabs, sans copier la vidéo d'origine.
 
-**Ce que ça fait :** l'app analyse le Short modèle et, si tu n'as pas les vidéos d'origine, **te dit quoi télécharger** : chaque scène à chercher, les comptes crédités, des vidéos trouvées sur YouTube, triées et vérifiables par l'IA. Elle découpe ses vidéos sources en clips propres, écrit et fait relire un script par chaîne, génère la voix, et contrôle automatiquement chaque vidéo. Tu valides les sources, chaque script et chaque aperçu. Les vidéos arrivent ensuite dans Publication.
+**Ce que ça fait :** l'app analyse le Short modèle et, si tu n'as pas les vidéos d'origine, **te dit quoi télécharger** : chaque scène à chercher, avec les vidéos trouvées par le compte crédité, YouTube, la langue du pays et la recherche par image (Yandex), et l'IA qui vérifie les meilleures plan par plan. Elle découpe ses vidéos sources en clips propres, écrit et fait relire un script par chaîne, génère la voix, et contrôle automatiquement chaque vidéo. Tu valides les sources, chaque script et chaque aperçu. Les vidéos arrivent ensuite dans Publication.
 
 Le mode d'emploi complet est dans **[ADAPTATION.md](ADAPTATION.md)**.
 
