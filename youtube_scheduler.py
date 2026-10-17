@@ -146,7 +146,8 @@ class YouTubeScheduler:
         daily_counts = {}
         weekly_counts = {}
         
-        for item in schedule:
+        timed = [item for item in schedule if item.get('scheduled_time')]   # one published right away has no time
+        for item in timed:
             publish_time = parser.parse(item['scheduled_time'])
             day_key = publish_time.strftime('%Y-%m-%d')
             week_key = publish_time.strftime('%Y-W%U')
@@ -170,8 +171,8 @@ class YouTubeScheduler:
         return {
             'total_videos': len(schedule),
             'date_range': {
-                'start': min(item['scheduled_time'] for item in schedule),
-                'end': max(item['scheduled_time'] for item in schedule)
+                'start': min((item['scheduled_time'] for item in timed), default=None),
+                'end': max((item['scheduled_time'] for item in timed), default=None)
             },
             'daily_distribution': daily_counts,
             'weekly_distribution': weekly_counts,

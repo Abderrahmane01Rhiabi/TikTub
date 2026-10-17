@@ -71,3 +71,19 @@ def test_other_channels_keep_their_own_first_slots(project, bp):
 
     times = {e["channel"]: e["scheduled_time"] for e in schedule}
     assert times["chanA"] == times["chanB"]  # independent sequences per channel
+
+
+def test_an_entry_published_right_away_without_time_does_not_break_the_schedule(project, bp):
+    """A video published at once stays in the schedule with no time: adding
+    a new ready video must not crash on it (Planning showed a 500)."""
+    project.add_video("early", title="E")
+    bp.create_upload_schedule(schedule_method="static")
+    data = bp.scheduler.load_schedule()
+    data["schedule"].append({"video_id": "published_now", "channel": "chanA", "scheduled_time": None})
+    bp.scheduler.save_schedule(data["schedule"])
+    project.add_video("late", title="L")
+
+    combined = bp.ensure_schedule_includes_all_ready()
+
+    assert combined[0]["video_id"] == "published_now"
+    assert {e["video_id"] for e in combined} == {"published_now", "early", "late"}

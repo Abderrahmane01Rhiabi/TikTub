@@ -710,7 +710,10 @@ class BatchProcessor:
             new_entries = self.scheduler.create_upload_schedule(missing, channel_manager=channel_manager)
 
         self._shift_off_taken_slots(new_entries, existing_schedule)
-        combined = sorted(existing_schedule + new_entries, key=lambda e: self._parse_slot(e['scheduled_time']))
+        # An entry without a time (published right away) goes first instead of breaking the sort
+        far_past = self.scheduler.timezone.localize(datetime(1970, 1, 1))
+        combined = sorted(existing_schedule + new_entries,
+                          key=lambda e: self._parse_slot(e['scheduled_time']) if e.get('scheduled_time') else far_past)
         self.scheduler.save_schedule(combined, schedule_method=schedule_method)
         self._record_schedule_decisions(new_entries, schedule_method)
         return combined
