@@ -560,19 +560,22 @@ def run_fetch(pid: str, report: Optional[Report] = None):
 
 
 def _real_faults(why_not: str) -> str:
-    """What really makes a chosen moment unusable: a logo or a watermark is
-    painted over by the cleaning, so it is not one (measured: 3 good moments
-    of 7 refused for "logo" alone)."""
+    """What really makes a chosen moment unusable: only what is SEEN. A logo
+    or a watermark is painted over by the cleaning, and the original sound
+    (a voice-over, music) is replaced by the narration (measured: good moments
+    refused for "logo" and for "voix off" alone)."""
     parts = [x.strip() for x in re.split(r"[,;/]| et ", why_not or "") if x.strip()]
-    return ", ".join(x for x in parts if not re.search(r"logo|filigrane|watermark|@", x, re.I))
+    return ", ".join(x for x in parts
+                     if not re.search(r"logo|filigrane|watermark|@|voix|parole|musique|son\b|audio|bruit", x, re.I))
 
 
 def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:
     out = script.problems(sc, clips, code)
     for k, x in enumerate(sc["passages"], 1):
         c = clips.get(x["clip"]) or {}
-        if c and not c.get("usable", True):
-            out.append(f"Passage {k} : le moment choisi ne convient pas ({c.get('why_not') or 'refusé par le contrôle'}) : "
+        why = _real_faults(c.get("why_not") or "") if c and not c.get("usable", True) else ""
+        if c and not c.get("usable", True) and (why or not c.get("why_not")):
+            out.append(f"Passage {k} : le moment choisi ne convient pas ({why or 'refusé par le contrôle'}) : "
                        f"choisis un autre clip ou « Revenir aux images ».")
     return out
 

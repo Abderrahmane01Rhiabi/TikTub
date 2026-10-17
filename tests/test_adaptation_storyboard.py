@@ -421,6 +421,13 @@ def test_a_logo_alone_does_not_refuse_a_chosen_moment():
     assert ap._real_faults("logo") == "" and ap._real_faults("filigrane TikTok @x, logo") == ""
     assert ap._real_faults("presentateur, logo, ecran scinde") == "presentateur, ecran scinde"
     assert ap._real_faults("logo, texte incrusté") == "texte incrusté"
+    assert ap._real_faults("voix off") == "" and ap._real_faults("présentateur, musique forte") == "présentateur"
+    clips = {"P1": {"start": 0, "end": 5, "usable": False, "why_not": "voix off"},
+             "P2": {"start": 0, "end": 5, "usable": False, "why_not": "présentateur"}}
+    sc = {"passages": [{"clip": "P1", "texte": "Une phrase.", "bandeau": "", "mots_cles": []},
+                       {"clip": "P2", "texte": "Une autre.", "bandeau": "", "mots_cles": []}]}
+    found = ap._fetched_problems(sc, clips, "fr")
+    assert len(found) == 1 and "Passage 2" in found[0]               # an earlier "voix off" refusal no longer blocks
 
 
 def test_a_re_edit_chosen_by_hand_keeps_its_warning(project, fakes, monkeypatch):
