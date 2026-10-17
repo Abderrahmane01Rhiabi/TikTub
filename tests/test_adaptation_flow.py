@@ -314,3 +314,56 @@ def test_api_serves_the_short_pictures_only_from_the_project(client, project, fa
     assert client.get(f"/api/adaptations/{pid}/frames/f00.jpg").content == b"jpg"
     assert client.get(f"/api/adaptations/{pid}/frames/..%2F..%2Fdb.jpg").status_code == 404
     assert client.get(f"/api/adaptations/{pid}/frames/f99.jpg").status_code == 404
+
+
+def test_a_script_still_broken_after_the_re_read_is_fixed_once_more(project, fakes, monkeypatch):
+    from adaptation import script
+    monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "passages": sc["passages"][:2] + [
+        {**sc["passages"][2], "texte": "Mais au fait..."}], "corrections": ["relu"]})
+    asked = []
+
+    def revise(sc, clips, request):
+        asked.append(request)
+        return {**sc, "passages": sc["passages"][:2] + [{**sc["passages"][2], "texte": "Voilà pourquoi."}]}
+    monkeypatch.setattr(script, "revise", revise)
+    pid = new_project(project)["project_id"]
+    ap.run_analysis(pid); ap.start_scripts(pid); ap.run_scripts(pid)
+    t = ap.target(ap.load(pid), "chanA")
+    assert "incomplète" in asked[0] and t["problems"] == []
+    assert t["script"]["passages"][2]["texte"] == "Voilà pourquoi."
+    assert t["script"]["corrections"][-1].startswith("Correction automatique")
+
+
+def test_own_links_are_judged_and_kept_with_their_errors(project, fakes):
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project)])["project_id"]
+    ap.run_analysis(pid)
+    seen = []
+
+    def checker(url, scenes, plans):
+        seen.append(url)
+        if "dead" in url:
+            raise RuntimeError("vidéo supprimée")
+        return {"verdict": "oui", "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 3}]}},
+                "moments": [{"debut": 3}], "duration": 60, "title": "Le bon TikTok · @iamklimakov"}
+    tt = "https://www.tiktok.com/@iamklimakov/video/7556965783809576214"
+    p = ap.check_own(pid, [tt, " https://dead.example/v ", tt, "pas un lien"], checker=checker)
+    assert sorted(seen) == ["https://dead.example/v", tt]
+    perso = {c["url"]: c for c in p["suggestions"]["perso"]}
+    assert perso[tt]["title"] == "Le bon TikTok · @iamklimakov" and perso[tt]["platform"] == "TikTok"
+    assert perso[tt]["origines"] == ["perso"] and p["suggestions"]["verifs"][tt]["verdict"] == "oui"
+    assert p["suggestions"]["verif_errors"]["https://dead.example/v"] == "vidéo supprimée"
+    with pytest.raises(ap.PipelineError):
+        ap.check_own(pid, ["  "], checker=checker)
+    ap.add_sources(pid, [tt])
+    with pytest.raises(ap.PipelineError):                    # analysing: not now
+        ap.check_own(pid, [tt], checker=checker)
+
+
+def test_api_checks_own_links(client, project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project)])["project_id"]
+    ap.run_analysis(pid)
+    monkeypatch.setattr(finder, "check", lambda url, scenes, plans=None: {"verdict": "non", "par_scene": {}, "moments": []})
+    r = client.post(f"/api/adaptations/{pid}/suggestions/own", json={"urls": ["https://vk.com/video-1_2"]})
+    assert r.status_code == 200 and r.json()["suggestions"]["perso"][0]["platform"] == "VK"
+    assert client.post(f"/api/adaptations/{pid}/suggestions/own", json={"urls": []}).status_code == 400

@@ -113,6 +113,48 @@ def test_script_problems_flag_unknown_clips_long_and_incomplete_sentences():
     assert "trop longue" in found and "« Z »" in found and "incomplète" in found
 
 
+def test_script_problems_show_the_ellipsis_and_refuse_a_repeated_clip():
+    p = lambda c, t: {"clip": c, "texte": t, "bandeau": "", "mots_cles": []}
+    sc = {"passages": [p("A", "Une question ?"), p("B", "Une réponse."), p("A", "Mais au fait...")]}
+    clips = {**_clips(), "C": clip(end=4.0)}
+    found = script.problems(sc, clips, "fr")
+    assert "Passage 3 : phrase incomplète (elle finit par « … »)." in found
+    assert any("clip A est déjà utilisé au passage 1" in f for f in found)
+    assert not any("déjà utilisé" in f for f in script.problems(sc, _clips(), "fr"))   # 2 clips for 3 passages: allowed
+
+
+def test_the_writer_is_told_about_the_advertisement():
+    seen = {}
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            seen["prompt"] = parts[0]["text"]
+            return {"titre": "t", "passages": [{"clip": "A", "texte": "x."}]}
+    script.write({"sujet": "piscines", "publicite": "IPoolGo, piscine ultra-résistante", "plans": []}, _clips(), "fr", gemini=G())
+    assert "IPoolGo, piscine ultra-résistante" in seen["prompt"] and "JAMAIS deux fois le meme clip" in seen["prompt"]
+    assert "reprend le clip du 1er" not in seen["prompt"]
+
+
+def test_credits_never_show_an_account_number_and_tiktok_names_are_used():
+    from adaptation import pipeline as ap
+    clips = {"A": {"usable": True, "source": 0, "marks": ["filigrane TikTok @7315046821897962529", "@562burke"]}}
+    assert ap.guess_credits([{}], clips) == "@562burke"
+    assert ap.guess_credits([{"handle": "@123456789"}], {"A": {"usable": True, "source": 0, "marks": []}}) == ""
+    assert sources._handle({"uploader_id": "7556965783809576214", "uploader": "iamklimakov"}) == "@iamklimakov"
+    assert sources._handle({"uploader_id": None, "channel": "Car Crashes Times"}) is None   # a display name, not a handle
+    assert sources.MIN_CLIP == 1.0                                           # fast TikTok edits: 1.0-1.4 s shots
+
+
+def test_advertisement_scenes_are_marked_and_not_searched():
+    from adaptation import finder
+    ref = {"plans_pub": [3, 4], "a_chercher": [{"scene": "piscine qui cède", "plans": [0, 1], "recherches": ["pool"]},
+                                               {"scene": "démo IPoolGo", "plans": [3, 4], "recherches": ["ipoolgo"]}]}
+    asked = []
+    out = finder.suggest(ref, "u", search=lambda q: asked.append(q) or [], search_in=lambda h, q: [], sort=lambda f: None,
+                         local=lambda f: {})
+    assert [s.get("pub", False) for s in out["scenes"]] == [False, True] and asked == ["pool"]
+
+
 def test_normalise_cleans_gemini_output():
     sc = script.normalise({"titre": "T" * 150, "tags": [" a ", ""], "passages": [
         {"clip": " a ", "texte": "  Une   phrase. ", "bandeau": "B", "mots_cles": ["x", "", "y", "z", "w"]},
@@ -275,12 +317,12 @@ def test_finder_check_judges_plan_by_plan_with_a_partial_level():
         def _generate_content(self, parts, **kw):
             assert parts[0]["file_data"]["file_uri"].startswith("https://www.youtube.com/")
             text = parts[1]["text"]
-            assert "0. des hommes autour d'un jet de gaz (indices : café)" in text and "partielle" in text
+            assert "1. des hommes autour d'un jet de gaz (indices : café)" in text and "partielle" in text
             assert "générique" not in text                      # a plan of no scene is not judged
-            return {"plans": [{"plan": 0, "niveau": "Exacte", "moments": [{"debut": 40, "fin": 47}, "x"], "raison": "même puits"},
-                              {"plan": "1", "niveau": "partielle", "moments": [{"debut": 90, "fin": 95}], "raison": "le jet seul"},
-                              {"plan": 2, "niveau": "rien", "moments": [{"debut": 1}], "raison": "pas de pelleteuse"},
-                              {"plan": 9, "niveau": "exacte"}],
+            return {"plans": [{"plan": 1, "niveau": "Exacte", "moments": [{"debut": 40, "fin": 47}, "x"], "raison": "même puits"},
+                              {"plan": "2", "niveau": "partielle", "moments": [{"debut": 90, "fin": 95}], "raison": "le jet seul"},
+                              {"plan": 3, "niveau": "rien", "moments": [{"debut": 1}], "raison": "pas de pelleteuse"},
+                              {"plan": 0, "niveau": "exacte"}, {"plan": 9, "niveau": "exacte"}],
                     "resume": "le puits d'Ia Phin"}
     r = finder.check("https://www.youtube.com/watch?v=aaaaaaaaaaa", scenes, plans, gemini=G())
     assert r["verdict"] == "oui" and r["raison"] == "le puits d'Ia Phin"

@@ -18,6 +18,7 @@ queries and the clues seen on screen). From there:
     those moments
 """
 
+import json
 import os
 import re
 from typing import Callable, Dict, List, Optional
@@ -82,6 +83,10 @@ def scenes(ref: Dict) -> List[Dict]:
         out.append({"scene": str(s["scene"]).strip(), "plans": [int(i) for i in (s.get("plans") or [])
                                                                  if isinstance(i, (int, float))],
                     "indices": str(s.get("indices") or "").strip(), "recherches": queries or [str(s["scene"])[:80]]})
+    ads = {int(i) for i in (ref.get("plans_pub") or []) if isinstance(i, (int, float))}
+    for s in out:                       # the sponsor's demo: not to be found, not to be paid for
+        if ads and s["plans"] and set(s["plans"]) <= ads:
+            s["pub"] = True
     if not out:
         for i, pl in enumerate(ref.get("plans") or []):
             v = str((pl or {}).get("visuel") or "").strip()
@@ -286,6 +291,8 @@ def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, 
     for i, s in enumerate(found):
         report(f"recherche texte : scène {i + 1}/{len(found)}", 0.05 + 0.3 * i / max(1, len(found)))
         s["candidats"], s["liens"] = [], search_links(s["recherches"][0])
+        if s.get("pub"):
+            continue
         for q in s["recherches"][:2]:
             for c in search(q):
                 if c["id"] not in skip:
@@ -329,7 +336,7 @@ def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, 
             report("tri des résultats par image", 0.66)
             sort_image(pools)
             for i, s in enumerate(found):
-                for c in pools[i]["candidats"]:
+                for c in [] if s.get("pub") else pools[i]["candidats"]:
                     _add(s["candidats"], c, "image", by_url[i])
             extra = pools[-1]["candidats"]
             for f in images["frames"]:
@@ -355,7 +362,8 @@ def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, 
 def all_candidates(sug: Dict) -> List[Dict]:
     seen, out = set(), []
     for c in [c for s in sug.get("scenes") or [] for c in s.get("candidats") or []] + \
-             [v for a in sug.get("comptes") or [] for v in a.get("videos") or []] + list(sug.get("image_videos") or []):
+             [v for a in sug.get("comptes") or [] for v in a.get("videos") or []] + list(sug.get("image_videos") or []) + \
+             list(sug.get("perso") or []):
         if c["url"] not in seen:
             seen.add(c["url"])
             out.append(c)
@@ -466,13 +474,27 @@ def _units(scenes_: List[Dict], plans: List[Dict]) -> List[Dict]:
     return units
 
 
+def _youtube_title(url: str) -> str:
+    """The title through YouTube's oEmbed (not the player page, which is the
+    one that asks "not a bot"); empty on failure."""
+    import urllib.request
+    from urllib.parse import quote
+    try:
+        with urllib.request.urlopen(f"https://www.youtube.com/oembed?format=json&url={quote(url, safe='')}",
+                                    timeout=10) as r:
+            d = json.loads(r.read().decode())
+        return " · ".join(x for x in (d.get("title"), d.get("author_name")) if x)
+    except Exception:
+        return ""
+
+
 def _watch(url: str, g, prompt: str) -> Dict:
     """Gemini watches a YouTube link directly; anything else (VK, Rutube,
     TikTok…) is downloaded small and sent as a file."""
     if _video_id(url):
         return {"answer": g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": 1}},
                                                {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1),
-                "duration": None}
+                "duration": None, "title": _youtube_title(url)}
     import tempfile
     import yt_dlp
     from adaptation import sources
@@ -497,7 +519,8 @@ def _watch(url: str, g, prompt: str) -> Dict:
                                           {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1)
         finally:
             g._delete_file(up["name"])
-        return {"answer": answer, "duration": info.get("duration")}
+        return {"answer": answer, "duration": info.get("duration"),
+                "title": " · ".join(x for x in (info.get("title"), info.get("uploader")) if x)}
 
 
 def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gemini=None) -> Dict:
@@ -508,7 +531,7 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
     g = gemini or GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
     units = _units(scenes_, plans or [])
     listing = "\n".join(f"{n}. {u['text']}" + (f" (indices : {u['indices']})" if u["indices"] else "")
-                        for n, u in enumerate(units))
+                        for n, u in enumerate(units, 1))       # numbered from 1: Gemini's reasons quote them
     seen = _watch(url, g, CHECK_PROMPT.format(plans=listing))
     r = seen["answer"]
     items = (r.get("plans") or r.get("scenes")) if isinstance(r, dict) else None
@@ -519,7 +542,7 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         if not isinstance(e, dict):
             continue
         try:
-            n = int(e.get("plan", e.get("scene")))
+            n = int(e.get("plan", e.get("scene"))) - 1
         except (TypeError, ValueError):
             continue
         if not 0 <= n < len(units):
@@ -539,4 +562,5 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
     moments = [m for e in par_plan.values() for m in e["moments"]]
     best = min((LEVELS.index(e["niveau"]) for e in par_plan.values()), default=3)
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
-            "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"]}
+            "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
+            "title": seen.get("title") or ""}

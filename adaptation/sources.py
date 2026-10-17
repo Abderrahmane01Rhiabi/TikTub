@@ -32,6 +32,7 @@ class SourceError(RuntimeError):
 
 # --------------------------------------------------------------- download / probe
 
+MIN_CLIP = 1.0                            # shorter: unticked as "trop court"
 COOKIES_FILE = "youtube_cookies.txt"      # a cookies.txt export, when YouTube asks to "confirm you're not a bot"
 
 
@@ -83,9 +84,18 @@ def _fetch(url: str, opts: Dict) -> Dict:
             raise SourceError(explain(url, str(e)))
 
 
+def _handle(info: Dict) -> Optional[str]:
+    """The account's name: TikTok's uploader_id is a number, its uploader the @name."""
+    for v in (info.get("uploader_id"), info.get("uploader"), info.get("channel")):
+        v = str(v or "").strip().lstrip("@")
+        if v and not v.replace("_", "").isdigit() and " " not in v:
+            return "@" + v
+    return None
+
+
 def _write_meta(path: str, url: str, info: Dict, **extra):
     meta = {"url": url, "title": info.get("title"), "uploader": info.get("uploader"),
-            "handle": "@" + str(info.get("uploader_id") or info.get("channel") or "").lstrip("@") or None,
+            "handle": _handle(info),
             "extractor": info.get("extractor_key"), **extra}
     with open(path + ".meta.json", "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False)
@@ -454,8 +464,10 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             "id": next(ids), "source": index, "src": path, "start": a, "end": b, "impact": peak,
             "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches,
             "desc": d.get("visuel") or "", "camera": d.get("camera") or "",
-            "usable": bool(d.get("utilisable", True)) and b - a >= 1.5,
-            "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < 1.5 else ""),
+            # 1 s is enough for a short sentence (the script check keeps longer ones off it); fast TikTok
+            # edits are made of 1.0-1.4 s shots, and merging them would mix unrelated scenes (measured)
+            "usable": bool(d.get("utilisable", True)) and b - a >= MIN_CLIP,
+            "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < MIN_CLIP else ""),
             "audio_ok": from_sound and not d.get("parole_dans_le_son", False),
             "low_res": min(w_full, h) < 540,
             "marks": [m for m in marks if m],

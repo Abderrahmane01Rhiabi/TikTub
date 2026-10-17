@@ -6,9 +6,13 @@ Rules learned on the tram prototype (rated 7.5/10):
   - facts stay cautious (the reference's "they never face charges" became
     "presque toujours la faute de l'automobiliste")
   - a question in the first second, in the banner AND the voice
-  - the last sentence is COMPLETE on its own and still flows into the first
-    when the Short loops (the Arabic ending only made sense on a loop)
-  - each sentence fits the clip under it
+  - the last sentence is COMPLETE on its own (the Arabic ending only made
+    sense on a loop; a "Mais au fait…" relaunch slipped through once): a
+    script still ending in suspense after the re-read is fixed once more
+  - each sentence fits the clip under it; no clip twice (reusing the first
+    clip at the end "for the loop" looked like a mistake)
+  - a reference that advertises a product: neither the brand nor the sales
+    pitch is taken (a pool Short ended on its sponsor's "ultra-resistant pool")
 A person always reviews and can edit the script before any voice is made.
 """
 
@@ -31,6 +35,7 @@ Il reprend la RECETTE d'un Short viral (a garder) :
 - deroule : {plans}
 - faits utilisables : {faits}
 - faits DOUTEUX a ne pas reprendre tels quels : {douteux}
+- publicite dans le modele (NE PAS reprendre, ni la marque ni l'argument de vente) : {pub}
 
 Clips disponibles (lettre: contenu, duree utilisable, instant du moment fort depuis le debut du clip) :
 {clips}
@@ -39,10 +44,12 @@ REGLES
 - Langue : {regles}
 - REECRIS avec tes propres phrases, ne traduis jamais le texte d'origine mot a mot.
 - Faits exacts et prudents, jamais absolus quand ce n'est pas certain.
-- 6 a 8 passages. Chaque passage = UN clip (sa lettre) qui illustre la phrase. Pas deux fois le meme clip,
-  SAUF le dernier passage qui reprend le clip du 1er (la video reboucle).
+- 6 a 8 passages. Chaque passage = UN clip (sa lettre) qui illustre la phrase. JAMAIS deux fois le meme clip.
 - 1er passage : une QUESTION qui donne envie de rester, dans le bandeau ET dans la phrase, sur un clip dont le moment fort arrive vite.
-- Dernier passage : une phrase COMPLETE qui conclut seule, et qui s'enchaine quand meme avec la 1re si la video repart.
+- Dernier passage : une phrase COMPLETE qui REPOND a la question du debut et conclut seule. Jamais une relance,
+  une question ou une phrase en suspens ("Mais au fait…", "Et vous ?", "…").
+- Si le modele fait la publicite d'une marque ou d'un produit : ne cite pas la marque, ne reprends pas l'argument
+  de vente ; termine plutot sur un fait ou un conseil utile.
 - Chaque phrase tient dans la duree de son clip : au plus {cps} caracteres par seconde de clip.
 - Duree totale de lecture : 27 a 33 secondes.
 - Bandeau : 2 a 5 mots percutants + 1 emoji, different a chaque passage, format "SUJET : DETAIL 😐" de preference.
@@ -65,7 +72,9 @@ Script (JSON) :
 {script}
 Verifie et CORRIGE si besoin, sans changer les clips ni l'ordre :
 - chaque passage est une phrase COMPLETE et claire a l'oral (jamais un fragment, jamais une fin en ":" ou ",") ;
-- le dernier passage conclut seul (il doit aussi pouvoir s'enchainer avec le 1er quand la video repart) ;
+- le dernier passage conclut seul et repond a la question du debut : jamais une relance, une question ou des
+  points de suspension ("Mais au fait…") ;
+- aucune marque ni argument de vente d'un produit (si le modele etait une publicite) ;
 - {regles}
 - les faits restent prudents (pas de "jamais"/"toujours" non verifie) ;
 - les mots_cles sont des mots EXACTS de leur phrase ;
@@ -88,7 +97,7 @@ def _gemini(pro: bool = False):
 
 
 def clip_listing(clips: Dict[str, Dict]) -> str:
-    return "\n".join(f"- {cid}: {c['desc'] or 'clip'} ({c['end'] - c['start']:.1f}s, moment fort a "
+    return "\n".join(f"- {cid}: {c.get('desc') or 'clip'} ({c['end'] - c['start']:.1f}s, moment fort a "
                      f"{c['impact'] - c['start']:.1f}s)" for cid, c in clips.items() if c.get("usable", True))
 
 
@@ -98,6 +107,7 @@ def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) 
     prompt = PROMPT.format(langue=lang["label"], sujet=reference.get("sujet"), question=reference.get("question"),
                            plans=plans, faits="; ".join(reference.get("faits") or []),
                            douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
+                           pub=reference.get("publicite") or "aucune",
                            clips=clip_listing(clips), regles=LANG_RULES.get(lang["code"], LANG_RULES["fr"]),
                            cps=lang["chars_per_second"])
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.6)
@@ -164,9 +174,16 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
     ps = script.get("passages") or []
     if not 3 <= len(ps) <= 12:
         out.append(f"{len(ps)} passages : il en faut entre 3 et 12.")
+    usable = sum(1 for c in clips.values() if c.get("usable", True))
+    seen = {}
     for k, p in enumerate(ps, 1):
-        if p["texte"].rstrip()[-1:] in (",", ":", "،", ";", "…") or p["texte"].rstrip().endswith("..."):
-            out.append(f"Passage {k} : phrase incomplète (elle finit par « {p['texte'].rstrip()[-1]} »).")
+        end = p["texte"].rstrip()
+        if end[-1:] in (",", ":", "،", ";", "…") or end.endswith("..."):
+            shown = "…" if end.endswith(("…", "...")) else end[-1]
+            out.append(f"Passage {k} : phrase incomplète (elle finit par « {shown} »).")
+        if p["clip"] in seen and usable >= len(ps):           # with too few clips, a repeat is the only way
+            out.append(f"Passage {k} : le clip {p['clip']} est déjà utilisé au passage {seen[p['clip']]}, choisis-en un autre.")
+        seen.setdefault(p["clip"], k)
         c = clips.get(p["clip"])
         if not c:
             out.append(f"Passage {k} : le clip « {p['clip']} » n'existe pas.")

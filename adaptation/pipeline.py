@@ -100,11 +100,14 @@ def fail(pid: str, step: str, err: Exception):
 
 def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
     """Handles seen in the watermarks first (often the real author), then the
-    media names in logos, then the accounts the sources came from."""
+    media names in logos, then the accounts the sources came from. Never a
+    bare account number (TikTok shows one when a user has no name)."""
     seen, out = set(), []
 
     def add(name):
-        if name and name.lower() not in seen:
+        if not name or re.fullmatch(r"@?[\d_.]*", name):    # "@7315046821897962529" is an account number, not a name
+            return
+        if name.lower() not in seen:
             seen.add(name.lower())
             out.append(name)
     used = [c for c in clips.values() if c.get("usable")]
@@ -228,6 +231,48 @@ def check_candidate(pid: str, url: str) -> Dict:
     return save(p)
 
 
+def check_own(pid: str, urls: List[str], checker=None) -> Dict:
+    """The person's own links, judged like the suggestions (plan by plan,
+    with the moments), in parallel; the useful ones come back ticked."""
+    from concurrent.futures import ThreadPoolExecutor
+    p = load(pid)
+    _expect(p, "sources_search", "sources_review")
+    sug = p.get("suggestions")
+    if not sug or not sug.get("scenes"):
+        raise PipelineError("Aucune scène à chercher dans ce projet.")
+    new = list(dict.fromkeys(u.strip() for u in urls if u and u.strip().startswith("http")))
+    if not new:
+        raise PipelineError("Colle au moins un lien (https://…).")
+    checker = checker or finder.check
+    plans = (p.get("reference") or {}).get("plans")
+
+    def one(u):
+        try:
+            return u, checker(u, sug["scenes"], plans), None
+        except Exception as e:
+            return u, None, str(e)[:200]
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        results = list(pool.map(one, new))
+    p = load(pid)
+    sug = p["suggestions"]
+    perso = {c["url"]: c for c in sug.get("perso") or []}
+    for u, r, err in results:
+        from adaptation.imagesearch import platform
+        vid = finder._video_id(u)
+        card = perso.get(u) or {"url": u, "id": vid or u, "origines": ["perso"], "platform": platform(u),
+                                "thumb": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else ""}
+        if r:
+            sug.setdefault("verifs", {})[u] = r
+            (sug.get("verif_errors") or {}).pop(u, None)
+            card.update(title=r.get("title") or card.get("title") or u, duration=r.get("duration") or card.get("duration"))
+        else:
+            sug.setdefault("verif_errors", {})[u] = err
+            card.setdefault("title", u)
+        perso[u] = card
+    sug["perso"] = list(perso.values())
+    return save(p)
+
+
 def set_sources(pid: str, usable: Optional[Dict[str, bool]] = None, credits: Optional[str] = None) -> Dict:
     p = load(pid)
     _expect(p, "sources_review")
@@ -253,6 +298,15 @@ def run_scripts(pid: str, report: Optional[Report] = None):
             sc = script.write(p["reference"], clips, t["language"])
             report(f"relecture {label}", (i + 0.6) / n)
             sc = script.critique(sc, t["language"], clips)
+            left = script.problems(sc, p["clips"], t["language"])
+            if left:                                   # what the re-read missed is fixed once more, then shown
+                report(f"correction {label}", (i + 0.85) / n)
+                try:
+                    fixed = script.revise(sc, clips, "Corrige ces problemes : " + " ".join(left))
+                    if len(script.problems(fixed, p["clips"], t["language"])) < len(left):
+                        sc = {**fixed, "corrections": sc.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
+                except script.ScriptError:
+                    pass
             t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False,
                      validated=False, preview=None, voice=None)
         p.update(status="script_review", error=None, failed_step=None)

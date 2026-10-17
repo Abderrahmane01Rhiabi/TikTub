@@ -61,7 +61,11 @@ Puis l'IA **vérifie automatiquement les 8 meilleures vidéos** (la vidéo du co
 
 Elle donne **les moments** (« à 2:24 ») et signale si la vidéo est « utile aussi pour les scènes 3, 5 ». Pour une longue compilation vérifiée, l'app ne télécharge que **les passages utiles**, en une seule demande.
 
-Coche les vidéos qui conviennent, ajoute tes propres liens si besoin (TikTok, Instagram, VK…), puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit. Pour aller plus loin à la main, l'extension **InVID-WeVerify** découpe une vidéo en images et lance toutes les recherches par image.
+**Tes propres liens** (TikTok, Instagram, VK… trouvés par exemple avec Google Lens) : colle-les, puis **Vérifier mes liens avec l'IA** (1 à 2 minutes). Ils sont jugés comme les vidéos proposées, apparaissent dans **« Tes liens vérifiés »**, et **ceux qui servent sont cochés tout seuls** : seuls leurs passages utiles seront téléchargés. Tu peux aussi les télécharger sans les vérifier.
+
+Une scène marquée **« Publicité dans le modèle »** (la démonstration d'un produit de marque) n'est pas cherchée, et ton script ne reprend ni la marque ni l'argument de vente.
+
+Coche les vidéos qui conviennent, puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit. Pour aller plus loin à la main, l'extension **InVID-WeVerify** découpe une vidéo en images et lance toutes les recherches par image.
 
 Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées. Une vidéo qui ne se télécharge pas est **ignorée avec un avertissement**, et **Réessayer** la retente.
 
@@ -75,15 +79,15 @@ Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajoute
 
 L'app a **analysé le modèle** : sa question, et les **affirmations douteuses** à ne pas reprendre telles quelles. Elle a aussi **découpé les sources en clips** :
 - chaque clip a sa miniature, prise au **moment fort** (le choc) et **déjà nettoyée** : seule la vraie image est gardée, et les filigranes sont effacés ;
-- les clips inutilisables sont **décochés**, avec leur raison : interview, écran de fin, texte incrusté, trop court… Tu peux en cocher ou en décocher d'autres ;
+- les clips inutilisables sont **décochés**, avec leur raison : interview, écran de fin, texte incrusté, trop court (moins d'1 seconde)… Tu peux en cocher ou en décocher d'autres. Un clip court ne sert qu'à une phrase courte : le contrôle du script refuse une phrase trop longue pour son clip ;
 - **la basse résolution** est signalée ;
-- les **crédits** proposés viennent des filigranes, par exemple « @azzamyreal · 9News ». Corrige-les si besoin : ils s'affichent en haut de la vidéo et à la fin de la description.
+- les **crédits** proposés viennent des filigranes, par exemple « @azzamyreal · 9News » (jamais un numéro de compte TikTok). Corrige-les si besoin : ils s'affichent en haut de la vidéo et à la fin de la description, et ta correction est gardée si tu ajoutes des sources.
 
 Clique ensuite sur **Écrire les scripts**.
 
 ### Étape 3 · Script (relecture obligatoire)
 
-Pour chaque chaîne, l'IA a écrit un script, puis un **modèle plus puissant l'a relu et corrigé** : phrases complètes, fin qui se suffit à elle-même, faits prudents, longueur adaptée à chaque clip. Ses corrections sont listées.
+Pour chaque chaîne, l'IA a écrit un script, puis un **modèle plus puissant l'a relu et corrigé** : phrases complètes, **une fin qui répond à la question** (jamais « Mais au fait… »), faits prudents, pas de publicité, **jamais deux fois le même clip**, longueur adaptée à chaque clip. S'il reste un problème après la relecture, l'IA le corrige encore une fois toute seule. Ses corrections sont listées.
 
 Tu peux tout modifier :
 - le titre, la description et les tags ;

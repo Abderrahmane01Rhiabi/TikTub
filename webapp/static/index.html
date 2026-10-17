@@ -2674,7 +2674,7 @@ const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images 
 const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'],
   partielle: ['warn', 'partielle : à regarder'], non: ['bad', 'rien d\'utile'] };
 const AD_RANK = { exacte: 0, equivalente: 1, partielle: 2, rien: 4 };
-const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité' };
+const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien' };
 
 function adVerifOf(sug, url){
   const v = (sug.verifs || {})[url];
@@ -2690,7 +2690,7 @@ function adVerifHtml(v, scene, long){
   const others = useful.filter(i => i !== scene).map(i => i + 1);
   return `<span class="pill ${cls}">${esc(label)}</span>
     <span>${esc((here && here.raison) || v.raison)}${(ms || []).length ? ' · à ' + [...new Set(ms.map(m => adDuration(m.debut) || '0:00'))].join(', ') : ''}</span>
-    ${others.length ? `<span style="color:var(--ok)">utile aussi pour ${others.length > 1 ? 'les scènes' : 'la scène'} ${others.join(', ')}</span>` : ''}
+    ${others.length ? `<span style="color:var(--ok)">utile ${scene >= 0 ? 'aussi ' : ''}pour ${others.length > 1 ? 'les scènes' : 'la scène'} ${others.join(', ')}</span>` : ''}
     ${long && useful.length ? '<span style="color:var(--ok)">seuls les passages utiles seront téléchargés</span>' : ''}`;
 }
 
@@ -2775,21 +2775,26 @@ function renderAdFinder(box, p){
       <div class="chcard-body">${sug.scenes.map((sc, si) => `
         <div class="ad-scene" data-scene="${si}">
           <div class="what">${si + 1}. Cherche : ${esc(sc.scene)}</div>
+          ${sc.pub ? `<div class="warnbox">Publicité dans le modèle : pas besoin de la chercher, ton script ne reprendra pas la marque.</div>` : ''}
           ${sc.indices ? `<div class="tiny">Indices : ${esc(sc.indices)}</div>` : ''}
           ${adFramesHtml(p, framesOf(si))}
           <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches)}</div>
           ${links(sc.liens || [])}
           ${sc.langue ? `<div class="ad-links"><span class="tiny">En ${esc(sc.langue.langue.toLowerCase())} (filmé ${esc(sc.langue.pays ? 'en/au ' + sc.langue.pays : 'ailleurs')}) :</span>${chips(sc.langue.recherches)}</div>
             ${links(sc.liens_langue || [])}` : ''}
-          ${(sc.candidats || []).length ? `<div class="ad-clips">${adSortCands(sc.candidats, si, sug).map(c => adCandHtml(c, si, sug, have)).join('')}</div>` : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les images et les liens de recherche ci-dessus.</div>'}
+          ${(sc.candidats || []).length ? `<div class="ad-clips">${adSortCands(sc.candidats, si, sug).map(c => adCandHtml(c, si, sug, have)).join('')}</div>` : sc.pub ? '' : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les images et les liens de recherche ci-dessus.</div>'}
         </div>`).join('') || '<div class="tiny">Le modèle n\'a pas pu être découpé en scènes.</div>'}</div></article>
     ${loose.length || (sug.image_videos || []).length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('image', 14)} Trouvées par image (toutes scènes)</div></div></div>
       <div class="chcard-body">${adFramesHtml(p, loose)}
         ${(sug.image_videos || []).length ? `<div class="ad-clips">${adSortCands(sug.image_videos, -1, sug).map(c => adCandHtml(c, -1, sug, have)).join('')}</div>` : ''}</div></article>` : ''}
+    ${(sug.perso || []).length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('link', 14)} Tes liens vérifiés</div>
+        <div class="meta" style="margin-left:0">Jugés comme les vidéos proposées. Ceux qui servent sont cochés ; seuls leurs passages utiles seront téléchargés.</div></div></div>
+      <div class="chcard-body"><div class="ad-clips">${adSortCands(sug.perso, -1, sug).map(c => adCandHtml(c, -1, sug, have)).join('')}</div></div></article>` : ''}
     <article class="chcard"><div class="chcard-body">
       <label class="f">Tes propres liens (TikTok, YouTube, Instagram, VK…), un par ligne</label>
       <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
       <div class="chcard-foot"><span class="tiny ad-count"></span>
+        <button class="btn secondary ad-own-check" data-icon="sparkle" title="L'IA regarde chaque lien et le compare aux plans du modèle (1 à 2 min)">Vérifier mes liens avec l'IA</button>
         <button class="btn primary push ad-add" data-icon="download">Télécharger et analyser →</button></div></article>`;
   hydrateIcons(box);
   const own = box.querySelector('.ad-own'), count = box.querySelector('.ad-count');
@@ -2820,6 +2825,19 @@ function renderAdFinder(box, p){
       } catch (e){ log(e.message, 'error'); chk.disabled = false; chk.textContent = 'Vérifier avec l\'IA'; }
     };
   });
+  box.querySelector('.ad-own-check').onclick = async ev => {
+    const list = own.value.split('\n').map(x => x.trim()).filter(Boolean);
+    if (!list.length){ toast('Colle d\'abord un ou plusieurs liens', 'error'); return; }
+    const btn = ev.currentTarget; btn.disabled = true; btn.innerHTML = spin('l\'IA regarde tes liens…');
+    try {
+      const np = await api(`/api/adaptations/${p.project_id}/suggestions/own`, { method:'POST', body: JSON.stringify({ urls: list }) });
+      const vs = (np.suggestions || {}).verifs || {};
+      list.forEach(u => { const v = vs[u]; if (v && v.par_scene && v.verdict !== 'non') adPicked.add(u); });   // the useful ones, ticked
+      adProject = np; renderAdFinder(box, np);
+      const kept = list.filter(u => adPicked.has(u)).length;
+      toast(`${list.length} lien(s) vérifié(s), ${kept} utile(s) coché(s)`, 'success');
+    } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.textContent = 'Vérifier mes liens avec l\'IA'; }
+  };
   box.querySelector('.ad-add').onclick = async ev => {
     const list = urls();
     if (!list.length){ recount(); return; }

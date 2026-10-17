@@ -1450,6 +1450,14 @@ def check_adaptation_candidate(pid: str, req: AdaptationCheck):
     return _serialize_adaptation(_adaptation_call(ap.check_candidate, pid, req.url))
 
 
+@app.post("/api/adaptations/{pid}/suggestions/own")
+def check_adaptation_own_links(pid: str, req: AdaptationAddSources):
+    """Your own links, judged by Gemini like the suggestions (1 to 2 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.check_own, pid, [str(u) for u in req.urls]))
+
+
 @app.post("/api/adaptations/{pid}/scripts")
 def start_adaptation_scripts(pid: str):
     from adaptation import pipeline as ap

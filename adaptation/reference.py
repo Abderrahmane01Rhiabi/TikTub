@@ -22,6 +22,8 @@ JSON uniquement :
  "script_complet": "tout le texte dit, dans l'ordre",
  "faits": ["chaque affirmation factuelle du script, une par ligne"],
  "faits_douteux": ["affirmations exagerees ou fausses a ne pas reprendre telles quelles"],
+ "publicite": "si la video fait la promotion d'une marque ou d'un produit : la marque et ce qui est vante, sinon null",
+ "plans_pub": [indices des plans qui sont de la publicite (demonstration du produit, logo de marque), 0 = premier],
  "fin_reboucle": true/false,
  "recherche_courte": "1 ou 2 mots anglais du theme, pour chercher dans la chaine des comptes credites (ex. tram)",
  "a_chercher": [{"scene": "en francais, la video d'origine a retrouver, concrete et visuelle (ex. un tram qui percute une voiture noire, filme depuis la cabine du conducteur, de nuit)",
