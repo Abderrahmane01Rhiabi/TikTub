@@ -398,10 +398,11 @@ def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, 
     p = ap.load(pid)
     assert p["status"] == "script_review" and p["source_urls"] == ["https://www.youtube.com/watch?v=aaaaaaaaaaa"]
     plans = p["storyboard"]["plans"]
-    assert got["sections"][0][0] == 99.0 and len(got["sections"]) == 5         # one span per moment, 1 s around
+    room = [min(pl["duree"], 6.0) for pl in plans]                             # room to lengthen inside the shot
+    assert got["sections"][0][0] == pytest.approx(100 - room[0] - 1) and len(got["sections"]) == 5
     # times in the downloaded file: the spans are joined one after the other
     lens = [b - a for a, b in got["sections"]]
-    assert made[1][1] == round(lens[0] + 1.0, 2)
+    assert made[1][1] == pytest.approx(lens[0] + 1.0 + room[1], abs=0.01)
     assert made[0][2] - made[0][1] == pytest.approx(max(4, plans[0]["duree"]))   # long enough for its sentence
     assert set(p["clips"]) == {"P1", "P2", "P3", "P4", "P5"} and p["credits"] == "@auteur"
     assert p["clips"]["P1"]["desc"] == "vu 0" and not p["clips"]["P5"]["usable"]
@@ -410,6 +411,21 @@ def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, 
     assert any("présentateur" in x for x in t["problems"]) and not t["approved"]          # the check refused plan 5's moment
     p = ap.back_to_images(pid)
     assert p["status"] == "images_review" and p["picks"][0]                                # pick another moment there
+
+
+def test_a_short_moment_is_lengthened_inside_its_shot_never_across_a_cut():
+    # measured: 24-27 then an interview from 28.1 s; 0-3 then a black end screen from 3.8 s
+    assert ap.fit_window(24, 27, 5.4, [(10.08, 27.98), (28.18, 40)], 99) == (22.58, 27.98)
+    assert ap.fit_window(0, 3, 5.5, [(0.08, 3.62), (3.82, 6.42)], 6.5) == (0, 3.62)
+    assert ap.fit_window(10, 12, 4, [(5, 30)], 60) == (10, 14)                  # room ahead: forward first
+    assert ap.fit_window(10, 16, 4, [(5, 30)], 60) == (10, 16)                  # long enough: as it is
+    assert ap.fit_window(10, 12, 0, [(11, 30)], 60) == (10, 12)                 # an excerpt: untouched
+
+
+def test_an_advert_is_a_warning_not_a_refusal():
+    from adaptation import finder
+    assert finder.real_faults("publicité") == "" and finder.warnings_of("publicité") == "publicité"
+    assert finder.real_faults("présentateur, pub") == "présentateur" and finder.warnings_of("présentateur, pub") == "pub"
 
 
 def test_spans_merge_close_moments_and_calm_clips_do_not_shake():

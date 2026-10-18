@@ -288,10 +288,18 @@ def wanted_from_storyboard(sb_plans: List[Dict], queries: Dict[int, Dict]) -> Li
 RANK = {"exacte": 0, "equivalente": 1, "partielle": 2}
 
 # What makes a moment unusable whatever the cleaning does: only what is seen and can't be removed. Not
-# burnt-in text or a logo (cropped or painted), not the sound (replaced by the narration), not "a compilation".
+# burnt-in text or a logo (cropped or painted), not the sound (replaced by the narration), not "a compilation",
+# not "an advert" (a brand's promo film shows real footage, its logo is painted: a warning, never a refusal).
 REAL_FAULTS = re.compile(r"pr[ée]sentat|presenter|interview|journaliste|plateau|split|[ée]cran (divis|partag|scind)|"
-                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|publicit|\bpub\b|flou|blur|"
+                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|flou|blur|"
                          r"noir|black|image fixe|photo|diaporama|slide|dessin|anim[ée]|jeu vid[ée]o|t[ée]l[ée]phone film", re.I)
+WARNINGS = re.compile(r"publicit|\bpub\b|promo|sponsor", re.I)
+
+
+def warnings_of(text: str) -> str:
+    """Reasons worth a look but not a refusal (an advert's footage)."""
+    parts = [x.strip() for x in re.split(r"[,;/]| et ", text or "") if x.strip()]
+    return ", ".join(x for x in parts if WARNINGS.search(x) and not REAL_FAULTS.search(x))
 
 
 def real_faults(text: str) -> str:

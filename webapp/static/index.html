@@ -3306,6 +3306,9 @@ function renderAdScripts(body, p){
               .filter(c => c && !c.usable);
             return refused.length ? `<div class="ad-row">${refused.map(c => `<span class="tiny">${esc(c.id)} refusé (${esc(c.why_not || 'contrôle')}) :</span>
               <button class="btn ghost small ad-force" data-clip="${esc(c.id)}" title="Regarde-le avec ▶ d'abord : tu as le dernier mot">Utiliser quand même</button>`).join('')}</div>` : ''; })()}
+        ${(() => { const noted = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
+              .filter(c => c && c.usable && c.note);
+            return noted.length ? `<div class="tiny" style="color:#f5c56d">${noted.map(c => `${esc(c.id)} : ${esc(c.note)} — vérifie-le avec ▶ (le logo est effacé)`).join(' · ')}</div>` : ''; })()}
         <label class="f">Titre</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
         <div>${sc.passages.map((ps, i) => `
           <div class="ad-passage" data-i="${i}">

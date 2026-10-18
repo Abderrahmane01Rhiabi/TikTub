@@ -647,6 +647,30 @@ def start_fetch(pid: str) -> Dict:
     return save(p)
 
 
+def fit_window(a: float, b: float, need: float, shots: List[Tuple[float, float]],
+               length: Optional[float] = None) -> Tuple[float, float]:
+    """The clip for a sentence of `need` seconds from the moment [a, b] the AI
+    checked: when it is too short, lengthened forward then backward but only
+    inside the shots the moment is in — never into the next shot (measured:
+    blindly lengthened, a clip took an interview after the bump, another the
+    black end screen of its video). Still short: kept short, the script check
+    then asks for a shorter sentence instead of showing the wrong picture."""
+    if need <= 0 or b - a >= need:
+        return round(a, 2), round(b, 2)
+    lo, hi = 0.0, length if length else b + need
+    for s, e in shots:              # detect_cuts trims its shots by 0.08 s: a moment edge on a cut still matches
+        if s - 0.15 <= a <= e + 0.15:
+            lo = max(lo, s)
+        if s - 0.15 <= b - 0.05 <= e + 0.15:
+            hi = min(hi, e)
+    if not shots:
+        lo, hi = max(0.0, a - need), (min(length, b + need) if length else b + need)
+    lo, hi = min(lo, a), max(hi, b)
+    end = min(hi, a + need)
+    start = max(lo, end - need)
+    return round(start, 2), round(end, 2)
+
+
 def _spans(items: List[Tuple[int, float, float]]) -> List[List[float]]:
     spans = []
     for _, a, b in sorted(items, key=lambda x: x[1]):
@@ -672,8 +696,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         durations.update({u: v.get("duration") for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
         def pick_key(k: int) -> List:
             m = picks[k]["moment"]
-            end = m["fin"] if picks[k].get("extrait") else max(m["fin"], m["debut"] + plans[k]["duree"])
-            return [picks[k]["url"], round(m["debut"], 2), round(end, 2)]
+            return [picks[k]["url"], round(m["debut"], 2), round(m["fin"], 2), 0 if picks[k].get("extrait") else plans[k]["duree"]]
         old = p.get("clips") or {}
         clips = {f"P{k + 1}": old[f"P{k + 1}"] for k in _active(p)
                  if (old.get(f"P{k + 1}") or {}).get("pick_key") == pick_key(k) and os.path.exists(old[f"P{k + 1}"]["src"])}
@@ -682,8 +705,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             if f"P{k + 1}" in clips:
                 continue
             m = picks[k]["moment"]
-            end = m["fin"] if picks[k].get("extrait") else max(m["fin"], m["debut"] + plans[k]["duree"])   # an excerpt stays short
-            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], end))
+            need = 0.0 if picks[k].get("extrait") else plans[k]["duree"]       # an excerpt stays as it is
+            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], max(m["fin"], m["debut"] + 0.5), need))
         if clips:
             report(f"{len(clips)} plan(s) inchangé(s) : clips gardés", 0.03)
         failed: Dict[str, Tuple[str, List[int]]] = {}
@@ -691,7 +714,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         for i, (url, items) in enumerate(by_url.items()):
             report(f"vidéo {i + 1}/{len(by_url)} : téléchargement des moments choisis", 0.05 + 0.8 * i / len(by_url))
             dur = durations.get(url)
-            spans = None if (dur and dur <= 120) else _spans(items)
+            room = lambda need: min(need, 6.0)                 # around the moment: room to lengthen it, both ways
+            spans = None if (dur and dur <= 120) else _spans([(k, max(0.0, a - room(n)), b + room(n)) for k, a, b, n in items])
             name = f"src{stamp}_{i}"           # never over a file a kept clip still uses
             try:
                 try:
@@ -702,7 +726,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     spans = None                # some sites refuse a section: the whole video, then
                     path = sources.download(url, os.path.join(base, "src"), name)
             except sources.SourceError as e:
-                failed[url] = (str(e), [k for k, _, _ in items])
+                failed[url] = (str(e), [k for k, _, _, _ in items])
                 continue
             meta = sources.source_meta(path)
 
@@ -716,7 +740,24 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     offset += b - a
                 return t
             report(f"vidéo {i + 1}/{len(by_url)} : nettoyage des images", 0.05 + 0.8 * (i + 0.6) / len(by_url))
-            times = [(k, file_time(a), file_time(a) + (b - a)) for k, a, b in items]
+            try:                        # the shots of the file: a clip is lengthened inside them, never across one
+                shots = sources.detect_cuts(path, sources.probe(path), None, min_len=0.1)
+                length = sources.probe(path)["duration"]
+            except Exception:
+                shots, length = [], None
+            if spans:                   # the spans are joined in one file: a join is a cut too, seen or not
+                joins, at = [], 0.0
+                for a, b in spans[:-1]:
+                    at += b - a
+                    joins.append(at)
+                bounds = [0.0] + joins + [length or at + spans[-1][1] - spans[-1][0]]
+                shots = [(max(s, x), min(e, y)) for s, e in (shots or [(0.0, bounds[-1])])
+                         for x, y in zip(bounds, bounds[1:]) if min(e, y) > max(s, x)]
+            times = []
+            for k, a, b, need in items:
+                fa = file_time(a)
+                start, end = fit_window(fa, fa + (b - a), need, shots, length)
+                times.append((k, start, end))
             work = os.path.join(base, "work")
             os.makedirs(work, exist_ok=True)
             stills = [sources.still(path, (a + b) / 2, None, os.path.join(work, f"p{k}.jpg")) for k, a, b in times]
@@ -732,7 +773,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 c = sources.clip_at(path, i, f"P{k + 1}", a, b, f, desc=plans[k]["image"])
                 why = _real_faults(d.get("pourquoi_pas") or "")
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
-                         why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta)
+                         why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta,
+                         note=finder.warnings_of(d.get("pourquoi_pas") or ""))
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c

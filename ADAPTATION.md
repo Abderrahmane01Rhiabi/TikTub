@@ -89,8 +89,9 @@ Pour chaque plan, tu peux aussi :
 
 Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 minutes) :
 - seuls **les moments choisis** sont téléchargés (une vidéo courte entière), image **et** son ;
-- chaque plan reçoit **son clip**, coupé sur son moment et assez long pour sa phrase, **nettoyé** comme d'habitude (recadrage, logos effacés) ;
-- l'IA **contrôle chaque clip** : un présentateur, un texte incrusté, un écran partagé, une interview… le refusent (un simple logo non, il est effacé) ;
+- chaque plan reçoit **son clip**, coupé sur son moment et allongé pour sa phrase **seulement dans le même plan de la vidéo** : jamais au-delà d'une coupe (sinon une interview ou un écran de fin noir apparaissait). Si le plan est trop court, le clip reste court et le contrôle du script te demande une phrase plus courte ;
+- le clip est **nettoyé** comme d'habitude (recadrage, logos effacés) ;
+- l'IA **contrôle le clip final**, tel qu'il sera montré : un présentateur, un texte incrusté, un écran partagé, une interview, un écran de fin… le refusent (un simple logo non, il est effacé). Une **vidéo publicitaire** n'est pas refusée : ses images sont souvent bonnes, une note jaune te demande juste de la vérifier avec ▶ ;
 - les **crédits** citent les chaînes de toutes les vidéos utilisées.
 
 Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
