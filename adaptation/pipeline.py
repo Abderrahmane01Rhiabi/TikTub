@@ -267,6 +267,11 @@ def run_analysis(pid: str, report: Optional[Report] = None):
 
 # ---------------------------------------------------------------- "Script d'abord": the storyboard
 
+FIX_HOW = (" Pour une phrase coupee entre deux plans (\"… patiner sur place…\" / \"…et leur evite…\"), ecris DEUX "
+           "phrases completes, une par plan, sans aucun \"…\" : par exemple \"…patiner sur place.\" puis \"Elle leur evite "
+           "aussi…\". Ne change que les plans en cause.")
+
+
 def _codes(p: Dict) -> List[str]:
     return list(dict.fromkeys(t["language"] for t in p["targets"]))
 
@@ -318,15 +323,18 @@ def write_storyboard(p: Dict, report: Report):
     b = storyboard.write(p["reference"], codes, angle=p.get("angle"))
     report("relecture (rétention, langue, images)", 0.65)
     b = storyboard.critique(b, codes)
-    left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
-    if left:                            # what the re-read missed is fixed once more, then shown
+    for attempt in (1, 2):              # what the re-read missed is fixed (twice at most), then shown
+        left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
+        if not left:
+            break
         report("correction", 0.85)
         try:
-            fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left))
-            if sum(len(storyboard.problems(fixed, c)) for c in codes) < len(left):
-                b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
+            fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + FIX_HOW)
         except script.ScriptError:
-            pass
+            break
+        if sum(len(storyboard.problems(fixed, c)) for c in codes) >= len(left):
+            break
+        b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
     p = load(p["project_id"])
     p["storyboard"] = b
     _refresh_plan(p)
@@ -989,15 +997,18 @@ def run_scripts(pid: str, report: Optional[Report] = None):
             if seen is not None:        # the arrows decided again looking at the clips themselves
                 for x, a in zip(sc["passages"], seen):
                     x["annotation"] = a
-            left = script.problems(sc, p["clips"], t["language"])
-            if left:                                   # what the re-read missed is fixed once more, then shown
+            for attempt in (1, 2):                     # what the re-read missed is fixed (twice at most), then shown
+                left = script.problems(sc, p["clips"], t["language"])
+                if not left:
+                    break
                 report(f"correction {label}", (i + 0.85) / n)
                 try:
-                    fixed = script.revise(sc, clips, "Corrige ces problemes : " + " ".join(left))
-                    if len(script.problems(fixed, p["clips"], t["language"])) < len(left):
-                        sc = {**fixed, "corrections": sc.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
+                    fixed = script.revise(sc, clips, "Corrige ces problemes : " + " ".join(left) + FIX_HOW)
                 except script.ScriptError:
-                    pass
+                    break
+                if len(script.problems(fixed, p["clips"], t["language"])) >= len(left):
+                    break
+                sc = {**fixed, "corrections": sc.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
             t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False,
                      validated=False, preview=None, voice=None)
         p.update(status="script_review", error=None, failed_step=None)

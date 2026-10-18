@@ -46,6 +46,8 @@ REGLES
 - Faits exacts et prudents, jamais absolus quand ce n'est pas certain.
 - 6 a 8 passages. Chaque passage = UN clip (sa lettre) qui illustre la phrase. JAMAIS deux fois le meme clip.
   Un clip marque "(extrait du Short modele)" ne sert JAMAIS au 1er passage, et sa phrase tient en 3 secondes.
+- Chaque passage = UNE OU DEUX PHRASES COMPLETES qui se lisent seules : jamais une phrase coupee entre deux passages,
+  jamais de "…" ni au debut ni a la fin d'un passage.
 - 1er passage : une QUESTION qui donne envie de rester, dans le bandeau ET dans la phrase, sur un clip dont le moment fort arrive vite.
 - Dernier passage : une phrase COMPLETE qui REPOND a la question du debut et conclut seule. Jamais une relance,
   une question ou une phrase en suspens ("Mais au fait…", "Et vous ?", "…").
@@ -75,7 +77,8 @@ CRITIQUE_PROMPT = """Tu es un relecteur exigeant de scripts de YouTube Shorts, l
 Script (JSON) :
 {script}
 Verifie et CORRIGE si besoin, sans changer les clips ni l'ordre :
-- chaque passage est une phrase COMPLETE et claire a l'oral (jamais un fragment, jamais une fin en ":" ou ",") ;
+- chaque passage est fait de phrases COMPLETES et claires a l'oral (jamais un fragment, jamais une fin en ":" ou ",",
+  jamais de "…" au debut ou a la fin, jamais une phrase coupee entre deux passages) ;
 - le dernier passage conclut seul et repond a la question du debut : jamais une relance, une question ou des
   points de suspension ("Mais au fait…") ;
 - aucune marque ni argument de vente d'un produit (si le modele etait une publicite) ;
@@ -187,6 +190,8 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
         if end[-1:] in (",", ":", "،", ";", "…") or end.endswith("..."):
             shown = "…" if end.endswith(("…", "...")) else end[-1]
             out.append(f"Passage {k} : phrase incomplète (elle finit par « {shown} »).")
+        if end.lstrip().startswith(("…", "...")):
+            out.append(f"Passage {k} : la phrase commence par « … » : elle continue celle d'avant, écris une phrase complète.")
         if k == 1 and (clips.get(p["clip"]) or {}).get("extrait"):
             out.append("Passage 1 : l'accroche ne peut pas être un extrait du Short modèle, choisis un autre clip.")
         if p["clip"] in seen and usable >= len(ps):           # with too few clips, a repeat is the only way

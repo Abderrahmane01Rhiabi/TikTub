@@ -683,3 +683,14 @@ def test_a_picked_video_that_wont_download_is_replaced_and_the_picks_come_back(p
     assert p["picks"][1] is None                            # nothing else for plan 2
     assert "plan(s) 1, 2, 3, 4, 5" in p["fetch_note"] and "Une autre vidéo" in p["fetch_note"]
     assert ap.choose_pick(pid, 1, other, 1, 6)["picks"][1]["url"] == other   # the person picks again from there
+
+
+def test_a_sentence_split_between_two_plans_is_refused_at_both_ends():
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    b["plans"][4]["textes"]["fr"]["texte"] = "Cette colle empêche ces bolides de patiner sur place…"
+    b["plans"][5]["textes"]["fr"]["texte"] = "…et leur évite surtout de s'envoler au démarrage !"
+    found = " | ".join(sb.problems(b, "fr"))
+    assert "Plan 5 : phrase incomplète" in found and "Plan 6 : la phrase commence par « … »" in found
+    from adaptation import script
+    sc = {"passages": [{"clip": "A", "texte": "...et voilà.", "bandeau": "", "mots_cles": []}]}
+    assert any("commence par" in x for x in script.problems(sc, {"A": {"start": 0, "end": 5}}, "fr"))

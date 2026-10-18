@@ -48,6 +48,9 @@ Il reprend la RECETTE d'un Short viral :
 - Dernier plan "reponse" : une phrase COMPLETE qui REPOND a la question du debut. Jamais une relance, une question
   ou des points de suspension ("Mais au fait…", "Et vous ?").
 - Chaque plan : au plus 6 secondes de voix (une image trouvee dure rarement plus).
+- Chaque plan = UNE OU DEUX PHRASES COMPLETES, qui se lisent seules. JAMAIS une phrase coupee entre deux plans,
+  jamais de points de suspension ("…", "...") ni au debut ni a la fin d'un plan, jamais un plan qui commence par
+  "et", "mais", "qui", "car" pour continuer la phrase du plan d'avant (chaque plan a son propre clip).
 - REECRIS avec tes propres phrases, ne traduis jamais le texte d'origine. Faits exacts et prudents.
 
 IMAGES : pour chaque plan, "image" = la video qu'il faudra TROUVER pour l'illustrer : concrete et filmable
@@ -77,7 +80,8 @@ CRITIQUE_PROMPT = """Tu es un relecteur exigeant de YouTube Shorts. Voici un sto
 Verifie et CORRIGE si besoin, en gardant le meme format JSON :
 - RETENTION : plan 1 = accroche tres courte (2-3 s de voix) et intrigante ; une promesse tot ; chaque plan apporte du
   nouveau ; le dernier plan REPOND a la question du debut par une phrase complete (jamais une relance ni "…") ;
-- chaque phrase est complete et claire a l'oral, au plus 6 secondes de voix ;
+- chaque plan est fait de phrases COMPLETES qui se lisent seules, au plus 6 secondes de voix : une phrase coupee
+  entre deux plans ("… patiner sur place…" / "…et leur evite…") est reecrite en deux phrases completes, sans "…" ;
 - les images sont concretes, filmables et trouvables en video (pas d'idee abstraite, de schema ni de texte),
   toutes differentes ; garde "plans_modele" quand l'image vient du modele ;
 - langues : {regles}
@@ -254,6 +258,8 @@ def problems(bundle: Dict, code: str) -> List[str]:
             continue
         if texte[-1:] in (",", ":", "،", ";", "…") or texte.endswith("..."):
             out.append(f"Plan {k} : phrase incomplète (elle finit par « {'…' if texte.endswith(('…', '...')) else texte[-1]} »).")
+        if texte.lstrip().startswith(("…", "...")):
+            out.append(f"Plan {k} : la phrase commence par « … » : elle continue celle d'avant, écris une phrase complète.")
         s = seconds(texte, code)
         if k == 1 and s > HOOK_MAX_S:
             out.append(f"Plan 1 : accroche trop longue ({s} s de voix, viser 2 à 3 s).")
