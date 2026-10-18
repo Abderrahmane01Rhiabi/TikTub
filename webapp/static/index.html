@@ -2667,6 +2667,22 @@ function renderAdSources(body, p){
 
 const adPicked = new Set();
 const adUnpicked = new Set();                 // what the person unticked: never ticked again automatically
+let adPickedFor = null;
+
+function adLoadPicks(pid){                    // your ticks survive a reload (this browser, this project)
+  if (adPickedFor === pid) return;
+  adPickedFor = pid; adPicked.clear(); adUnpicked.clear();
+  try {
+    const d = JSON.parse(localStorage.getItem('adPicks:' + pid) || '{}');
+    (d.picked || []).forEach(u => adPicked.add(u)); (d.unpicked || []).forEach(u => adUnpicked.add(u));
+  } catch (e){ /* private window: ticks just aren't remembered */ }
+}
+
+function adSavePicks(){
+  if (!adPickedFor) return;
+  try { localStorage.setItem('adPicks:' + adPickedFor, JSON.stringify({ picked: [...adPicked], unpicked: [...adUnpicked] })); }
+  catch (e){ /* ignore */ }
+}
 
 function renderAdSearch(body, p){
   body.innerHTML = `<article class="chcard"><div class="chcard-body">
@@ -2793,8 +2809,11 @@ async function adCopyImage(src){
 
 function renderAdFinder(box, p){
   const sug = p.suggestions || { comptes: [], scenes: [] };
+  adLoadPicks(p.project_id);
   const dead = new Set((p.sources || []).filter(m => m.failed).map(m => m.url));
   const have = new Set((p.source_urls || []).filter(u => !dead.has(u)).map(adKey));
+  const pending = new Set(p.pending_excerpts || []);
+  const made = new Set((p.clips || []).filter(c => c.extrait).map(c => c.scene));
   (sug.perso || []).forEach(c => {           // your verified links that serve stay ticked, even after a reload
     const v = (sug.verifs || {})[c.url];
     if (v && v.par_scene && v.verdict !== 'non' && !v.copie && !adUnpicked.has(c.url) && !have.has(adKey(c.url))) adPicked.add(c.url);
@@ -2838,8 +2857,10 @@ function renderAdFinder(box, p){
               ? `<div class="ad-clips">${adSortCands(list, si, sug).map(c => adCandHtml(c, si, sug, have)).join('')}</div>`
               : sc.pub ? '' : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les images et les liens de recherche ci-dessus.</div>'; })()}
           ${!sc.pub && si > 0 && (sc.plans || []).length
-            ? `<div class="ad-row"><button class="btn ghost small ad-scene-excerpt" data-scene="${si}" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>
-               <span class="tiny">si rien ne te convient : 3 s de cette scène prises dans le modèle, nettoyées et créditées</span></div>` : ''}
+            ? (made.has(si) ? `<div class="ad-row"><span class="pill warn">${icon('check', 11)} extrait du Short modèle ajouté à tes clips</span></div>`
+              : `<div class="ad-row"><label class="switch" style="color:var(--text)"><input type="checkbox" class="ad-scene-excerpt" data-scene="${si}" ${pending.has(si) ? 'checked' : ''}>
+                 Extrait du Short modèle (dernier recours)</label>
+               <span class="tiny">3 s de cette scène prises dans le modèle, nettoyées et créditées${p.status === 'sources_search' ? ', ajoutées avec tes vidéos au téléchargement' : ''}</span></div>`) : ''}
         </div>`).join('') || '<div class="tiny">Le modèle n\'a pas pu être découpé en scènes.</div>'}</div></article>
     ${loose.length || (sug.image_videos || []).length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('image', 14)} Trouvées par image (toutes scènes)</div></div></div>
       <div class="chcard-body">${adFramesHtml(p, loose)}
@@ -2856,7 +2877,12 @@ function renderAdFinder(box, p){
   hydrateIcons(box);
   const own = box.querySelector('.ad-own'), count = box.querySelector('.ad-count');
   const urls = () => [...adPicked, ...own.value.split('\n').map(x => x.trim()).filter(Boolean)].filter(u => !have.has(adKey(u)));
-  const recount = () => { const n = urls().length; count.textContent = n ? `${n} vidéo(s) à télécharger` : 'Coche au moins une vidéo ou colle un lien.'; };
+  const recount = () => {
+    adSavePicks();
+    const n = urls().length, x = pending.size;
+    count.textContent = n || x ? [n ? `${n} vidéo(s) à télécharger` : '', x ? `${x} extrait(s) du Short` : ''].filter(Boolean).join(' + ')
+      : 'Coche au moins une vidéo ou colle un lien.';
+  };
   recount();
   own.oninput = recount;
   box.querySelectorAll('[data-copy]').forEach(b => b.onclick = () => {
@@ -2883,11 +2909,14 @@ function renderAdFinder(box, p){
       } catch (e){ log(e.message, 'error'); chk.disabled = false; chk.textContent = 'Vérifier avec l\'IA'; }
     };
   });
-  box.querySelectorAll('.ad-scene-excerpt').forEach(b => b.onclick = async () => {
-    b.disabled = true; b.innerHTML = spin('repérage dans le Short…');
-    try { await api(`/api/adaptations/${p.project_id}/scenes/${b.dataset.scene}/excerpt`, { method:'POST' });
-          toast('Extrait ajouté aux clips', 'success'); adProject = null; loadAdProject(); }
-    catch (e){ log(e.message, 'error'); b.disabled = false; b.textContent = 'Extrait du Short modèle (dernier recours)'; }
+  box.querySelectorAll('.ad-scene-excerpt').forEach(b => b.onchange = async () => {
+    b.disabled = true;
+    if (p.status === 'sources_review') b.parentElement.insertAdjacentHTML('beforeend', ' ' + spin('repérage dans le Short…'));
+    try {
+      const np = await api(`/api/adaptations/${p.project_id}/scenes/${b.dataset.scene}/excerpt`, { method:'POST' });
+      if (np.status === 'sources_review' && p.status === 'sources_review'){ toast('Extrait ajouté à tes clips', 'success'); adProject = null; loadAdProject(); return; }
+      adProject = np; renderAdFinder(box, np);
+    } catch (e){ log(e.message, 'error'); b.checked = !b.checked; b.disabled = false; }
   });
   box.querySelector('.ad-own-check').onclick = async ev => {
     const list = own.value.split('\n').map(x => x.trim()).filter(Boolean);
@@ -2904,10 +2933,10 @@ function renderAdFinder(box, p){
   };
   box.querySelector('.ad-add').onclick = async ev => {
     const list = urls();
-    if (!list.length){ recount(); return; }
+    if (!list.length && !pending.size){ recount(); return; }
     const btn = ev.currentTarget; btn.disabled = true;
     try { await api(`/api/adaptations/${p.project_id}/sources/add`, { method:'POST', body: JSON.stringify({ urls: list }) });
-          list.forEach(u => adPicked.delete(u)); loadAdProject(); }
+          list.forEach(u => adPicked.delete(u)); adSavePicks(); loadAdProject(); }
     catch (e){ log(e.message, 'error'); btn.disabled = false; }
   };
 }

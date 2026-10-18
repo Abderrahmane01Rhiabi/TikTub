@@ -107,9 +107,9 @@ Elle donne **les moments** (« à 2:24 ») et signale si la vidéo est « utile 
 
 Une scène marquée **« Publicité dans le modèle »** (la démonstration d'un produit de marque) n'est pas cherchée, et ton script ne reprend ni la marque ni l'argument de vente.
 
-Coche les vidéos qui conviennent, puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit. Pour aller plus loin à la main, l'extension **InVID-WeVerify** découpe une vidéo en images et lance toutes les recherches par image.
+Coche les vidéos qui conviennent (tes coches sont gardées même si tu recharges la page), puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit. Pour aller plus loin à la main, l'extension **InVID-WeVerify** découpe une vidéo en images et lance toutes les recherches par image.
 
-**Rien trouvé pour une scène ?** En dernier recours, **« Extrait du Short modèle »** prend **3 secondes au plus** de cette scène dans le Short modèle, **nettoyées** (ses sous-titres, bandeaux et logos recadrés ou effacés) et **créditées** (son créateur est ajouté aux crédits). **2 extraits au plus** par vidéo, **jamais pour l'accroche** (la scène la plus reconnaissable). Ta voix, tes bandeaux et tes flèches passent par-dessus. Le même bouton existe en « Script d'abord », sous un plan sans vidéo.
+**Rien ne te convient pour une scène ?** En dernier recours, coche **« Extrait du Short modèle »** (il est ajouté avec tes vidéos quand tu cliques « Télécharger et analyser », ou tout de suite à l'étape Sources) : prend **3 secondes au plus** de cette scène dans le Short modèle, **nettoyées** (ses sous-titres, bandeaux et logos recadrés ou effacés) et **créditées** (son créateur est ajouté aux crédits). **2 extraits au plus** par vidéo, **jamais pour l'accroche** (la scène la plus reconnaissable). Ta voix, tes bandeaux et tes flèches passent par-dessus. Le même bouton existe en « Script d'abord », sous un plan sans vidéo.
 
 Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées. Une vidéo qui ne se télécharge pas est **ignorée avec un avertissement**, et **Réessayer** la retente.
 

@@ -1322,11 +1322,12 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
-                                                  "why_not", "low_res", "audio_ok", "marks", "extrait")},
+                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene")},
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
                          for c in (p.get("clips") or {}).values()]
         base["sources"] = p.get("sources") or []
         base["source_urls"] = p.get("source_urls") or []
+        base["pending_excerpts"] = p.get("pending_excerpts") or []
         sb = p.get("storyboard")
         base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree", "retire", "adapte")}
                                         for pl in sb["plans"]],

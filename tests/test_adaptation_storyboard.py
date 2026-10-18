@@ -552,9 +552,20 @@ def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatc
     monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
         "id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920, "usable": True,
         "marks": found[2], "desc": desc})
-    p = ap.add_excerpt_source(pid, 1)
+    with pytest.raises(ap.PipelineError, match="Aucun nouveau lien"):
+        ap.add_sources(pid, [])
+    p = ap.add_excerpt_source(pid, 1)                       # while choosing: only planned, the step stays
+    assert p["status"] == "sources_search" and p["pending_excerpts"] == [1] and p["clips"] == {}
+    assert ap.add_excerpt_source(pid, 1)["pending_excerpts"] == []          # clicked again: cancelled
+    ap.add_excerpt_source(pid, 1)
+    ap.add_sources(pid, [])                                 # an excerpt alone may be "downloaded"
+    ap.run_analysis(pid)
+    p = ap.load(pid)
     c = p["clips"]["M1"]
     assert p["status"] == "sources_review" and c["extrait"] and (c["start"], c["end"]) == (4.5, 7.5)
+    assert not p.get("pending_excerpts")
+    with pytest.raises(ap.PipelineError, match="déjà son extrait"):
+        ap.add_excerpt_source(pid, 1)
     assert "extrait du Short modèle" in c["desc"] and "@createur_du_short" in p["credits"]
     assert p["source_urls"] == ["https://youtube.com/shorts/ref"] and len(p["sources"]) == 1
     sc = {"passages": [{"clip": "M1", "texte": "Court.", "bandeau": "", "mots_cles": []}]}

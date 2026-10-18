@@ -168,7 +168,7 @@ def run_analysis(pid: str, report: Optional[Report] = None):
                 finder.verify_best(p["suggestions"], p["reference"],
                                    report=lambda ph, f: report(ph, 0.7 + 0.28 * f))
                 save(p)
-        if not p["source_urls"]:
+        if not p["source_urls"] and not p.get("pending_excerpts"):
             p.update(status="sources_search", error=None, failed_step=None)
             save(p)
             report("terminé", 1.0)
@@ -198,6 +198,12 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             p["credits"] = guess
         p.update(clips=clips, sources=metas, credits_auto=guess, status="sources_review", error=None,
                  failed_step=None)
+        for scene in p.pop("pending_excerpts", None) or []:     # the excerpts planned while choosing the videos
+            report("extrait du Short modèle", 0.97)
+            try:
+                _make_excerpt(p, scene)
+            except PipelineError:
+                pass
         if not any(c["usable"] for c in clips.values()):
             failed = [m["failed"] for m in metas if m.get("failed")]
             p.update(status="error", failed_step="analysing",
@@ -659,7 +665,7 @@ def excerpt_window(p: Dict, ref_plans: List[int]) -> Tuple[float, float]:
 
 
 def _excerpts_used(p: Dict) -> int:
-    return sum(1 for x in p.get("picks") or [] if x and x.get("extrait")) + \
+    return len(p.get("pending_excerpts") or []) + sum(1 for x in p.get("picks") or [] if x and x.get("extrait")) + \
         sum(1 for c in (p.get("clips") or {}).values() if c.get("extrait") and not str(c.get("id", "")).startswith("P"))
 
 
@@ -686,34 +692,25 @@ def use_excerpt_for_plan(pid: str, plan: int) -> Dict:
     return save(p)
 
 
-def add_excerpt_source(pid: str, scene: int) -> Dict:
-    """"Sources d'abord", last resort: a scene nobody filmed gets a clip of a
-    few seconds from the reference itself, cleaned, credited."""
-    p = load(pid)
-    _expect(p, "sources_search", "sources_review")
+def _make_excerpt(p: Dict, scene: int):
+    """The excerpt clip of one scene, added to p in memory (clip, source, credits)."""
     scenes = (p.get("suggestions") or {}).get("scenes") or []
-    if not 0 <= scene < len(scenes):
-        raise PipelineError("Scène inconnue.")
-    if _excerpts_used(p) >= EXCERPTS_PER_VIDEO:
-        raise PipelineError(f"Déjà {EXCERPTS_PER_VIDEO} extraits du Short modèle : c'est le maximum par vidéo.")
     a, b = excerpt_window(p, scenes[scene].get("plans") or [])
     path = _short_file(p)
     if not path:
         raise PipelineError("Le Short modèle n'a pas pu être téléchargé (YouTube refuse) : réessaie plus tard.")
-    work = os.path.join(project_dir(pid), "work")
+    work = os.path.join(project_dir(p["project_id"]), "work")
     os.makedirs(work, exist_ok=True)
     found = sources.find_boxes([sources.still(path, (a + b) / 2, None, os.path.join(work, f"excerpt{scene}.jpg"))])
-    p = load(pid)
     metas = p.get("sources") or []
     idx = next((i for i, m in enumerate(metas) if m and m.get("url") == p["reference_url"]), None)
     if idx is None:                     # the reference becomes one more (already downloaded) source
-        meta = {**sources.source_meta(path), "url": p["reference_url"]}
-        metas.append(meta)
+        metas.append({**sources.source_meta(path), "url": p["reference_url"]})
         p["source_urls"] = p.get("source_urls", []) + [p["reference_url"]]
         idx = len(metas) - 1
     n = sum(1 for c in p["clips"].values() if c.get("extrait")) + 1
     c = sources.clip_at(path, idx, f"M{n}", a, b, found[0], desc=scenes[scene]["scene"] + " (extrait du Short modèle)")
-    c.update(extrait=True, usable=True)
+    c.update(extrait=True, usable=True, scene=scene)
     p["clips"][c["id"]] = c
     p["sources"] = metas
     guess = guess_credits(metas, p["clips"])
@@ -721,7 +718,34 @@ def add_excerpt_source(pid: str, scene: int) -> Dict:
         handle = (metas[idx] or {}).get("handle")
         p["credits"] = " · ".join(x for x in dict.fromkeys([*guess.split(" · "), handle or ""]) if x)[:120]
         p["credits_auto"] = p["credits"]
-    p.update(status="sources_review", error=None, failed_step=None)
+
+
+def add_excerpt_source(pid: str, scene: int) -> Dict:
+    """"Sources d'abord", last resort: a scene nobody filmed gets a clip of a
+    few seconds from the reference itself, cleaned, credited. While the
+    videos are being chosen, it is only planned (made with the downloads, the
+    step stays the same); clicked again, the plan is cancelled. At the clip
+    review, it is made at once."""
+    p = load(pid)
+    _expect(p, "sources_search", "sources_review")
+    scenes = (p.get("suggestions") or {}).get("scenes") or []
+    if not 0 <= scene < len(scenes):
+        raise PipelineError("Scène inconnue.")
+    pending = p.setdefault("pending_excerpts", [])
+    if p["status"] == "sources_search" and scene in pending:
+        pending.remove(scene)
+        return save(p)
+    if any(c.get("extrait") and c.get("scene") == scene for c in p["clips"].values()):
+        raise PipelineError("Cette scène a déjà son extrait.")
+    if _excerpts_used(p) >= EXCERPTS_PER_VIDEO:
+        raise PipelineError(f"Déjà {EXCERPTS_PER_VIDEO} extraits du Short modèle : c'est le maximum par vidéo.")
+    if p["status"] == "sources_search":
+        plans = (p.get("reference") or {}).get("plans") or []
+        if not any(0 <= i < len(plans) and plans[i].get("fin") is not None for i in scenes[scene].get("plans") or []):
+            raise PipelineError("Cette scène n'a pas de plan repéré dans le Short modèle.")
+        pending.append(scene)           # instant: the Short is looked at when the videos are downloaded
+        return save(p)
+    _make_excerpt(p, scene)
     return save(p)
 
 
@@ -738,7 +762,7 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
         if u and finder.same_video(u) not in have:      # the same video spelled http/https, with/without www
             have.add(finder.same_video(u))
             new.append(u)
-    if not new:
+    if not new and not p.get("pending_excerpts"):
         raise PipelineError("Aucun nouveau lien : coche une vidéo proposée ou colle un lien.")
     p["source_urls"] = p["source_urls"] + new
     sug = p.get("suggestions") or {}
