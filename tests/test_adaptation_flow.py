@@ -390,3 +390,21 @@ def test_checking_one_of_your_links_again_gives_it_its_title(project, fakes, mon
     monkeypatch.setattr(finder, "check", lambda url, scenes, plans=None: {"verdict": "oui", "par_scene": {}, "title": "Nerfs d'acier", "duration": 64})
     card = ap.check_candidate(pid, "https://vk.com/video-1_2")["suggestions"]["perso"][0]
     assert card["title"] == "Nerfs d'acier" and card["duration"] == 64
+
+
+def test_a_clip_can_be_watched_cleaned(client, project, fakes, monkeypatch):
+    from adaptation import sources
+    pid = new_project(project)["project_id"]
+    ap.run_analysis(pid)
+    made = []
+
+    def preview(c, out):
+        made.append(c["id"])
+        Path(out).write_bytes(b"mp4")
+        return out
+    monkeypatch.setattr(sources, "clip_preview", preview)
+    r = client.get(f"/api/adaptations/{pid}/clips/A/video")
+    assert r.status_code == 200 and r.headers["content-type"] == "video/mp4"
+    client.get(f"/api/adaptations/{pid}/clips/A/video")
+    assert made == ["A"]                                     # made once, then kept
+    assert client.get(f"/api/adaptations/{pid}/clips/ZZ/video").status_code == 404

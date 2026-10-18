@@ -1420,6 +1420,24 @@ def adaptation_clip_thumb(pid: str, cid: str):
     return FileResponse(out, media_type="image/jpeg")
 
 
+@app.get("/api/adaptations/{pid}/clips/{cid}/video")
+def adaptation_clip_video(pid: str, cid: str):
+    """The clip as a small video, cleaned like the render (made once, then kept)."""
+    from adaptation import pipeline as ap, sources
+    p = _adaptation_or_404(pid)
+    c = (p.get("clips") or {}).get(cid)
+    if not c:
+        raise HTTPException(status_code=404, detail="Clip introuvable")
+    key = f"{cid}_{c['start']:.2f}_{c['end']:.2f}".replace(".", "-")
+    out = os.path.join(ap.project_dir(pid), "previews", f"{key}.mp4")
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        sources.clip_preview(c, out)
+    if not os.path.exists(out):
+        raise HTTPException(status_code=404, detail="Aperçu indisponible")
+    return FileResponse(out, media_type="video/mp4")
+
+
 class AdaptationSources(BaseModel):
     usable: dict = Field(default_factory=dict)
     credits: Optional[str] = None

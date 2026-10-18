@@ -424,6 +424,20 @@ def clip_still(c: Dict, out: str) -> str:
     return out
 
 
+def clip_preview(c: Dict, out: str) -> str:
+    """A small video of the clip as the render will show it (cropped, marks
+    erased), with its own sound — to watch it before choosing."""
+    marks = delogo_filters(c.get("delogo"), c["w"], c["h"]) if c.get("delogo") else []
+    vf = ",".join(([f"crop={c['crop']}"] if c.get("crop") else []) + marks + ["scale=480:-2"])
+    dur = max(0.3, c["end"] - c["start"])
+    base = ["ffmpeg", "-v", "error", "-y", "-ss", f"{c['start']:.3f}", "-t", f"{dur:.3f}", "-i", c["src"]]
+    tail = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-c:a", "aac", "-b:a", "96k",
+            "-movflags", "+faststart", out]
+    if subprocess.run(base + ["-vf", vf] + tail).returncode or not os.path.exists(out):
+        subprocess.run(base + ["-vf", "scale=480:-2"] + tail)       # never fail a preview over the clean-up
+    return out
+
+
 def _to_band_coords(boxes: List[List[int]], h_full: int, top: int, height: int) -> List[List[int]]:
     """Boxes given on the full frame (0-1000) -> 0-1000 relative to the band."""
     out = []
