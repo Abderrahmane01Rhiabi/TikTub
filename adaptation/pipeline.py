@@ -110,6 +110,8 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
     base = {"status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
             "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
             "credits": "", "credits_auto": "", "error": None, "failed_step": None}
+    if mode == "sources" and versions and len(targets) > 1:
+        base["versions"] = True         # one project, the same clips, an angle per channel at the script step
     if mode == "script" and versions and len(targets) > 1:
         leader = _new_pid()
         for k, t in enumerate(targets):     # the leader's run reads the reference and writes every member
@@ -998,16 +1000,26 @@ def set_sources(pid: str, usable: Optional[Dict[str, bool]] = None, credits: Opt
 
 # ---------------------------------------------------------------- 2. scripts
 
-def run_scripts(pid: str, report: Optional[Report] = None):
+def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] = None):
+    """Every channel's script (or one, after an angle change). A project made
+    with "une version différente par chaîne" gives each channel its angle."""
     report = report or (lambda phase, f: None)
     p = load(pid)
     try:
         clips = {k: c for k, c in p["clips"].items() if c.get("usable")}
-        n = len(p["targets"])
-        for i, t in enumerate(p["targets"]):
+        if p.get("versions") and not p.get("angles"):
+            report("angles des versions", 0.02)
+            p["angles"] = storyboard.angles(p["reference"], max(3, len(p["targets"])))
+            for i, t in enumerate(p["targets"]):
+                t.setdefault("angle", p["angles"][i % len(p["angles"])])
+            save(p)
+        todo = [t for t in p["targets"] if only is None or t["channel"] == only]
+        n = len(todo)
+
+        def one(i, t):                  # every channel's script at the same time
             label = langs.lang(t["language"])["label"]
-            report(f"script {label}", (i + 0.1) / n)
-            sc = script.write(p["reference"], clips, t["language"])
+            report(f"script {label}" + (f" : « {t['angle']['titre']} »" if t.get("angle") else ""), (i + 0.1) / n)
+            sc = script.write(p["reference"], clips, t["language"], angle=t.get("angle"))
             report(f"relecture {label}", (i + 0.6) / n)
             sc = script.critique(sc, t["language"], clips)
             seen = annotate.review(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
@@ -1028,11 +1040,30 @@ def run_scripts(pid: str, report: Optional[Report] = None):
                 sc = {**fixed, "corrections": sc.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
             t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False,
                      validated=False, preview=None, voice=None)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, n)) as pool:
+            for f in [pool.submit(one, i, t) for i, t in enumerate(todo)]:
+                f.result()
         p.update(status="script_review", error=None, failed_step=None)
         save(p)
     except Exception as e:
         fail(pid, "scripting", e)
     report("terminé", 1.0)
+
+
+def change_target_angle(pid: str, channel: str, index: Optional[int] = None, custom: Optional[str] = None) -> Dict:
+    """"Sources d'abord" with versions: another angle for one channel, its script is written again."""
+    p = load(pid)
+    _expect(p, "script_review")
+    t = target(p, channel)
+    if custom and custom.strip():
+        t["angle"] = {"titre": custom.strip()[:80], "idee": custom.strip()[:400]}
+    elif index is not None and 0 <= index < len(p.get("angles") or []):
+        t["angle"] = p["angles"][index]
+    else:
+        raise PipelineError("Choisis un angle.")
+    p["status"] = "scripting"
+    return save(p)
 
 
 def start_scripts(pid: str) -> Dict:

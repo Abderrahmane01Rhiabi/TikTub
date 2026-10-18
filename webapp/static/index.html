@@ -2559,7 +2559,7 @@ async function renderNewAdaptation(){
             <span class="tiny">tu as déjà les vidéos, ou tu préfères les choisir d'abord : le script est écrit avec les clips trouvés</span></label>
         </div>
         <label class="switch" id="adVersionsBox" style="color:var(--text);margin-top:4px"><input type="checkbox" id="adVersions" checked>
-          <b>Une version différente par chaîne</b> <span class="tiny">chaque chaîne a son angle, son accroche et sa fin (sinon : la même vidéo traduite)</span></label>
+          <b>Une version différente par chaîne</b> <span class="tiny">chaque chaîne a son angle, son accroche et sa fin (sinon : la même vidéo traduite) ; en « Sources d'abord », avec les mêmes clips</span></label>
         <div id="adSrcBox" style="display:none"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
         <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
         <label class="f" style="margin-top:6px">3. Les chaînes qui recevront une version (chacune dans sa langue, avec sa voix)</label>
@@ -2576,8 +2576,7 @@ async function renderNewAdaptation(){
   hydrateIcons(stage);
   document.getElementById('adToVoices').onclick = () => goTo(13);
   const syncVersions = () => {
-    const script = (stage.querySelector('input[name="adMode"]:checked') || {}).value === 'script';
-    document.getElementById('adVersionsBox').style.display = script && stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
+    document.getElementById('adVersionsBox').style.display = stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
   };
   stage.querySelectorAll('.ad-target').forEach(x => x.addEventListener('change', syncVersions));
   syncVersions();
@@ -2589,7 +2588,7 @@ async function renderNewAdaptation(){
     const btn = ev.currentTarget;
     const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value || 'sources';
     const body = { reference_url: document.getElementById('adRef').value.trim(), mode,
-                   versions: mode === 'script' && document.getElementById('adVersions').checked,
+                   versions: document.getElementById('adVersions').checked,
                    source_urls: mode === 'script' ? [] : document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean),
                    channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value) };
     btn.disabled = true;
@@ -3287,6 +3286,11 @@ function renderAdScripts(body, p){
         ${esc((channels.find(c => c.name === t.channel) || {}).display_name || t.channel)} · ${esc(t.language_label)}</div></div>
         ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
       <div class="chcard-body">
+        ${t.angle && (p.angles || []).length ? `<div class="ad-row ad-tangle" style="gap:6px"><b>Angle : « ${esc(t.angle.titre)} »</b>
+            <select class="f sc-angle" style="width:auto;max-width:100%">${p.angles.map((a, i) =>
+              `<option value="${i}" ${a.titre === t.angle.titre ? 'selected' : ''}>${esc(a.titre)}</option>`).join('')}<option value="custom">Mon propre angle…</option></select>
+            <input class="f sc-angle-custom" placeholder="Décris ton angle" style="display:none;flex:1;min-width:200px">
+            <button class="btn ghost small sc-angle-go" title="Le script de cette chaîne est réécrit (environ 1 minute)">Réécrire avec cet angle</button></div>` : ''}
         ${p.annotations_reviewed || p.mode !== 'script' ? `<div class="tiny">${icon('eye', 12)} Flèches et cercles choisis par l'IA <b>en regardant les vrais clips</b> : clique ▶ pour voir un clip, change-les si besoin.</div>` : ''}
         ${(sc.corrections || []).length ? `<details><summary class="tiny" style="cursor:pointer">Relecture automatique : ${sc.corrections.length} correction(s)</summary>
           <ul class="tiny">${sc.corrections.map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}
@@ -3360,6 +3364,20 @@ function renderAdScripts(body, p){
   if (go) go.onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/voices`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };
+  body.querySelectorAll('.ad-target-card').forEach(card => {
+    const sel = card.querySelector('.sc-angle');
+    if (!sel) return;
+    const custom = card.querySelector('.sc-angle-custom');
+    sel.onchange = () => custom.style.display = sel.value === 'custom' ? '' : 'none';
+    card.querySelector('.sc-angle-go').onclick = async ev => {
+      const own = sel.value === 'custom' ? custom.value.trim() : null;
+      if (sel.value === 'custom' && !own){ toast('Décris ton angle', 'error'); return; }
+      ev.currentTarget.disabled = true;
+      try { await api(`/api/adaptations/${p.project_id}/targets/${card.dataset.channel}/angle`, { method:'POST',
+              body: JSON.stringify(own ? { custom: own } : { index: +sel.value }) }); adProject = null; loadAdProject(); }
+      catch (e){ log(e.message, 'error'); ev.currentTarget.disabled = false; }
+    };
+  });
   body.querySelectorAll('.ad-force').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const np = await api(`/api/adaptations/${p.project_id}/clips/${b.dataset.clip}/force`, { method:'POST' });

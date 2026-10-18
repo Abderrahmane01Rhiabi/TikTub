@@ -52,7 +52,9 @@ Dans le storyboard, **l'angle** est affiché en haut : choisis-en un autre, ou �
 
 **Nouvelle version pour une autre chaîne** (en haut d'un projet, même terminé) : la même vidéo pour une autre chaîne — par exemple une chaîne anglaise plus tard — avec **un angle jamais utilisé** dans le groupe, sans réanalyser le modèle.
 
-Sans la case : un seul projet, la même vidéo traduite dans chaque langue (comme avant).
+En **« Sources d'abord »**, la même case donne **un seul projet** : les clips sont trouvés et téléchargés **une fois**, et **chaque chaîne a son angle** au moment des scripts (écrits en même temps). L'angle de chaque chaîne est affiché sur l'écran Script, avec **Réécrire avec cet angle** (seul le script de cette chaîne est réécrit).
+
+Sans la case : la même vidéo traduite dans chaque langue (comme avant).
 
 #### Script d'abord : le storyboard
 

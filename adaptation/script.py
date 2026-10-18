@@ -18,7 +18,7 @@ A person always reviews and can edit the script before any voice is made.
 
 import json
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from adaptation.langs import lang as lang_of
 
@@ -39,7 +39,7 @@ Il reprend la RECETTE d'un Short viral (a garder) :
 
 Clips disponibles (lettre: contenu, duree utilisable, instant du moment fort depuis le debut du clip) :
 {clips}
-
+{angle}
 REGLES
 - Langue : {regles}
 - REECRIS avec tes propres phrases, ne traduis jamais le texte d'origine mot a mot.
@@ -108,7 +108,14 @@ def clip_listing(clips: Dict[str, Dict]) -> str:
                      f"{c['impact'] - c['start']:.1f}s)" for cid, c in clips.items() if c.get("usable", True))
 
 
-def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) -> Dict:
+ANGLE_PART = """
+ANGLE IMPOSE pour CETTE chaine (sa video doit etre differente du modele et des autres chaines) : "{titre}" — {idee}
+Le script suit cet angle : sa propre accroche, son propre ordre de clips, sa propre fin. Ne reprends ni l'accroche
+ni la fin du modele.
+"""
+
+
+def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None, angle: Optional[Dict] = None) -> Dict:
     lang = lang_of(lang_code)
     plans = " | ".join(f"[{p.get('role')}] {p.get('visuel')} -> \"{p.get('paroles')}\"" for p in reference.get("plans", []))
     prompt = PROMPT.format(langue=lang["label"], sujet=reference.get("sujet"), question=reference.get("question"),
@@ -116,7 +123,7 @@ def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) 
                            douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
                            pub=reference.get("publicite") or "aucune",
                            clips=clip_listing(clips), regles=LANG_RULES.get(lang["code"], LANG_RULES["fr"]),
-                           cps=lang["chars_per_second"])
+                           cps=lang["chars_per_second"], angle=ANGLE_PART.format(**angle) if angle else "")
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.6)
     return normalise(r, clips)
 

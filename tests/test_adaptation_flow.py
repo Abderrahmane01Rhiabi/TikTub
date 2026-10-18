@@ -53,7 +53,7 @@ def fakes(monkeypatch):
         calls["analysed"].append(i)
         return [dict(c) for c in CLIPS.values() if c["source"] == i]
     monkeypatch.setattr(sources, "analyse_source", analyse_source)
-    monkeypatch.setattr(script, "write", lambda ref, clips, lang: json.loads(json.dumps(SCRIPT)))
+    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: json.loads(json.dumps(SCRIPT)))
     monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "corrections": ["fin complète"]})
 
     def synth(passages, voice_id, lang, out):
@@ -408,3 +408,24 @@ def test_a_clip_can_be_watched_cleaned(client, project, fakes, monkeypatch):
     client.get(f"/api/adaptations/{pid}/clips/A/video")
     assert made == ["A"]                                     # made once, then kept
     assert client.get(f"/api/adaptations/{pid}/clips/ZZ/video").status_code == 404
+
+
+def test_sources_first_versions_give_each_channel_its_angle_on_the_same_clips(project, fakes, monkeypatch):
+    from adaptation import script, storyboard
+    monkeypatch.setattr(storyboard, "angles", lambda ref, n=3, avoid=None: [{"titre": f"Angle {k}", "idee": "i"} for k in range(n)])
+    seen = []
+    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: seen.append((lang, (angle or {}).get("titre")))
+                        or json.loads(json.dumps(SCRIPT)))
+    p = ap.create("https://youtube.com/shorts/x", ["https://tiktok.com/a", "https://tiktok.com/b"],
+                  [channel(project), channel(project, "chanB", "ar", "v_ar")], versions=True)
+    assert p["versions"] and not p.get("group") and len(p["targets"]) == 2       # one project, shared clips
+    pid = p["project_id"]
+    ap.run_analysis(pid); ap.start_scripts(pid); ap.run_scripts(pid)
+    assert sorted(seen) == [("ar", "Angle 1"), ("fr", "Angle 0")]                # written at the same time
+    p = ap.change_target_angle(pid, "chanB", custom="Le point de vue du conducteur")
+    assert p["status"] == "scripting"
+    ap.run_scripts(pid, only="chanB")
+    assert seen[-1] == ("ar", "Le point de vue du conducteur") and len(seen) == 3       # only that channel rewritten
+    assert ap.load(pid)["status"] == "script_review"
+    with pytest.raises(ap.PipelineError):
+        ap.change_target_angle(pid, "chanB")

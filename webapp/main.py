@@ -1286,7 +1286,7 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
     def run():
         try:
             report = lambda phase, f: progress.update(key, f, phase=phase)
-            if step == "voicing":
+            if step in ("voicing", "scripting") and only:
                 runner(pid, report, only=only)
             else:
                 runner(pid, report)
@@ -1325,6 +1325,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "rtl": langs.lang(t["language"])["rtl"], "voice_id": t["voice_id"], "approved": t.get("approved"),
             "validated": t.get("validated"), "video_id": t.get("video_id"), "script": t.get("script"),
             "problems": t.get("problems") or [], "music": os.path.basename(t["music_path"]) if t.get("music_path") else None,
+            "angle": t.get("angle"),
             "preview_url": video_media_url({"video_path": prev["path"]}) if prev.get("path") and os.path.exists(prev["path"]) else None,
             "checks": prev.get("checks"), "final_checks": fin.get("checks"),
             "duration": (prev.get("summary") or {}).get("duration"),
@@ -1514,6 +1515,16 @@ def change_adaptation_angle(pid: str, req: AdaptationAngle):
 
 class AdaptationNewVersion(BaseModel):
     channel: str
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/angle")
+def change_adaptation_target_angle(pid: str, channel: str, req: AdaptationAngle):
+    """Sources d'abord with versions: another angle for one channel's script (about a minute)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.change_target_angle, pid, channel, req.index, req.custom)
+    _start_adaptation_step(pid, "scripting", only=channel)
+    return _serialize_adaptation(p)
 
 
 @app.post("/api/adaptations/{pid}/new-version")
