@@ -2666,6 +2666,7 @@ function renderAdSources(body, p){
 // ---------- "what to download": the scenes to find, the credited accounts, the YouTube candidates ----------
 
 const adPicked = new Set();
+const adUnpicked = new Set();                 // what the person unticked: never ticked again automatically
 
 function renderAdSearch(body, p){
   body.innerHTML = `<article class="chcard"><div class="chcard-body">
@@ -2794,6 +2795,10 @@ function renderAdFinder(box, p){
   const sug = p.suggestions || { comptes: [], scenes: [] };
   const dead = new Set((p.sources || []).filter(m => m.failed).map(m => m.url));
   const have = new Set((p.source_urls || []).filter(u => !dead.has(u)).map(adKey));
+  (sug.perso || []).forEach(c => {           // your verified links that serve stay ticked, even after a reload
+    const v = (sug.verifs || {})[c.url];
+    if (v && v.par_scene && v.verdict !== 'non' && !v.copie && !adUnpicked.has(c.url) && !have.has(adKey(c.url))) adPicked.add(c.url);
+  });
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
   const chips = qs => qs.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('');
   const im = sug.images || { frames: [] };
@@ -2865,7 +2870,8 @@ function renderAdFinder(box, p){
     const cb = card.querySelector('.ad-pick');
     cb.onchange = () => {
       box.querySelectorAll(`.ad-cand[data-url="${CSS.escape(url)}"] .ad-pick`).forEach(x => { x.checked = cb.checked; x.closest('.ad-cand').classList.toggle('picked', cb.checked); });
-      cb.checked ? adPicked.add(url) : adPicked.delete(url); recount();
+      if (cb.checked){ adPicked.add(url); adUnpicked.delete(url); } else { adPicked.delete(url); adUnpicked.add(url); }
+      recount();
     };
     const chk = card.querySelector('.ad-check');
     if (chk) chk.onclick = async () => {
