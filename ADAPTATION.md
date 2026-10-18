@@ -46,6 +46,8 @@ En « Script d'abord », si tu coches **plusieurs chaînes**, la case **« Une v
 - l'IA propose **plusieurs angles** (ex. « Arnaque ou coup de génie ? », « L'erreur fatale », « Le test sans pitié ») et en donne **un différent à chaque chaîne** : son accroche, son déroulé, sa fin. Ta vidéo n'est plus une traduction du modèle ni de ton autre chaîne ;
 - chaque projet suit ensuite son chemin (storyboard, images, voix, publication) ; la liste des projets montre la chaîne de chacun.
 
+En haut de chaque projet, les **onglets « Versions de ce Short »** montrent chaque chaîne, son angle et son étape : un clic pour passer de l'une à l'autre.
+
 Dans le storyboard, **l'angle** est affiché en haut : choisis-en un autre, ou écris **ton propre angle**, puis **Réécrire avec cet angle** (environ 1 minute).
 
 **Nouvelle version pour une autre chaîne** (en haut d'un projet, même terminé) : la même vidéo pour une autre chaîne — par exemple une chaîne anglaise plus tard — avec **un angle jamais utilisé** dans le groupe, sans réanalyser le modèle.
@@ -86,7 +88,7 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
 - l'IA **contrôle chaque clip** : un présentateur, un texte incrusté, un écran partagé, une interview… le refusent (un simple logo non, il est effacé) ;
 - les **crédits** citent les chaînes de toutes les vidéos utilisées.
 
-Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste ou clique **← Revenir aux images** pour choisir un autre moment. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
+Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
 
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
 

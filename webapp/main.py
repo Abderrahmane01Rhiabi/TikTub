@@ -1310,7 +1310,11 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["angles"] = p.get("angles") or []
     if full and p.get("group"):
         from adaptation import pipeline as _ap
-        base["group_channels"] = [t["channel"] for x in [p] + _ap.group_of(p) for t in x["targets"]]
+        members = sorted([p] + _ap.group_of(p), key=lambda x: x.get("created_at") or "")
+        base["group_channels"] = [t["channel"] for x in members for t in x["targets"]]
+        base["group_members"] = [{"project_id": x["project_id"], "status": x["status"],
+                                  "channels": [t["channel"] for t in x["targets"]],
+                                  "angle": (x.get("angle") or {}).get("titre")} for x in members]
     base["subject"] = (p.get("reference") or {}).get("sujet")
     base["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
     targets = []
@@ -1330,7 +1334,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
-                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene")},
+                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced")},
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
                          for c in (p.get("clips") or {}).values()]
         base["sources"] = p.get("sources") or []
@@ -1634,6 +1638,14 @@ def excerpt_for_adaptation_scene(pid: str, scene: int):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.add_excerpt_source, pid, scene))
+
+
+@app.post("/api/adaptations/{pid}/clips/{cid}/force")
+def force_adaptation_clip(pid: str, cid: str):
+    """Use a clip the check refused (you have the last word)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.force_clip, pid, cid))
 
 
 @app.post("/api/adaptations/{pid}/fetch")

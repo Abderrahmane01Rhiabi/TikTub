@@ -569,6 +569,12 @@
   .ad-clip{background:var(--panel2);border:1px solid var(--border);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;}
   .ad-clip.off{opacity:.42;}
   .ad-play{position:relative;cursor:pointer;}
+  .ad-versions{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:8px 0 4px;}
+  .ad-vtab{all:unset;cursor:pointer;display:flex;flex-direction:column;gap:2px;padding:7px 12px;border-radius:10px;
+    border:1px solid var(--border);background:var(--panel2);min-width:150px;max-width:260px;}
+  .ad-vtab b{font-size:12.5px;color:var(--text);} .ad-vtab span{font-size:11px;color:var(--muted);}
+  .ad-vtab i{font-style:normal;font-size:10.5px;color:var(--dim);}
+  .ad-vtab.on{border-color:var(--accent);background:rgba(124,140,255,.12);} .ad-vtab:hover{border-color:var(--accent);}
   .ad-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:1000;display:flex;align-items:center;justify-content:center;padding:16px;}
   .ad-lightbox-in{display:flex;flex-direction:column;align-items:center;gap:10px;max-width:100%;}
   .ad-lightbox video{max-width:min(92vw,720px);max-height:78vh;background:#000;border-radius:10px;}
@@ -2605,9 +2611,17 @@ async function loadAdProject(){
       <a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
       ${!AD_BUSY.includes(p.status) && p.reference ? '<button class="btn ghost small" id="adNewVersion" data-icon="globe" title="La même vidéo pour une autre chaîne, avec un nouvel angle">Nouvelle version pour une autre chaîne</button>' : ''}
       ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>
-      <div id="adNewVersionBox"></div>`;
+      <div id="adNewVersionBox"></div>
+      ${(p.group_members || []).length > 1 ? `<div class="ad-versions"><span class="tiny">Versions de ce Short :</span>${p.group_members.map(m =>
+        `<button class="ad-vtab ${m.project_id === p.project_id ? 'on' : ''}" data-id="${m.project_id}">
+          <b>${esc(m.channels.map(ch => (channels.find(c => c.name === ch) || {}).display_name || ch).join(', '))}</b>
+          <span>${esc(m.angle || '')}</span><i>${esc(AD_STATUS[m.status] || m.status)}</i></button>`).join('')}</div>` : ''}`;
     stage.innerHTML = adStepsHtml(p.status, p.mode) + head + '<div id="adBody" class="stack"></div>';
     hydrateIcons(stage);
+    stage.querySelectorAll('.ad-vtab').forEach(b => b.onclick = () => {
+      if (b.dataset.id === p.project_id) return;
+      adCurrent = b.dataset.id; adProject = null; loadAdaptationList();
+    });
     const nv = document.getElementById('adNewVersion');
     if (nv) nv.onclick = async () => {
       const box = document.getElementById('adNewVersionBox');
@@ -3277,6 +3291,10 @@ function renderAdScripts(body, p){
         ${(sc.corrections || []).length ? `<details><summary class="tiny" style="cursor:pointer">Relecture automatique : ${sc.corrections.length} correction(s)</summary>
           <ul class="tiny">${sc.corrections.map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
+        ${(() => { const refused = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
+              .filter(c => c && !c.usable);
+            return refused.length ? `<div class="ad-row">${refused.map(c => `<span class="tiny">${esc(c.id)} refusé (${esc(c.why_not || 'contrôle')}) :</span>
+              <button class="btn ghost small ad-force" data-clip="${esc(c.id)}" title="Regarde-le avec ▶ d'abord : tu as le dernier mot">Utiliser quand même</button>`).join('')}</div>` : ''; })()}
         <label class="f">Titre</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
         <div>${sc.passages.map((ps, i) => `
           <div class="ad-passage" data-i="${i}">
@@ -3342,6 +3360,12 @@ function renderAdScripts(body, p){
   if (go) go.onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/voices`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };
+  body.querySelectorAll('.ad-force').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { const np = await api(`/api/adaptations/${p.project_id}/clips/${b.dataset.clip}/force`, { method:'POST' });
+          toast(`${b.dataset.clip} utilisé quand même`, 'success'); adProject = null; renderAdScripts(body, np); adProject = np; }
+    catch (e){ log(e.message, 'error'); b.disabled = false; }
+  });
   const back = document.getElementById('adBackImages');
   if (back) back.onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/back-to-images`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }

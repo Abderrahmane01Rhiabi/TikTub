@@ -694,3 +694,22 @@ def test_a_sentence_split_between_two_plans_is_refused_at_both_ends():
     from adaptation import script
     sc = {"passages": [{"clip": "A", "texte": "...et voilà.", "bandeau": "", "mots_cles": []}]}
     assert any("commence par" in x for x in script.problems(sc, {"A": {"start": 0, "end": 5}}, "fr"))
+
+
+def test_force_a_refused_clip_and_the_versions_tabs(client, project, fakes):
+    a, b = channel(project, "chanA", "fr", "v_fr"), channel(project, "chanB", "ar", "v_ar")
+    lead = ap.create("https://youtube.com/shorts/x", [], [a, b], mode="script", versions=True)
+    ap.run_analysis(lead["project_id"])
+    p = client.get(f"/api/adaptations/{lead['project_id']}").json()
+    assert [m["channels"] for m in p["group_members"]] == [["chanA"], ["chanB"]] and all(m["angle"] for m in p["group_members"])
+    q = ap.load(lead["project_id"])
+    q["status"] = "script_review"
+    q["clips"] = {"P1": {"id": "P1", "start": 0, "end": 5, "usable": False, "why_not": "trop flou"}}
+    t = q["targets"][0]
+    t["script"] = {"titre": "t", "passages": [{"clip": "P1", "texte": "Une phrase complète.", "bandeau": "", "mots_cles": []}]}
+    ap.save(q)
+    r = client.post(f"/api/adaptations/{lead['project_id']}/clips/P1/force").json()
+    clip = next(c for c in r["clips"] if c["id"] == "P1")
+    assert clip["usable"] and clip["forced"] == "trop flou"
+    assert not any("ne convient pas" in x for x in r["targets"][0]["problems"])
+    assert client.post(f"/api/adaptations/{lead['project_id']}/clips/ZZ/force").status_code == 400

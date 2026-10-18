@@ -731,6 +731,23 @@ def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:
     return out
 
 
+def force_clip(pid: str, cid: str) -> Dict:
+    """The person has the last word: a clip refused by the check (blur,
+    presenter…) is used anyway; it stays marked as forced."""
+    p = load(pid)
+    _expect(p, "script_review", "sources_review")
+    c = (p.get("clips") or {}).get(cid)
+    if not c:
+        raise PipelineError("Clip inconnu.")
+    c.update(usable=True, forced=c.get("why_not") or "refusé par le contrôle", why_not="")
+    for t in p["targets"]:
+        if t.get("script"):
+            t["problems"] = _fetched_problems(t["script"], p["clips"], t["language"])
+            if t["problems"]:
+                t["approved"] = False
+    return save(p)
+
+
 def back_to_images(pid: str) -> Dict:
     """"Script d'abord": from the script screen back to the plan-by-plan
     picks (a moment refused by the check, another one wanted)."""
