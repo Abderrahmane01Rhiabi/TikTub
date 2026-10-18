@@ -504,7 +504,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         durations.update({u: v.get("duration") for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
         def pick_key(k: int) -> List:
             m = picks[k]["moment"]
-            return [picks[k]["url"], round(m["debut"], 2), round(max(m["fin"], m["debut"] + plans[k]["duree"]), 2)]
+            end = m["fin"] if picks[k].get("extrait") else max(m["fin"], m["debut"] + plans[k]["duree"])
+            return [picks[k]["url"], round(m["debut"], 2), round(end, 2)]
         old = p.get("clips") or {}
         clips = {f"P{k + 1}": old[f"P{k + 1}"] for k in _active(p)
                  if (old.get(f"P{k + 1}") or {}).get("pick_key") == pick_key(k) and os.path.exists(old[f"P{k + 1}"]["src"])}
@@ -513,7 +514,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             if f"P{k + 1}" in clips:
                 continue
             m = picks[k]["moment"]
-            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], max(m["fin"], m["debut"] + plans[k]["duree"])))
+            end = m["fin"] if picks[k].get("extrait") else max(m["fin"], m["debut"] + plans[k]["duree"])   # an excerpt stays short
+            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], end))
         if clips:
             report(f"{len(clips)} plan(s) inchangé(s) : clips gardés", 0.03)
         base, stamp = project_dir(pid), datetime.now().strftime("%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
@@ -556,6 +558,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 why = _real_faults(d.get("pourquoi_pas") or "")
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
                          why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta)
+                if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
+                    c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c
         srcs = list(dict.fromkeys(c["src"] for c in clips.values()))        # one entry per file, kept clips included
         metas = [next(c.get("meta") or {} for c in clips.values() if c["src"] == src) for src in srcs]
@@ -603,6 +607,121 @@ def back_to_images(pid: str) -> Dict:
     if p.get("mode") != "script":
         raise PipelineError("Seulement en « Script d'abord ».")
     p["status"] = "images_review"
+    return save(p)
+
+
+# ---------------------------------------------------------------- last resort: an excerpt of the reference itself
+
+EXCERPT_MAX = 3.0          # seconds: a short piece under our own voice, banners and arrows stays our creation
+EXCERPTS_PER_VIDEO = 2
+
+
+def _short_file(p: Dict) -> Optional[str]:
+    """The reference Short on disk (downloaded for the picture search), or downloaded now."""
+    d = os.path.join(project_dir(p["project_id"]), "finder")
+    for name in ("short.mp4", "short.webm", "short.mkv"):
+        if os.path.exists(os.path.join(d, name)):
+            return os.path.join(d, name)
+    try:
+        return sources.download(p["reference_url"], d, "short")
+    except sources.SourceError:
+        return None
+
+
+def excerpt_window(p: Dict, ref_plans: List[int]) -> Tuple[float, float]:
+    """Where a scene is in the reference (its shots' times), narrowed to one
+    real shot of the downloaded Short and to EXCERPT_MAX seconds from its middle."""
+    plans = (p.get("reference") or {}).get("plans") or []
+    spans = []
+    for i in ref_plans:
+        if 0 <= i < len(plans):
+            try:
+                spans.append((float(plans[i]["debut"]), float(plans[i]["fin"])))
+            except (KeyError, TypeError, ValueError):
+                continue
+    if not spans:
+        raise PipelineError("Cette scène n'a pas de plan repéré dans le Short modèle.")
+    a, b = min(x for x, _ in spans), max(y for _, y in spans)
+    path = _short_file(p)
+    if path:
+        try:                            # the longest real shot inside the scene: no cut in the excerpt
+            shots = [(max(x, a), min(y, b)) for x, y in sources.detect_cuts(path, sources.probe(path), None, min_len=0.8)
+                     if min(y, b) - max(x, a) > 0.8]
+            longest = max(shots, key=lambda s: s[1] - s[0]) if shots else None
+            if longest and longest[1] - longest[0] >= 2.0:
+                a, b = longest
+            # else: a scene cut in quick shots (measured: 1 s at most) — its cuts all show the same scene, keep them
+        except Exception:
+            pass
+    mid = (a + b) / 2
+    half = min(EXCERPT_MAX, b - a) / 2
+    return round(mid - half, 2), round(mid + half, 2)
+
+
+def _excerpts_used(p: Dict) -> int:
+    return sum(1 for x in p.get("picks") or [] if x and x.get("extrait")) + \
+        sum(1 for c in (p.get("clips") or {}).values() if c.get("extrait") and not str(c.get("id", "")).startswith("P"))
+
+
+def use_excerpt_for_plan(pid: str, plan: int) -> Dict:
+    """"Script d'abord", last resort: a plan nobody filmed takes a few seconds
+    of the reference itself (never the hook, two per video at most)."""
+    p = load(pid)
+    _expect(p, "images_review")
+    plans = p["storyboard"]["plans"]
+    if not 0 <= plan < len(plans):
+        raise PipelineError("Plan inconnu.")
+    if plan == 0 or plans[plan]["role"] == "accroche":
+        raise PipelineError("Pas pour l'accroche : c'est la scène la plus reconnaissable du modèle.")
+    if _excerpts_used(p) >= EXCERPTS_PER_VIDEO and not (p["picks"][plan] or {}).get("extrait"):
+        raise PipelineError(f"Déjà {EXCERPTS_PER_VIDEO} extraits du Short modèle : c'est le maximum par vidéo.")
+    ref_plans = [k - 1 for k in plans[plan].get("plans_modele") or [] if k >= 1]
+    a, b = excerpt_window(p, ref_plans)
+    need = plans[plan]["duree"]
+    p = load(pid)
+    p["picks"][plan] = {"url": p["reference_url"], "titre": "Extrait du Short modèle", "niveau": "extrait",
+                        "moment": {"debut": a, "fin": b}, "auto": False, "extrait": True,
+                        "raison": (f"La phrase dure {need} s pour {b - a:.1f} s d'extrait : raccourcis-la."
+                                   if need > b - a + 0.2 else "Un court extrait, nettoyé, sous ta voix et ton montage.")}
+    return save(p)
+
+
+def add_excerpt_source(pid: str, scene: int) -> Dict:
+    """"Sources d'abord", last resort: a scene nobody filmed gets a clip of a
+    few seconds from the reference itself, cleaned, credited."""
+    p = load(pid)
+    _expect(p, "sources_search", "sources_review")
+    scenes = (p.get("suggestions") or {}).get("scenes") or []
+    if not 0 <= scene < len(scenes):
+        raise PipelineError("Scène inconnue.")
+    if _excerpts_used(p) >= EXCERPTS_PER_VIDEO:
+        raise PipelineError(f"Déjà {EXCERPTS_PER_VIDEO} extraits du Short modèle : c'est le maximum par vidéo.")
+    a, b = excerpt_window(p, scenes[scene].get("plans") or [])
+    path = _short_file(p)
+    if not path:
+        raise PipelineError("Le Short modèle n'a pas pu être téléchargé (YouTube refuse) : réessaie plus tard.")
+    work = os.path.join(project_dir(pid), "work")
+    os.makedirs(work, exist_ok=True)
+    found = sources.find_boxes([sources.still(path, (a + b) / 2, None, os.path.join(work, f"excerpt{scene}.jpg"))])
+    p = load(pid)
+    metas = p.get("sources") or []
+    idx = next((i for i, m in enumerate(metas) if m and m.get("url") == p["reference_url"]), None)
+    if idx is None:                     # the reference becomes one more (already downloaded) source
+        meta = {**sources.source_meta(path), "url": p["reference_url"]}
+        metas.append(meta)
+        p["source_urls"] = p.get("source_urls", []) + [p["reference_url"]]
+        idx = len(metas) - 1
+    n = sum(1 for c in p["clips"].values() if c.get("extrait")) + 1
+    c = sources.clip_at(path, idx, f"M{n}", a, b, found[0], desc=scenes[scene]["scene"] + " (extrait du Short modèle)")
+    c.update(extrait=True, usable=True)
+    p["clips"][c["id"]] = c
+    p["sources"] = metas
+    guess = guess_credits(metas, p["clips"])
+    if not p.get("credits") or p.get("credits") == p.get("credits_auto"):
+        handle = (metas[idx] or {}).get("handle")
+        p["credits"] = " · ".join(x for x in dict.fromkeys([*guess.split(" · "), handle or ""]) if x)[:120]
+        p["credits_auto"] = p["credits"]
+    p.update(status="sources_review", error=None, failed_step=None)
     return save(p)
 
 

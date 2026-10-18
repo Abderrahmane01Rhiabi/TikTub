@@ -45,6 +45,7 @@ REGLES
 - REECRIS avec tes propres phrases, ne traduis jamais le texte d'origine mot a mot.
 - Faits exacts et prudents, jamais absolus quand ce n'est pas certain.
 - 6 a 8 passages. Chaque passage = UN clip (sa lettre) qui illustre la phrase. JAMAIS deux fois le meme clip.
+  Un clip marque "(extrait du Short modele)" ne sert JAMAIS au 1er passage, et sa phrase tient en 3 secondes.
 - 1er passage : une QUESTION qui donne envie de rester, dans le bandeau ET dans la phrase, sur un clip dont le moment fort arrive vite.
 - Dernier passage : une phrase COMPLETE qui REPOND a la question du debut et conclut seule. Jamais une relance,
   une question ou une phrase en suspens ("Mais au fait…", "Et vous ?", "…").
@@ -186,6 +187,8 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
         if end[-1:] in (",", ":", "،", ";", "…") or end.endswith("..."):
             shown = "…" if end.endswith(("…", "...")) else end[-1]
             out.append(f"Passage {k} : phrase incomplète (elle finit par « {shown} »).")
+        if k == 1 and (clips.get(p["clip"]) or {}).get("extrait"):
+            out.append("Passage 1 : l'accroche ne peut pas être un extrait du Short modèle, choisis un autre clip.")
         if p["clip"] in seen and usable >= len(ps):           # with too few clips, a repeat is the only way
             out.append(f"Passage {k} : le clip {p['clip']} est déjà utilisé au passage {seen[p['clip']]}, choisis-en un autre.")
         seen.setdefault(p["clip"], k)

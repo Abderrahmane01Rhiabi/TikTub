@@ -109,6 +109,8 @@ Une scène marquée **« Publicité dans le modèle »** (la démonstration d'un
 
 Coche les vidéos qui conviennent, puis **Télécharger et analyser**. Pas besoin des vidéos exactes : des images équivalentes suffisent, puisque ton script est réécrit. Pour aller plus loin à la main, l'extension **InVID-WeVerify** découpe une vidéo en images et lance toutes les recherches par image.
 
+**Rien trouvé pour une scène ?** En dernier recours, **« Extrait du Short modèle »** prend **3 secondes au plus** de cette scène dans le Short modèle, **nettoyées** (ses sous-titres, bandeaux et logos recadrés ou effacés) et **créditées** (son créateur est ajouté aux crédits). **2 extraits au plus** par vidéo, **jamais pour l'accroche** (la scène la plus reconnaissable). Ta voix, tes bandeaux et tes flèches passent par-dessus. Le même bouton existe en « Script d'abord », sous un plan sans vidéo.
+
 Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées. Une vidéo qui ne se télécharge pas est **ignorée avec un avertissement**, et **Réessayer** la retente.
 
 **Si YouTube bloque le téléchargement** (« confirme que tu n'es pas un robot ») : l'app réessaie toute seule une fois. Sinon, ça passe souvent après une heure. La vraie solution : un fichier de cookies YouTube, `youtube_cookies.txt`, à la racine de TikTub :

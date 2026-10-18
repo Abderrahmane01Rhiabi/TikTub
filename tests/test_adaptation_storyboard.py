@@ -490,3 +490,73 @@ def test_fetching_again_keeps_the_clips_of_the_unchanged_plans(project, fakes, m
     assert p["clips"]["P1"] == first["P1"] and p["clips"]["P3"]["src"].endswith(downloads[1][0] + ".mp4")
     assert p["source_urls"] == ["https://www.youtube.com/watch?v=aaaaaaaaaaa", "https://www.tiktok.com/@a/video/9"]
     assert [m["handle"] for m in p["sources"]] == ["@auteur", "@auteur"] and p["clips"]["P3"]["source"] == 1
+
+
+# ---------------------------------------------------------------- last resort: an excerpt of the reference
+
+def test_excerpt_window_stays_inside_one_shot_and_three_seconds(project, fakes, monkeypatch):
+    from adaptation import sources
+    pid = new_project(project)["project_id"]
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    p["reference"]["plans"] = [{"debut": 0, "fin": 4}, {"debut": 4, "fin": 12}, {"debut": 12, "fin": 15}]
+    monkeypatch.setattr(ap, "_short_file", lambda p: None)
+    assert ap.excerpt_window(p, [1]) == (6.5, 9.5)
+    monkeypatch.setattr(ap, "_short_file", lambda p: "short.mp4")
+    monkeypatch.setattr(sources, "probe", lambda path: {"duration": 15})
+    monkeypatch.setattr(sources, "detect_cuts", lambda *a, **k: [(0, 4), (4, 6), (6.1, 11.9), (12, 15)])
+    assert ap.excerpt_window(p, [1]) == (7.5, 10.5)            # the longest real shot of the scene, its middle
+    assert ap.excerpt_window(p, [2]) == (12.0, 15.0)
+    monkeypatch.setattr(sources, "detect_cuts", lambda *a, **k: [(4, 5.1), (5.2, 6.3), (6.4, 7.4), (7.5, 8.6), (8.7, 12)])
+    assert ap.excerpt_window(p, [1]) == (8.85, 11.85)          # quick cuts, but one 3.3 s shot: that one…
+    monkeypatch.setattr(sources, "detect_cuts", lambda *a, **k: [(4 + k, 4.9 + k) for k in range(8)])
+    assert ap.excerpt_window(p, [1]) == (6.5, 9.5)             # …all under 2 s: 3 s of the scene, cuts included
+    with pytest.raises(ap.PipelineError):
+        ap.excerpt_window(p, [9])
+
+
+def test_script_first_excerpt_never_for_the_hook_two_at_most(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    monkeypatch.setattr(ap, "excerpt_window", lambda p, plans: (6.5, 9.5))
+    with pytest.raises(ap.PipelineError, match="accroche"):
+        ap.use_excerpt_for_plan(pid, 0)
+    p = ap.use_excerpt_for_plan(pid, 5)
+    pick = p["picks"][5]
+    assert pick["extrait"] and pick["url"] == "https://youtube.com/shorts/x" and pick["moment"] == {"debut": 6.5, "fin": 9.5}
+    ap.use_excerpt_for_plan(pid, 4)
+    with pytest.raises(ap.PipelineError, match="maximum"):
+        ap.use_excerpt_for_plan(pid, 3)
+    assert ap.use_excerpt_for_plan(pid, 5)["picks"][5]["extrait"]          # redoing one already counted is fine
+
+
+def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatch):
+    import json as _json
+    from adaptation import sources
+    from adaptation import pipeline
+    project.add_channel("chanA")
+    (Path("channels") / "chanA" / "profile.json").write_text(_json.dumps({"language_hint": "fr", "adaptation": {"voice_id": "v"}}))
+    import db
+    db.upsert_voice({"voice_id": "v", "name": "v", "language": "fr"})
+    pid = ap.create("https://youtube.com/shorts/ref", [], [{"channel": "chanA", "profile": {"language_hint": "fr",
+                    "adaptation": {"voice_id": "v"}}, "music_dir": "."}])["project_id"]
+    p = ap.load(pid)
+    p.update(status="sources_search", reference={"plans": [{"debut": 0, "fin": 3}, {"debut": 3, "fin": 9}]},
+             suggestions={"scenes": [{"scene": "l'accroche", "plans": [0]}, {"scene": "l'homme au masque", "plans": [1]}]})
+    ap.save(p)
+    monkeypatch.setattr(ap, "_short_file", lambda p: "short.mp4")
+    monkeypatch.setattr(sources, "probe", lambda path: {"duration": 9})
+    monkeypatch.setattr(sources, "detect_cuts", lambda *a, **k: [(0, 3), (3, 9)])
+    monkeypatch.setattr(sources, "still", lambda *a, **k: "s.jpg")
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [([0, 0, 1000, 1000], [], ["@createur_du_short"])])
+    monkeypatch.setattr(sources, "source_meta", lambda path: {"handle": "@createur_du_short"})
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920, "usable": True,
+        "marks": found[2], "desc": desc})
+    p = ap.add_excerpt_source(pid, 1)
+    c = p["clips"]["M1"]
+    assert p["status"] == "sources_review" and c["extrait"] and (c["start"], c["end"]) == (4.5, 7.5)
+    assert "extrait du Short modèle" in c["desc"] and "@createur_du_short" in p["credits"]
+    assert p["source_urls"] == ["https://youtube.com/shorts/ref"] and len(p["sources"]) == 1
+    sc = {"passages": [{"clip": "M1", "texte": "Court.", "bandeau": "", "mots_cles": []}]}
+    from adaptation import script
+    assert any("accroche" in x for x in script.problems(sc, p["clips"], "fr"))
