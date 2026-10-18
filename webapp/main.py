@@ -1335,7 +1335,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         base["source_urls"] = p.get("source_urls") or []
         base["pending_excerpts"] = p.get("pending_excerpts") or []
         sb = p.get("storyboard")
-        base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree", "retire", "adapte")}
+        base["storyboard"] = {"plans": [{k: pl.get(k) for k in ("role", "image", "plans_modele", "duree", "retire", "adapte", "annotation")}
                                         for pl in sb["plans"]],
                               "corrections": sb.get("corrections") or []} if sb else None
         base["picks"] = p.get("picks")

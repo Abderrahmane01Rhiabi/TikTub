@@ -653,3 +653,15 @@ def test_api_versions_angle_and_new_version(client, project, fakes):
     assert p["angle"]["titre"] and len(p["angles"]) >= 2 and sorted(p["group_channels"]) == ["chanA", "chanB"]
     assert client.post(f"/api/adaptations/{pid}/angle", json={}).status_code == 400
     assert client.post(f"/api/adaptations/{pid}/new-version", json={"channel": "chanB"}).status_code == 400
+
+
+def test_an_arrow_set_on_the_storyboard_comes_back_to_the_page(client, project, fakes):
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")], mode="script")["project_id"]
+    ap.run_analysis(pid)
+    p = client.get(f"/api/adaptations/{pid}").json()
+    plan_ = {**p["targets"][0]["script"], "passages": [{**x, "image": p["storyboard"]["plans"][k]["image"]}
+                                                      for k, x in enumerate(p["targets"][0]["script"]["passages"])]}
+    plan_["passages"][0]["annotation"] = {"type": "cercle", "cible": "la semelle collée au sol"}
+    r = client.put(f"/api/adaptations/{pid}/targets/chanA/plan", json={"plan": plan_}).json()
+    assert r["storyboard"]["plans"][0]["annotation"] == {"type": "cercle", "cible": "la semelle collée au sol"}
+    assert client.get(f"/api/adaptations/{pid}").json()["storyboard"]["plans"][0]["annotation"]["cible"] == "la semelle collée au sol"
