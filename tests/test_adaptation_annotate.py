@@ -102,3 +102,27 @@ def test_render_lays_the_annotations_on_the_picture_box(monkeypatch, tmp_path):
     graph = seen["cmd"][seen["cmd"].index("-filter_complex") + 1]
     assert "setpts=PTS-STARTPTS+0.400/TB[an0]" in graph and "[box][an0]overlay=0:0:eof_action=pass[bx0]" in graph
     assert "[bgc][bx0]overlay" in graph
+
+
+def test_review_decides_the_arrows_again_on_the_real_clips(tmp_path, monkeypatch):
+    from adaptation import sources
+    monkeypatch.setattr(sources, "clip_still", lambda c, out: Image.new("RGB", (8, 8)).save(out) or out)
+    passages = [{"clip": "P1", "texte": "Pourquoi ?", "annotation": {"type": "fleche", "cible": "la voiture"}},
+                {"clip": "P2", "texte": "Le pneu se plisse.", "annotation": None},
+                {"clip": "PX", "texte": "Sans clip.", "annotation": {"type": "cercle", "cible": "x"}},
+                {"clip": "P3", "texte": "Fin.", "annotation": None}, {"clip": "P4", "texte": "Bonus.", "annotation": None}]
+    clips = {k: clip() for k in ("P1", "P2", "P3", "P4")}
+    seen = {}
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            seen["n"], seen["text"] = len(parts) - 1, parts[-1]["text"]
+            return {"plans": [{"plan": 1, "annotation": None},
+                              {"plan": 2, "annotation": {"type": "Cercle", "cible": "le pneu arrière gauche"}},
+                              {"plan": 3, "annotation": {"type": "fleche", "cible": "a"}},
+                              {"plan": 4, "annotation": {"type": "fleche", "cible": "b"}}]}
+    out = A.review(passages, clips, str(tmp_path), gemini=G())
+    assert seen["n"] == 4 and "fleche sur « la voiture »" in seen["text"]          # a passage without clip is skipped
+    assert out[0] is None and out[1] == {"type": "cercle", "cible": "le pneu arrière gauche"}
+    assert out[2] is None and out[3]["cible"] == "a" and out[4]["cible"] == "b"
+    assert A.review(passages, clips, str(tmp_path), gemini=type("B", (), {"_generate_content": lambda s, *a, **k: "cut"})()) is None

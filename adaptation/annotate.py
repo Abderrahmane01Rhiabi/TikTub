@@ -234,3 +234,66 @@ def prepare(seg: Dict, clip: Dict, ann: Dict, work_dir: str, k: int, gemini=None
     n = frames(path, kind, a, b, d)
     return {"k": k, "dir": d, "frames": n, "start": seg["out"] + (a - seg["ws"]),
             "cache": {"window": [round(a, 2), round(b, 2)], "cible": ann.get("cible"), "path": path}}
+
+
+REVIEW_PROMPT = """Voici {n} images, une par plan d'un YouTube Short (le moment fort de chaque clip), dans l'ordre.
+Plans (numero : phrase dite / fleche ou cercle prevu) :
+{plans}
+
+Revois les fleches et cercles AVEC CES VRAIES IMAGES :
+- 2 ou 3 plans au plus, la ou le spectateur doit ANTICIPER une action (fleche) ou VOIR un detail (cercle) ;
+- la cible DOIT etre clairement visible dans l'image du plan ; decris-la pour qu'on la retrouve
+  (couleur, position : ex. "le pneu arriere gauche", "la voiture rouge a droite") ;
+- garde une annotation prevue si sa cible est bien visible (en precisant la description si besoin),
+  retire-la sinon, et ajoute-en une la ou elle aide vraiment.
+JSON uniquement : {{"plans": [{{"plan": numero, "annotation": null ou {{"type": "fleche | cercle", "cible": "..."}}}}]}}"""
+
+
+def review(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=None) -> Optional[List[Optional[Dict]]]:
+    """The arrows and circles decided again by Gemini looking at the real
+    clips (the storyboard chose them before any footage existed). One
+    annotation (or None) per passage, or None when Gemini can't answer."""
+    from adaptation import sources
+    from adaptation.storyboard import clean_annotation
+    os.makedirs(work_dir, exist_ok=True)
+    stills, idx = [], []
+    for k, x in enumerate(passages):
+        c = clips.get(x.get("clip"))
+        if not c:
+            continue
+        out = os.path.join(work_dir, f"review_{k}.jpg")
+        try:
+            sources.clip_still(c, out)
+        except Exception:
+            continue
+        if os.path.exists(out):
+            stills.append(out)
+            idx.append(k)
+    if not stills:
+        return None
+    listing = "\n".join(
+        f"{n}. {passages[k].get('texte', '')} / " + (f"{a['type']} sur « {a['cible']} »" if (a := passages[k].get("annotation")) else "rien")
+        for n, k in enumerate(idx, 1))
+    parts = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(p, "rb").read()).decode()}}
+             for p in stills]
+    try:
+        from adaptation.sources import _gemini
+        r = (gemini or _gemini())._generate_content(parts + [{"text": REVIEW_PROMPT.format(n=len(stills), plans=listing)}],
+                                                    max_tokens=3000, timeout=120, temperature=0.2)
+    except Exception:
+        return None
+    items = (r.get("plans") if isinstance(r, dict) else None)
+    if not isinstance(items, list):
+        return None
+    out = [None] * len(passages)
+    for e in items:
+        try:
+            n = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= n < len(idx):
+            out[idx[n]] = clean_annotation(e.get("annotation"))
+    kept = [k for k, a in enumerate(out) if a]
+    for k in kept[3:]:                  # never more than three
+        out[k] = None
+    return out

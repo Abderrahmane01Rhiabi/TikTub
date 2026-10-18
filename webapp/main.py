@@ -1303,6 +1303,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base = {k: p.get(k) for k in ("project_id", "status", "reference_url", "credits", "error", "failed_step",
                                    "created_at", "updated_at")}
     base["mode"] = p.get("mode") or "sources"
+    base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
     base["group"] = p.get("group")
     base["angle"] = p.get("angle")
     base["angles"] = p.get("angles") or []

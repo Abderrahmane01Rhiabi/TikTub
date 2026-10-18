@@ -662,6 +662,15 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         names = [n for n in guess.split(" · ") if n] + [m.get("handle") for m in metas if m.get("handle")]
         guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:4])
         p["credits"], p["credits_auto"] = guess, guess        # every channel whose footage is used, not only watermarks
+        report("flèches et cercles revus avec les vrais clips", 0.92)
+        active = _active(p)
+        code = p["targets"][0]["language"]
+        rough = [{**storyboard.script_for(p["storyboard"], code)["passages"][k], "clip": f"P{k + 1}"} for k in active]
+        seen = annotate.review(rough, clips, os.path.join(project_dir(pid), "work"))
+        if seen is not None:            # shared by every language, like the images
+            for k, a in zip(active, seen):
+                p["storyboard"]["plans"][k]["annotation"] = a
+            p["annotations_reviewed"] = True
         for t in p["targets"]:
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
@@ -950,6 +959,10 @@ def run_scripts(pid: str, report: Optional[Report] = None):
             sc = script.write(p["reference"], clips, t["language"])
             report(f"relecture {label}", (i + 0.6) / n)
             sc = script.critique(sc, t["language"], clips)
+            seen = annotate.review(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
+            if seen is not None:        # the arrows decided again looking at the clips themselves
+                for x, a in zip(sc["passages"], seen):
+                    x["annotation"] = a
             left = script.problems(sc, p["clips"], t["language"])
             if left:                                   # what the re-read missed is fixed once more, then shown
                 report(f"correction {label}", (i + 0.85) / n)
