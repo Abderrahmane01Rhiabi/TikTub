@@ -1239,7 +1239,22 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
     music_dir = Path(channel_manager.get_assets_dirs(channel_name)["music"])
     music = sorted(p.name for p in music_dir.iterdir() if p.suffix.lower() in MUSIC_EXTENSIONS) \
         if music_dir.exists() else []
-    return {"settings": s, "music_files": music, "voices": [_serialize_voice(v) for v in ad.voices_for(s["language"])]}
+    from adaptation.render import STYLES
+    return {"settings": s, "music_files": music, "voices": [_serialize_voice(v) for v in ad.voices_for(s["language"])],
+            "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
+
+
+@app.get("/api/adaptation/styles/{name}/preview")
+def adaptation_style_preview(name: str, lang: str = "fr"):
+    """A banner and a caption line drawn in one of the channel styles."""
+    from adaptation import render, langs
+    if name not in render.STYLES:
+        raise HTTPException(status_code=404, detail="Style inconnu")
+    out = os.path.join("temp", "style_previews", f"{name}_{lang}.jpg")
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        render.style_preview(name, langs.lang(lang), out)
+    return FileResponse(out, media_type="image/jpeg")
 
 
 @app.get("/api/channels/{channel_name}/adaptation")

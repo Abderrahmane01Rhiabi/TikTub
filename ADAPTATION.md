@@ -21,6 +21,8 @@ Tu valides à chaque étape importante.
   - **sa voix**, choisie parmi les voix de cette langue ;
   - **sa musique de fond** et **son point de départ**, avec le bouton **Prendre l'instant du lecteur**.
 
+  - **son style visuel** : **Classique** (noir et jaune), **Flamme** (rouge et or), **Néon** (cyan et rose), **Or** (bleu nuit et doré) ou **Clair** (blanc et bleu), avec un aperçu du bandeau et des sous-titres. Il s'applique aux bandeaux et aux sous-titres de **toutes les vidéos Adaptation de la chaîne** — une signature reconnaissable, différente d'une chaîne à l'autre. Un changement vaut aussi pour les projets en cours (au prochain aperçu).
+
 Une chaîne sans voix ne peut pas recevoir d'adaptation.
 
 La clé ElevenLabs doit avoir les permissions **Text to Speech** et **Voices : Read**.

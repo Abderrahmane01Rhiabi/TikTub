@@ -266,7 +266,9 @@ def test_channel_adaptation_settings_language_voice_music(client, project, monke
     project.add_channel("chanA")
     r = client.put("/api/channels/chanA/adaptation", json={"language": "ar", "settings": {
         "voice_id": "v1", "music_file": "../x/song.mp3", "music_start": "33", "bogus": 1}}).json()
-    assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0}
+    assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0,
+                             "style": "classique"}
+    assert [x["name"] for x in r["styles"]][:2] == ["classique", "flamme"]
     assert [v["voice_id"] for v in r["voices"]] == ["v1"]                    # only voices of its language
     assert client.put("/api/channels/chanA/adaptation", json={"language": "xx"}).status_code == 400
 
@@ -656,3 +658,27 @@ def test_a_download_without_picture_is_never_returned(monkeypatch, tmp_path):
     monkeypatch.setattr(sources, "has_picture", lambda path: True)
     assert sources.download("u", str(tmp_path), "c").endswith("c.mp4")
     assert sources.VIDEO_FORMAT.startswith("bv*[vcodec^=avc1]")
+
+
+def test_a_channel_style_colours_its_banners_and_captions(tmp_path):
+    from PIL import Image
+    from adaptation import render, settings
+    from adaptation.langs import lang
+    st = render.style_of("flamme")
+    out = render.banner_png("PNEUS : DÉFORMATION", str(tmp_path / "b.png"), lang("fr"), st)
+    im = Image.open(out).convert("RGBA")
+    reds = sum(1 for x in range(0, render.W, 6) for y in range(20, 140, 6)
+               if im.getpixel((x, y))[0] > 180 and im.getpixel((x, y))[1] < 60 and im.getpixel((x, y))[3] > 200)
+    assert reds > 50                                         # the Flamme box is red
+    ass = tmp_path / "c.ass"
+    passages = [{"mots_cles": ["pneu"], "words": [0, 1]}]
+    words = [{"w": "Le", "start": 0.0, "end": 0.3}, {"w": "pneu", "start": 0.3, "end": 0.7}]
+    segs = [{"k": 0, "va": 0.0, "vb": 1.0, "out": 0.0, "dur": 1.2, "ws": 0.0}]
+    render.captions_ass(passages, words, segs, str(ass), lang("fr"), render.style_of("neon"))
+    assert render._ass_color("#00E5FF") in ass.read_text()   # the Néon keyword colour
+    assert render.style_of("inconnu") is render.STYLES["classique"]
+    assert settings.channel_settings({"adaptation": {"style": "or"}})["style"] == "or"
+    assert settings.channel_settings({"adaptation": {"style": "n'importe"}})["style"] == "classique"
+    assert settings.clean_update({"style": "neon"}) == {"style": "neon"} and settings.clean_update({"style": "x"}) == {}
+    render.style_preview("clair", lang("ar"), str(tmp_path / "p.jpg"))
+    assert (tmp_path / "p.jpg").exists()

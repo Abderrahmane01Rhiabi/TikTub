@@ -31,6 +31,55 @@ BOX_X, BOX_Y, BOX_W, BOX_H = 30, 380, 1020, 980
 BANNER_Y, CREDIT_Y, CAPTION_Y = 220, 150, 1500
 GAP = 0.18                                         # pause kept between two sentences
 KEY_COLORS = ["#FFD60A", "#FF4D8D", "#4ADE80"]     # yellow, pink, green — one per sentence
+
+# A channel's look (Réglages → Voix): its banners and captions, the same on every video it publishes.
+STYLES = {
+    "classique": {"label": "Classique", "box": (14, 14, 16, 240), "border": (255, 255, 255, 220), "head": "white",
+                  "key": "#FFD60A", "words": ["#FFD60A", "#FF4D8D", "#4ADE80"], "text": "#FFFFFF", "outline": "#000000"},
+    "flamme": {"label": "Flamme", "box": (200, 24, 36, 245), "border": (255, 214, 10, 255), "head": "white",
+               "key": "#FFD60A", "words": ["#FFB020", "#FF4D3D", "#FFD60A"], "text": "#FFFFFF", "outline": "#000000"},
+    "neon": {"label": "Néon", "box": (8, 8, 20, 240), "border": (0, 229, 255, 255), "head": "white",
+             "key": "#00E5FF", "words": ["#00E5FF", "#FF3DF5", "#B6FF3B"], "text": "#FFFFFF", "outline": "#000000"},
+    "or": {"label": "Or", "box": (16, 22, 40, 245), "border": (232, 190, 92, 255), "head": "white",
+           "key": "#F2C94C", "words": ["#F2C94C", "#F2994A", "#FFFFFF"], "text": "#FFFFFF", "outline": "#101828"},
+    "clair": {"label": "Clair", "box": (255, 255, 255, 245), "border": (20, 20, 20, 255), "head": "#111111",
+              "key": "#2563EB", "words": ["#60A5FA", "#F472B6", "#34D399"], "text": "#FFFFFF", "outline": "#0B1220"},
+}
+
+
+def style_of(name: Optional[str]) -> Dict:
+    return STYLES.get(name or "", STYLES["classique"])
+
+
+def style_preview(name: str, lang: Dict, path: str) -> str:
+    """A banner and a caption line drawn in a style, on a dark picture — what
+    the settings show next to the choice."""
+    st = style_of(name)
+    rtl = lang["rtl"]
+    banner_text = "إطارات : لغز التجعد" if rtl else "PNEUS : DÉFORMATION"
+    words = (["لماذا", "تتجعد", "الإطارات؟"] if rtl else ["POURQUOI", "LE PNEU", "SE PLISSE ?"])
+    img = Image.new("RGBA", (W, 560), (34, 38, 46, 255))
+    for y in range(560):                                        # a soft vertical gradient, like a dim picture
+        ImageDraw.Draw(img).line([(0, y), (W, y)], fill=(30 + y // 20, 34 + y // 22, 44 + y // 18, 255))
+    tmp = path + ".banner.png"
+    banner_png(banner_text, tmp, lang, st)
+    img.alpha_composite(Image.open(tmp).convert("RGBA"), (0, 30))
+    os.remove(tmp)
+    d = ImageDraw.Draw(img)
+    kw = {"direction": "rtl", "language": "ar"} if rtl else {}
+    cols = [st["text"], st["words"][0], st["text"]]
+    for size in (96, 86, 76, 68, 60):                          # the line fits the picture
+        font = ImageFont.truetype(font_path(lang["banner_font"]), size)
+        widths = [d.textlength(w + " ", font=font, **kw) for w in words]
+        if sum(widths) <= W - 120:
+            break
+    x = (W - sum(widths)) / 2
+    order = list(zip(words, cols, widths))[::-1] if rtl else list(zip(words, cols, widths))
+    for w, col, wd in order:
+        d.text((x, 410), w, font=font, fill=col, anchor="lm", stroke_width=7, stroke_fill=st["outline"], **kw)
+        x += wd
+    img.convert("RGB").resize((W // 2, 280)).save(path, quality=88)
+    return path
 BANNER_KEY = "#FFD60A"
 EMOJI_FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 MUSIC_GAIN = 0.16                                  # under a -16 LUFS voice
@@ -114,22 +163,24 @@ def _draw_runs(img, center, parts, font, rtl, emoji=None, emoji_size=0):
     return total
 
 
-def banner_parts(text: str) -> Tuple[List[Tuple[str, str]], Optional[str]]:
-    """'HEAD : TAIL 😐' -> white head + yellow tail; no colon -> last word yellow."""
+def banner_parts(text: str, head: str = "white", key: str = None) -> Tuple[List[Tuple[str, str]], Optional[str]]:
+    """'HEAD : TAIL 😐' -> head colour + key colour tail; no colon -> last word in the key colour."""
+    key = key or BANNER_KEY
     clean, emoji = split_emoji(text)
     if ":" in clean:
-        head, tail = clean.split(":", 1)
-        return [(head.strip() + " : ", "white"), (tail.strip(), BANNER_KEY)], emoji
+        h, tail = clean.split(":", 1)
+        return [(h.strip() + " : ", head), (tail.strip(), key)], emoji
     ws = clean.split()
     if len(ws) > 1:
-        return [(" ".join(ws[:-1]) + " ", "white"), (ws[-1], BANNER_KEY)], emoji
-    return [(clean, BANNER_KEY)], emoji
+        return [(" ".join(ws[:-1]) + " ", head), (ws[-1], key)], emoji
+    return [(clean, key)], emoji
 
 
-def banner_png(text: str, path: str, lang: Dict) -> str:
-    """Rounded dark box with a thin white border, sized to its text."""
+def banner_png(text: str, path: str, lang: Dict, style: Optional[Dict] = None) -> str:
+    """Rounded box with a border, sized to its text, in the channel's style."""
+    st = style or STYLES["classique"]
     img = Image.new("RGBA", (W, 300), (0, 0, 0, 0))
-    parts, emoji = banner_parts(text)
+    parts, emoji = banner_parts(text, st["head"], st["key"])
     if lang["rtl"]:
         parts = [(s.replace(" : ", ": "), c) for s, c in parts]
     d = ImageDraw.Draw(img)
@@ -144,7 +195,7 @@ def banner_png(text: str, path: str, lang: Dict) -> str:
     shadow = Image.new("RGBA", img.size, (0, 0, 0, 0))
     ImageDraw.Draw(shadow).rounded_rectangle((x0, y0 + 6, x0 + bw, y0 + bh + 6), 22, fill=(0, 0, 0, 160))
     img.alpha_composite(shadow.filter(ImageFilter.GaussianBlur(8)))
-    d.rounded_rectangle((x0, y0, x0 + bw, y0 + bh), 22, fill=(14, 14, 16, 240), outline=(255, 255, 255, 220), width=3)
+    d.rounded_rectangle((x0, y0, x0 + bw, y0 + bh), 22, fill=st["box"], outline=st["border"], width=4)
     _draw_runs(img, (W / 2, y0 + bh / 2 + 2), parts, font, lang["rtl"], emoji, size)
     img.save(path)
     return path
@@ -232,23 +283,28 @@ def caption_groups(ws: List[Dict], lang: Dict) -> List[List[Dict]]:
     return groups
 
 
-def captions_ass(passages: List[Dict], words: List[Dict], segs: List[Dict], path: str, lang: Dict) -> int:
+def captions_ass(passages: List[Dict], words: List[Dict], segs: List[Dict], path: str, lang: Dict,
+                 style: Optional[Dict] = None) -> int:
     """1-3 words at a time, centred under the box, popping in; the sentence's
     keywords in its colour. Arabic: every word is its own colour run and the
     style's encoding is -1 (right-to-left base) — measured: with one multi-word
     run after a colour change, libass laid the words out left to right."""
     enc = -1 if lang["rtl"] else 1
+    st = style or STYLES["classique"]
+    base, outline = _ass_color(st["text"]).strip("&") , _ass_color(st["outline"]).strip("&")
+    base, outline = "&" + base, "&" + outline
+    reset = base + "&"
     lines = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 2", "",
              "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
              "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, "
              "MarginL, MarginR, MarginV, Encoding",
-             f"Style: Cap,{lang['caption_font']},{lang['caption_size']},&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,"
+             f"Style: Cap,{lang['caption_font']},{lang['caption_size']},{base},{base},{outline},&H90000000,"
              f"0,0,0,0,100,100,0,0,1,7,4,5,60,60,0,{enc}",
              "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     n = 0
     for k, p in enumerate(passages):
-        colour = _ass_color(KEY_COLORS[k % len(KEY_COLORS)])
+        colour = _ass_color(st["words"][k % len(st["words"])])
         keys = {_norm(x) for kw in p.get("mots_cles") or [] for x in str(kw).split()}
         groups = caption_groups([words[i] for i in p["words"]], lang)
         for g, grp in enumerate(groups):
@@ -262,9 +318,9 @@ def captions_ass(passages: List[Dict], words: List[Dict], segs: List[Dict], path
                 word = (w["w"].upper() if lang["upper"] else w["w"]).replace("{", "").replace("}", "")
                 hit = _norm(w["w"]) in keys
                 if lang["rtl"]:
-                    parts.append(f"{{\\c{colour if hit else '&H00FFFFFF&'}}}{word}")
+                    parts.append(f"{{\\c{colour if hit else reset}}}{word}")
                 else:
-                    parts.append(f"{{\\c{colour}}}{word}{{\\c&H00FFFFFF&}}" if hit else word)
+                    parts.append(f"{{\\c{colour}}}{word}{{\\c{reset}}}" if hit else word)
             # a single word wider than the screen is squeezed to fit, never cut
             fit = min(100, int(100 * CAPTION_MAX_W / max(1.0, caption_width([w["w"] for w in grp], lang))))
             pop = (rf"{{\an5\pos({W // 2},{CAPTION_Y})\fscx{int(fit * 0.8)}\fscy80"
@@ -339,7 +395,8 @@ def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
 
 def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
-           preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None) -> Dict:
+           preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None,
+           style: Optional[str] = None) -> Dict:
     """annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
     picture box under the banners and captions.
     passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
@@ -349,11 +406,12 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
     os.makedirs(work_dir, exist_ok=True)
     segs, total = build_timeline(passages, clips)
 
-    banners = [banner_png(p["bandeau"], os.path.join(work_dir, f"banner_{k}.png"), lang) for k, p in enumerate(passages)]
+    look = style_of(style)
+    banners = [banner_png(p["bandeau"], os.path.join(work_dir, f"banner_{k}.png"), lang, look) for k, p in enumerate(passages)]
     credit_file = credit_png(credit, os.path.join(work_dir, "credit.png"), lang)
     corners = corners_png(os.path.join(work_dir, "corners.png"))
     ass = os.path.join(work_dir, "captions.ass")
-    n_caps = captions_ass(passages, words, segs, ass, lang)
+    n_caps = captions_ass(passages, words, segs, ass, lang, look)
 
     inputs: List[str] = []
     g: List[str] = []

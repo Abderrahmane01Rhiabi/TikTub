@@ -105,7 +105,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         music = os.path.join(c["music_dir"], s["music_file"]) if s["music_file"] else None
         targets.append({"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
                         "music_path": music if music and os.path.exists(music) else None,
-                        "music_start": s["music_start"], "script": None, "approved": False,
+                        "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
                         "validated": False, "video_id": None})
     base = {"status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
             "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
@@ -1121,9 +1121,20 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
                       os.path.join(base, "work"), credit=p["credits"],
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
-                                                   offset + share * (0.3 + 0.6 * f)), annotations=anns)
+                                                   offset + share * (0.3 + 0.6 * f)), annotations=anns,
+                      style=_style_of(t))
     c = checks.verify(out, voice_mp3, t["voice"]["passages"])
     return {"path": out, "summary": r, "checks": c}
+
+
+def _style_of(t: Dict) -> str:
+    """The channel's look as set now in Réglages → Voix (a change applies to the
+    projects under way), else the one it had when the project was made."""
+    try:
+        from channel_manager import ChannelManager
+        return settings.channel_settings(ChannelManager().get_channel_profile(t["channel"]))["style"]
+    except Exception:
+        return t.get("style") or "classique"
 
 
 def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float) -> List[Dict]:
