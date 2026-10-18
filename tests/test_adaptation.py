@@ -163,7 +163,7 @@ def test_normalise_cleans_gemini_output():
         {"clip": " a ", "texte": "  Une   phrase. ", "bandeau": "B", "mots_cles": ["x", "", "y", "z", "w"]},
         {"clip": "B", "texte": ""}]}, _clips())
     assert len(sc["titre"]) == 100 and sc["tags"] == ["a"]
-    assert sc["passages"] == [{"clip": "A", "bandeau": "B", "texte": "Une phrase.", "mots_cles": ["x", "y", "z"]}]
+    assert sc["passages"] == [{"clip": "A", "bandeau": "B", "texte": "Une phrase.", "mots_cles": ["x", "y", "z"], "annotation": None}]
     with pytest.raises(script.ScriptError):
         script.normalise({"error": "boom"}, _clips())
 
@@ -176,7 +176,7 @@ def test_critique_keeps_the_clips_and_falls_back_on_a_bad_answer():
         {"clip": "A", "texte": "Pourquoi ?", "bandeau": "", "mots_cles": []}]}
     good = {"passages": [{"clip": "B", "texte": "Pourquoi donc ?", "bandeau": "", "mots_cles": []}], "corrections": ["x"]}
     fixed = script.critique(sc, "fr", _clips(), gemini=Fake(good))
-    assert fixed["passages"][0] == {"clip": "A", "bandeau": "", "texte": "Pourquoi donc ?", "mots_cles": []}
+    assert fixed["passages"][0] == {"clip": "A", "bandeau": "", "texte": "Pourquoi donc ?", "mots_cles": [], "annotation": None}
     assert fixed["corrections"] == ["x"]
     assert script.critique(sc, "fr", _clips(), gemini=Fake({"passages": []}))["passages"] == sc["passages"]
 

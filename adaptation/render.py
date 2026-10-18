@@ -339,8 +339,10 @@ def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
 
 def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
-           preview: bool = False, progress_cb=None) -> Dict:
-    """passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
+           preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None) -> Dict:
+    """annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
+    picture box under the banners and captions.
+    passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
     times; words: [{w, start, end}]; clips: id -> {src, start, end, impact, w, h, crop?,
     delogo?, audio_ok?}. Returns {duration, segments, captions}."""
     lang = lang_of(lang_code)
@@ -369,6 +371,12 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
         c = clips[s["clip"]]
         g += clip_chain(src_index[c["src"]], s["k"], c, s)
     g.append("".join(f"[v{s['k']}]" for s in segs) + f"concat=n={len(segs)}:v=1:a=0[box]")
+    box = "box"
+    for j, an in enumerate(annotations or []):              # each one a PNG sequence, shifted to its moment
+        ai = add_input("-framerate", str(FPS), "-i", os.path.join(an["dir"], "f_%03d.png"))
+        g.append(f"[{ai}:v]format=rgba,setpts=PTS-STARTPTS+{an['start']:.3f}/TB[an{j}]")
+        g.append(f"[{box}][an{j}]overlay=0:0:eof_action=pass[bx{j}]")
+        box = f"bx{j}"
 
     # narration, pauses tightened, one loudness for every video
     for s in segs:
@@ -411,7 +419,7 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
     ki = add_input("-loop", "1", "-i", corners)
     bi = [add_input("-loop", "1", "-i", b) for b in banners]
     g.append(f"color=black:s={W}x{H}:r={FPS}:d={total:.3f}[bgc]")
-    g.append(f"[bgc][box]overlay={BOX_X}:{BOX_Y}:shortest=1[p0]")
+    g.append(f"[bgc][{box}]overlay={BOX_X}:{BOX_Y}:shortest=1[p0]")
     g.append(f"[p0][{ki}:v]overlay={BOX_X}:{BOX_Y}:shortest=1[p1]")
     g.append(f"[p1][{ci}:v]overlay=0:{CREDIT_Y}:shortest=1[p2]")
     cur = "p2"

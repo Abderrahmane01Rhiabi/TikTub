@@ -54,11 +54,14 @@ REGLES
 - Duree totale de lecture : 27 a 33 secondes.
 - Bandeau : 2 a 5 mots percutants + 1 emoji, different a chaque passage, format "SUJET : DETAIL 😐" de preference.
 - mots_cles : 1 ou 2 mots EXACTS de la phrase, a colorer dans les sous-titres.
+- FLECHES ET CERCLES : sur 2 ou 3 passages seulement, ceux ou il faut ANTICIPER une action (la voiture qui va
+  etre percutee) ou VOIR un detail, "annotation": {{"type": "fleche" ou "cercle", "cible": "ce qu'il faut pointer,
+  visible dans le clip (ex. la voiture noire a droite)"}} ; sinon "annotation": null.
 - titre (100 caracteres max, avec 1-2 emojis), description (2-3 phrases + 3 a 5 hashtags dont #shorts), tags (8 a 12).
 
 JSON uniquement :
 {{"titre": "", "description": "", "tags": [""],
-  "passages": [{{"clip": "A", "bandeau": "", "texte": "", "mots_cles": [""]}}]}}"""
+  "passages": [{{"clip": "A", "bandeau": "", "texte": "", "mots_cles": [""], "annotation": null}}]}}"""
 
 REVISE_PROMPT = """Voici le script d'un Short (JSON) :
 {script}
@@ -159,9 +162,11 @@ def normalise(r, clips: Dict[str, Dict]) -> Dict:
     for p in r["passages"]:
         if not isinstance(p, dict) or not str(p.get("texte", "")).strip():
             continue
+        from adaptation.storyboard import clean_annotation
         passages.append({"clip": str(p.get("clip", "")).strip().upper(), "bandeau": str(p.get("bandeau", "")).strip(),
                          "texte": " ".join(str(p["texte"]).split()),
-                         "mots_cles": [str(m) for m in p.get("mots_cles") or [] if str(m).strip()][:3]})
+                         "mots_cles": [str(m) for m in p.get("mots_cles") or [] if str(m).strip()][:3],
+                         "annotation": clean_annotation(p.get("annotation"))})
     tags = [str(t).strip() for t in r.get("tags") or [] if str(t).strip()]
     return {"titre": str(r.get("titre", "")).strip()[:100], "description": str(r.get("description", "")).strip(),
             "tags": tags[:15], "passages": passages}

@@ -36,7 +36,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
 import db
-from adaptation import checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
+from adaptation import annotate, checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
 
 BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
@@ -259,6 +259,8 @@ def edit_plan(pid: str, channel: str, new: Dict) -> Dict:
         raise PipelineError("Le nombre de plans ne peut pas changer ici : demande-le à l'IA.")
     images_changed = False
     for plan, x in zip(b["plans"], passages):
+        if "annotation" in x:           # an arrow/circle is shared by every language, like the image
+            plan["annotation"] = storyboard.clean_annotation(x.get("annotation"))
         image = " ".join(str(x.get("image", plan["image"])).split())
         images_changed |= image != plan["image"]
         plan["image"] = image
@@ -789,14 +791,39 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
         t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3)
         t["voice"]["voice_id"] = t["voice_id"]
     out = os.path.join(base, "preview.mp4" if preview else "final.mp4")
+    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2)
     report(f"{'aperçu' if preview else 'rendu'} {t['channel']}", offset + share * 0.3)
     r = render.render(t["voice"]["passages"], t["voice"]["words"], p["clips"], voice_mp3, t["language"], out,
                       os.path.join(base, "work"), credit=p["credits"],
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
-                                                   offset + share * (0.3 + 0.6 * f)))
+                                                   offset + share * (0.3 + 0.6 * f)), annotations=anns)
     c = checks.verify(out, voice_mp3, t["voice"]["passages"])
     return {"path": out, "summary": r, "checks": c}
+
+
+def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float) -> List[Dict]:
+    """The arrows/circles the script asks for, located once (the final render
+    reuses the preview's track); a target not found is simply left out."""
+    passages = (t.get("script") or {}).get("passages") or []
+    wanted = [(k, x["annotation"]) for k, x in enumerate(passages) if (x.get("annotation") or {}).get("cible")]
+    if not wanted:
+        return []
+    report(f"flèches et cercles {t['channel']}", at)
+    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"])
+    cache, out = t.setdefault("ann_cache", {}), []
+    os.makedirs(work, exist_ok=True)
+    for k, ann in wanted:
+        if k >= len(segs):
+            continue
+        try:
+            r = annotate.prepare(segs[k], p["clips"][segs[k]["clip"]], ann, work, k, cached=cache.get(str(k)))
+        except Exception:
+            r = None
+        if r:
+            cache[str(k)] = r.pop("cache")
+            out.append(r)
+    return out
 
 
 def run_voices(pid: str, report: Optional[Report] = None, only: Optional[str] = None):

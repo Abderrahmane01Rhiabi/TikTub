@@ -2890,6 +2890,19 @@ function adClipOptions(p, current){
 
 const AD_ROLE = { accroche: 'Accroche', promesse: 'Promesse', montee: 'Montée', reponse: 'Réponse' };
 
+function adAnnHtml(a){
+  const t = (a && a.type) || '';
+  return `<div class="ad-row ad-ann"><select class="f sc-ann-type" style="width:auto" title="Une flèche pour anticiper un mouvement, un cercle pour un détail">
+      <option value="" ${t ? '' : 'selected'}>Pas de flèche</option><option value="fleche" ${t === 'fleche' ? 'selected' : ''}>➜ Flèche</option>
+      <option value="cercle" ${t === 'cercle' ? 'selected' : ''}>◯ Cercle</option></select>
+    <input class="f sc-ann-cible" value="${esc((a && a.cible) || '')}" placeholder="Quoi pointer (ex. la voiture noire à droite)" style="flex:1;min-width:180px;font-size:12px"></div>`;
+}
+
+function adAnnOf(row){
+  const type = row.querySelector('.sc-ann-type').value, cible = row.querySelector('.sc-ann-cible').value.trim();
+  return type && cible ? { type, cible } : null;
+}
+
 function renderAdPlan(body, p){
   const sb = p.storyboard || { plans: [] };
   const allApproved = p.targets.every(t => t.approved);
@@ -2921,6 +2934,7 @@ function renderAdPlan(body, p){
               <input class="f sc-banner" ${dir} value="${esc(ps.bandeau)}" placeholder="Bandeau">
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
+              ${adAnnHtml(pl.annotation)}
             </div>
           </div>`; }).join('')}</div>
         <label class="f">Description</label><textarea class="f sc-desc" ${dir}>${esc(sc.description || '')}</textarea>
@@ -2943,7 +2957,7 @@ function renderAdPlan(body, p){
       tags: card.querySelector('.sc-tags').value.split(',').map(x => x.trim()).filter(Boolean),
       passages: [...card.querySelectorAll('.ad-plan')].map(row => ({
         image: row.querySelector('.sc-image').value, bandeau: row.querySelector('.sc-banner').value,
-        texte: row.querySelector('.sc-text').value,
+        texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = np; renderAdPlan(body, np); };
     const save = () => api(`/api/adaptations/${p.project_id}/targets/${ch}/plan`, { method:'PUT', body: JSON.stringify({ plan: collect() }) });
@@ -3101,6 +3115,7 @@ function renderAdScripts(body, p){
                 <input class="f sc-banner" ${dir} value="${esc(ps.bandeau)}" placeholder="Bandeau" style="flex:1;min-width:180px"></div>
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
+              ${adAnnHtml(ps.annotation)}
             </div>
           </div>`).join('')}</div>
         <label class="f">Description</label><textarea class="f sc-desc" ${dir}>${esc(sc.description || '')}</textarea>
@@ -3124,7 +3139,7 @@ function renderAdScripts(body, p){
       tags: card.querySelector('.sc-tags').value.split(',').map(x => x.trim()).filter(Boolean),
       passages: [...card.querySelectorAll('.ad-passage')].map(row => ({
         clip: row.querySelector('.sc-clip').value, bandeau: row.querySelector('.sc-banner').value,
-        texte: row.querySelector('.sc-text').value,
+        texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = null; renderAdScripts(body, np); adProject = np; };
     card.querySelectorAll('.sc-clip').forEach(sel => sel.onchange = () =>

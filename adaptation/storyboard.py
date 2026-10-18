@@ -56,6 +56,11 @@ que le modele montre deja ("plans_modele" = ses numeros) : ces videos existent. 
 c'est une video tres courante. Jamais une idee, un schema, un texte ou une image impossible a filmer.
 Pas deux plans avec la meme image.
 
+FLECHES ET CERCLES : sur 2 ou 3 plans seulement (jamais plus), ceux ou le spectateur doit ANTICIPER une action
+(la voiture qui va etre percutee, le tuyau qui va exploser) ou VOIR un detail qu'il raterait, donne "annotation" :
+{{"type": "fleche" (pour anticiper un mouvement) ou "cercle" (pour un detail), "cible": "ce qu'il faut pointer,
+visible a l'image, decrit pour etre trouve (ex. la voiture noire a droite)"}}. Sinon "annotation": null.
+
 TEXTES dans chaque langue demandee, qui disent la meme chose plan par plan, naturels dans chaque langue :
 {langues}
 - bandeau : 2 a 5 mots percutants + 1 emoji, different a chaque plan, format "SUJET : DETAIL 😐" de preference
@@ -64,7 +69,7 @@ TEXTES dans chaque langue demandee, qui disent la meme chose plan par plan, natu
 
 JSON uniquement :
 {{"plans": [{{"role": "accroche | promesse | montee | reponse", "image": "...", "plans_modele": [numeros],
-             "textes": {{{exemple}}}}}],
+             "annotation": null, "textes": {{{exemple}}}}}],
   "meta": {{{exemple_meta}}}}}"""
 
 CRITIQUE_PROMPT = """Tu es un relecteur exigeant de YouTube Shorts. Voici un storyboard ecrit avant de chercher les images (JSON) :
@@ -140,7 +145,7 @@ def revise(bundle: Dict, codes: List[str], request: str, gemini=None) -> Dict:
 
 
 def _public(bundle: Dict) -> Dict:
-    return {"plans": [{k: p.get(k) for k in ("role", "image", "plans_modele", "textes")} for p in bundle["plans"]],
+    return {"plans": [{k: p.get(k) for k in ("role", "image", "plans_modele", "annotation", "textes")} for p in bundle["plans"]],
             "meta": bundle.get("meta") or {}}
 
 
@@ -162,7 +167,7 @@ def normalise(r, codes: List[str]) -> Dict:
         role = str(p.get("role") or "").lower().strip().replace("é", "e")
         plans.append({"role": role if role in ROLES else "montee", "image": " ".join(str(p.get("image") or "").split()),
                       "plans_modele": [int(i) for i in p.get("plans_modele") or [] if isinstance(i, (int, float))],
-                      "textes": t})
+                      "annotation": clean_annotation(p.get("annotation")), "textes": t})
     meta = {}
     raw_meta = r.get("meta") if isinstance(r.get("meta"), dict) else {}
     for c in codes:
@@ -172,6 +177,14 @@ def normalise(r, codes: List[str]) -> Dict:
     out = {"plans": plans, "meta": meta}
     durations(out, codes)
     return out
+
+
+def clean_annotation(a) -> Optional[Dict]:
+    """{"type": "fleche" | "cercle", "cible": "…"} or None."""
+    if not isinstance(a, dict) or not str(a.get("cible") or "").strip():
+        return None
+    kind = str(a.get("type") or "").lower().replace("è", "e").strip()
+    return {"type": kind if kind in ("fleche", "cercle") else "fleche", "cible": " ".join(str(a["cible"]).split())[:120]}
 
 
 def seconds(text: str, code: str) -> float:
@@ -188,7 +201,7 @@ def script_for(bundle: Dict, code: str) -> Dict:
     """One language's script, in the format the rest of the app uses (no clips yet)."""
     m = (bundle.get("meta") or {}).get(code) or {}
     return {"titre": m.get("titre", ""), "description": m.get("description", ""), "tags": m.get("tags", []),
-            "passages": [{"clip": "", **p["textes"][code]} for p in bundle["plans"]],
+            "passages": [{"clip": "", **p["textes"][code], "annotation": p.get("annotation")} for p in bundle["plans"]],
             "corrections": bundle.get("corrections", [])}
 
 
