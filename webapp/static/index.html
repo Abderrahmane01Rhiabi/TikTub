@@ -2751,6 +2751,18 @@ function adMomentButtons(v, scene){
   return `<span class="ad-links">${ms.slice(0, 3).map(m => `<button class="chipbtn ad-choose" data-debut="${+m.debut || 0}" data-fin="${m.fin != null ? +m.fin : (+m.debut || 0) + 4}">Choisir · ${adDuration(m.debut) || '0:00'}</button>`).join('')}</span>`;
 }
 
+function adSceneCands(sug, si){
+  // the scene's own results, plus videos found for another scene that the AI judged useful for this one
+  const own = (sug.scenes[si] || {}).candidats || [], seen = new Set(own.map(c => c.url));
+  const elsewhere = [...(sug.scenes || []).flatMap(s => s.candidats || []), ...(sug.image_videos || []), ...(sug.perso || []),
+                     ...(sug.comptes || []).flatMap(a => a.videos || [])].filter(c => {
+    const e = (((sug.verifs || {})[c.url] || {}).par_scene || {})[si];
+    if (seen.has(c.url) || !e || !['exacte', 'equivalente', 'partielle'].includes(e.niveau)) return false;
+    seen.add(c.url); return true;
+  });
+  return [...own, ...elsewhere];
+}
+
 function adSortCands(cands, scene, sug){
   const rank = c => { const v = adVerifOf(sug, c.url); if (!v) return 3;
     const e = scene >= 0 ? (v.par_scene || {})[scene] : null; return e ? AD_RANK[e.niveau] : (v.verdict === 'non' ? 4 : 1); };
@@ -2817,9 +2829,12 @@ function renderAdFinder(box, p){
           ${links(sc.liens || [])}
           ${sc.langue ? `<div class="ad-links"><span class="tiny">En ${esc(sc.langue.langue.toLowerCase())} (filmé ${esc(sc.langue.pays ? 'en/au ' + sc.langue.pays : 'ailleurs')}) :</span>${chips(sc.langue.recherches)}</div>
             ${links(sc.liens_langue || [])}` : ''}
-          ${(sc.candidats || []).length ? `<div class="ad-clips">${adSortCands(sc.candidats, si, sug).map(c => adCandHtml(c, si, sug, have)).join('')}</div>` : sc.pub ? '' : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les images et les liens de recherche ci-dessus.</div>'}
-          ${!sc.pub && si > 0 && (sc.plans || []).length && !Object.values(sug.verifs || {}).some(v => v.par_scene && ['exacte', 'equivalente', 'partielle'].includes(((v.par_scene || {})[si] || {}).niveau))
-            ? `<div class="ad-row"><button class="btn ghost small ad-scene-excerpt" data-scene="${si}" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Rien trouvé ? Extrait du Short modèle (dernier recours)</button></div>` : ''}
+          ${(() => { const list = adSceneCands(sug, si); return list.length
+              ? `<div class="ad-clips">${adSortCands(list, si, sug).map(c => adCandHtml(c, si, sug, have)).join('')}</div>`
+              : sc.pub ? '' : '<div class="tiny">Aucune vidéo trouvée automatiquement : utilise les images et les liens de recherche ci-dessus.</div>'; })()}
+          ${!sc.pub && si > 0 && (sc.plans || []).length
+            ? `<div class="ad-row"><button class="btn ghost small ad-scene-excerpt" data-scene="${si}" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>
+               <span class="tiny">si rien ne te convient : 3 s de cette scène prises dans le modèle, nettoyées et créditées</span></div>` : ''}
         </div>`).join('') || '<div class="tiny">Le modèle n\'a pas pu être découpé en scènes.</div>'}</div></article>
     ${loose.length || (sug.image_videos || []).length ? `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('image', 14)} Trouvées par image (toutes scènes)</div></div></div>
       <div class="chcard-body">${adFramesHtml(p, loose)}
@@ -2866,7 +2881,7 @@ function renderAdFinder(box, p){
     b.disabled = true; b.innerHTML = spin('repérage dans le Short…');
     try { await api(`/api/adaptations/${p.project_id}/scenes/${b.dataset.scene}/excerpt`, { method:'POST' });
           toast('Extrait ajouté aux clips', 'success'); adProject = null; loadAdProject(); }
-    catch (e){ log(e.message, 'error'); b.disabled = false; b.textContent = 'Rien trouvé ? Extrait du Short modèle (dernier recours)'; }
+    catch (e){ log(e.message, 'error'); b.disabled = false; b.textContent = 'Extrait du Short modèle (dernier recours)'; }
   });
   box.querySelector('.ad-own-check').onclick = async ev => {
     const list = own.value.split('\n').map(x => x.trim()).filter(Boolean);
@@ -3038,11 +3053,12 @@ function renderAdImages(body, p){
             <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
           : `<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan. Choisis-en une ci-dessous, donne ton lien, ou :</div>
              <div class="ad-row"><button class="btn secondary small ad-adapt" data-icon="sparkle" title="L'IA réécrit la phrase (toutes les langues) autour d'une image déjà trouvée">Adapter la phrase à une image trouvée</button>
-               ${k > 0 && pl.role !== 'accroche' && (pl.plans_modele || []).length ? `<button class="btn ghost small ad-excerpt" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}
                <button class="btn ghost small ad-skip">Retirer ce plan</button></div>`}
         <div class="ad-row"><input class="f ad-plan-link" placeholder="Ton lien pour ce plan (TikTok, YouTube, VK…)" style="flex:1;min-width:220px">
           <button class="btn secondary small ad-plan-check" title="L'IA vérifie ce lien pour ce plan (15 s à 2 min)">Vérifier pour ce plan</button>
-          ${pick ? '<button class="btn ghost small ad-skip">Retirer ce plan</button>' : ''}</div>
+          ${pick ? '<button class="btn ghost small ad-skip">Retirer ce plan</button>' : ''}
+          ${k > 0 && pl.role !== 'accroche' && (pl.plans_modele || []).length && !(pick && pick.extrait)
+            ? `<button class="btn ghost small ad-excerpt" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>
         ${frames.length ? adFramesHtml(p, frames) : ''}
         <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches || [])}</div>
         ${links(sc.liens || [])}
