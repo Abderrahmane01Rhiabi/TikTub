@@ -633,8 +633,10 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             times = [(k, file_time(a), file_time(a) + (b - a)) for k, a, b in items]
             work = os.path.join(base, "work")
             os.makedirs(work, exist_ok=True)
-            found = sources.find_boxes([sources.still(path, (a + b) / 2, None, os.path.join(work, f"p{k}.jpg"))
-                                        for k, a, b in times])
+            stills = [sources.still(path, (a + b) / 2, None, os.path.join(work, f"p{k}.jpg")) for k, a, b in times]
+            ok = [st for st in stills if os.path.exists(st)]          # a missing still: no cleaning, never a crash
+            boxes = iter(sources.find_boxes(ok)) if ok else iter([])
+            found = [next(boxes, (None, [], [])) if os.path.exists(st) else (None, [], []) for st in stills]
             report(f"vidéo {i + 1}/{len(by_url)} : contrôle des moments par l'IA", 0.05 + 0.8 * (i + 0.8) / len(by_url))
             try:                        # the same check as an analysed source: a presenter, a title, a logo… is refused
                 seen = sources.describe(path, [(a, b) for _, a, b in times])

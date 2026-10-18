@@ -635,3 +635,24 @@ def test_a_repost_of_the_reference_short_is_never_usable():
     finder.verify_best({"scenes": [{"candidats": [{"url": "a", "score": 1, "origines": ["youtube"]}]}]},
                        {"script_complet": "x", "duree_s": 30}, checker=lambda u, s, p, **kw: calls.append(kw) or {"verdict": "non"})
     assert calls == [{"model": {"texte": "x", "duree": 30}}]
+
+
+def test_a_download_without_picture_is_never_returned(monkeypatch, tmp_path):
+    from adaptation import sources
+    calls = []
+
+    def fake(url, d, name, sections=None, fmt=sources.VIDEO_FORMAT):
+        calls.append((sections, fmt))
+        path = tmp_path / f"{name}.mp4"
+        path.write_bytes(b"x")
+        return str(path)
+    monkeypatch.setattr(sources, "_download", fake)
+    monkeypatch.setattr(sources, "has_picture", lambda path: False)
+    with pytest.raises(sources.SourceError, match="pas d'image"):
+        sources.download("u", str(tmp_path), "a", [[1, 5]])          # a section: the caller takes the whole video
+    with pytest.raises(sources.SourceError, match="sans image"):
+        sources.download("u", str(tmp_path), "b")
+    assert calls[-1] == (None, "b/best")                             # the whole video tried with a plain format
+    monkeypatch.setattr(sources, "has_picture", lambda path: True)
+    assert sources.download("u", str(tmp_path), "c").endswith("c.mp4")
+    assert sources.VIDEO_FORMAT.startswith("bv*[vcodec^=avc1]")

@@ -101,7 +101,18 @@ def _handle(info: Dict) -> Optional[str]:
 
 
 # Picture AND sound: "mp4/best" once took a YouTube video-only stream (398), and the crash sounds need the sound
-VIDEO_FORMAT = "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4]/bv*[height<=1080]+ba/b"
+# H.264 first: a VP9 stream over HLS cut into sections once came out as sound only
+VIDEO_FORMAT = ("bv*[vcodec^=avc1][height<=1080]+ba[ext=m4a]/bv*[ext=mp4][height<=1080]+ba[ext=m4a]/"
+                "b[ext=mp4]/bv*[height<=1080]+ba/b")
+
+
+def has_picture(path: str) -> bool:
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v", "-show_entries", "stream=codec_type",
+                              "-of", "csv=p=0", path], capture_output=True, text=True).stdout
+        return "video" in out
+    except OSError:
+        return False
 
 
 def _final_path(ydl, info: Dict) -> str:
@@ -120,11 +131,29 @@ def _write_meta(path: str, url: str, info: Dict, **extra):
 
 
 def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None) -> str:
-    """sections: only these [start, end] spans of a long video (joined, in order)."""
+    """sections: only these [start, end] spans of a long video (joined, in order).
+    A file without picture is never returned: sections fall back to the whole
+    video, then a plain "best" format is tried."""
+    path = _download(url, dest_dir, name, sections)
+    if has_picture(path):
+        return path
+    for p in (path, path + ".meta.json"):
+        if os.path.exists(p):
+            os.remove(p)
+    if sections:
+        raise SourceError(f"Le passage téléchargé n'a pas d'image ({url}) : on retélécharge la vidéo entière.")
+    path = _download(url, dest_dir, name, None, fmt="b/best")
+    if not has_picture(path):
+        raise SourceError(f"Vidéo sans image après téléchargement ({url}).")
+    return path
+
+
+def _download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None,
+              fmt: str = VIDEO_FORMAT) -> str:
     os.makedirs(dest_dir, exist_ok=True)
     if sections and len(sections) > 1:
         return _download_parts(url, dest_dir, name, sections)
-    opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format=VIDEO_FORMAT, merge_output_format="mp4", noplaylist=True)
+    opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format=fmt, merge_output_format="mp4", noplaylist=True)
     if sections:
         from yt_dlp.utils import download_range_func
         opts.update(download_ranges=download_range_func(None, [tuple(sections[0])]), force_keyframes_at_cuts=True)

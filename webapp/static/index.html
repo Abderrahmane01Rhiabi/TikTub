@@ -3006,6 +3006,17 @@ function adAnnHtml(a){
     <input class="f sc-ann-cible" value="${esc((a && a.cible) || '')}" placeholder="Quoi pointer (ex. la voiture noire à droite)" style="flex:1;min-width:180px;font-size:12px"></div>`;
 }
 
+function adAnnMissing(card){
+  // an arrow or circle chosen without saying what to point at: never dropped silently
+  const rows = [...card.querySelectorAll('.ad-ann')];
+  const k = rows.findIndex(r => r.querySelector('.sc-ann-type').value && !r.querySelector('.sc-ann-cible').value.trim());
+  if (k < 0) return false;
+  const input = rows[k].querySelector('.sc-ann-cible');
+  input.style.borderColor = 'var(--danger)'; input.focus();
+  toast(`Plan ${k + 1} : écris quoi pointer (ex. la semelle collée au sol), ou choisis « Pas de flèche »`, 'error');
+  return true;
+}
+
 function adAnnOf(row){
   const type = row.querySelector('.sc-ann-type').value, cible = row.querySelector('.sc-ann-cible').value.trim();
   return type && cible ? { type, cible } : null;
@@ -3076,7 +3087,8 @@ function renderAdPlan(body, p){
         texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = np; renderAdPlan(body, np); };
-    const save = () => api(`/api/adaptations/${p.project_id}/targets/${ch}/plan`, { method:'PUT', body: JSON.stringify({ plan: collect() }) });
+    const save = () => adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible'))
+      : api(`/api/adaptations/${p.project_id}/targets/${ch}/plan`, { method:'PUT', body: JSON.stringify({ plan: collect() }) });
     card.querySelector('.sc-save').onclick = async () => {
       try { refresh(await save()); toast('Script enregistré', 'success'); } catch (e){ log(e.message, 'error'); }
     };
@@ -3277,7 +3289,7 @@ function renderAdScripts(body, p){
     card.querySelectorAll('.sc-clip').forEach(sel => sel.onchange = () =>
       sel.closest('.ad-passage').querySelector('img').src = `/api/adaptations/${p.project_id}/clips/${sel.value}/thumb`);
     card.querySelector('.sc-save').onclick = async () => {
-      try { refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
+      try { refresh(await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) })));
             toast('Script enregistré', 'success'); } catch (e){ log(e.message, 'error'); }
     };
     card.querySelector('.sc-revise').onclick = async ev => {
@@ -3285,13 +3297,13 @@ function renderAdScripts(body, p){
       if (!req) return;
       const btn = ev.currentTarget; btn.disabled = true; btn.innerHTML = spin('…');
       try {
-        await api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) });
+        await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
         refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/revise`, { method:'POST', body: JSON.stringify({ request: req }) }));
       } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.textContent = 'Envoyer'; }
     };
     card.querySelector('.sc-approve').onclick = async () => {
       try {
-        await api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) });
+        await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
         refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/approve`, { method:'POST' }));
         toast('Script validé ✓', 'success');
       } catch (e){ log(e.message, 'error'); refresh(await api(`/api/adaptations/${p.project_id}`)); }
