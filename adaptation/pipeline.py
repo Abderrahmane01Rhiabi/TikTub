@@ -822,12 +822,43 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         for t in p["targets"]:
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
+            sc = _shorten(p, sc, clips, t["language"], report)
             t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"]))
             t["approved"] = not t["problems"]
         save(p)
     except Exception as e:
         fail(pid, "fetching", e)
     report("terminé", 1.0)
+
+
+TOO_LONG = re.compile(r"Passage (\d+) : phrase trop longue pour son clip \(\d+ caract[eè]res, le clip \S+ en laisse environ (\d+)\)")
+
+
+def _shorten(p: Dict, sc: Dict, clips: Dict[str, Dict], code: str, report: Report) -> Dict:
+    """A clip kept inside its shot can be shorter than the sentence written for
+    the plan: the AI shortens only those sentences (twice at most), the others
+    stay word for word; the new sentence is kept in the storyboard too."""
+    for _ in range(2):
+        long = {int(n) - 1: int(room) for n, room in TOO_LONG.findall(" ".join(script.problems(sc, clips, code)))}
+        if not long:
+            break
+        report("phrases raccourcies pour leur clip", 0.95)
+        asks = " ".join(f"Passage {k + 1} : {max(room - 3, 12)} caracteres au plus." for k, room in long.items())
+        try:
+            new = script.revise(sc, clips, "Raccourcis UNIQUEMENT ces phrases, sans changer leur sens ni les autres "
+                                "passages (meme texte, meme clip) ; chaque phrase reste complete. " + asks)
+        except Exception:
+            break
+        if len(new["passages"]) != len(sc["passages"]):
+            break
+        sc = {**sc, "passages": [{**x, "texte": new["passages"][k]["texte"]} if k in long else x
+                                 for k, x in enumerate(sc["passages"])]}
+    plans = p["storyboard"]["plans"]
+    for k, x in zip(_active(p), sc["passages"]):       # the storyboard says the same: a new fetch keeps it
+        textes = plans[k].get("textes") or {}
+        if code in textes:
+            textes[code]["texte"] = x["texte"]
+    return sc
 
 
 REAL_FAULTS = finder.REAL_FAULTS

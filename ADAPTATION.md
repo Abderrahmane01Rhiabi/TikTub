@@ -94,7 +94,7 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
 - l'IA **contrôle le clip final**, tel qu'il sera montré : un présentateur, un texte incrusté, un écran partagé, une interview, un écran de fin… le refusent (un simple logo non, il est effacé). Une **vidéo publicitaire** n'est pas refusée : ses images sont souvent bonnes, une note jaune te demande juste de la vérifier avec ▶ ;
 - les **crédits** citent les chaînes de toutes les vidéos utilisées.
 
-Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
+Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip (une phrase trop longue pour un clip resté court est **raccourcie automatiquement**, elle seule) ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
 
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
 

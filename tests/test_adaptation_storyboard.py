@@ -422,6 +422,26 @@ def test_a_short_moment_is_lengthened_inside_its_shot_never_across_a_cut():
     assert ap.fit_window(10, 12, 0, [(11, 30)], 60) == (10, 12)                 # an excerpt: untouched
 
 
+def test_a_sentence_too_long_for_its_shorter_clip_is_shortened_alone(monkeypatch):
+    from adaptation import script
+    clips = {"P1": {"start": 0, "end": 4}, "P2": {"start": 0, "end": 2}, "P3": {"start": 0, "end": 4}}
+    texts = ["Une phrase courte.", "Une phrase beaucoup trop longue pour un clip de deux secondes seulement.", "Fin."]
+    sc = {"titre": "T", "passages": [{"clip": f"P{k + 1}", "texte": t, "bandeau": ""} for k, t in enumerate(texts)]}
+    p = {"storyboard": {"plans": [{"textes": {"fr": {"texte": t}}} for t in texts]}, "skipped": []}
+    asked = []
+
+    def revise(sc, clips, request, gemini=None):
+        asked.append(request)
+        return {"passages": [{**x, "texte": "Tout autre chose."} if k != 1 else {**x, "texte": "Trop court pour lui."}
+                             for k, x in enumerate(sc["passages"])]}
+    monkeypatch.setattr(script, "revise", revise)
+    monkeypatch.setattr(ap, "_active", lambda p: [0, 1, 2])
+    out = ap._shorten(p, sc, clips, "fr", lambda *a: None)
+    assert [x["texte"] for x in out["passages"]] == ["Une phrase courte.", "Trop court pour lui.", "Fin."]   # only passage 2
+    assert len(asked) == 1 and "Passage 2" in asked[0]
+    assert p["storyboard"]["plans"][1]["textes"]["fr"]["texte"] == "Trop court pour lui."
+
+
 def test_an_advert_is_a_warning_not_a_refusal():
     from adaptation import finder
     assert finder.real_faults("publicité") == "" and finder.warnings_of("publicité") == "publicité"
