@@ -410,6 +410,71 @@ def start_images(pid: str) -> Dict:
     return save(p)
 
 
+class SharedSearch:
+    """What every version of a group searches the same way, done once: the
+    reference Short's pictures, their Yandex results, the YouTube searches
+    with the same words. Kept on the group's leader; the Gemini checks stay
+    per version (they judge a video against that version's own plans)."""
+
+    def __init__(self, p: Dict, wanted: List[Dict]):
+        self.p, self.wanted, self.reused = p, wanted, []
+        self.leader = p.get("group") or p["project_id"]
+        try:
+            self.cache = dict((load(self.leader).get("search_cache") or {}))
+        except PipelineError:
+            self.cache = {}
+        self.cache.setdefault("queries", {})
+        self.cache.setdefault("hits", {})
+
+    def search(self, q: str) -> List[Dict]:
+        if q in self.cache["queries"]:
+            if "recherches YouTube" not in self.reused:
+                self.reused.append("recherches YouTube")
+            return [dict(c) for c in self.cache["queries"][q]]
+        out = finder.search_youtube(q)
+        self.cache["queries"][q] = out
+        return out
+
+    def frames(self, ref: Dict, url: str, work_dir: str, scenes: List[Dict], report=None) -> Dict:
+        from adaptation import frames as frames_mod
+        got = self.cache.get("frames")
+        if got and got.get("frames") and all(os.path.exists(os.path.join(got["dir"], f["file"])) for f in got["frames"]):
+            os.makedirs(work_dir, exist_ok=True)
+            if os.path.abspath(got["dir"]) != os.path.abspath(work_dir):
+                for f in got["frames"]:
+                    shutil.copy(os.path.join(got["dir"], f["file"]), os.path.join(work_dir, f["file"]))
+            self.reused.append("images du Short")
+            return {**got, "frames": [{**f, "scene": frames_mod._scene_of(f.get("plan"), scenes)} for f in got["frames"]]}
+        out = frames_mod.reference_frames(ref, url, work_dir, scenes, report=report)
+        if out.get("frames"):
+            self.cache["frames"] = {**out, "dir": work_dir}
+        return out
+
+    def image_search(self, files: List[str]) -> Dict:
+        from adaptation import imagesearch
+        names = [os.path.basename(f) for f in files]
+        if names and all(n in self.cache["hits"] for n in names):
+            self.reused.append("recherche par image")
+            return {"hits": {f: self.cache["hits"][n] for f, n in zip(files, names)}, "error": None, "seconds": 0}
+        out = imagesearch.timed_search(files)
+        if not out.get("error"):
+            self.cache["hits"].update({os.path.basename(f): h for f, h in out["hits"].items()})
+        return out
+
+    def save(self):
+        try:
+            leader = load(self.leader)
+        except PipelineError:
+            return
+        mine = leader.get("search_cache") or {}
+        mine.setdefault("queries", {}).update(self.cache["queries"])
+        mine.setdefault("hits", {}).update(self.cache["hits"])
+        if self.cache.get("frames") and not mine.get("frames"):
+            mine["frames"] = self.cache["frames"]
+        leader["search_cache"] = mine
+        save(leader)
+
+
 def run_images(pid: str, report: Optional[Report] = None):
     """Every plan's footage: search words from its image, the four searches,
     Gemini's checks (twice as many as plans: each plan's best by words, then
@@ -422,9 +487,14 @@ def run_images(pid: str, report: Optional[Report] = None):
         queries = finder.plan_queries(finder.wanted_from_storyboard(plans, {}))
         local = lambda found: {i: {"pays": q["pays"], "langue": q["langue"], "recherches": q["locales"]}
                                for i, q in queries.items() if q.get("locales")}
+        wanted = finder.wanted_from_storyboard(plans, queries)
+        shared = SharedSearch(p, wanted)
         sug = finder.suggest(p["reference"], p["reference_url"], work_dir=os.path.join(project_dir(pid), "finder"),
-                             wanted=finder.wanted_from_storyboard(plans, queries), local=local,
-                             report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
+                             wanted=wanted, local=local, search=shared.search, frames_fn=shared.frames,
+                             image_search=shared.image_search, report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
+        shared.save()
+        if shared.reused:
+            report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(plans)),
                            report=lambda ph, f: report(ph, 0.62 + 0.36 * f))

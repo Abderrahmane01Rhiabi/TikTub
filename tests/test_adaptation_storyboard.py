@@ -2,6 +2,7 @@
 plan shared by every language, texts per language, retention rules, review."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -245,7 +246,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
     monkeypatch.setattr(finder, "plan_queries", lambda found: {0: {"recherches": ["tram crash"], "pays": "Russie",
                                                                     "langue": "Russe", "locales": ["трамвай"]}})
 
-    def suggest(ref, url, work_dir=None, wanted=None, local=None, report=None):
+    def suggest(ref, url, work_dir=None, wanted=None, local=None, report=None, **kw):
         seen["wanted"], seen["local"] = wanted, local(wanted)
         return {"scenes": [{**w, "candidats": [{"url": "A", "title": "Compil"}]} for w in wanted], "comptes": [], "verifs": {}}
     monkeypatch.setattr(finder, "suggest", suggest)
@@ -317,7 +318,7 @@ def _images_project(project, fakes, monkeypatch, picks=None):
     pid = _approved_project(project, fakes)
     ap.start_images(pid)
     monkeypatch.setattr(finder, "plan_queries", lambda found: {})
-    monkeypatch.setattr(finder, "suggest", lambda ref, url, work_dir=None, wanted=None, local=None, report=None: {
+    monkeypatch.setattr(finder, "suggest", lambda ref, url, work_dir=None, wanted=None, local=None, report=None, **kw: {
         "scenes": [{**w, "candidats": [{"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "title": "Compil", "duration": 600}]}
                    for w in wanted], "comptes": [], "verifs": {}})
     v = {"verdict": "oui", "title": "Compil", "duration": 600, "par_scene": {
@@ -713,3 +714,44 @@ def test_force_a_refused_clip_and_the_versions_tabs(client, project, fakes):
     assert clip["usable"] and clip["forced"] == "trop flou"
     assert not any("ne convient pas" in x for x in r["targets"][0]["problems"])
     assert client.post(f"/api/adaptations/{lead['project_id']}/clips/ZZ/force").status_code == 400
+
+
+def test_the_versions_of_a_group_share_the_searches_that_are_the_same(project, fakes, monkeypatch):
+    from adaptation import finder, frames, imagesearch
+    a, b = channel(project, "chanA", "fr", "v_fr"), channel(project, "chanB", "ar", "v_ar")
+    lead = ap.create("https://youtube.com/shorts/x", [], [a, b], mode="script", versions=True)
+    ap.run_analysis(lead["project_id"])
+    members = [ap.load(lead["project_id"])] + ap.group_of(ap.load(lead["project_id"]))
+    calls = {"frames": 0, "yandex": 0, "youtube": []}
+    monkeypatch.setattr(finder, "plan_queries", lambda found: {i: {"recherches": ["tram crash"], "pays": "", "langue": "",
+                                                                    "locales": []} for i in range(len(found))})
+    monkeypatch.setattr(finder, "sort_out", lambda found, gemini=None, prompt=None: None)
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+
+    def youtube(q, n=5):
+        calls["youtube"].append(q)
+        return [{"id": "aaaaaaaaaaa", "url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "title": "t", "channel": "c"}]
+    monkeypatch.setattr(finder, "search_youtube", youtube)
+
+    def ref_frames(ref, url, work, scenes, report=None):
+        calls["frames"] += 1
+        os.makedirs(work, exist_ok=True)
+        Path(work, "f00.jpg").write_bytes(b"jpg")
+        return {"frames": [{"file": "f00.jpg", "t": 1.0, "plan": 0, "scene": None}], "source": "short", "error": None}
+    monkeypatch.setattr(frames, "reference_frames", ref_frames)
+
+    def yandex(files):
+        calls["yandex"] += 1
+        return {"hits": {f: [{"url": "https://vkvideo.ru/video-1_2", "title": "v", "thumb": "", "platform": "VK"}] for f in files},
+                "error": None, "seconds": 1}
+    monkeypatch.setattr(imagesearch, "timed_search", yandex)
+    for m in members:
+        for t in m["targets"]:
+            ap.approve_plan(m["project_id"], t["channel"])
+        ap.start_images(m["project_id"]); ap.run_images(m["project_id"])
+    assert calls["frames"] == 1 and calls["yandex"] == 1                 # done once for the group
+    assert len(calls["youtube"]) == 1                                    # the same words searched once
+    second = ap.load(members[1]["project_id"])
+    assert second["status"] == "images_review" and second["suggestions"]["images"]["frames"][0]["file"] == "f00.jpg"
+    assert Path(ap.project_dir(members[1]["project_id"]), "finder", "f00.jpg").exists()     # copied for its page
+    assert "search_cache" in ap.load(lead["project_id"])

@@ -47,6 +47,7 @@ En « Script d'abord », si tu coches **plusieurs chaînes**, la case **« Une v
 - le Short modèle n'est **analysé qu'une fois** ;
 - l'IA propose **plusieurs angles** (ex. « Arnaque ou coup de génie ? », « L'erreur fatale », « Le test sans pitié ») et en donne **un différent à chaque chaîne** : son accroche, son déroulé, sa fin. Ta vidéo n'est plus une traduction du modèle ni de ton autre chaîne ;
 - chaque projet suit ensuite son chemin (storyboard, images, voix, publication) ; la liste des projets montre la chaîne de chacun.
+- ce qui est identique pour toutes les versions est fait **une seule fois** et partagé : les **images du Short**, la **recherche par image** et les **recherches YouTube** avec les mêmes mots (la deuxième version cherche ses images environ 25 % plus vite). La vérification par l'IA reste propre à chaque version, puisqu'elle juge les vidéos par rapport à ses propres plans.
 
 En haut de chaque projet, les **onglets « Versions de ce Short »** montrent chaque chaîne, son angle et son étape : un clic pour passer de l'une à l'autre.
 
