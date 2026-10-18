@@ -1304,6 +1304,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
                                    "created_at", "updated_at")}
     base["mode"] = p.get("mode") or "sources"
     base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
+    base["fetch_note"] = p.get("fetch_note")
     base["group"] = p.get("group")
     base["angle"] = p.get("angle")
     base["angles"] = p.get("angles") or []

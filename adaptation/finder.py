@@ -305,10 +305,13 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     equivalent, then partial; the longest moment; never the same moment for
     two plans. None when nothing checked fits."""
     verifs, used, picks = sug.get("verifs") or {}, set(), []
+    dead = set(sug.get("unavailable") or [])          # could not be downloaded from here: never picked again
     cands = {c["url"]: c for c in all_candidates(sug)}
     for i, pl in enumerate(sb_plans):
         options = []
         for url, v in verifs.items():
+            if url in dead:
+                continue
             e = (v.get("par_scene") or {}).get(str(i))
             if not e or e.get("niveau") not in RANK:
                 continue

@@ -3167,7 +3167,7 @@ function renderAdImages(body, p){
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
   const chips = qs => qs.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('');
   const im = sug.images || { frames: [] };
-  body.innerHTML = `<article class="chcard"><div class="chcard-body">
+  body.innerHTML = (p.fetch_note ? `<div class="warnbox">${esc(p.fetch_note)}</div>` : '') + `<article class="chcard"><div class="chcard-body">
       <div><b>${got.length}/${n} plans ont une vidéo choisie</b> : ${green} verte(s), ${got.length - green} à regarder, ${n - got.length} sans vidéo.</div>
       <div class="tiny">Pour chaque plan, l'app a cherché l'image voulue (YouTube, langue du pays, recherche par image, compte crédité), fait vérifier les meilleures vidéos par l'IA
         et choisi <b>le meilleur moment</b>. Tu peux en choisir un autre avec <b>« Choisir »</b>, donner <b>ton lien</b> pour un plan,

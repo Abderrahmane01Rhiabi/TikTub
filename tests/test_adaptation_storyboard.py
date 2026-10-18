@@ -665,3 +665,21 @@ def test_an_arrow_set_on_the_storyboard_comes_back_to_the_page(client, project, 
     r = client.put(f"/api/adaptations/{pid}/targets/chanA/plan", json={"plan": plan_}).json()
     assert r["storyboard"]["plans"][0]["annotation"] == {"type": "cercle", "cible": "la semelle collée au sol"}
     assert client.get(f"/api/adaptations/{pid}").json()["storyboard"]["plans"][0]["annotation"]["cible"] == "la semelle collée au sol"
+
+
+def test_a_picked_video_that_wont_download_is_replaced_and_the_picks_come_back(project, fakes, monkeypatch):
+    from adaptation import sources
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    other = "https://www.youtube.com/watch?v=bbbbbbbbbbb"
+    p["suggestions"]["verifs"][other] = {"verdict": "probable", "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 1, "fin": 6}]}}}
+    ap.save(p)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda *a, **k: (_ for _ in ()).throw(sources.SourceError("bloquée")))
+    ap.start_fetch(pid); ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert p["status"] == "images_review" and "aaaaaaaaaaa" in p["suggestions"]["unavailable"][0]
+    assert p["picks"][0]["url"] == other                    # plan 1: another checked video
+    assert p["picks"][1] is None                            # nothing else for plan 2
+    assert "plan(s) 1, 2, 3, 4, 5" in p["fetch_note"] and "Une autre vidéo" in p["fetch_note"]
+    assert ap.choose_pick(pid, 1, other, 1, 6)["picks"][1]["url"] == other   # the person picks again from there

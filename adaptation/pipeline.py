@@ -563,6 +563,7 @@ def start_fetch(pid: str) -> Dict:
     if left:
         raise PipelineError("À corriger d'abord : " + " ".join(left))
     p["status"] = "fetching"
+    p.pop("fetch_note", None)
     return save(p)
 
 
@@ -605,6 +606,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], end))
         if clips:
             report(f"{len(clips)} plan(s) inchangé(s) : clips gardés", 0.03)
+        failed: Dict[str, Tuple[str, List[int]]] = {}
         base, stamp = project_dir(pid), datetime.now().strftime("%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
         for i, (url, items) in enumerate(by_url.items()):
             report(f"vidéo {i + 1}/{len(by_url)} : téléchargement des moments choisis", 0.05 + 0.8 * i / len(by_url))
@@ -612,12 +614,16 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             spans = None if (dur and dur <= 120) else _spans(items)
             name = f"src{stamp}_{i}"           # never over a file a kept clip still uses
             try:
-                path = sources.download(url, os.path.join(base, "src"), name, spans)
-            except sources.SourceError:
-                if spans is None:
-                    raise
-                spans = None                    # some sites refuse a section: the whole video, then
-                path = sources.download(url, os.path.join(base, "src"), name)
+                try:
+                    path = sources.download(url, os.path.join(base, "src"), name, spans)
+                except sources.SourceError:
+                    if spans is None:
+                        raise
+                    spans = None                # some sites refuse a section: the whole video, then
+                    path = sources.download(url, os.path.join(base, "src"), name)
+            except sources.SourceError as e:
+                failed[url] = (str(e), [k for k, _, _ in items])
+                continue
             meta = sources.source_meta(path)
 
             def file_time(t: float) -> float:
@@ -650,6 +656,26 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c
+        if failed:                      # a video that won't download: replaced where possible, back to the picks
+            p = load(pid)
+            sug = p["suggestions"]
+            sug["unavailable"] = list(dict.fromkeys((sug.get("unavailable") or []) + list(failed)))
+            plans_hit = sorted(k for _, ks in failed.values() for k in ks)
+            fresh = finder.auto_pick(sug, p["storyboard"]["plans"])
+            for k in plans_hit:
+                p["picks"][k] = fresh[k]
+            p["clips"] = {**(p.get("clips") or {}), **clips}       # the clips made are kept for the next try
+            names = ", ".join(str(k + 1) for k in plans_hit)
+            replaced = [str(k + 1) for k in plans_hit if p["picks"][k]]
+            p["fetch_note"] = (f"Vidéo impossible à télécharger d'ici (supprimée, privée ou bloquée dans ton pays) pour "
+                               f"le(s) plan(s) {names}. " + (f"Une autre vidéo vérifiée a été choisie pour le(s) plan(s) "
+                               f"{', '.join(replaced)} : vérifie-la. " if replaced else "") +
+                               ("Les autres plans n'ont plus de vidéo : choisis-en une, adapte la phrase ou retire le plan."
+                                if len(replaced) < len(plans_hit) else "Puis relance « Télécharger les images choisies ».")).strip()
+            p.update(status="images_review", error=None, failed_step=None)
+            save(p)
+            report("terminé", 1.0)
+            return
         srcs = list(dict.fromkeys(c["src"] for c in clips.values()))        # one entry per file, kept clips included
         metas = [next(c.get("meta") or {} for c in clips.values() if c["src"] == src) for src in srcs]
         for c in clips.values():
