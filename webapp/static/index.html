@@ -2508,7 +2508,7 @@ function renderAdChips(list){
   const bar = document.getElementById('adProjects');
   bar.innerHTML = list.length ? '<span class="tiny">Projets :</span>' + list.slice(0, 12).map(p =>
     `<button class="chipbtn ${p.project_id === adCurrent ? 'active' : ''}" data-id="${p.project_id}" style="${p.project_id === adCurrent ? 'border-color:var(--accent);color:var(--text)' : ''}">
-      ${esc((p.subject || p.reference_url || '').slice(0, 40))} · ${esc(AD_STATUS[p.status] || p.status)}</button>`).join('')
+      ${esc((p.subject || p.reference_url || '').slice(0, 34))}${p.group ? ' · ' + esc((p.targets || []).map(t => (channels.find(c => c.name === t.channel) || {}).display_name || t.channel).join(', ')) : ''} · ${esc(AD_STATUS[p.status] || p.status)}</button>`).join('')
     : '<span class="tiny">Aucun projet pour l\'instant.</span>';
   bar.querySelectorAll('.chipbtn').forEach(b => b.onclick = () => { adCurrent = b.dataset.id; loadAdaptationList(); });
 }
@@ -2548,6 +2548,8 @@ async function renderNewAdaptation(){
           <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="sources"> <b>Sources d'abord</b>
             <span class="tiny">tu as déjà les vidéos, ou tu préfères les choisir d'abord : le script est écrit avec les clips trouvés</span></label>
         </div>
+        <label class="switch" id="adVersionsBox" style="color:var(--text);margin-top:4px"><input type="checkbox" id="adVersions" checked>
+          <b>Une version différente par chaîne</b> <span class="tiny">chaque chaîne a son angle, son accroche et sa fin (sinon : la même vidéo traduite)</span></label>
         <div id="adSrcBox" style="display:none"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
         <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
         <label class="f" style="margin-top:6px">3. Les chaînes qui recevront une version (chacune dans sa langue, avec sa voix)</label>
@@ -2563,12 +2565,21 @@ async function renderNewAdaptation(){
     </article>`;
   hydrateIcons(stage);
   document.getElementById('adToVoices').onclick = () => goTo(13);
-  stage.querySelectorAll('input[name="adMode"]').forEach(r => r.onchange = () =>
-    document.getElementById('adSrcBox').style.display = r.value === 'script' && r.checked ? 'none' : '');
+  const syncVersions = () => {
+    const script = (stage.querySelector('input[name="adMode"]:checked') || {}).value === 'script';
+    document.getElementById('adVersionsBox').style.display = script && stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
+  };
+  stage.querySelectorAll('.ad-target').forEach(x => x.addEventListener('change', syncVersions));
+  syncVersions();
+  stage.querySelectorAll('input[name="adMode"]').forEach(r => r.onchange = () => {
+    document.getElementById('adSrcBox').style.display = r.value === 'script' && r.checked ? 'none' : '';
+    syncVersions();
+  });
   document.getElementById('adCreate').onclick = async ev => {
     const btn = ev.currentTarget;
     const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value || 'sources';
     const body = { reference_url: document.getElementById('adRef').value.trim(), mode,
+                   versions: mode === 'script' && document.getElementById('adVersions').checked,
                    source_urls: mode === 'script' ? [] : document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean),
                    channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value) };
     btn.disabled = true;
@@ -2588,9 +2599,32 @@ async function loadAdProject(){
   if (changed){
     const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.reference_url)}</span><span class="spacer"></span>
       <a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
-      ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>`;
+      ${!AD_BUSY.includes(p.status) && p.reference ? '<button class="btn ghost small" id="adNewVersion" data-icon="globe" title="La même vidéo pour une autre chaîne, avec un nouvel angle">Nouvelle version pour une autre chaîne</button>' : ''}
+      ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>
+      <div id="adNewVersionBox"></div>`;
     stage.innerHTML = adStepsHtml(p.status, p.mode) + head + '<div id="adBody" class="stack"></div>';
     hydrateIcons(stage);
+    const nv = document.getElementById('adNewVersion');
+    if (nv) nv.onclick = async () => {
+      const box = document.getElementById('adNewVersionBox');
+      const taken = new Set(p.group_channels || p.targets.map(t => t.channel));
+      const free = [];
+      await Promise.all(channels.filter(c => !taken.has(c.name)).map(async c => {
+        try { const d = await api(`/api/channels/${c.name}/adaptation`); if (d.settings && d.settings.voice_id) free.push(c); } catch (e){ /* skip */ }
+      }));
+      box.innerHTML = free.length ? `<div class="ad-row" style="margin:8px 0">Pour quelle chaîne ?
+          <select class="f" id="adNvChannel" style="width:auto">${free.map(c => `<option value="${c.name}">${esc(c.display_name)}</option>`).join('')}</select>
+          <button class="btn primary small" id="adNvGo">Créer la version (nouvel angle)</button></div>`
+        : '<div class="tiny" style="margin:8px 0">Toutes tes chaînes avec une voix ont déjà leur version (Réglages → Voix pour en régler une autre).</div>';
+      const go = document.getElementById('adNvGo');
+      if (go) go.onclick = async () => {
+        go.disabled = true;
+        try { const np = await api(`/api/adaptations/${p.project_id}/new-version`, { method:'POST',
+                body: JSON.stringify({ channel: document.getElementById('adNvChannel').value }) });
+              adCurrent = np.project_id; adProject = null; loadAdaptationList(); }
+        catch (e){ log(e.message, 'error'); go.disabled = false; }
+      };
+    };
     const del = document.getElementById('adDelete');
     if (del) del.onclick = async () => {
       if (!confirm('Supprimer ce projet et ses fichiers de travail ? Les vidéos déjà envoyées à Publication restent.')) return;
@@ -2980,7 +3014,15 @@ function adAnnOf(row){
 function renderAdPlan(body, p){
   const sb = p.storyboard || { plans: [] };
   const allApproved = p.targets.every(t => t.approved);
-  body.innerHTML = `<article class="chcard"><div class="chcard-body"><div class="tiny">
+  const angles = p.angles || [], cur = p.angle || {};
+  body.innerHTML = (cur.titre ? `<article class="chcard"><div class="chcard-body">
+      <div><b>Angle de cette version : « ${esc(cur.titre)} »</b> <span class="tiny">${esc(cur.idee || '')}</span></div>
+      <div class="ad-row"><select class="f" id="adAngle" style="width:auto;max-width:100%">
+          ${angles.map((a, i) => `<option value="${i}" ${a.titre === cur.titre ? 'selected' : ''}>${esc(a.titre)} — ${esc(a.idee.slice(0, 70))}</option>`).join('')}
+          <option value="custom">Mon propre angle…</option></select>
+        <input class="f" id="adAngleCustom" placeholder="Décris ton angle (ex. le test honnête, ça vaut le coup ?)" style="display:none;flex:1;min-width:220px">
+        <button class="btn secondary small" id="adAngleGo" data-icon="refresh" title="Le storyboard est réécrit avec cet angle (environ 1 minute)">Réécrire avec cet angle</button></div>
+    </div></article>` : '') + `<article class="chcard"><div class="chcard-body"><div class="tiny">
       ${icon('sparkle', 12)} Le script est écrit <b>avant</b> les images, pour garder les gens jusqu'à la fin :
       <b>accroche</b> (2-3 s) → <b>promesse</b> → <b>montée</b> → <b>réponse</b>. Pour chaque phrase, <b>🎬 l'image voulue</b> sera cherchée ensuite :
       elle est <b>commune à toutes les langues</b>, la modifier demande de revalider chaque langue.
@@ -3050,6 +3092,18 @@ function renderAdPlan(body, p){
       catch (e){ log(e.message, 'error'); }
     };
   });
+  const angleSel = document.getElementById('adAngle');
+  if (angleSel){
+    angleSel.onchange = () => document.getElementById('adAngleCustom').style.display = angleSel.value === 'custom' ? '' : 'none';
+    document.getElementById('adAngleGo').onclick = async ev => {
+      const custom = angleSel.value === 'custom' ? document.getElementById('adAngleCustom').value.trim() : null;
+      if (angleSel.value === 'custom' && !custom){ toast('Décris ton angle', 'error'); return; }
+      ev.currentTarget.disabled = true;
+      try { await api(`/api/adaptations/${p.project_id}/angle`, { method:'POST',
+              body: JSON.stringify(custom ? { custom } : { index: +angleSel.value }) }); adProject = null; loadAdProject(); }
+      catch (e){ log(e.message, 'error'); ev.currentTarget.disabled = false; }
+    };
+  }
   const go = document.getElementById('adImages');
   if (go) go.onclick = async () => {
     go.disabled = true;

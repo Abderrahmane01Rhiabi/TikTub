@@ -40,7 +40,7 @@ Il reprend la RECETTE d'un Short viral :
 - faits DOUTEUX a ne pas reprendre tels quels : {douteux}
 - publicite dans le modele (NE PAS reprendre, ni la marque ni l'argument de vente) : {pub}
 
-BUT : que les gens regardent JUSQU'A LA FIN.
+{angle}BUT : que les gens regardent JUSQU'A LA FIN.
 - 6 a 8 plans, 25 a 35 secondes de voix en tout.
 - Plan 1 "accroche" : une question ou un fait surprenant, TRES court (2 a 3 secondes de voix), sur l'image la plus forte.
 - Plan 2 "promesse" : on comprend que la reponse arrive (boucle ouverte), sans cliche du genre "restez jusqu'a la fin".
@@ -105,14 +105,48 @@ def _languages_listing(codes: List[str]) -> str:
     return "\n".join(f"- {c} ({lang_of(c)['label']}) : {LANG_RULES.get(c, LANG_RULES['fr'])}" for c in codes)
 
 
-def write(reference: Dict, codes: List[str], gemini=None) -> Dict:
-    """{"plans": [...], "meta": {lang: {...}}} — one storyboard, texts for every language."""
+ANGLE_PART = """ANGLE IMPOSE (cette version doit etre DIFFERENTE du modele, pas une traduction) : "{titre}" — {idee}
+L'histoire suit cet angle : sa propre question d'accroche, son propre ordre de plans, sa propre fin. Ne reprends ni
+l'accroche ni la fin du modele ; garde seulement le sujet et les faits.
+
+"""
+
+ANGLES_PROMPT = """Un Short viral explique : {sujet}
+Question du modele : {question}
+Faits : {faits}
+Propose {n} ANGLES vraiment differents pour refaire une video sur ce sujet (autre question d'accroche, autre fil de
+l'histoire, autre fin), chacun capable de garder le spectateur jusqu'a la fin, avec les memes images disponibles.
+{deja}Ex. pour une machine a raviolis : "Le test honnete", "Les 3 erreurs que tout le monde fait", "Ca vaut le coup ?".
+JSON uniquement : {{"angles": [{{"titre": "2 a 6 mots", "idee": "1 ou 2 phrases : la question posee, le fil, la fin"}}]}}"""
+
+
+def angles(reference: Dict, n: int = 3, avoid: Optional[List[str]] = None, gemini=None) -> List[Dict]:
+    """n different angles on the reference's subject, none of the ones already used."""
+    deja = ("Angles DEJA utilises, a ne pas reprendre : " + " ; ".join(avoid) + "\n") if avoid else ""
+    r = (gemini or _gemini())._generate_content([{"text": ANGLES_PROMPT.format(
+        sujet=reference.get("sujet"), question=reference.get("question"), faits="; ".join(reference.get("faits") or []),
+        n=n, deja=deja)}], max_tokens=3000, timeout=90, temperature=0.9)
+    items = (r.get("angles") if isinstance(r, dict) else None) or []
+    out, seen = [], {a.lower() for a in avoid or []}
+    for a in items:
+        if isinstance(a, dict) and str(a.get("titre") or "").strip() and str(a.get("titre")).strip().lower() not in seen:
+            seen.add(str(a["titre"]).strip().lower())
+            out.append({"titre": str(a["titre"]).strip()[:80], "idee": " ".join(str(a.get("idee") or "").split())[:400]})
+    if not out:
+        raise ScriptError(f"Aucun angle proposé : {str(r)[:160]}")
+    return out
+
+
+def write(reference: Dict, codes: List[str], gemini=None, angle: Optional[Dict] = None) -> Dict:
+    """{"plans": [...], "meta": {lang: {...}}} — one storyboard, texts for every language;
+    angle: {"titre", "idee"} this version follows, so that it differs from the reference."""
     exemple = ", ".join(f'"{c}": {{"bandeau": "", "texte": "", "mots_cles": [""]}}' for c in codes)
     exemple_meta = ", ".join(f'"{c}": {{"titre": "", "description": "", "tags": [""]}}' for c in codes)
     prompt = WRITE_PROMPT.format(sujet=reference.get("sujet"), question=reference.get("question"),
                                  plans=_plans_listing(reference), faits="; ".join(reference.get("faits") or []),
                                  douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
                                  pub=reference.get("publicite") or "aucune", langues=_languages_listing(codes),
+                                 angle=ANGLE_PART.format(**angle) if angle else "",
                                  exemple=exemple, exemple_meta=exemple_meta)
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.7)
     return normalise(r, codes)

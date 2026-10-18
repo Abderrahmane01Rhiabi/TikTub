@@ -39,6 +39,19 @@ La clé ElevenLabs doit avoir les permissions **Text to Speech** et **Voices : R
 - **Sources d'abord** : trouver les vidéos, puis écrire le script avec les clips trouvés (décrit ci-dessous) ;
 - **Script d'abord** (nouveau) : écrire d'abord **le meilleur script pour la rétention**, avec **l'image voulue** de chaque phrase, puis chercher ces images.
 
+#### Une version différente par chaîne
+
+En « Script d'abord », si tu coches **plusieurs chaînes**, la case **« Une version différente par chaîne »** (cochée par défaut) crée **un projet par chaîne**, liés en un groupe :
+- le Short modèle n'est **analysé qu'une fois** ;
+- l'IA propose **plusieurs angles** (ex. « Arnaque ou coup de génie ? », « L'erreur fatale », « Le test sans pitié ») et en donne **un différent à chaque chaîne** : son accroche, son déroulé, sa fin. Ta vidéo n'est plus une traduction du modèle ni de ton autre chaîne ;
+- chaque projet suit ensuite son chemin (storyboard, images, voix, publication) ; la liste des projets montre la chaîne de chacun.
+
+Dans le storyboard, **l'angle** est affiché en haut : choisis-en un autre, ou écris **ton propre angle**, puis **Réécrire avec cet angle** (environ 1 minute).
+
+**Nouvelle version pour une autre chaîne** (en haut d'un projet, même terminé) : la même vidéo pour une autre chaîne — par exemple une chaîne anglaise plus tard — avec **un angle jamais utilisé** dans le groupe, sans réanalyser le modèle.
+
+Sans la case : un seul projet, la même vidéo traduite dans chaque langue (comme avant).
+
 #### Script d'abord : le storyboard
 
 L'IA écrit **un storyboard commun à toutes les langues** et **un texte par langue**, aligné plan par plan :

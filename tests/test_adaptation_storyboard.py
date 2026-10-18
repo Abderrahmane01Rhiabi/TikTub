@@ -80,11 +80,22 @@ def test_critique_keeps_the_bundle_when_it_breaks_it():
 @pytest.fixture
 def fakes(monkeypatch):
     from adaptation import reference
-    calls = {"write": 0, "revise": []}
-    monkeypatch.setattr(reference, "analyse", lambda url: {"sujet": "trams", "question": "pourquoi", "plans": [{}]})
+    calls = {"write": 0, "revise": [], "reference": 0, "angles": [], "written_with": []}
 
-    def write(ref, codes):
+    def analyse(url):
+        calls["reference"] += 1
+        return {"sujet": "trams", "question": "pourquoi", "plans": [{}]}
+    monkeypatch.setattr(reference, "analyse", analyse)
+
+    def angles(ref, n=3, avoid=None):
+        calls["angles"].append(list(avoid or []))
+        names = [x for x in ("Le test honnête", "Les 3 erreurs", "Ça vaut le coup ?", "Le secret") if x not in (avoid or [])]
+        return [{"titre": t, "idee": "idée " + t} for t in names[:n]]
+    monkeypatch.setattr(sb, "angles", angles)
+
+    def write(ref, codes, angle=None):
         calls["write"] += 1
+        calls["written_with"].append((angle or {}).get("titre"))
         b = json.loads(json.dumps(GOOD))
         b["plans"][0]["textes"]["fr"]["texte"] = "Pourquoi les conducteurs de tramway restent-ils impassibles face à un crash ?"
         return sb.normalise(b, codes)
@@ -571,3 +582,74 @@ def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatc
     sc = {"passages": [{"clip": "M1", "texte": "Court.", "bandeau": "", "mots_cles": []}]}
     from adaptation import script
     assert any("accroche" in x for x in script.problems(sc, p["clips"], "fr"))
+
+
+
+# ---------------------------------------------------------------- one version per channel: angles and groups
+
+def test_one_project_per_channel_each_with_its_own_angle(project, fakes):
+    a, b = channel(project, "chanA", "fr", "v_fr"), channel(project, "chanB", "ar", "v_ar")
+    lead = ap.create("https://youtube.com/shorts/x", [], [a, b], mode="script", versions=True)
+    group = [lead] + ap.group_of(lead)
+    assert len(group) == 2 and all(len(x["targets"]) == 1 for x in group)
+    ap.run_analysis(lead["project_id"])                         # the leader's run does the whole group
+    group = [ap.load(x["project_id"]) for x in group]
+    assert fakes["reference"] == 1 and fakes["write"] == 2
+    assert [x["status"] for x in group] == ["plan_review", "plan_review"]
+    assert {x["angle"]["titre"] for x in group} == {"Le test honnête", "Les 3 erreurs"}
+    assert group[1]["reference"] == group[0]["reference"] and not group[1]["await_leader"]
+    assert sorted(fakes["written_with"]) == ["Le test honnête", "Les 3 erreurs"]
+
+
+def test_without_versions_it_is_one_project_translated(project, fakes):
+    p = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr"),
+                                                      channel(project, "chanB", "ar", "v_ar")], mode="script")
+    assert len(p["targets"]) == 2 and not p.get("group")
+    ap.run_analysis(p["project_id"])
+    assert fakes["write"] == 1 and ap.load(p["project_id"])["angle"]["titre"] == "Le test honnête"
+
+
+def test_a_new_version_for_another_channel_takes_an_unused_angle(project, fakes):
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")], mode="script")["project_id"]
+    ap.run_analysis(pid)
+    with pytest.raises(ap.PipelineError, match="déjà sa version"):
+        ap.new_version(pid, channel(project, "chanA", "fr", "v_fr"))
+    nv = ap.new_version(pid, channel(project, "chanB", "en", "v_en"))
+    assert nv["group"] == pid and ap.load(pid)["group"] == pid and nv["reference"]
+    ap.run_analysis(nv["project_id"])
+    nv = ap.load(nv["project_id"])
+    assert fakes["reference"] == 1                              # the reference is not read again
+    assert fakes["angles"][-1] == ["Le test honnête"] and nv["angle"]["titre"] == "Les 3 erreurs"
+
+
+def test_change_the_angle_rewrites_the_storyboard(project, fakes):
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")], mode="script")["project_id"]
+    ap.run_analysis(pid)
+    with pytest.raises(ap.PipelineError):
+        ap.change_angle(pid)
+    assert ap.change_angle(pid, index=2)["status"] == "analysing"
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "plan_review" and p["angle"]["titre"] == "Ça vaut le coup ?" and fakes["written_with"][-1] == "Ça vaut le coup ?"
+    assert len(fakes["angles"]) == 1                            # the angles are proposed once
+    ap.change_angle(pid, custom="Le point de vue du conducteur")
+    ap.run_analysis(pid)
+    assert fakes["written_with"][-1] == "Le point de vue du conducteur"
+
+
+def test_api_versions_angle_and_new_version(client, project, fakes):
+    import time
+    channel(project, "chanA", "fr", "v_fr"); channel(project, "chanB", "ar", "v_ar")
+    r = client.post("/api/adaptations", json={"reference_url": "https://youtube.com/shorts/x", "channels": ["chanA", "chanB"],
+                                              "mode": "script", "versions": True})
+    pid = r.json()["project_id"]
+    for _ in range(80):
+        if all(x["status"] != "analysing" for x in client.get("/api/adaptations").json()):
+            break
+        time.sleep(0.1)
+    listing = client.get("/api/adaptations").json()
+    assert len(listing) == 2 and {x["group"] for x in listing} == {pid}
+    p = client.get(f"/api/adaptations/{pid}").json()
+    assert p["angle"]["titre"] and len(p["angles"]) >= 2 and sorted(p["group_channels"]) == ["chanA", "chanB"]
+    assert client.post(f"/api/adaptations/{pid}/angle", json={}).status_code == 400
+    assert client.post(f"/api/adaptations/{pid}/new-version", json={"channel": "chanB"}).status_code == 400

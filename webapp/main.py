@@ -1303,6 +1303,12 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base = {k: p.get(k) for k in ("project_id", "status", "reference_url", "credits", "error", "failed_step",
                                    "created_at", "updated_at")}
     base["mode"] = p.get("mode") or "sources"
+    base["group"] = p.get("group")
+    base["angle"] = p.get("angle")
+    base["angles"] = p.get("angles") or []
+    if full and p.get("group"):
+        from adaptation import pipeline as _ap
+        base["group_channels"] = [t["channel"] for x in [p] + _ap.group_of(p) for t in x["targets"]]
     base["subject"] = (p.get("reference") or {}).get("sujet")
     base["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
     targets = []
@@ -1358,6 +1364,7 @@ class AdaptationCreate(BaseModel):
     source_urls: list = Field(default_factory=list)
     channels: list
     mode: str = "sources"
+    versions: bool = False
 
 
 @app.post("/api/adaptations")
@@ -1365,7 +1372,7 @@ def create_adaptation(req: AdaptationCreate):
     from adaptation import pipeline as ap
     targets = [{"channel": ch, "profile": channel_manager.get_channel_profile(ch),
                 "music_dir": channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
-    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, req.mode)
+    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, req.mode, req.versions)
     _start_adaptation_step(p["project_id"], "analysing")
     return _serialize_adaptation(p)
 
@@ -1482,6 +1489,37 @@ def check_adaptation_own_links(pid: str, req: AdaptationAddSources):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.check_own, pid, [str(u) for u in req.urls]))
+
+
+class AdaptationAngle(BaseModel):
+    index: Optional[int] = None
+    custom: Optional[str] = None
+
+
+@app.post("/api/adaptations/{pid}/angle")
+def change_adaptation_angle(pid: str, req: AdaptationAngle):
+    """Another angle: the storyboard is written again (about a minute)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.change_angle, pid, req.index, req.custom)
+    _start_adaptation_step(pid, "analysing")
+    return _serialize_adaptation(p)
+
+
+class AdaptationNewVersion(BaseModel):
+    channel: str
+
+
+@app.post("/api/adaptations/{pid}/new-version")
+def new_adaptation_version(pid: str, req: AdaptationNewVersion):
+    """Another channel's version of the same Short, with a new angle."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    ch = {"channel": req.channel, "profile": channel_manager.get_channel_profile(req.channel),
+          "music_dir": channel_manager.get_assets_dirs(req.channel)["music"]}
+    p = _adaptation_call(ap.new_version, pid, ch)
+    _start_adaptation_step(p["project_id"], "analysing")
+    return _serialize_adaptation(p)
 
 
 class AdaptationPlan(BaseModel):

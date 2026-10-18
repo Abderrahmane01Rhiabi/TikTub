@@ -78,9 +78,16 @@ def _expect(p: Dict, *statuses: str):
 MODES = ("sources", "script")
 
 
-def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources") -> Dict:
+def _new_pid() -> str:
+    return "ad_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
+
+
+def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
+           versions: bool = False) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
-    mode: "sources" (find the footage, then write) or "script" (write, then find the footage)."""
+    mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
+    versions (script mode, several channels): one project per channel, a group — the reference
+    is read once, each channel gets its own angle, so its video differs from the others."""
     urls = [u.strip() for u in source_urls if u and u.strip()]
     if mode not in MODES:
         raise PipelineError("Mode inconnu.")
@@ -100,11 +107,52 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
                         "music_path": music if music and os.path.exists(music) else None,
                         "music_start": s["music_start"], "script": None, "approved": False,
                         "validated": False, "video_id": None})
-    pid = "ad_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
-    return save({"project_id": pid, "status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
-                 "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
-                 "credits": "", "credits_auto": "",
-                 "targets": targets, "error": None, "failed_step": None})
+    base = {"status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
+            "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
+            "credits": "", "credits_auto": "", "error": None, "failed_step": None}
+    if mode == "script" and versions and len(targets) > 1:
+        leader = _new_pid()
+        for k, t in enumerate(targets):     # the leader's run reads the reference and writes every member
+            pid = leader if k == 0 else _new_pid()
+            save({**base, "project_id": pid, "targets": [t], "group": leader, "await_leader": k > 0})
+        return load(leader)
+    return save({**base, "project_id": _new_pid(), "targets": targets})
+
+
+def group_of(p: Dict) -> List[Dict]:
+    """The other projects of p's group (other channels' versions of the same reference)."""
+    g = p.get("group")
+    return [x for x in db.list_adaptations() if g and x.get("group") == g and x["project_id"] != p["project_id"]]
+
+
+def new_version(pid: str, channel: Dict) -> Dict:
+    """One more channel's version of an analysed project: the reference is
+    not read again, a new angle (never used in the group) is written."""
+    src = load(pid)
+    if not src.get("reference"):
+        raise PipelineError("Le Short modèle de ce projet n'est pas encore analysé.")
+    if any(t["channel"] == channel["channel"] for x in [src] + group_of(src) for t in x["targets"]):
+        raise PipelineError(f"La chaîne {channel['channel']} a déjà sa version de ce Short.")
+    fresh = create(src["reference_url"], [], [channel], mode="script")
+    if not src.get("group"):
+        src["group"] = src["project_id"]
+        save(src)
+    fresh.update(group=src["group"], reference=src["reference"])
+    return save(fresh)
+
+
+def change_angle(pid: str, index: Optional[int] = None, custom: Optional[str] = None) -> Dict:
+    """Another angle for this version: the storyboard is written again (background)."""
+    p = load(pid)
+    _expect(p, "plan_review")
+    if custom and custom.strip():
+        p["angle"] = {"titre": custom.strip()[:80], "idee": custom.strip()[:400]}
+    elif index is not None and 0 <= index < len(p.get("angles") or []):
+        p["angle"] = p["angles"][index]
+    else:
+        raise PipelineError("Choisis un angle.")
+    p["status"] = "analysing"
+    return save(p)
 
 
 def fail(pid: str, step: str, err: Exception):
@@ -154,7 +202,10 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             p["reference"] = reference.analyse(p["reference_url"])
             save(p)
         if p.get("mode") == "script":
-            write_storyboard(p, report)
+            members = _angles(p, report)
+            write_storyboard(load(pid), report)
+            for th in members:          # the other channels' storyboards, written at the same time
+                th.join()
             report("terminé", 1.0)
             return
         if not p.get("suggestions"):
@@ -231,10 +282,40 @@ def _refresh_plan(p: Dict, keep_approved: Optional[str] = None):
             t["approved"] = False
 
 
+def _angles(p: Dict, report: Report) -> List:
+    """Angles proposed once per project, never one already used in its group;
+    the leader of a new group also gives each waiting member its angle and
+    writes its storyboard (the reference is read once for all)."""
+    if p.get("angles"):
+        return []
+    group = group_of(p)
+    waiting = [x for x in group if x.get("await_leader")] if p.get("group") == p["project_id"] else []
+    used = [x["angle"]["titre"] for x in group if x.get("angle")]
+    report("angles de la vidéo", 0.25)
+    found = storyboard.angles(p["reference"], max(3, 1 + len(waiting)), avoid=used)
+    p.update(angles=found, angle=found[0])
+    save(p)
+    import threading
+    threads = []
+
+    def write_member(m):
+        try:
+            write_storyboard(m, lambda ph, f: None)
+        except Exception as e:
+            fail(m["project_id"], "analysing", e)
+    for k, m in enumerate(waiting, 1):
+        m.update(reference=p["reference"], angles=found, angle=found[k % len(found)], await_leader=False)
+        save(m)
+        th = threading.Thread(target=write_member, args=(m,), daemon=True)
+        th.start()
+        threads.append(th)
+    return threads
+
+
 def write_storyboard(p: Dict, report: Report):
     codes = _codes(p)
-    report("écriture du storyboard", 0.35)
-    b = storyboard.write(p["reference"], codes)
+    report("écriture du storyboard" + (f" : « {p['angle']['titre']} »" if p.get("angle") else ""), 0.35)
+    b = storyboard.write(p["reference"], codes, angle=p.get("angle"))
     report("relecture (rétention, langue, images)", 0.65)
     b = storyboard.critique(b, codes)
     left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
