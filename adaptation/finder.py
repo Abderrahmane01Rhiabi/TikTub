@@ -276,12 +276,18 @@ def plan_queries(found: List[Dict], gemini=None) -> Dict[int, Dict]:
 
 def wanted_from_storyboard(sb_plans: List[Dict], queries: Dict[int, Dict]) -> List[Dict]:
     """The storyboard's plans as "scenes to find" for suggest(): the image
-    is the scene, the reference shots it draws on bring their pictures."""
+    is the scene, the reference shots it draws on bring their pictures; the
+    sentence said over it goes along (measured on a parkour Short: the exact
+    footage of a glass dome was found for "redirect the shock's energy" —
+    judged on the image alone, nothing saw that it said something else)."""
     out = []
     for i, pl in enumerate(sb_plans):
         q = queries.get(i) or {}
+        textes = pl.get("textes") or {}
+        phrase = next((textes[c]["texte"] for c in ("fr", *textes) if c in textes and textes[c].get("texte")), "")
         out.append({"scene": pl["image"], "plans": [k - 1 for k in pl.get("plans_modele") or [] if k >= 1],
-                    "indices": "", "recherches": q.get("recherches") or [" ".join(pl["image"].split()[:8])]})
+                    "indices": "", "phrase": phrase,
+                    "recherches": q.get("recherches") or [" ".join(pl["image"].split()[:8])]})
     return out
 
 
@@ -318,8 +324,8 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     for i, pl in enumerate(sb_plans):
         options = []
         for url, v in verifs.items():
-            if url in dead:
-                continue
+            if url in dead or v.get("film") or v.get("remontage"):
+                continue                    # a film, or someone else's re-edit: only by hand (rights)
             e = (v.get("par_scene") or {}).get(str(i))
             if not e or e.get("niveau") not in RANK:
                 continue
@@ -331,8 +337,8 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
                     continue
                 if (url, round(a)) in used:
                     continue
-                # someone else's re-edit, or a presenter / split screen at that moment: only when nothing better
-                penalty = (3 if v.get("remontage") else 0) + (6 if real_faults(e.get("defauts")) else 0)
+                # a presenter / split screen at that moment: only when nothing better
+                penalty = 6 if real_faults(e.get("defauts")) else 0
                 options.append((RANK[e["niveau"]] + penalty, -(b - a), url, a, b, e))
         if not options:
             picks.append(None)
@@ -342,7 +348,7 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
         c = cands.get(url) or {}
         picks.append({"url": url, "titre": c.get("title") or verifs[url].get("title") or url, "niveau": e["niveau"],
                       "moment": {"debut": a, "fin": b}, "raison": e.get("raison") or "", "auto": True,
-                      "remontage": bool(verifs[url].get("remontage")), "defauts": real_faults(e.get("defauts"))})
+                      "remontage": False, "film": False, "defauts": real_faults(e.get("defauts"))})
     return picks
 
 
@@ -543,14 +549,19 @@ Regarde cette video et dis, POUR CHAQUE plan, si elle peut servir :
 - "partielle" : le meme evenement ou la meme action, mais pas tout ce que decrit le plan (ex. le jet de gaz
   du puits, sans la tentative de le boucher) : utile, a regarder ;
 - "rien" : rien d'utilisable pour ce plan (seulement le meme theme general, ou une action differente).
+Quand un plan donne la phrase dite pendant ce plan, le moment doit AUSSI l'illustrer : le spectateur entend la
+phrase en regardant ce moment (une roulade pour "la roulade absorbe le choc", pas un simple atterrissage).
 Le CADRAGE et la VITESSE ne comptent pas : le montage sait zoomer sur un detail et passer au ralenti. Un
 plan demande "serre" ou "au ralenti" et filme ici de loin ou a vitesse normale reste "equivalente" si l'action
 y est bien visible.
-Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en secondes depuis le debut de la video).
+Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en secondes depuis le debut de la video),
+PRECIS : du debut a la fin de l'action elle-meme, pas de la sequence autour.
 {modele}"remontage" = true si cette video est elle-meme un montage d'un autre createur PAR-DESSUS les images de quelqu'un
 d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee), false si ce sont des images d'origine.
+"film" = true si ce sont des images d'un FILM, d'une serie, d'un clip musical ou d'une emission TV (production
+professionnelle avec des droits), false pour des videos de particuliers, de sportifs ou de createurs.
 JSON uniquement :
-{{"copie_du_modele": true/false, "remontage": true/false,
+{{"copie_du_modele": true/false, "remontage": true/false, "film": true/false,
   "plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
              "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais",
              "defauts": "ce qui SE VOIT a ces moments et rend l'image inutilisable meme nettoyee : presentateur, interview,
@@ -598,7 +609,9 @@ def _units(scenes_: List[Dict], plans: List[Dict]) -> List[Dict]:
         if s is not None and text:
             units.append({"plan": k, "scene": s, "text": text, "indices": scenes_[s].get("indices") or ""})
     if not units:
-        units = [{"plan": i, "scene": i, "text": sc.get("scene", ""), "indices": sc.get("indices") or ""}
+        units = [{"plan": i, "scene": i, "indices": sc.get("indices") or "",
+                  "text": sc.get("scene", "") + (f" — phrase dite pendant ce plan : « {sc['phrase']} »"
+                                                 if sc.get("phrase") else "")}
                  for i, sc in enumerate(scenes_)]
     return units
 
@@ -714,6 +727,6 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
     moments = [m for e in par_plan.values() for m in e["moments"]]
     best = min((LEVELS.index(e["niveau"]) for e in par_plan.values()), default=3)
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
-            "copie": copy, "remontage": r.get("remontage") is True,
+            "copie": copy, "remontage": r.get("remontage") is True, "film": r.get("film") is True,
             "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
             "title": seen.get("title") or ""}

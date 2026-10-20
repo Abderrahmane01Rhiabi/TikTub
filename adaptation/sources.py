@@ -15,6 +15,7 @@ What was done by hand for the tram prototype, made generic:
     else is painted over (ffmpeg delogo)
 """
 
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -335,7 +336,9 @@ JSON uniquement : {{"images": [{{"zone_image": [ymin, xmin, ymax, xmax],
 Coordonnees entre 0 et 1000, sur l'image ENTIERE. "boites" vide si rien a effacer."""
 
 
-def describe(path: str, segments: List[Tuple[float, float]]) -> List[Dict]:
+@contextmanager
+def gemini_file(path: str):
+    """The file sent to Gemini once, for several questions: (gemini, file part)."""
     g = _gemini()
     up = g._upload_video_file(path)
     if not up:
@@ -343,12 +346,72 @@ def describe(path: str, segments: List[Tuple[float, float]]) -> List[Dict]:
     try:
         if not g._wait_for_file_active(up["name"], timeout=180):
             raise SourceError("Gemini n'a pas fini de lire la source à temps.")
-        listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
-        r = g._generate_content([{"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}},
-                                 {"text": DESCRIBE_PROMPT.format(segments=listing)}],
-                                max_tokens=16000, timeout=180, temperature=0.2)
+        yield g, {"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}}
     finally:
         g._delete_file(up["name"])
+
+
+RETIME_PROMPT = """Voici une video (les secondes comptent depuis son debut). Pour chaque plan d'un Short, on cherche le
+moment ou l'on VOIT l'action decrite, pendant que la phrase est dite. Un moment approximatif est donne : il peut
+etre decale de plusieurs secondes, cherche autour d'abord, puis dans toute la video.
+{plans}
+Pour chaque plan : "visible" = true si l'action se voit vraiment ; "debut" et "fin" au dixieme de seconde, du
+debut a la fin de l'action elle-meme (pas de la sequence autour) ; "ce_qu_on_voit" en francais.
+"visible" = false si l'action n'apparait nulle part dans la video.
+JSON uniquement : {{"plans": [{{"plan": numero, "visible": true, "debut": s, "fin": s, "ce_qu_on_voit": "..."}}]}}"""
+
+
+def retime(path: str, asks: List[Dict], length: float, file=None) -> List[Optional[Dict]]:
+    """Where each wanted action really is in a downloaded file — measured on a
+    parkour Short: the search's seconds, given watching a 6-minute video at
+    about one image a second, missed the pole slide by a few seconds twice.
+    asks: [{"image", "phrase", "a", "b"}] (file times). Per ask {"visible",
+    "debut", "fin", "vu"}, or None when Gemini can't say (the old moment stays)."""
+    if not asks:
+        return []
+    if file is None:
+        with gemini_file(path) as f:
+            return retime(path, asks, length, f)
+    g, part = file
+    listing = "\n".join(f"{n}. action : {x['image']} | phrase : « {x.get('phrase') or ''} » | moment approximatif : "
+                        f"{x['a']:.1f}-{x['b']:.1f} s" for n, x in enumerate(asks, 1))
+    fps = 4 if length <= 40 else 2                  # finer than the search's look, within a sensible token budget
+    try:
+        r = g._generate_content([{**part, "video_metadata": {"fps": fps}}, {"text": RETIME_PROMPT.format(plans=listing)}],
+                                max_tokens=4000, timeout=180, temperature=0.1)
+    except Exception:
+        return [None] * len(asks)
+    items = r.get("plans") if isinstance(r, dict) else None
+    out: List[Optional[Dict]] = [None] * len(asks)
+    for e in items if isinstance(items, list) else []:
+        try:
+            n = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not 0 <= n < len(asks):
+            continue
+        vu = str(e.get("ce_qu_on_voit") or "").strip()[:200]
+        if e.get("visible") is False:
+            out[n] = {"visible": False, "vu": vu}
+            continue
+        try:
+            a, b = sorted((float(e["debut"]), float(e["fin"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        a, b = max(0.0, min(a, length)), max(0.0, min(b, length))
+        if b - a >= 0.3:
+            out[n] = {"visible": True, "debut": round(a, 2), "fin": round(b, 2), "vu": vu}
+    return out
+
+
+def describe(path: str, segments: List[Tuple[float, float]], file=None) -> List[Dict]:
+    if file is None:
+        with gemini_file(path) as f:
+            return describe(path, segments, f)
+    g, part = file
+    listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
+    r = g._generate_content([part, {"text": DESCRIBE_PROMPT.format(segments=listing)}],
+                            max_tokens=16000, timeout=180, temperature=0.2)
     items = r if isinstance(r, list) else (r.get("passages") if isinstance(r, dict) else None)
     if not isinstance(items, list):
         raise SourceError(f"Description de la source inutilisable : {str(r)[:200]}")

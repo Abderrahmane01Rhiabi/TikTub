@@ -85,6 +85,9 @@ Verifie et CORRIGE si besoin, en gardant le meme format JSON :
   entre deux plans ("… patiner sur place…" / "…et leur evite…") est reecrite en deux phrases completes, sans "…" ;
 - les images sont concretes, filmables et trouvables en video (pas d'idee abstraite, de schema ni de texte),
   toutes differentes ; garde "plans_modele" quand l'image vient du modele ;
+- chaque phrase COMMENTE SON IMAGE : le spectateur entend la phrase en voyant l'image, il doit voir ce qu'elle dit.
+  Une phrase abstraite (physique, energie, "le secret c'est…") sur une image d'action est reecrite pour parler
+  de ce qu'on voit ("ses jambes plient et absorbent le choc"), ou l'image est changee pour montrer ce que dit la phrase ;
 - langues : {regles}
 - les textes des differentes langues disent la meme chose au meme plan ;
 - faits prudents, aucune marque ni argument de vente.
@@ -155,6 +158,25 @@ def write(reference: Dict, codes: List[str], gemini=None, angle: Optional[Dict] 
                                  exemple=exemple, exemple_meta=exemple_meta)
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.7)
     return normalise(r, codes)
+
+
+def illustration(bundle: Dict, code: str, gemini=None) -> List[str]:
+    """Each sentence against its own image, before any search (the same judge
+    as after the download, on the wanted image): what a viewer would hear
+    without seeing it. Empty when it can't be judged."""
+    from adaptation import script
+    plans = bundle.get("plans") or []
+    clips = {f"P{k + 1}": {"start": 0.0, "end": max(float(p.get("duree") or 4), 2.0), "desc": p.get("image") or ""}
+             for k, p in enumerate(plans)}
+    sc = {"passages": [{"clip": f"P{k + 1}", "texte": (p.get("textes") or {}).get(code, {}).get("texte", "")}
+                       for k, p in enumerate(plans)]}
+    try:
+        verdicts = script.match(sc, clips, code, gemini=gemini)
+    except Exception:
+        return []
+    return [f"Plan {k} : la phrase ne se voit pas dans son image ({a['pourquoi'] or 'autre chose a l ecran'}) : "
+            f"reecris la phrase pour qu'elle commente ce qu'on voit, ou change l'image pour montrer ce qu'elle dit."
+            for k, a in enumerate(verdicts, 1) if a["note"] == "non" or (a["note"] == "moyen" and k == 1)]
 
 
 def critique(bundle: Dict, codes: List[str], gemini=None) -> Dict:

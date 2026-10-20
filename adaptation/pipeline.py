@@ -326,7 +326,10 @@ def write_storyboard(p: Dict, report: Report):
     report("relecture (rétention, langue, images)", 0.65)
     b = storyboard.critique(b, codes)
     for attempt in (1, 2):              # what the re-read missed is fixed (twice at most), then shown
-        left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
+        hard = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
+        report("chaque phrase comparée à son image", 0.8)
+        seen = storyboard.illustration(b, codes[0])          # images are shared: one language is enough
+        left = hard + seen
         if not left:
             break
         report("correction", 0.85)
@@ -334,7 +337,8 @@ def write_storyboard(p: Dict, report: Report):
             fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + FIX_HOW)
         except script.ScriptError:
             break
-        if sum(len(storyboard.problems(fixed, c)) for c in codes) >= len(left):
+        now = sum(len(storyboard.problems(fixed, c)) for c in codes)
+        if now > len(hard) or (not seen and now >= len(hard)):     # a fix that breaks more than it mends: kept out
             break
         b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
     p = load(p["project_id"])
@@ -523,6 +527,7 @@ def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin
         picks[plan] = {"url": url, "titre": c.get("title") or v.get("title") or url, "niveau": e.get("niveau") or "choisie",
                        "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
                        "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage")),
+                       "film": bool(v.get("film")),
                        "defauts": e.get("defauts") or ""}
     p["picks"] = picks
     return save(p)
@@ -753,10 +758,30 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 bounds = [0.0] + joins + [length or at + spans[-1][1] - spans[-1][0]]
                 shots = [(max(s, x), min(e, y)) for s, e in (shots or [(0.0, bounds[-1])])
                          for x, y in zip(bounds, bounds[1:]) if min(e, y) > max(s, x)]
+            upload = None
+            try:                        # one upload for the two looks below
+                upload = sources.gemini_file(path)
+                gfile = upload.__enter__()
+            except Exception:
+                upload, gfile = None, None
+            moments = [(k, file_time(a), file_time(a) + (b - a), need) for k, a, b, need in items]
+            absent, seen_moving = {}, {}
+            asks = [(n, m) for n, m in enumerate(moments) if m[3] > 0]        # an excerpt stays where it was cut
+            if gfile and asks:
+                report(f"vidéo {i + 1}/{len(by_url)} : l'IA recale chaque moment", 0.05 + 0.8 * (i + 0.5) / len(by_url))
+                code = p["targets"][0]["language"]
+                found_at = sources.retime(path, [{"image": plans[m[0]]["image"], "a": m[1], "b": m[2],
+                                                  "phrase": (plans[m[0]].get("textes") or {}).get(code, {}).get("texte")}
+                                                 for _, m in asks], length or moments[-1][2] + 10, gfile)
+                for (n, (k, fa, fb, need)), r in zip(asks, found_at):
+                    if r and r["visible"]:
+                        moments[n] = (k, r["debut"], r["fin"], need)
+                        seen_moving[k] = r["vu"]
+                    elif r:
+                        absent[k] = r["vu"] or "autre chose"
             times = []
-            for k, a, b, need in items:
-                fa = file_time(a)
-                start, end = fit_window(fa, fa + (b - a), need, shots, length)
+            for k, fa, fb, need in moments:
+                start, end = fit_window(fa, fb, need, shots, length)
                 times.append((k, start, end))
             work = os.path.join(base, "work")
             os.makedirs(work, exist_ok=True)
@@ -766,15 +791,23 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             found = [next(boxes, (None, [], [])) if os.path.exists(st) else (None, [], []) for st in stills]
             report(f"vidéo {i + 1}/{len(by_url)} : contrôle des moments par l'IA", 0.05 + 0.8 * (i + 0.8) / len(by_url))
             try:                        # the same check as an analysed source: a presenter, a title, a logo… is refused
-                seen = sources.describe(path, [(a, b) for _, a, b in times])
+                segs = [(a, b) for _, a, b in times]
+                seen = sources.describe(path, segs, file=gfile) if gfile else sources.describe(path, segs)
             except Exception:
                 seen = [{} for _ in times]
+            finally:
+                if upload:
+                    upload.__exit__(None, None, None)
             for (k, a, b), f, d in zip(times, found, seen):
                 c = sources.clip_at(path, i, f"P{k + 1}", a, b, f, desc=plans[k]["image"])
                 why = _real_faults(d.get("pourquoi_pas") or "")
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
                          why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta,
                          note=finder.warnings_of(d.get("pourquoi_pas") or ""))
+                if k in absent:                 # the wanted action is nowhere in what was downloaded
+                    c["absent"] = absent[k]
+                if seen_moving.get(k):          # what the re-timing saw, in motion: the judge trusts it over stills
+                    c["action"] = seen_moving[k]
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c
@@ -830,7 +863,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
             sc = _shorten(p, sc, clips, t["language"], report)
             report("chaque phrase comparée à son image", 0.97)
-            t["accords"] = _judge(sc, clips, t["language"])
+            t["accords"] = _judge(sc, clips, t["language"], os.path.join(project_dir(pid), "work"))
             t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"], t["accords"]))
             t["approved"] = not t["problems"]
         save(p)
@@ -873,12 +906,26 @@ REAL_FAULTS = finder.REAL_FAULTS
 _real_faults = finder.real_faults          # what really refuses a chosen moment (shared with the search)
 
 
-def _judge(sc: Dict, clips: Dict[str, Dict], code: str) -> Optional[List[Dict]]:
+def _judge(sc: Dict, clips: Dict[str, Dict], code: str, work: Optional[str] = None) -> Optional[List[Dict]]:
     """Measured on the speed-bump Short: the French hook said "this bump
     forgives nothing" over a man punching a tub in a lab — nothing checked that
-    a clip shows its sentence. Best effort: no verdict never blocks."""
+    a clip shows its sentence. Three pictures of each clip go with it. Best
+    effort: no verdict never blocks."""
+    stills = {}
+    if work:
+        os.makedirs(work, exist_ok=True)
+        for k, x in enumerate(sc.get("passages") or []):
+            c = clips.get(x.get("clip"))
+            if not c:
+                continue
+            try:
+                stills[k] = [sources.still(c["src"], c["start"] + (c["end"] - c["start"]) * f, c.get("crop"),
+                                           os.path.join(work, f"judge_{x['clip']}_{j}.jpg"), c.get("delogo"),
+                                           (c["w"], c["h"])) for j, f in enumerate((0.2, 0.5, 0.8))]
+            except Exception:
+                continue
     try:
-        return script.match(sc, clips, code)
+        return script.match(sc, clips, code, stills=stills)
     except Exception:
         return None
 
@@ -902,6 +949,9 @@ def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str, accords: Opti
         if c and not c.get("usable", True) and (why or not c.get("why_not")):
             out.append(f"Passage {k} : le moment choisi ne convient pas ({why or 'refusé par le contrôle'}) : "
                        f"choisis un autre clip ou « Revenir aux images ».")
+        elif c and c.get("absent") and not c.get("forced"):
+            out.append(f"Passage {k} : l'action voulue ne se voit pas dans la vidéo téléchargée (on y voit : "
+                       f"{c['absent']}) : choisis un autre clip, « Revenir aux images » ou « Utiliser quand même ».")
     return out
 
 
@@ -913,7 +963,8 @@ def force_clip(pid: str, cid: str) -> Dict:
     c = (p.get("clips") or {}).get(cid)
     if not c:
         raise PipelineError("Clip inconnu.")
-    c.update(usable=True, forced=c.get("why_not") or "refusé par le contrôle", why_not="")
+    c.update(usable=True, forced=c.get("why_not") or (f"action introuvable : {c['absent']}" if c.get("absent")
+                                                      else "refusé par le contrôle"), why_not="")
     for t in p["targets"]:
         if t.get("script"):
             t["problems"] = _fetched_problems(t["script"], p["clips"], t["language"], t.get("accords"))

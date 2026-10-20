@@ -229,7 +229,7 @@ passe a l'ecran. Le spectateur doit voir ce qu'il entend.
 
 Pour chaque passage : la phrase, et ce que montre REELLEMENT son clip (decrit par quelqu'un qui l'a regarde).
 {passages}
-
+{images}
 Note chaque passage :
 - "bon" : l'image montre ce que dit la phrase (ou son effet direct, ex. des passagers secoues pour "un mur pour les
   trop rapides").
@@ -245,20 +245,36 @@ JSON uniquement : {{"passages": [{{"note": "bon|moyen|non", "pourquoi": "en fran
 .../on voit ...", "proposition": "..."}}]}} dans l'ordre des passages."""
 
 
-def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) -> List[Dict]:
+def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
+          stills: Optional[Dict[int, List[str]]] = None) -> List[Dict]:
     """Does each clip show what its sentence says? Judged on what the final
-    clip really shows (its description, made from the clip itself)."""
+    clip really shows: its description, and its own pictures when given
+    (stills: passage index -> image files) — a description once said "a
+    bus" where the pictures show the lamp-post the sentence talks about."""
     lang = lang_of(lang_code)
     ps = script.get("passages") or []
     lines = []
     for k, p in enumerate(ps, 1):
         c = clips.get(p["clip"]) or {}
         room = int((c.get("end", 0) - c.get("start", 0)) * lang["chars_per_second"]) or len(p["texte"])
-        lines.append(f"{k}. phrase : \"{p['texte']}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}")
-    r = (gemini or _gemini())._generate_content(
-        [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines))}],
-        max_tokens=8000, timeout=180, temperature=0.2)
-    items = r.get("passages") if isinstance(r, dict) else r
+        seen = f" | action verifiee en regardant la video en mouvement : {c['action']}" if c.get("action") else ""
+        lines.append(f"{k}. phrase : \"{p['texte']}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}{seen}")
+    import base64
+    pics = []
+    for k in range(len(ps)):
+        files = [f for f in (stills or {}).get(k) or [] if os.path.exists(f)]
+        if files:
+            pics.append({"text": f"Images du clip du passage {k + 1} :"})
+            pics += [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(f, "rb").read()).decode()}}
+                     for f in files]
+    images = ("Trois images fixes de chaque clip suivent. Une image fixe peut etre ambigue (un saut fige au moment ou un "
+              "bus passe) : l'\"action verifiee\", vue en mouvement, fait foi sur ce qui se passe.\n" if pics else "")
+    parts = [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines), images=images)}] + pics
+    for _attempt in range(2):           # an answer once came back cut in the middle (long, with pictures)
+        r = (gemini or _gemini())._generate_content(parts, max_tokens=32000, timeout=180, temperature=0.2)
+        items = r.get("passages") if isinstance(r, dict) else r
+        if isinstance(items, list):
+            break
     if not isinstance(items, list):
         raise ScriptError(f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
     out = []

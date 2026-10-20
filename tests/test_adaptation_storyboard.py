@@ -10,6 +10,8 @@ import pytest
 from adaptation import pipeline as ap
 from adaptation import storyboard as sb
 
+REAL_ILLUSTRATION = sb.illustration          # the fixture below fakes it for the flows
+
 
 def plan(role, image, fr, ar=None, ref=(1,)):
     t = {"fr": {"bandeau": "B : X 😐", "texte": fr, "mots_cles": [fr.split()[0]]}}
@@ -102,6 +104,7 @@ def fakes(monkeypatch):
         return sb.normalise(b, codes)
     monkeypatch.setattr(sb, "write", write)
     monkeypatch.setattr(sb, "critique", lambda b, codes: {**b, "corrections": ["relu"]})
+    monkeypatch.setattr(sb, "illustration", lambda b, code: calls.setdefault("illustrated", []).append(code) or [])
 
     def revise(b, codes, request):
         calls["revise"].append(request)
@@ -206,7 +209,8 @@ def test_plan_queries_and_wanted_scenes():
     q = finder.plan_queries(finder.wanted_from_storyboard(plans, {}), gemini=G())
     assert q == {0: {"recherches": ["tram hits car cab view"], "pays": "Biélorussie", "langue": "Russe", "locales": ["трамвай авария"]}}
     w = finder.wanted_from_storyboard(plans, q)
-    assert w[0] == {"scene": "un tram percute une voiture", "plans": [0, 2], "indices": "", "recherches": ["tram hits car cab view"]}
+    assert w[0] == {"scene": "un tram percute une voiture", "plans": [0, 2], "indices": "", "phrase": "",
+                    "recherches": ["tram hits car cab view"]}
     assert w[1]["recherches"] == ["le visage du conducteur"] and w[1]["plans"] == []
 
 
@@ -267,7 +271,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
 
     p = ap.choose_pick(pid, 1, "A", 30, 35)
     assert p["picks"][1] == {"url": "A", "titre": "Compil", "niveau": "choisie", "moment": {"debut": 30.0, "fin": 35.0},
-                             "raison": "", "auto": False, "remontage": False, "defauts": ""}
+                             "raison": "", "auto": False, "remontage": False, "film": False, "defauts": ""}
     assert ap.choose_pick(pid, 0, None)["picks"][0] is None
     with pytest.raises(ap.PipelineError):
         ap.choose_pick(pid, 9, "A")
@@ -301,14 +305,14 @@ def test_api_images_and_picks(client, project, fakes, monkeypatch):
     assert r.status_code == 200 and r.json()["picks"][2]["moment"] == {"debut": 4.0, "fin": 8.0}
 
 
-def test_auto_pick_prefers_original_footage_to_someone_elses_re_edit():
+def test_auto_pick_never_takes_a_film_or_someone_elses_re_edit():
     from adaptation import finder
-    v = lambda lvl, remix: {"verdict": "oui", "remontage": remix, "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}}
+    v = lambda lvl, remix, film=False: {"verdict": "oui", "remontage": remix, "film": film,
+                                        "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}}
     sug = {"verifs": {"remix": v("exacte", True), "orig": v("equivalente", False)}}
     assert finder.auto_pick(sug, [{}])[0]["url"] == "orig"
-    sug = {"verifs": {"remix": v("exacte", True)}}
-    pick = finder.auto_pick(sug, [{}])[0]
-    assert pick["url"] == "remix" and pick["remontage"]                       # nothing else: taken, flagged
+    sug = {"verifs": {"remix": v("exacte", True), "movie": v("exacte", False, film=True)}}
+    assert finder.auto_pick(sug, [{}]) == [None]                              # rights: only chosen by hand
 
 
 # ---------------------------------------------------------------- steps 4-5: your link, adapt, set aside, fetch
@@ -477,7 +481,7 @@ def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(
         "id": cid, "source": i, "src": path, "start": a, "end": b + 3, "impact": a, "w": 1080, "h": 1920, "usable": True,
         "marks": [], "desc": desc, "shock": False})
     monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
-    monkeypatch.setattr(script, "match", lambda sc, clips, code: [
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: [
         {"clip": x["clip"], "texte": x["texte"], "note": "non" if k < 2 else "bon", "pourquoi": "autre chose",
          "proposition": "Une phrase pour cette image." if k < 2 else ""} for k, x in enumerate(sc["passages"])])
     ap.start_fetch(pid)
@@ -524,6 +528,115 @@ def test_the_montage_effects_chosen_after_the_download_reach_the_script_and_the_
     edited = ap.edit_script(pid, t["channel"], {"passages": [{**x, "effets": None} if k == 1 else x
                                                              for k, x in enumerate(t["script"]["passages"])]})
     assert edited["targets"][0]["script"]["passages"][1]["effets"] is None   # unticked by hand: gone
+
+
+def test_a_sentence_that_cannot_be_seen_in_its_image_is_rewritten_before_any_search(project, fakes, monkeypatch):
+    from adaptation import script
+    seen = []
+
+    def match(sc, clips, code, gemini=None, **kw):
+        seen.append([(x["texte"], clips[x["clip"]]["desc"]) for x in sc["passages"]])
+        return [{"clip": x["clip"], "texte": x["texte"], "note": "non" if k == 2 else "bon", "pourquoi": "on entend X, on voit Y",
+                 "proposition": ""} for k, x in enumerate(sc["passages"])]
+    monkeypatch.setattr(script, "match", match)
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    out = REAL_ILLUSTRATION(b, "fr")
+    assert seen[0][2] == (b["plans"][2]["textes"]["fr"]["texte"], b["plans"][2]["image"])   # each sentence with ITS image
+    assert len(out) == 1 and out[0].startswith("Plan 3 : la phrase ne se voit pas dans son image")
+    monkeypatch.setattr(sb, "illustration", lambda bundle, code: out if not fakes["revise"] else [])
+    ap.run_analysis(new_project(project)["project_id"])
+    assert any("ne se voit pas dans son image" in r for r in fakes["revise"])                # sent to the fix
+
+
+def test_the_judge_sees_the_clip_pictures_and_what_was_seen_in_motion(tmp_path):
+    from adaptation import script
+    from PIL import Image
+    pic = str(tmp_path / "a.jpg")
+    Image.new("RGB", (8, 8)).save(pic)
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.parts = parts
+            return {"passages": [{"note": "bon"}]}
+    clips = {"P1": {"start": 0, "end": 4, "desc": "un bus passe", "action": "il saute vers le lampadaire"}}
+    script.match({"passages": [{"clip": "P1", "texte": "Il saute vers le lampadaire."}]}, clips, "fr", gemini=G(),
+                 stills={0: [pic, pic, str(tmp_path / "missing.jpg")]})
+    assert "action verifiee en regardant la video en mouvement : il saute vers le lampadaire" in G.parts[0]["text"]
+    assert sum("inline_data" in x for x in G.parts) == 2 and "fait foi" in G.parts[0]["text"]
+
+
+def test_a_film_is_recognised_by_the_check():
+    from adaptation import finder
+
+    class G:
+        pass
+    seen = {"answer": {"film": True, "remontage": False, "plans": [{"plan": 1, "niveau": "exacte", "moments": [{"debut": 1, "fin": 3}]}]},
+            "duration": 600, "title": "Banlieue 13"}
+    old = finder._watch
+    finder._watch = lambda url, g, prompt: seen
+    try:
+        r = finder.check("https://youtu.be/x", [{"scene": "il glisse le long d'un poteau", "phrase": "Ce frottement freine."}],
+                         None, gemini=G())
+    finally:
+        finder._watch = old
+    assert r["film"] is True and r["par_plan"]["0"]["niveau"] == "exacte"
+
+
+def test_retime_reads_where_the_action_really_is():
+    from adaptation import sources
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.parts = parts
+            return {"plans": [{"plan": 1, "visible": True, "debut": 7.1, "fin": 8.3, "ce_qu_on_voit": "il glisse"},
+                              {"plan": 2, "visible": False, "ce_qu_on_voit": "un toit"}, {"plan": 3, "debut": "x"}]}
+    asks = [{"image": "glisse le long du mat", "phrase": "Ce frottement…", "a": 6, "b": 9}] * 3
+    out = sources.retime("f.mp4", asks, 15.0, file=(G(), {"file_data": {"file_uri": "u"}}))
+    assert out == [{"visible": True, "debut": 7.1, "fin": 8.3, "vu": "il glisse"}, {"visible": False, "vu": "un toit"}, None]
+    assert G.parts[0]["video_metadata"] == {"fps": 4} and "6.0-9.0 s" in G.parts[1]["text"]
+
+
+def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagged(project, fakes, monkeypatch):
+    from adaptation import sources, script
+    from contextlib import contextmanager
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda url, d, name, sections=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    made = {}
+
+    def clip_at(path, i, cid, a, b, found, desc=""):
+        made[cid] = (round(a, 2), round(b, 2))
+        return {"id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920,
+                "usable": True, "marks": [], "desc": desc, "shock": False}
+    monkeypatch.setattr(sources, "clip_at", clip_at)
+
+    @contextmanager
+    def gemini_file(path):
+        yield ("g", {"file_data": {}})
+    monkeypatch.setattr(sources, "gemini_file", gemini_file)
+    monkeypatch.setattr(sources, "describe", lambda path, segs, file=None: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    asked = []
+
+    def retime(path, asks, length, file=None):
+        asked.extend(asks)
+        return [{"visible": True, "debut": x["a"] + 2.0, "fin": x["a"] + 2.5, "vu": "il glisse"} if n == 0 else
+                ({"visible": False, "vu": "un toit"} if n == 1 else None) for n, x in enumerate(asks)]
+    monkeypatch.setattr(sources, "retime", retime)
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: None)
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert asked[0]["image"] == p["storyboard"]["plans"][0]["image"] and asked[0]["phrase"]
+    first = asked[0]["a"]
+    assert made["P1"][0] == pytest.approx(first + 2.0)                       # cut where the action really is
+    assert p["clips"]["P1"]["action"] == "il glisse" and p["clips"]["P2"]["absent"] == "un toit"
+    t = p["targets"][0]
+    assert any("Passage 2 : l'action voulue ne se voit pas" in x for x in t["problems"])
+    p = ap.force_clip(pid, "P2")
+    assert not any("Passage 2 : l'action voulue" in x for x in p["targets"][0]["problems"])
 
 
 def test_an_advert_is_a_warning_not_a_refusal():

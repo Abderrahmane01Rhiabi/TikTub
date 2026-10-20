@@ -1350,7 +1350,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
-                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced", "note")},
+                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced", "note", "absent", "action")},
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
                          for c in (p.get("clips") or {}).values()]
         base["sources"] = p.get("sources") or []

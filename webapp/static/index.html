@@ -2783,7 +2783,8 @@ function adVerifOf(sug, url){
 
 function adVerifHtml(v, scene, long){
   if (v.copie) return `<span class="pill bad">copie du Short modèle</span><span>Un repost du Short que tu adaptes : ne pas l'utiliser (droits d'auteur).</span>`;
-  const remix = v.remontage ? `<span class="pill warn">remontage d'un autre créateur</span>` : '';
+  const remix = (v.film ? `<span class="pill bad">film / série / TV : droits d'auteur, jamais choisi automatiquement</span>` : '')
+    + (v.remontage ? `<span class="pill bad">remontage d'un autre créateur : jamais choisi automatiquement</span>` : '');
   const per = v.par_scene || {};
   const useful = Object.entries(per).filter(([, e]) => e.niveau !== 'rien').map(([i]) => +i);
   const here = scene >= 0 ? (per[scene] || { niveau: 'rien', moments: [], raison: '' }) : null;
@@ -3231,7 +3232,8 @@ function renderAdImages(body, p){
         <div class="tiny">🎬 ${esc(pl.image)}</div>
         ${pick ? `<div class="ad-chosen">${icon('check', 13)} <b>${esc(pick.titre)}</b> — de ${adDuration(pick.moment.debut) || '0:00'} à ${adDuration(pick.moment.fin) || '0:00'}
             <a href="${esc(adAt(pick.url, pick.moment.debut))}" target="_blank" rel="noopener">voir ce moment ↗</a>
-            ${pick.remontage ? `<span class="pill warn">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
+            ${pick.film ? `<span class="pill bad">film / série / TV : droits d'auteur, à remplacer</span>` : ''}
+            ${pick.remontage ? `<span class="pill bad">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
             ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
             <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
@@ -3336,8 +3338,8 @@ function renderAdScripts(body, p){
           <ul class="tiny">${sc.corrections.map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
         ${(() => { const refused = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
-              .filter(c => c && !c.usable);
-            return refused.length ? `<div class="ad-row">${refused.map(c => `<span class="tiny">${esc(c.id)} refusé (${esc(c.why_not || 'contrôle')}) :</span>
+              .filter(c => c && (!c.usable || (c.absent && !c.forced)));
+            return refused.length ? `<div class="ad-row">${refused.map(c => `<span class="tiny">${esc(c.id)} ${c.usable ? `: action introuvable (on y voit : ${esc(c.absent)})` : `refusé (${esc(c.why_not || 'contrôle')})`} :</span>
               <button class="btn ghost small ad-force" data-clip="${esc(c.id)}" title="Regarde-le avec ▶ d'abord : tu as le dernier mot">Utiliser quand même</button>`).join('')}</div>` : ''; })()}
         ${(() => { const noted = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
               .filter(c => c && c.usable && c.note);
