@@ -823,7 +823,9 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
             sc = _shorten(p, sc, clips, t["language"], report)
-            t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"]))
+            report("chaque phrase comparée à son image", 0.97)
+            t["accords"] = _judge(sc, clips, t["language"])
+            t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"], t["accords"]))
             t["approved"] = not t["problems"]
         save(p)
     except Exception as e:
@@ -865,8 +867,29 @@ REAL_FAULTS = finder.REAL_FAULTS
 _real_faults = finder.real_faults          # what really refuses a chosen moment (shared with the search)
 
 
-def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:
+def _judge(sc: Dict, clips: Dict[str, Dict], code: str) -> Optional[List[Dict]]:
+    """Measured on the speed-bump Short: the French hook said "this bump
+    forgives nothing" over a man punching a tub in a lab — nothing checked that
+    a clip shows its sentence. Best effort: no verdict never blocks."""
+    try:
+        return script.match(sc, clips, code)
+    except Exception:
+        return None
+
+
+def _accord(accords: Optional[List[Dict]], k: int, x: Dict) -> Optional[Dict]:
+    """The verdict on passage k, if it still judges this sentence on this clip."""
+    a = accords[k] if accords and k < len(accords) else None
+    return a if a and a["clip"] == x["clip"] and a["texte"] == x["texte"] else None
+
+
+def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str, accords: Optional[List[Dict]] = None) -> List[str]:
     out = script.problems(sc, clips, code)
+    for k, x in enumerate(sc.get("passages") or []):
+        a = _accord(accords, k, x)
+        if a and a["note"] == "non" and not a.get("garde"):
+            out.append(f"Passage {k + 1} : la phrase ne correspond pas à l'image ({a['pourquoi'] or 'autre chose à l’écran'}) : "
+                       f"prends la phrase proposée, change de clip ou « Garder quand même ».")
     for k, x in enumerate(sc["passages"], 1):
         c = clips.get(x["clip"]) or {}
         why = _real_faults(c.get("why_not") or "") if c and not c.get("usable", True) else ""
@@ -887,7 +910,7 @@ def force_clip(pid: str, cid: str) -> Dict:
     c.update(usable=True, forced=c.get("why_not") or "refusé par le contrôle", why_not="")
     for t in p["targets"]:
         if t.get("script"):
-            t["problems"] = _fetched_problems(t["script"], p["clips"], t["language"])
+            t["problems"] = _fetched_problems(t["script"], p["clips"], t["language"], t.get("accords"))
             if t["problems"]:
                 t["approved"] = False
     return save(p)
@@ -1224,7 +1247,45 @@ def edit_script(pid: str, channel: str, new: Dict) -> Dict:
     t = target(p, channel)
     sc = script.normalise({**(t["script"] or {}), **new}, p["clips"])
     t.update(script={**sc, "corrections": (t["script"] or {}).get("corrections", [])},
-             problems=_fetched_problems(sc, p["clips"], t["language"]), approved=False)
+             problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
+    return save(p)
+
+
+def _passage_accord(p: Dict, channel: str, k: int) -> Tuple[Dict, Dict, Dict]:
+    _expect(p, "script_review")
+    t = target(p, channel)
+    ps = (t.get("script") or {}).get("passages") or []
+    if not 0 <= k < len(ps):
+        raise PipelineError("Passage inconnu.")
+    a = _accord(t.get("accords"), k, ps[k])
+    if not a:
+        raise PipelineError("Ce passage n'a pas de contrôle phrase/image en cours (la phrase ou le clip a changé).")
+    return t, ps[k], a
+
+
+def keep_passage(pid: str, channel: str, k: int) -> Dict:
+    """You have the last word: the sentence stays on its clip."""
+    p = load(pid)
+    t, _, a = _passage_accord(p, channel, k)
+    a["garde"] = True
+    t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t["accords"]), approved=False)
+    return save(p)
+
+
+def use_proposal(pid: str, channel: str, k: int) -> Dict:
+    """The sentence the check wrote for what the clip really shows."""
+    p = load(pid)
+    t, x, a = _passage_accord(p, channel, k)
+    if not a.get("proposition"):
+        raise PipelineError("Pas de phrase proposée pour ce passage.")
+    x["texte"] = a["proposition"]
+    a.update(texte=x["texte"], note="bon", proposition="", pourquoi="phrase réécrite pour son image")
+    plans, active = p["storyboard"]["plans"], _active(p)
+    if p.get("mode") == "script" and k < len(active):      # the storyboard says the same: a new fetch keeps it
+        textes = plans[active[k]].get("textes") or {}
+        if t["language"] in textes:
+            textes[t["language"]]["texte"] = x["texte"]
+    t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t["accords"]), approved=False)
     return save(p)
 
 
@@ -1241,7 +1302,7 @@ def approve_script(pid: str, channel: str) -> Dict:
     p = load(pid)
     _expect(p, "script_review")
     t = target(p, channel)
-    problems = _fetched_problems(t["script"] or {}, p["clips"], t["language"])
+    problems = _fetched_problems(t["script"] or {}, p["clips"], t["language"], t.get("accords"))
     if problems:
         raise PipelineError("À corriger avant de valider : " + " ".join(problems))
     t["approved"] = True

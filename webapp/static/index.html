@@ -3282,6 +3282,18 @@ function renderAdImages(body, p){
   });
 }
 
+// Does the clip show what its sentence says? (checked after the download; stale once the sentence or the clip changes)
+function adAccordHtml(t, ps, i){
+  const a = (t.accords || [])[i];
+  if (!a || a.texte !== ps.texte || a.clip !== ps.clip) return '';
+  if (a.note === 'bon') return `<div class="tiny" style="color:#6fd08c">✅ La phrase va avec son image</div>`;
+  const red = a.note === 'non' && !a.garde;
+  return `<div class="tiny" style="color:${red ? '#ff7b7b' : '#f5c56d'}">${a.note === 'non' ? (a.garde ? '❌ gardé quand même' : '❌ Ne va pas avec l\'image') : '🟡 Lien faible avec l\'image'}${a.pourquoi ? ' : ' + esc(a.pourquoi) : ''}</div>
+    ${a.proposition ? `<div class="ad-row"><span class="tiny">Proposé : « ${esc(a.proposition)} »</span>
+      <button class="btn ghost small ad-acc" data-act="proposal">Prendre cette phrase</button></div>` : ''}
+    ${red ? `<button class="btn ghost small ad-acc" data-act="keep" title="Regarde le clip avec ▶ : tu as le dernier mot">Garder quand même</button>` : ''}`;
+}
+
 function renderAdScripts(body, p){
   const allApproved = p.targets.every(t => t.approved);
   body.innerHTML = p.targets.map(t => {
@@ -3319,6 +3331,7 @@ function renderAdScripts(body, p){
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
               ${adAnnHtml(ps.annotation)}
+              ${adAccordHtml(t, ps, i)}
             </div>
           </div>`).join('')}</div>
         <label class="f">Description</label><textarea class="f sc-desc" ${dir}>${esc(sc.description || '')}</textarea>
@@ -3387,6 +3400,13 @@ function renderAdScripts(body, p){
               body: JSON.stringify(own ? { custom: own } : { index: +sel.value }) }); adProject = null; loadAdProject(); }
       catch (e){ log(e.message, 'error'); ev.currentTarget.disabled = false; }
     };
+  });
+  body.querySelectorAll('.ad-acc').forEach(b => b.onclick = async () => {
+    const card = b.closest('[data-channel]'), k = b.closest('.ad-passage').dataset.i;
+    b.disabled = true;
+    try { const np = await api(`/api/adaptations/${p.project_id}/targets/${card.dataset.channel}/passages/${k}/${b.dataset.act}`, { method:'POST' });
+          adProject = null; renderAdScripts(body, np); adProject = np; }
+    catch (e){ log(e.message, 'error'); b.disabled = false; }
   });
   body.querySelectorAll('.ad-force').forEach(b => b.onclick = async () => {
     b.disabled = true;

@@ -220,3 +220,51 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
 
 def estimated_seconds(script: Dict, lang_code: str) -> float:
     return round(sum(len(p["texte"]) for p in script.get("passages") or []) / lang_of(lang_code)["chars_per_second"], 1)
+
+
+MATCH_PROMPT = """Tu verifies une video courte (Short) narree en {langue} : chaque phrase est dite PENDANT que son clip
+passe a l'ecran. Le spectateur doit voir ce qu'il entend.
+
+Pour chaque passage : la phrase, et ce que montre REELLEMENT son clip (decrit par quelqu'un qui l'a regarde).
+{passages}
+
+Note chaque passage :
+- "bon" : l'image montre ce que dit la phrase (ou son effet direct, ex. des passagers secoues pour "un mur pour les
+  trop rapides").
+- "moyen" : lien indirect, le spectateur comprend mais l'image n'illustre pas vraiment la phrase.
+- "non" : l'image montre autre chose ; le spectateur entend X et voit Y.
+Le passage 1 est l'ACCROCHE (les 2 premieres secondes) : sois strict, le sujet de la video doit se voir ; s'il ne se
+voit pas, c'est "non".
+Pour "moyen" et "non", propose une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP tout en gardant
+le role du passage dans l'histoire (accroche, explication, chute), complete, sans "…", au plus le nombre de
+caracteres indique pour son clip. Pour "bon", "proposition" est vide.
+
+JSON uniquement : {{"passages": [{{"note": "bon|moyen|non", "pourquoi": "en francais, 1 phrase courte : on entend
+.../on voit ...", "proposition": "..."}}]}} dans l'ordre des passages."""
+
+
+def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) -> List[Dict]:
+    """Does each clip show what its sentence says? Judged on what the final
+    clip really shows (its description, made from the clip itself)."""
+    lang = lang_of(lang_code)
+    ps = script.get("passages") or []
+    lines = []
+    for k, p in enumerate(ps, 1):
+        c = clips.get(p["clip"]) or {}
+        room = int((c.get("end", 0) - c.get("start", 0)) * lang["chars_per_second"]) or len(p["texte"])
+        lines.append(f"{k}. phrase : \"{p['texte']}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}")
+    r = (gemini or _gemini())._generate_content(
+        [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines))}],
+        max_tokens=8000, timeout=180, temperature=0.2)
+    items = r.get("passages") if isinstance(r, dict) else r
+    if not isinstance(items, list):
+        raise ScriptError(f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
+    out = []
+    for p, x in zip(ps, items + [{}] * len(ps)):
+        x = x if isinstance(x, dict) else {}
+        note = str(x.get("note", "")).strip().lower()
+        note = note if note in ("bon", "moyen", "non") else "bon"
+        prop = " ".join(str(x.get("proposition") or "").split()) if note != "bon" else ""
+        out.append({"clip": p["clip"], "texte": p["texte"], "note": note,
+                    "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop})
+    return out

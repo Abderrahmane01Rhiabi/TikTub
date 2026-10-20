@@ -442,6 +442,58 @@ def test_a_sentence_too_long_for_its_shorter_clip_is_shortened_alone(monkeypatch
     assert p["storyboard"]["plans"][1]["textes"]["fr"]["texte"] == "Trop court pour lui."
 
 
+def test_each_sentence_is_compared_with_what_its_clip_really_shows():
+    from adaptation import script
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.prompt = parts[0]["text"]
+            return {"passages": [{"note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
+                                  "proposition": "Ce liquide cache un secret."}, {"note": "bon", "proposition": "x"},
+                                 {"note": "bizarre"}]}
+    clips = {"P1": {"start": 0, "end": 4, "desc": "un homme frappe un bac"}, "P2": {"start": 0, "end": 3, "desc": "une roue"},
+             "P3": {"start": 0, "end": 3, "desc": "?"}}
+    sc = {"passages": [{"clip": f"P{k}", "texte": f"Phrase {k}."} for k in (1, 2, 3)]}
+    out = script.match(sc, clips, "fr", gemini=G())
+    assert "un homme frappe un bac" in G.prompt and "ACCROCHE" in G.prompt
+    assert [a["note"] for a in out] == ["non", "bon", "bon"] and out[1]["proposition"] == ""   # unknown note: never blocks
+    assert out[0] == {"clip": "P1", "texte": "Phrase 1.", "note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
+                      "proposition": "Ce liquide cache un secret."}
+    probs = ap._fetched_problems(sc, clips, "fr", out)
+    assert any("Passage 1 : la phrase ne correspond pas" in x for x in probs)
+    sc["passages"][0]["texte"] = "Une autre phrase."                       # the sentence changed: the verdict is stale
+    assert not any("ne correspond pas" in x for x in ap._fetched_problems(sc, clips, "fr", out))
+
+
+def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(project, fakes, monkeypatch):
+    from adaptation import sources, script
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda url, d, name, sections=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b + 3, "impact": a, "w": 1080, "h": 1920, "usable": True,
+        "marks": [], "desc": desc, "shock": False})
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    monkeypatch.setattr(script, "match", lambda sc, clips, code: [
+        {"clip": x["clip"], "texte": x["texte"], "note": "non" if k < 2 else "bon", "pourquoi": "autre chose",
+         "proposition": "Une phrase pour cette image." if k < 2 else ""} for k, x in enumerate(sc["passages"])])
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    t = ap.load(pid)["targets"][0]
+    assert sum("ne correspond pas" in x for x in t["problems"]) == 2 and not t["approved"]
+    p = ap.use_proposal(pid, t["channel"], 0)
+    t = p["targets"][0]
+    assert t["script"]["passages"][0]["texte"] == "Une phrase pour cette image."
+    assert p["storyboard"]["plans"][0]["textes"][t["language"]]["texte"] == "Une phrase pour cette image."
+    t = ap.keep_passage(pid, t["channel"], 1)["targets"][0]
+    assert not any("ne correspond pas" in x for x in t["problems"])
+    with pytest.raises(ap.PipelineError):
+        ap.use_proposal(pid, t["channel"], 2)                               # a good match has nothing to propose
+
+
 def test_an_advert_is_a_warning_not_a_refusal():
     from adaptation import finder
     assert finder.real_faults("publicité") == "" and finder.warnings_of("publicité") == "publicité"

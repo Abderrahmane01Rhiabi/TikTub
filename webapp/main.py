@@ -1340,7 +1340,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "rtl": langs.lang(t["language"])["rtl"], "voice_id": t["voice_id"], "approved": t.get("approved"),
             "validated": t.get("validated"), "video_id": t.get("video_id"), "script": t.get("script"),
             "problems": t.get("problems") or [], "music": os.path.basename(t["music_path"]) if t.get("music_path") else None,
-            "angle": t.get("angle"),
+            "angle": t.get("angle"), "accords": t.get("accords"),
             "preview_url": video_media_url({"video_path": prev["path"]}) if prev.get("path") and os.path.exists(prev["path"]) else None,
             "checks": prev.get("checks"), "final_checks": fin.get("checks"),
             "duration": (prev.get("summary") or {}).get("duration"),
@@ -1672,6 +1672,22 @@ def force_adaptation_clip(pid: str, cid: str):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.force_clip, pid, cid))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/keep")
+def keep_adaptation_passage(pid: str, channel: str, k: int):
+    """The check says the sentence and its picture don't match: keep it anyway."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.keep_passage, pid, channel, k))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/proposal")
+def use_adaptation_proposal(pid: str, channel: str, k: int):
+    """Take the sentence the check wrote for what the clip shows."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.use_proposal, pid, channel, k))
 
 
 @app.post("/api/adaptations/{pid}/fetch")
