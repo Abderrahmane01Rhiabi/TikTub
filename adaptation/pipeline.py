@@ -1044,7 +1044,8 @@ def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str, accords: Opti
         if c and not c.get("usable", True) and (why or not c.get("why_not")):
             out.append(f"Passage {k} : le moment choisi ne convient pas ({why or 'refusé par le contrôle'}) : "
                        f"choisis un autre clip ou « Revenir aux images ».")
-        elif c and c.get("absent") and not c.get("forced"):
+        elif c and c.get("absent") and not c.get("forced") and not (_accord(accords, k - 1, x) or {}).get("note") == "bon":
+            # the final judge saw the clip's pictures and found the sentence shown: the re-timing was too literal
             out.append(f"Passage {k} : l'action voulue ne se voit pas dans la vidéo téléchargée (on y voit : "
                        f"{c['absent']}) : choisis un autre clip, « Revenir aux images » ou « Utiliser quand même ».")
     return out

@@ -698,6 +698,10 @@ def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagg
     assert any("Passage 2 : l'action voulue ne se voit pas" in x for x in t["problems"])
     p = ap.force_clip(pid, "P2")
     assert not any("Passage 2 : l'action voulue" in x for x in p["targets"][0]["problems"])
+    sc, clips = t["script"], {**p["clips"], "P2": {**p["clips"]["P2"], "forced": None}}
+    good = [None, {"clip": "P2", "texte": sc["passages"][1]["texte"], "note": "bon"}]
+    assert any("Passage 2 : l'action voulue" in x for x in ap._fetched_problems(sc, clips, "fr"))
+    assert not any("Passage 2 : l'action voulue" in x for x in ap._fetched_problems(sc, clips, "fr", good))  # pictures win
 
 
 def test_an_advert_is_a_warning_not_a_refusal():

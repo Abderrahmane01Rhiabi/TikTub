@@ -355,7 +355,10 @@ RETIME_PROMPT = """Voici une video (les secondes comptent depuis son debut). Pou
 moment ou l'on VOIT l'action decrite, pendant que la phrase est dite. Un moment approximatif est donne : il peut
 etre decale de plusieurs secondes, cherche autour d'abord, puis dans toute la video.
 {plans}
-Pour chaque plan : "visible" = true si l'action se voit vraiment ; "debut" et "fin" au dixieme de seconde, du
+On cherche l'ACTION qui illustre la phrase : le lieu, les personnes, le decor et le cadrage peuvent etre
+differents de la description (un saut jambes tendues dans une salle de classe illustre "atterrir jambes tendues"
+meme si la description dit "sur du goudron, en gros plan").
+Pour chaque plan : "visible" = true si cette action se voit vraiment ; "debut" et "fin" au dixieme de seconde, du
 debut a la fin de l'action elle-meme (pas de la sequence autour) ; "ce_qu_on_voit" en francais.
 "visible" = false si l'action n'apparait nulle part dans la video.
 JSON uniquement : {{"plans": [{{"plan": numero, "visible": true, "debut": s, "fin": s, "ce_qu_on_voit": "..."}}]}}"""
