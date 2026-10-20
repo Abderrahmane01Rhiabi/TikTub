@@ -733,6 +733,8 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
                         for n, u in enumerate(units, 1))       # numbered from 1: Gemini's reasons quote them
     seen = _watch(url, g, CHECK_PROMPT.format(plans=listing, modele=MODEL_PART.format(**model) if model else ""))
     r = seen["answer"]
+    if isinstance(r, list) and len(r) == 1 and isinstance(r[0], dict):      # once came back wrapped in a list
+        r = r[0]
     items = (r.get("plans") or r.get("scenes")) if isinstance(r, dict) else None
     if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or not isinstance(items, list):
         raise FinderError(f"Vérification impossible : {str(r)[:160]}")

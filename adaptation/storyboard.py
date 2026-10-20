@@ -161,6 +161,14 @@ def write(reference: Dict, codes: List[str], gemini=None, angle: Optional[Dict] 
     return normalise(r, codes)
 
 
+def unfilmable(bundle: Dict) -> List[str]:
+    """Images a search will hardly find (an animation, a diagram): sent to the
+    automatic fix when the storyboard is written, never a block — an existing
+    3D animation was found and chosen for one once."""
+    return [f"Plan {k} : une animation ou un schema se trouve rarement en video : decris une scene reelle filmee."
+            for k, p in enumerate(bundle.get("plans") or [], 1) if UNFILMABLE.search(p.get("image") or "")]
+
+
 def illustration(bundle: Dict, code: str, gemini=None) -> List[str]:
     """Each sentence against its own image, before any search (the same judge
     as after the download, on the wanted image): what a viewer would hear
@@ -298,8 +306,6 @@ def problems(bundle: Dict, code: str) -> List[str]:
             out.append(f"Plan {k} : décris l'image voulue (qui, quoi, où), elle servira à la chercher.")
         elif image.lower() in images:
             out.append(f"Plan {k} : même image que le plan {images[image.lower()]}, choisis-en une autre.")
-        elif UNFILMABLE.search(image):
-            out.append(f"Plan {k} : une animation ou un schéma ne se trouve pas en vidéo : décris une scène réelle filmée.")
         images.setdefault(image.lower(), k)
     total = sum(seconds(((p.get("textes") or {}).get(code) or {}).get("texte", ""), code) for p in plans)
     if plans and not TOTAL_S[0] <= total <= TOTAL_S[1]:

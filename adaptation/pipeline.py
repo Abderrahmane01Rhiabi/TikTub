@@ -328,7 +328,7 @@ def write_storyboard(p: Dict, report: Report):
     for attempt in (1, 2):              # what the re-read missed is fixed (twice at most), then shown
         hard = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
         report("chaque phrase comparée à son image", 0.8)
-        seen = storyboard.illustration(b, codes[0])          # images are shared: one language is enough
+        seen = storyboard.illustration(b, codes[0]) + storyboard.unfilmable(b)   # images are shared: one language
         left = hard + seen
         if not left:
             break

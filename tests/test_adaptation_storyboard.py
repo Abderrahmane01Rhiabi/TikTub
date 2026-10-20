@@ -623,6 +623,26 @@ def test_search_more_looks_for_the_action_only_where_footage_is_missing(project,
         ap.start_more_images(pid)                                              # nothing left to look for
 
 
+def test_an_animation_is_fixed_when_written_but_never_blocks_a_found_video():
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    b["plans"][2]["image"] = "Animation schematique de l'onde de choc dans la colonne"
+    assert sb.unfilmable(b) == ["Plan 3 : une animation ou un schema se trouve rarement en video : decris une scene reelle filmee."]
+    assert not any("animation" in x for x in sb.problems(b, "fr"))
+
+
+def test_a_check_answer_wrapped_in_a_list_is_read():
+    from adaptation import finder
+    seen = {"answer": [{"plans": [{"plan": 1, "niveau": "equivalente", "moments": [{"debut": 4, "fin": 13}]}]}],
+            "duration": 13, "title": "Spine"}
+    old = finder._watch
+    finder._watch = lambda url, g, prompt: seen
+    try:
+        r = finder.check("https://youtu.be/x", [{"scene": "onde de choc"}], None, gemini=object())
+    finally:
+        finder._watch = old
+    assert r["par_plan"]["0"]["niveau"] == "equivalente"
+
+
 def test_retime_reads_where_the_action_really_is():
     from adaptation import sources
 
