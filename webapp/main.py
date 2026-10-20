@@ -1662,6 +1662,14 @@ def adapt_adaptation_plan(pid: str, plan: int):
     return _serialize_adaptation(_adaptation_call(ap.adapt_plan, pid, plan))
 
 
+@app.post("/api/adaptations/{pid}/back-to-script")
+def back_to_adaptation_script(pid: str):
+    """From the previews back to the scripts (a clip or a sentence to change)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.back_to_script, pid))
+
+
 @app.post("/api/adaptations/{pid}/back-to-images")
 def back_to_adaptation_images(pid: str):
     from adaptation import pipeline as ap

@@ -3485,9 +3485,14 @@ async function renderAdPreviews(body, p){
       </div></div>
       <div class="chcard-foot">${t.video_id ? '' : `<button class="btn primary small push pv-validate" data-icon="check" ${ok && !t.validated ? '' : 'disabled'}>Valider cet aperçu</button>`}</div>
     </article>`;
-  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} aperçu(s) validé(s)</span><span></span>
+  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} aperçu(s) validé(s)</span>
+      ${p.targets.some(t => t.video_id) ? '<span></span>' : '<button class="btn ghost small" id="adBackScript" data-icon="eye" title="Changer un clip, une phrase, un effet : la voix est gardée si les phrases ne changent pas">← Revenir au script</button>'}
       <button class="btn primary" id="adRender" ${anyValidated ? '' : 'disabled'} data-icon="film">Rendu final des aperçus validés →</button></div>`;
   hydrateIcons(body);
+  const backScript = document.getElementById('adBackScript');
+  if (backScript) backScript.onclick = async () => {
+    try { await api(`/api/adaptations/${p.project_id}/back-to-script`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
+  };
   body.querySelectorAll('.ad-prev-card').forEach(card => {
     const ch = card.dataset.channel;
     const sel = card.querySelector('.pv-voice');

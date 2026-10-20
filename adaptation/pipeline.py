@@ -1086,6 +1086,19 @@ def force_clip(pid: str, cid: str) -> Dict:
     return save(p)
 
 
+def back_to_script(pid: str) -> Dict:
+    """From the previews back to the scripts: a clip to change, a sentence to
+    fix. The narration is kept and only made again if a sentence changes."""
+    p = load(pid)
+    _expect(p, "preview_review")
+    if any(t.get("video_id") for t in p["targets"]):
+        raise PipelineError("Une version est déjà rendue : fais une nouvelle version plutôt.")
+    p["status"] = "script_review"
+    for t in p["targets"]:
+        t["validated"] = False
+    return save(p)
+
+
 def back_to_images(pid: str) -> Dict:
     """"Script d'abord": from the script screen back to the plan-by-plan
     picks (a moment refused by the check, another one wanted)."""
@@ -1487,10 +1500,14 @@ def approve_script(pid: str, channel: str) -> Dict:
 def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset: float) -> Dict:
     base = os.path.join(project_dir(p["project_id"]), t["channel"])
     voice_mp3 = os.path.join(base, "voice.mp3")
-    if not t.get("voice") or t["voice"].get("voice_id") != t["voice_id"]:     # never pay twice for the same narration
+    texts = [x["texte"] for x in t["script"]["passages"]]
+    v = t.get("voice") or {}
+    if not v or v.get("voice_id") != t["voice_id"] or v.get("texts", texts) != texts:   # never pay twice for the same narration
         report(f"voix {t['channel']}", offset)
         t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3)
-        t["voice"]["voice_id"] = t["voice_id"]
+        t["voice"].update(voice_id=t["voice_id"], texts=texts)
+    for vp, sp in zip(t["voice"]["passages"], t["script"]["passages"]):      # back from the preview: a clip or a banner changed
+        vp.update({k: sp[k] for k in ("clip", "bandeau", "mots_cles") if k in sp})
     out = os.path.join(base, "preview.mp4" if preview else "final.mp4")
     fx = _effects(p, t, os.path.join(base, "work"))
     anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2, fx)

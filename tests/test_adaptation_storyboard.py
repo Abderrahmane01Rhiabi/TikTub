@@ -675,6 +675,28 @@ def test_a_poor_picture_comes_after_a_clean_one_of_the_same_level():
     assert finder.auto_pick(sug, [{}])[0]["url"] == "clean"
 
 
+def test_back_from_the_preview_keeps_the_voice_unless_a_sentence_changes(project, fakes, monkeypatch, tmp_path):
+    from adaptation import voices
+    calls = []
+    monkeypatch.setattr(voices, "synthesize", lambda passages, vid, code, out: calls.append(1) or {
+        "passages": [{**x, "start": k, "end": k + 0.8, "words": []} for k, x in enumerate(passages)], "words": [], "duration": 5})
+    p = {"project_id": "x", "clips": {}, "credits": "", "targets": [{"channel": "c", "language": "fr", "voice_id": "v",
+         "script": {"passages": [{"clip": "P1", "texte": "Un.", "bandeau": "A"}, {"clip": "P2", "texte": "Deux.", "bandeau": "B"}]}}]}
+    t = p["targets"][0]
+    monkeypatch.setattr(ap, "_effects", lambda p, t, w: [])
+    monkeypatch.setattr(ap, "_annotations", lambda *a, **k: [])
+    monkeypatch.setattr(ap.render, "render", lambda *a, **k: {})
+    monkeypatch.setattr(ap.checks, "verify", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(ap, "project_dir", lambda pid: str(tmp_path))
+    ap._make(p, t, True, lambda *a: None, 1, 0)
+    t["script"]["passages"][1].update(clip="P3", bandeau="C")                   # another clip: same narration
+    ap._make(p, t, True, lambda *a: None, 1, 0)
+    assert len(calls) == 1 and t["voice"]["passages"][1]["clip"] == "P3" and t["voice"]["passages"][1]["bandeau"] == "C"
+    t["script"]["passages"][0]["texte"] = "Un autre."                             # a new sentence: a new narration
+    ap._make(p, t, True, lambda *a: None, 1, 0)
+    assert len(calls) == 2
+
+
 def test_retime_reads_where_the_action_really_is():
     from adaptation import sources
 
