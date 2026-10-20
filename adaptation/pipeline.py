@@ -1090,10 +1090,11 @@ def back_to_script(pid: str) -> Dict:
     """From the previews back to the scripts: a clip to change, a sentence to
     fix. The narration is kept and only made again if a sentence changes."""
     p = load(pid)
-    _expect(p, "preview_review")
+    if not (p["status"] == "error" and p.get("failed_step") in ("voicing", "rendering")):   # a failed render too
+        _expect(p, "preview_review")
     if any(t.get("video_id") for t in p["targets"]):
         raise PipelineError("Une version est déjà rendue : fais une nouvelle version plutôt.")
-    p["status"] = "script_review"
+    p.update(status="script_review", error=None, failed_step=None)
     for t in p["targets"]:
         t["validated"] = False
     return save(p)

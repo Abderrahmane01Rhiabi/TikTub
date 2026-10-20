@@ -2679,8 +2679,13 @@ function adBusyHtml(p){
 
 function renderAdError(body, p){
   body.innerHTML = `<div class="errbox">${esc(p.error || 'Erreur')}</div>
-    <div class="ad-row"><button class="btn primary small" id="adRetry" data-icon="refresh">Réessayer cette étape</button></div>`;
+    <div class="ad-row"><button class="btn primary small" id="adRetry" data-icon="refresh">Réessayer cette étape</button>
+      ${['voicing', 'rendering'].includes(p.failed_step) ? '<button class="btn ghost small" id="adErrBack" data-icon="eye">← Revenir au script</button>' : ''}</div>`;
   hydrateIcons(body);
+  const errBack = document.getElementById('adErrBack');
+  if (errBack) errBack.onclick = async () => {
+    try { await api(`/api/adaptations/${p.project_id}/back-to-script`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
+  };
   document.getElementById('adRetry').onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/retry`, { method:'POST' }); loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };

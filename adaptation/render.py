@@ -19,6 +19,7 @@ import math
 import os
 import re
 import subprocess
+import threading
 import unicodedata
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -496,7 +497,72 @@ def whoosh_wav(path: str) -> str:
     return path
 
 
-def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
+def _window(s: Dict) -> Tuple[float, float]:
+    """The source seconds a segment needs: (start, length), with a margin."""
+    pcs = s.get("pieces") or [{"kind": "play", "a": s["ws"], "b": s["ws"] + s["dur"]}]
+    a0 = min(p["a"] if p["kind"] == "play" else p["t"] for p in pcs)
+    b0 = max(p["b"] if p["kind"] == "play" else p["t"] + 0.1 for p in pcs)
+    t0 = max(0.0, a0 - 0.5)
+    return t0, b0 - t0 + 0.5
+
+
+def _shifted(c: Dict, s: Dict, t0: float) -> Tuple[Dict, Dict]:
+    """The clip and its segment in the times of an input opened at t0 (-ss).
+    One input per source, cut many times, made ffmpeg hold every frame waiting
+    for a later segment in memory: a final render was killed at 4.5 GB."""
+    c2 = {**c, "start": c["start"] - t0, "end": c["end"] - t0, "impact": c["impact"] - t0}
+    pcs = [{**p, **({"a": p["a"] - t0, "b": p["b"] - t0} if p["kind"] == "play" else {"t": p["t"] - t0})}
+           for p in s.get("pieces") or []]
+    return c2, {**s, "ws": s["ws"] - t0, "pieces": pcs}
+
+
+RENDERING = threading.BoundedSemaphore(1)   # two final renders at once once ran out of memory
+
+
+def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, preview: bool, progress=None) -> str:
+    """The picture box of the whole video, made one segment at a time, then
+    joined without re-encoding. In one graph ffmpeg reads every source at once
+    and keeps the frames of the segments still waiting: a final render was
+    killed by the system at 4.5 GB. Each segment has the exact number of
+    frames of its place in the timeline, so nothing drifts."""
+    files = []
+    for n, s in enumerate(segs):
+        c = clips[s["clip"]]
+        t0, length = _window(s)
+        frames = max(1, round((s["out"] + s["dur"]) * FPS) - round(s["out"] * FPS))
+        g = clip_chain(0, s["k"], *_shifted(c, s, t0), preview)
+        g.append(f"[v{s['k']}]tpad=stop_mode=clone:stop_duration=1[vo]")
+        out = os.path.join(work_dir, f"seg_{s['k']}.mp4")
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{length:.3f}", "-i", c["src"],
+                            "-filter_complex", ";".join(g), "-map", "[vo]", "-frames:v", str(frames), "-r", str(FPS),
+                            "-c:v", "libx264", "-preset", "ultrafast" if preview else "veryfast",
+                            "-crf", "24" if preview else "12", "-pix_fmt", "yuv420p", "-an", out],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise RenderError(f"ffmpeg a échoué (plan {s['k'] + 1}) : {r.stderr.strip()[-600:]}")
+        files.append(out)
+        if progress:
+            progress((n + 1) / len(segs))
+    listing = os.path.join(work_dir, "segments.txt")
+    with open(listing, "w", encoding="utf-8") as f:
+        f.writelines(f"file '{os.path.abspath(x)}'\n" for x in files)
+    box = os.path.join(work_dir, "box.mp4")
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", listing, "-c", "copy", box],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RenderError(f"ffmpeg a échoué (assemblage) : {r.stderr.strip()[-600:]}")
+    return box
+
+
+def render(*args, **kw) -> Dict:
+    """Final renders one at a time (two at once ran out of memory); previews freely."""
+    if kw.get("preview"):
+        return _render(*args, **kw)
+    with RENDERING:
+        return _render(*args, **kw)
+
+
+def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
            preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None,
            style: Optional[str] = None, effects: Optional[List[Optional[Dict]]] = None) -> Dict:
@@ -524,14 +590,9 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
         return sum(1 for x in inputs if x == "-i") - 1
 
     vin = add_input("-i", voice_path)
-    src_index = {}
-    for c in clips.values():
-        if c["src"] not in src_index:
-            src_index[c["src"]] = add_input("-i", c["src"])
-    for s in segs:
-        c = clips[s["clip"]]
-        g += clip_chain(src_index[c["src"]], s["k"], c, s, preview)
-    g.append("".join(f"[v{s['k']}]" for s in segs) + f"concat=n={len(segs)}:v=1:a=0[box]")
+    part = lambda a, b: (lambda f: progress_cb(a + (b - a) * f)) if progress_cb else None
+    bi = add_input("-i", _picture_box(segs, clips, work_dir, preview, part(0.0, 0.5)))
+    g.append(f"[{bi}:v]setpts=PTS-STARTPTS,fps={FPS}[box]")
     box = "box"
     for j, an in enumerate(annotations or []):              # each one a PNG sequence, shifted to its moment
         ai = add_input("-framerate", str(FPS), "-i", os.path.join(an["dir"], "f_%03d.png"))
@@ -560,7 +621,8 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
         a = max(sound["start"], sound["impact"] - 0.35)
         b = min(sound["end"], sound["impact"] + 0.9)
         delay = int(max(0.0, s["impact_out"] - (sound["impact"] - a)) * 1000)
-        g.append(f"[{src_index[sound['src']]}:a]atrim={a:.3f}:{b:.3f},asetpts=PTS-STARTPTS,"
+        ai = add_input("-ss", f"{a:.3f}", "-t", f"{b - a + 0.1:.3f}", "-i", sound["src"])
+        g.append(f"[{ai}:a]atrim=0:{b - a:.3f},asetpts=PTS-STARTPTS,"
                  f"afade=t=out:st={max(0.0, b - a - 0.3):.3f}:d=0.3,"
                  f"aformat=sample_rates=44100:channel_layouts=stereo,adelay={delay}:all=1[fx{s['k']}]")
         fx.append(f"[fx{s['k']}]")
@@ -604,7 +666,7 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
     cmd = ["ffmpeg", "-v", "error", "-y", "-nostats", "-progress", "pipe:1", *inputs, "-filter_complex", ";".join(g),
            "-map", "[vout]", "-map", "[aout]", "-t", f"{total:.3f}", "-c:v", "libx264", *enc,
            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", tmp]
-    _run(cmd, total, progress_cb)
+    _run(cmd, total, part(0.5, 1.0))
     os.replace(tmp, out_path)
     return {"duration": round(total, 2), "captions": n_caps,
             "segments": [{"clip": s["clip"], "start": round(s["out"], 2), "end": round(s["out"] + s["dur"], 2),
@@ -618,7 +680,10 @@ def _run(cmd: Sequence[str], total: float, progress_cb) -> None:
         if m and progress_cb and total > 0:
             progress_cb(min(1.0, int(m.group(1)) / 1e6 / total))
     err = proc.stderr.read()
-    if proc.wait() != 0:
+    code = proc.wait()
+    if code != 0:
+        if code in (-9, 137) and not err.strip():   # killed by the system, no word from ffmpeg: memory
+            raise RenderError("ffmpeg a été arrêté par le système (mémoire pleine) : réessaie quand aucun autre rendu ne tourne.")
         raise RenderError(f"ffmpeg a échoué : {err.strip()[-600:]}")
     if progress_cb:
         progress_cb(1.0)

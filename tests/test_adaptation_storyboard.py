@@ -697,6 +697,19 @@ def test_back_from_the_preview_keeps_the_voice_unless_a_sentence_changes(project
     assert len(calls) == 2
 
 
+def test_a_failed_render_can_go_back_to_the_script(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p.update(status="error", failed_step="rendering", error="ffmpeg a été arrêté par le système (mémoire pleine)")
+    ap.save(p)
+    p = ap.back_to_script(pid)
+    assert p["status"] == "script_review" and not p["error"]
+    p.update(status="error", failed_step="fetching")
+    ap.save(p)
+    with pytest.raises(ap.PipelineError):
+        ap.back_to_script(pid)                                                 # only after the voice or the render
+
+
 def test_retime_reads_where_the_action_really_is():
     from adaptation import sources
 
