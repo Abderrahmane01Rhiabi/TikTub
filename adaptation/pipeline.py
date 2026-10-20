@@ -1510,6 +1510,8 @@ def _effects(p: Dict, t: Dict, work: str) -> List[Optional[Dict]]:
             out.append(None)
             continue
         e = dict(e)
+        if e.get("zoom") and (x.get("annotation") or {}).get("cible"):
+            e["zoom"] = None                    # the arrow is placed on the unzoomed picture: it wins
         if e.get("zoom"):
             key = f"{x['clip']}|{round(c['impact'], 2)}|{e['zoom']}"
             if key not in cache:

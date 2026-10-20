@@ -3363,6 +3363,7 @@ function renderAdScripts(body, p){
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
               ${adAnnHtml(ps.annotation)}
               ${adFxHtml(ps.effets)}
+              ${ps.effets && ps.effets.zoom && ps.annotation ? `<div class="tiny" style="color:#f5c56d">Zoom ignoré : ce plan a une flèche ou un cercle (elle serait mal placée sur l'image zoomée). Choisis l'un ou l'autre.</div>` : ''}
               ${adAccordHtml(t, ps, i)}
             </div>
           </div>`).join('')}</div>

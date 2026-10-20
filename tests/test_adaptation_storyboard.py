@@ -525,6 +525,8 @@ def test_the_montage_effects_chosen_after_the_download_reach_the_script_and_the_
     assert fx[0] is None and fx[1]["ralenti"] and fx[1]["zoom"]["cx"] == 0.45 and asked == ["les pieds"]
     ap._effects(p, t, str(tmp_path / "w"))
     assert asked == ["les pieds"]                                      # found once, the final render reuses it
+    t["script"]["passages"][1]["annotation"] = {"type": "cercle", "cible": "les pieds"}
+    assert ap._effects(p, t, str(tmp_path / "w"))[1]["zoom"] is None   # with an arrow, no zoom (it would misplace it)
     edited = ap.edit_script(pid, t["channel"], {"passages": [{**x, "effets": None} if k == 1 else x
                                                              for k, x in enumerate(t["script"]["passages"])]})
     assert edited["targets"][0]["script"]["passages"][1]["effets"] is None   # unticked by hand: gone
