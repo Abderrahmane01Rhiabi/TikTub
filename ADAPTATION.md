@@ -104,6 +104,12 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
   - ⏸ **arrêt sur image** : l'image se fige un instant sur le moment fort, la flèche ou le cercle reste dessus — 1 plan ;
   - 💨 **transition** : coup de zoom et « whoosh » quand une nouvelle partie de l'histoire commence — 3 plans au plus.
 
+  Règles automatiques du montage, mesurées sur chaque clip :
+  - **pas de temps mort** : le clip est coupé autour de l'action (0,6 s avant, 0,8 s après) et ralenti pour remplir sa phrase ; trop court même à mi-vitesse : arrêt sur image au moment fort ;
+  - **l'instant le plus fort** de chaque action (vu en mouvement) place la flèche, le ralenti, l'arrêt sur image — et l'**accroche démarre juste avant lui** ;
+  - **cadrage sur le sujet** : une image recadrée reste centrée sur la personne ou l'objet de la phrase (les flèches suivent) ;
+  - **lumière** : un clip trop sombre est éclairci ;
+  - **musique** : elle baisse sous la voix et remonte dans les pauses.
   En plus, l'app **mesure** la taille du sujet de chaque phrase dans son image : s'il prend moins d'un quart du cadre (une personne filmée de loin), le zoom sur lui est ajouté tout seul (3 zooms au plus par vidéo, jamais sous une flèche).
   Tu peux les changer sous chaque phrase (cases et « Zoom sur… »). Un clip trop court pour sa phrase est **ralenti en entier** (jamais plus de 2×) au lieu de finir sur une image figée. La recherche juge chaque vidéo sur l'image voulue **et sur la phrase dite** ; un **film, une série, une émission TV** ou le **remontage d'un autre créateur** est marqué en rouge et n'est jamais choisi automatiquement (droits). Pour la recherche, le cadrage et la vitesse ne comptent plus : un atterrissage filmé de loin à vitesse normale est « équivalent » à un « plan serré au ralenti ». L'aperçu montre les ralentis de façon simple (rapide) ; le rendu final les calcule en qualité (environ 30 s de plus par ralenti).
 

@@ -84,6 +84,7 @@ def style_preview(name: str, lang: Dict, path: str) -> str:
 BANNER_KEY = "#FFD60A"
 EMOJI_FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 MUSIC_GAIN = 0.16                                  # under a -16 LUFS voice
+MUSIC_DUCKED = 0.26                                # louder in the pauses, ducked under the voice
 SFX_GAIN = 0.55
 
 
@@ -397,6 +398,36 @@ def _played(i: int, k: int, c: Dict, s: Dict, crop_delogo: str, width: int = 0,
     return g, f"pl{k}"
 
 
+def framing(c: Dict) -> Tuple[float, float]:
+    """Where a filled (cropped) picture is centred: on the sentence's subject
+    when it was found (a man's head was cut off by a centred crop), else the
+    middle. Only a filled picture is cropped; a wide one is shown whole."""
+    ce = c.get("centre")
+    if isinstance(ce, (list, tuple)) and len(ce) == 2:
+        return min(max(float(ce[0]), 0.0), 1.0), min(max(float(ce[1]), 0.0), 1.0)
+    return 0.5, 0.5
+
+
+DARK = 70                                # mean luma (0-255) under which a clip is lit up
+
+
+def light(c: Dict) -> Optional[str]:
+    """An eq filter for a dark clip, measured on its own frames (a classroom
+    clip came out almost black next to sunny streets), else None."""
+    crop = f"crop={c['crop']}," if c.get("crop") else ""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{c['start']:.2f}", "-t", f"{max(0.5, c['end'] - c['start']):.2f}",
+                        "-i", c["src"], "-vf", f"{crop}fps=2,scale=96:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
+                        "-f", "null", "-"], capture_output=True, text=True)
+    vals = [float(v) for v in re.findall(r"YAVG=([\d.]+)", r.stderr)]
+    if not vals:
+        return None
+    y = sum(vals) / len(vals)
+    if y >= DARK:
+        return None
+    gamma = min(1.7, 1.0 + (DARK + 30 - y) / 100)
+    return f"eq=gamma={gamma:.2f}:contrast=1.08:saturation=1.1"
+
+
 def _zoom_filter(z: str, cx: str, cy: str, shake: str, vw: int, vh: int) -> str:
     """Zoom z toward (cx, cy) (0-1 of the frame) at a FIXED frame size: a
     perspective warp, sub-pixel and per frame. (A per-frame scale + crop was
@@ -424,20 +455,23 @@ def clip_chain(i: int, k: int, c: Dict, s: Dict, preview: bool = False) -> List[
         punch, shake = "1", "0"
     if fx.get("transition"):            # a whip zoom into the new part of the story
         punch += f"*(1+0.22*pow(1-clip(t/{E.TRANSITION},0,1),2))"
-    zoom, cx, cy = "1", "0.5", "0.5"
+    x0, y0 = framing(c)                 # the subject's place: a cropped picture is centred on it, not on the middle
+    zoom, cx, cy = "1", f"{x0:.3f}", f"{y0:.3f}"
     z = fx.get("zoom") if isinstance(fx.get("zoom"), dict) else None
     held = E.hold_at(s.get("pieces") or [])
     if z:                               # a slow push-in, reached at the strong moment, then held
         t1 = T if 0.6 < T < s["dur"] - 0.2 else s["dur"] * 0.7
         e = _ease(0.0, t1)
         zoom = f"(1+{z['z'] - 1:.3f}*{e})"
-        cx, cy = f"(0.5+{z['cx'] - 0.5:.3f}*{e})", f"(0.5+{z['cy'] - 0.5:.3f}*{e})"
+        cx, cy = f"({x0:.3f}+{z['cx'] - x0:.3f}*{e})", f"({y0:.3f}+{z['cy'] - y0:.3f}*{e})"
     elif held:                          # a freeze frame breathes: a small push-in while it holds
         zoom = f"(1+0.07*{_ease(held[0], held[0] + held[1])})"
     crop_delogo = f",crop={c['crop']}" if c.get("crop") else ""
     from adaptation.sources import delogo_filters
     for f in delogo_filters(c.get("delogo"), c["w"], c["h"]):
         crop_delogo += "," + f
+    if c.get("eq"):                     # a dark clip, lit up (see light)
+        crop_delogo += "," + c["eq"]
     aspect, box_aspect = c["w"] / c["h"], BOX_W / BOX_H
     fill = z or abs(math.log(aspect / box_aspect)) < 0.25
     shown = (max(BOX_W, BOX_H * aspect) * (z["z"] if z else 1.08) if fill
@@ -525,9 +559,15 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
     and keeps the frames of the segments still waiting: a final render was
     killed by the system at 4.5 GB. Each segment has the exact number of
     frames of its place in the timeline, so nothing drifts."""
-    files = []
+    files, lit = [], {}
     for n, s in enumerate(segs):
         c = clips[s["clip"]]
+        if s["clip"] not in lit:
+            try:
+                lit[s["clip"]] = light(c)
+            except Exception:
+                lit[s["clip"]] = None
+        c = {**c, "eq": lit[s["clip"]]}
         t0, length = _window(s)
         frames = max(1, round((s["out"] + s["dur"]) * FPS) - round(s["out"] * FPS))
         g = clip_chain(0, s["k"], *_shifted(c, s, t0), preview)
@@ -640,8 +680,11 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     if music and music[0] and os.path.exists(music[0]):
         mi = add_input("-ss", f"{music[1]:.3f}", "-i", music[0])
         g.append(f"[{mi}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{total:.3f},"
-                 f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, total - 0.6):.3f}:d=0.6,volume={MUSIC_GAIN}[mus]")
-        mix.append("[mus]")
+                 f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, total - 0.6):.3f}:d=0.6,volume={MUSIC_DUCKED}[mus]")
+        # the music steps back while a sentence is said and comes up in the pauses (it was one level throughout)
+        g.append("[voice]asplit=2[voice][vkey]")
+        g.append("[mus][vkey]sidechaincompress=threshold=0.03:ratio=6:attack=20:release=400:makeup=1[musd]")
+        mix.append("[musd]")
     g.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:normalize=0,alimiter=limit=0.95,"
              f"aresample=48000,apad,atrim=0:{total:.3f}[aout]")
 

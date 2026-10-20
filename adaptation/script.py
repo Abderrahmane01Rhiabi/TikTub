@@ -210,7 +210,9 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
         if not c:
             out.append(f"Passage {k} : le clip « {p['clip']} » n'existe pas.")
             continue
-        room = (c["end"] - c["start"]) * lang["chars_per_second"]
+        from adaptation.effects import MIN_SPEED
+        # a clip cut around its action is slowed down to fill its sentence (never below MIN_SPEED)
+        room = (c["end"] - c["start"]) / (MIN_SPEED + 0.1 if c.get("compact") else 1.0) * lang["chars_per_second"]
         if len(p["texte"]) > room * 1.15:
             out.append(f"Passage {k} : phrase trop longue pour son clip ({len(p['texte'])} caractères, "
                        f"le clip {p['clip']} en laisse environ {int(room)}).")

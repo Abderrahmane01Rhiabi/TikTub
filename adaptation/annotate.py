@@ -77,10 +77,13 @@ def to_box(clip: Dict, x: float, y: float) -> Tuple[float, float]:
     """A point of the cleaned clip picture (0-1 on each side) -> pixels in the
     picture box, as clip_chain places it (zoom pulse and shake left out)."""
     aspect, box_aspect = clip["w"] / clip["h"], R.BOX_W / R.BOX_H
-    if abs(math.log(aspect / box_aspect)) < 0.25:              # cover
+    if abs(math.log(aspect / box_aspect)) < 0.25:              # cover, centred on the subject (render.framing)
         cw = R._even(max(R.BOX_W, R.BOX_H * aspect) * 1.08)
         ch = cw / aspect
-        return x * cw - (cw - R.BOX_W) / 2, y * ch - (ch - R.BOX_H) / 2
+        fx, fy = R.framing(clip)
+        ox = min(max(fx * cw - R.BOX_W / 2, 0), cw - R.BOX_W)
+        oy = min(max(fy * ch - R.BOX_H / 2, 0), ch - R.BOX_H)
+        return x * cw - ox, y * ch - oy
     if aspect > box_aspect:                                    # wide, on its blurred copy
         fw, fh = R.BOX_W, R._even(R.BOX_W / aspect)
     else:

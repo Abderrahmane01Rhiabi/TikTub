@@ -747,7 +747,8 @@ def start_fetch(pid: str) -> Dict:
     return save(p)
 
 
-CUT_VERSION = 2          # how clips are cut; a clip cut an older way is cut again (2: re-timed, upright, no bars)
+CUT_VERSION = 3          # how clips are cut; a clip cut an older way is cut again (3: no dead time, strongest instant)
+ACTION_LEAD, ACTION_TAIL, MIN_ACTION = 0.6, 0.8, 1.2    # seconds kept before / after the action; shortest clip
 
 
 def fit_window(a: float, b: float, need: float, shots: List[Tuple[float, float]],
@@ -876,7 +877,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     if r and r["visible"]:
                         moments[n] = (k, r["debut"], r["fin"], need)
                         seen_moving[k] = r["vu"]
-                        action_at[k] = (r["debut"], r["fin"])
+                        action_at[k] = (r["debut"], r["fin"], r.get("fort"))
                     elif r:
                         absent[k] = r["vu"] or "autre chose"
             if gfile:                   # a video posted lying on its side is turned upright before anything is cut
@@ -887,9 +888,15 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                         path = sources.rotated(path, deg)
                     except Exception:
                         pass
-            times = []
+            times, compact = [], set()
             for k, fa, fb, need in moments:
                 start, end = fit_window(fa, fb, need, shots, length)
+                if k in action_at:          # no dead time: around the action only; the render slows it to fill
+                    ra, rb = action_at[k][:2]
+                    s2, e2 = max(start, ra - ACTION_LEAD), min(end, rb + ACTION_TAIL)
+                    if e2 - s2 >= MIN_ACTION and e2 - s2 < end - start - 0.3:
+                        start, end = round(s2, 2), round(e2, 2)
+                        compact.add(k)
                 times.append((k, start, end))
             work = os.path.join(base, "work")
             os.makedirs(work, exist_ok=True)
@@ -918,8 +925,14 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     c["action"] = seen_moving[k]
                 if k in action_at:              # the strong moment is IN the action (arrow, ramp, freeze follow it)
                     ra, rb = max(action_at[k][0], c["start"]), min(action_at[k][1], c["end"])
-                    if rb > ra and not ra <= c["impact"] <= rb:
+                    fort = action_at[k][2]
+                    if fort is not None and c["start"] <= fort <= c["end"]:
+                        c["impact"] = round(fort, 2)        # the most spectacular instant, as Gemini saw it moving
+                    elif rb > ra and not ra <= c["impact"] <= rb:
                         c["impact"] = round(ra + 0.6 * (rb - ra), 2)
+                    c["action_at"] = [round(action_at[k][0], 2), round(action_at[k][1], 2)]
+                if k in compact:                # cut around its action: slowed down to fill its sentence
+                    c["compact"] = True
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c

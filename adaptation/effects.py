@@ -150,6 +150,8 @@ def fit(c: Dict, s: Dict, fx: Optional[Dict]) -> Dict:
     sentence gets a uniform slow-down (then no ramp)."""
     fx = dict(fx or {})
     avail = c["end"] - s["ws"]
+    if not fx.get("arret") and 0.1 < avail and avail / MIN_SPEED < s["dur"] - 0.2:
+        fx["arret"] = True              # even at half speed too short: a freeze on the strong moment, not at the end
     hold = FREEZE if fx.get("arret") else 0.0
     need = s["dur"] - hold - (SLOW_SRC * (1 / SLOW - 1) if fx.get("ralenti") else 0.0)
     if avail < need - 0.05 and avail > 0.1:
@@ -322,7 +324,10 @@ def auto_zoom(passages: List[Dict], clips: Dict[str, Dict], fx: List[Optional[Di
         if not (0 <= n < len(idx) and sujet and isinstance(b, list) and len(b) == 4 and b[2] > b[0] and b[3] > b[1]):
             continue
         k = idx[n]
-        share = on_screen(clips[passages[k]["clip"]], [int(v) for v in b])
+        c = clips[passages[k]["clip"]]
+        y0, x0, y1, x1 = (int(v) / 1000 for v in b)
+        c["centre"] = [round((x0 + x1) / 2, 3), round((y0 + y1) / 2, 3)]   # a cropped picture keeps it in frame
+        share = on_screen(c, [int(v) for v in b])
         if share < SMALL:
             small.append((share, k, sujet))
     room = MAX["zoom"] - sum(1 for e in fx if e and e.get("zoom"))

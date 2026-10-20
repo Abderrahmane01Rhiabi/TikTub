@@ -361,9 +361,11 @@ On cherche l'ACTION qui illustre la phrase : le lieu, les personnes, le decor et
 differents de la description (un saut jambes tendues dans une salle de classe illustre "atterrir jambes tendues"
 meme si la description dit "sur du goudron, en gros plan").
 Pour chaque plan : "visible" = true si cette action se voit vraiment ; "debut" et "fin" au dixieme de seconde, du
-debut a la fin de l'action elle-meme (pas de la sequence autour) ; "ce_qu_on_voit" en francais.
+debut a la fin de l'action elle-meme (pas de la sequence autour, pas l'hesitation avant ni la marche apres) ;
+"fort" = l'instant le plus spectaculaire de l'action (l'impact, le contact, le saut, la chute) ; "ce_qu_on_voit" en
+francais.
 "visible" = false si l'action n'apparait nulle part dans la video.
-JSON uniquement : {{"plans": [{{"plan": numero, "visible": true, "debut": s, "fin": s, "ce_qu_on_voit": "..."}}]}}"""
+JSON uniquement : {{"plans": [{{"plan": numero, "visible": true, "debut": s, "fin": s, "fort": s, "ce_qu_on_voit": "..."}}]}}"""
 
 
 def retime(path: str, asks: List[Dict], length: float, file=None) -> List[Optional[Dict]]:
@@ -406,6 +408,12 @@ def retime(path: str, asks: List[Dict], length: float, file=None) -> List[Option
         a, b = max(0.0, min(a, length)), max(0.0, min(b, length))
         if b - a >= 0.3:
             out[n] = {"visible": True, "debut": round(a, 2), "fin": round(b, 2), "vu": vu}
+            try:
+                fort = float(e.get("fort"))
+                if a <= fort <= b:
+                    out[n]["fort"] = round(fort, 2)
+            except (TypeError, ValueError):
+                pass
     return out
 
 

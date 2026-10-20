@@ -39,11 +39,11 @@ def test_a_clip_too_short_for_its_sentence_is_slowed_down_not_frozen():
     assert fx["vitesse"] == pytest.approx(2.0 / 3.0, abs=1e-3)
     pcs = E.pieces(c, {**s, "fx": fx})
     assert len(pcs) == 1 and pcs[0]["speed"] < 1 and pcs[0]["len"] == pytest.approx(3.0, abs=0.01)
-    very = E.fit(clip(start=1.0, end=1.8), {**s, "dur": 4.0}, None)
-    assert very["vitesse"] == E.MIN_SPEED                                     # never slower than half speed…
-    pcs = E.pieces(clip(start=1.0, end=1.8), {**s, "dur": 4.0, "fx": very})
-    assert pcs[-1]["kind"] == "hold" and pcs[-1]["pad"]                        # …the rest is the last picture
-    assert E.hold_at(pcs) is None                                             # not a freeze the AI chose
+    short = clip(start=1.0, end=1.8, impact=1.4)
+    very = E.fit(short, {**s, "dur": 4.0}, None)
+    assert very["vitesse"] == E.MIN_SPEED and very["arret"]                   # half speed at most, then a freeze…
+    pcs = E.pieces(short, {**s, "dur": 4.0, "fx": very})
+    assert E.hold_at(pcs)[1] == E.FREEZE and pcs[1] == {**pcs[1], "kind": "hold", "t": 1.4}   # …on the strong moment
 
 
 def test_the_ai_choice_is_cleaned_and_capped():
@@ -72,7 +72,7 @@ def test_the_timeline_and_the_filters_follow_the_effects():
     assert total == pytest.approx(_)
     assert segs[0]["impact_out"] > plain[0]["impact_out"]                      # the crash sound waits for the slowed moment
     final = " ; ".join(render.clip_chain(1, 0, clips["A"], segs[0]))
-    assert "minterpolate" in final and "perspective" in final and "(0.5+-0.100*" in final   # toward x = 0.4
+    assert "minterpolate" in final and "perspective" in final and "(0.500+-0.100*" in final   # toward x = 0.4
     quick = " ; ".join(render.clip_chain(1, 0, clips["A"], segs[0], preview=True))
     assert "minterpolate" not in quick                                        # the preview repeats frames: seconds
     frozen = " ; ".join(render.clip_chain(2, 1, clips["B"], segs[1]))
@@ -101,3 +101,24 @@ def test_a_small_subject_gets_a_zoom_measured_not_guessed(tmp_path, monkeypatch)
     assert out[3] is None and out[4]["zoom"] == "deja"
     assert E.on_screen(clip(), [600, 500, 700, 540]) < E.SMALL < E.on_screen(clip(), [200, 450, 900, 520])
     assert E.on_screen(clip(), [500, 450, 900, 520]) < E.SMALL                  # 40 % of a wide clip: small once shown
+
+
+def test_a_cropped_picture_follows_its_subject_and_the_arrow_follows_too():
+    from adaptation import annotate
+    square = {**clip(w=1080, h=1080), "centre": [0.9, 0.5]}
+    assert render.framing(square) == (0.9, 0.5) and render.framing(clip()) == (0.5, 0.5)
+    seg = {"ws": 1.0, "dur": 3.0, "out": 0.0, "impact_out": 1.0, "fx": None}
+    chain = " ; ".join(render.clip_chain(1, 0, square, seg))
+    assert "clip(0.900*W" in chain                                          # the crop is centred on the subject
+    mid, right = annotate.to_box(clip(w=1080, h=1080), 0.9, 0.5), annotate.to_box(square, 0.9, 0.5)
+    assert right[0] < mid[0]                                                # the arrow moves with the picture
+
+
+def test_a_dark_clip_is_lit_up_and_a_bright_one_left_alone(tmp_path):
+    import subprocess
+    dark, bright = str(tmp_path / "d.mp4"), str(tmp_path / "b.mp4")
+    for f, col in ((dark, "0x101010"), (bright, "0xb0b0b0")):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"color=c={col}:s=320x240:d=2", "-c:v", "libx264",
+                        f], check=True)
+    assert render.light({"src": dark, "start": 0, "end": 2}).startswith("eq=gamma=")
+    assert render.light({"src": bright, "start": 0, "end": 2}) is None
