@@ -2774,7 +2774,7 @@ const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images 
 const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'],
   partielle: ['warn', 'partielle : à regarder'], non: ['bad', 'rien d\'utile'] };
 const AD_RANK = { exacte: 0, equivalente: 1, partielle: 2, rien: 4 };
-const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien' };
+const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien', action: 'par action' };
 
 function adVerifOf(sug, url){
   const v = (sug.verifs || {})[url];
@@ -3252,7 +3252,8 @@ function renderAdImages(body, p){
         ${(sc.candidats || []).length ? `<details ${pick ? '' : 'open'}><summary class="tiny" style="cursor:pointer">Autres vidéos trouvées pour ce plan (${sc.candidats.length})</summary>
           <div class="ad-clips" style="margin-top:8px">${adSortCands(sc.candidats, k, sug).map(c => adCandHtml(c, k, sug, new Set(), { plan: k, chosen: pick && pick.url === c.url })).join('')}</div></details>` : ''}
       </div></article>`;
-  }).join('') + `<div class="navbar"><span class="progress-text">${got.length}/${n} plan(s) avec une vidéo</span><span></span>
+  }).join('') + `<div class="navbar"><span class="progress-text">${got.length}/${n} plan(s) avec une vidéo</span>
+      ${p.wanting && p.wanting.length ? `<button class="btn secondary" id="adMore" title="Cherche l'ACTION de chaque plan sans vidéo (ou seulement partielle) dans des compilations, vidéos GoPro, vlogs… même si la vidéo parle d'autre chose ; l'IA regarde les nouvelles vidéos (2 à 5 min). Les autres plans ne changent pas.">🔎 Chercher plus pour ${p.wanting.length} plan(s)</button>` : '<span></span>'}
       <button class="btn primary" id="adFetch" ${got.length === n ? '' : 'disabled'} title="Télécharge seulement les moments choisis et fabrique un clip par plan (1 à 4 min)" data-icon="download">Télécharger les images choisies →</button></div>`;
   hydrateIcons(body);
   body.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
@@ -3269,6 +3270,12 @@ function renderAdImages(body, p){
     try { const np = await api(`/api/adaptations/${p.project_id}/${path}`, { method:'POST', body: JSON.stringify(payload || {}) });
           adProject = np; renderAdImages(body, np); return np; }
     catch (e){ log(e.message, 'error'); if (btn){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Réessayer'; } }
+  };
+  const moreBtn = document.getElementById('adMore');
+  if (moreBtn) moreBtn.onclick = async () => {
+    moreBtn.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/images/more`, { method:'POST' }); adProject = null; loadAdProject(); }
+    catch (e){ log(e.message, 'error'); moreBtn.disabled = false; }
   };
   const fetchBtn = document.getElementById('adFetch');
   if (fetchBtn) fetchBtn.onclick = async () => {

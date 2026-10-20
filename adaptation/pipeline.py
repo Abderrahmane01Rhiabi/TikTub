@@ -479,12 +479,107 @@ class SharedSearch:
         save(leader)
 
 
+def wanting(p: Dict) -> List[int]:
+    """The plans still without good footage: no pick, or only a partial one."""
+    picks = p.get("picks") or []
+    return [k for k in _active(p) if k >= len(picks) or not picks[k] or picks[k].get("niveau") == "partielle"]
+
+
+def start_more_images(pid: str) -> Dict:
+    p = load(pid)
+    _expect(p, "images_review")
+    todo = wanting(p)
+    if not todo:
+        raise PipelineError("Chaque plan a déjà une vidéo exacte ou équivalente.")
+    p.update(status="searching", search_more=todo)
+    return save(p)
+
+
+def _more_images(p: Dict, report: Report):
+    """The plans left without footage, searched again by ACTION (compilations,
+    GoPro, vlogs: videos about something else where it happens), the new
+    videos checked by Gemini against every plan, and a pick given only where
+    there was none — the other plans' choices stay."""
+    from concurrent.futures import ThreadPoolExecutor
+    pid, todo = p["project_id"], p["search_more"]
+    plans, sug = p["storyboard"]["plans"], p["suggestions"]
+    wanted = finder.wanted_from_storyboard(plans, {})
+    report(f"recherches par action pour {len(todo)} plan(s)", 0.03)
+    qs = finder.action_queries([wanted[k] for k in todo])
+    jobs = [(k, q) for n, k in enumerate(todo) for q in qs.get(n, [])]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda kq: (kq[0], kq[1], finder.search_youtube(kq[1])), jobs))
+    known = {c["url"] for c in finder.all_candidates(sug)}
+    fresh: Dict[int, List[Dict]] = {}
+    for k, q, hits in results:
+        sc = sug["scenes"][k]
+        sc.setdefault("actions", [])
+        if q not in sc["actions"]:
+            sc["actions"].append(q)
+        by_url = {c["url"]: c for c in sc.setdefault("candidats", [])}
+        for h in hits:
+            if h["url"] not in known:
+                fresh.setdefault(k, []).append(h["url"])
+            finder._add(sc["candidats"], h, "action", by_url)
+    # the first results of each plan's searches, in turn, four per plan: Gemini's look is the expensive part
+    order = []
+    for k in todo:
+        urls = list(dict.fromkeys(fresh.get(k, [])))
+        order += [u for u in urls if u not in (sug.get("verifs") or {})][:4]
+    order = list(dict.fromkeys(order))
+    model = finder.model_of(p.get("reference"))
+    verifs, errors = sug.setdefault("verifs", {}), sug.setdefault("verif_errors", {})
+
+    def look(url):
+        try:
+            return url, finder.check(url, sug["scenes"], None, **({"model": model} if model else {})), None
+        except Exception as e:
+            return url, None, str(e)[:200]
+    done = 0
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for url, r, err in pool.map(look, order):
+            done += 1
+            report(f"vérification par l'IA : {done}/{len(order)}", 0.1 + 0.85 * done / max(1, len(order)))
+            if r:
+                verifs[url] = r
+            else:
+                errors[url] = err
+    picks = p.get("picks") or [None] * len(plans)
+    taken = {(x["url"], round(x["moment"]["debut"])) for x in picks if x}
+    best = finder.auto_pick(sug, plans)
+    found = []
+    for k in todo:
+        b = best[k] if k < len(best) else None
+        better = b and (not picks[k] or finder.RANK[b["niveau"]] < finder.RANK.get(picks[k]["niveau"], 9))
+        if better and (b["url"], round(b["moment"]["debut"])) not in taken:
+            picks[k] = b
+            taken.add((b["url"], round(b["moment"]["debut"])))
+            found.append(k + 1)
+    p["picks"] = picks
+    p["fetch_note"] = (f"Recherche par action : {len(order)} nouvelle(s) vidéo(s) regardée(s) par l'IA ; "
+                       + (f"vidéo trouvée pour le(s) plan(s) {', '.join(map(str, found))}." if found
+                          else "rien de mieux pour ces plans : donne ton lien, adapte la phrase ou retire le plan."))
+
+
 def run_images(pid: str, report: Optional[Report] = None):
     """Every plan's footage: search words from its image, the four searches,
     Gemini's checks (twice as many as plans: each plan's best by words, then
     by picture), then the best checked moment picked for each plan."""
     report = report or (lambda phase, f: None)
     p = load(pid)
+    if p.get("search_more") is not None:      # "Chercher plus": only the plans still without footage
+        try:
+            _more_images(p, report)
+            p.pop("search_more", None)
+            p.update(status="images_review", error=None, failed_step=None)
+            save(p)
+        except Exception as e:              # the picks already made are worth more than this extra search
+            p = load(pid)
+            p.pop("search_more", None)
+            p.update(status="images_review", fetch_note=f"Recherche par action impossible : {str(e)[:200]}")
+            save(p)
+        report("terminé", 1.0)
+        return
     try:
         plans = p["storyboard"]["plans"]
         report("recherches pour chaque plan", 0.02)

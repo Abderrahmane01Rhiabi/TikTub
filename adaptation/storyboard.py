@@ -19,6 +19,7 @@ footage exists somewhere), never an idea, a diagram or a text.
 """
 
 import json
+import re
 import os
 from typing import Dict, List, Optional, Tuple
 
@@ -267,6 +268,9 @@ def script_for(bundle: Dict, code: str) -> Dict:
             "corrections": bundle.get("corrections", [])}
 
 
+UNFILMABLE = re.compile(r"\banimation|sch[ée]ma|infographi|graphique|mod[ée]lisation|\b3d\b|dessin anim|illustration", re.I)
+
+
 def problems(bundle: Dict, code: str) -> List[str]:
     """What blocks the approval of one language, in French."""
     out = []
@@ -294,6 +298,8 @@ def problems(bundle: Dict, code: str) -> List[str]:
             out.append(f"Plan {k} : décris l'image voulue (qui, quoi, où), elle servira à la chercher.")
         elif image.lower() in images:
             out.append(f"Plan {k} : même image que le plan {images[image.lower()]}, choisis-en une autre.")
+        elif UNFILMABLE.search(image):
+            out.append(f"Plan {k} : une animation ou un schéma ne se trouve pas en vidéo : décris une scène réelle filmée.")
         images.setdefault(image.lower(), k)
     total = sum(seconds(((p.get("textes") or {}).get(code) or {}).get("texte", ""), code) for p in plans)
     if plans and not TOTAL_S[0] <= total <= TOTAL_S[1]:

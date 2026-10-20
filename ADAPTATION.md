@@ -87,6 +87,8 @@ Pour chaque plan, tu peux aussi :
 
 #### Script d'abord : télécharger et monter
 
+Des plans sans vidéo (ou seulement « partielle ») ? **🔎 Chercher plus** cherche leur **action** et non plus leur sujet : compilations (fails, best of, caught on camera), vidéos GoPro, vlogs, reportages… des vidéos qui parlent d'autre chose mais où l'action se passe — on n'en prend que les 3 secondes utiles. L'IA regarde les 4 meilleures nouvelles vidéos par plan (2 à 5 min) ; seuls les plans sans bonne vidéo changent. Une image impossible à filmer (animation, schéma) est refusée dès le storyboard.
+
 Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 minutes) :
 - seuls **les moments choisis** sont téléchargés (une vidéo courte entière), image **et** son ;
 - chaque plan reçoit **son clip**, coupé sur son moment et allongé pour sa phrase **seulement dans le même plan de la vidéo** : jamais au-delà d'une coupe (sinon une interview ou un écran de fin noir apparaissait). Si le plan est trop court, le clip reste court et le contrôle du script te demande une phrase plus courte ;

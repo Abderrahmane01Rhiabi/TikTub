@@ -1311,6 +1311,11 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
     threading.Thread(target=run, daemon=True).start()
 
 
+def ap_wanting(p: dict):
+    from adaptation import pipeline as ap
+    return ap.wanting(p)
+
+
 def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     import progress
     from adaptation import langs
@@ -1320,6 +1325,10 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["mode"] = p.get("mode") or "sources"
     base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
     base["fetch_note"] = p.get("fetch_note")
+    try:
+        base["wanting"] = [k + 1 for k in ap_wanting(p)] if p.get("status") == "images_review" else []
+    except Exception:
+        base["wanting"] = []
     base["group"] = p.get("group")
     base["angle"] = p.get("angle")
     base["angles"] = p.get("angles") or []
@@ -1595,6 +1604,16 @@ def start_adaptation_images(pid: str):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     p = _adaptation_call(ap.start_images, pid)
+    _start_adaptation_step(pid, "searching")
+    return _serialize_adaptation(p)
+
+
+@app.post("/api/adaptations/{pid}/images/more")
+def more_adaptation_images(pid: str):
+    """Search again, by action, for the plans still without footage (2 to 5 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_more_images, pid)
     _start_adaptation_step(pid, "searching")
     return _serialize_adaptation(p)
 

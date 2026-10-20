@@ -248,6 +248,45 @@ JSON uniquement : {{"plans": [{{"plan": numero, "anglais": ["", ""], "pays": "",
   "locales": ["", ""]}}]}}"""
 
 
+ACTION_QUERIES_PROMPT = """On cherche en video une ACTION precise, pour des plans d'un Short ou rien n'a ete trouve
+en cherchant le sujet. L'action peut se trouver au milieu d'une video qui parle d'AUTRE CHOSE : compilations
+(fails, best of, caught on camera, top 10), videos GoPro / POV / casque, ralentis, vlogs, reportages, highlights
+de sport, extraits de tournages amateurs. On prendra juste les 3 secondes utiles.
+{plans}
+Pour CHAQUE plan, 5 recherches YouTube en ANGLAIS (3 a 6 mots) qui ramenent ces videos-la, pas des tutoriels du
+sujet : decris l'action telle qu'un titre de compilation ou de video amateur la nommerait. Jamais de film ni de
+serie.
+JSON uniquement : {{"plans": [{{"plan": numero, "recherches": ["", "", "", "", ""]}}]}}"""
+
+
+def action_queries(found: List[Dict], gemini=None) -> Dict[int, List[str]]:
+    """Searches by ACTION for plans the subject search left empty: footage
+    where it happens inside a video about something else (measured on a
+    parkour Short: 5 plans of 7 without footage, every candidate a parkour
+    video). {index in found: [queries]}."""
+    if not found:
+        return {}
+    try:
+        from gemini_ai_generator import GeminiAIGenerator
+        g = gemini or GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
+        listing = "\n".join(f"{i + 1}. action : {s['scene']}" + (f" | phrase : « {s['phrase']} »" if s.get("phrase") else "")
+                            for i, s in enumerate(found))
+        r = g._generate_content([{"text": ACTION_QUERIES_PROMPT.format(plans=listing)}], max_tokens=4000, timeout=90,
+                                temperature=0.5)
+    except Exception:
+        return {}
+    out = {}
+    for e in (r.get("plans") if isinstance(r, dict) else None) or []:
+        try:
+            i = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        qs = [str(q).strip() for q in e.get("recherches") or [] if str(q).strip()][:5]
+        if 0 <= i < len(found) and qs:
+            out[i] = qs
+    return out
+
+
 def plan_queries(found: List[Dict], gemini=None) -> Dict[int, Dict]:
     """Search words for the storyboard's images (written in French, as a person
     would see them): {plan: {"recherches", "pays", "langue", "locales"}}."""
@@ -353,7 +392,7 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
 
 
 ORIGINS = {"youtube": "recherche YouTube", "langue": "recherche en langue locale", "image": "trouvée par image",
-           "compte": "compte crédité"}
+           "compte": "compte crédité", "action": "recherche par action"}
 
 
 def _add(cands: List[Dict], c: Dict, origin: str, by_url: Dict[str, Dict]):

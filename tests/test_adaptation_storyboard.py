@@ -582,6 +582,47 @@ def test_a_film_is_recognised_by_the_check():
     assert r["film"] is True and r["par_plan"]["0"]["niveau"] == "exacte"
 
 
+def test_search_more_looks_for_the_action_only_where_footage_is_missing(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["picks"][2] = None
+    p["picks"][3] = {**p["picks"][3], "niveau": "partielle"}
+    for v in p["suggestions"]["verifs"].values():                             # nothing found for plan 3 so far
+        v["par_scene"].pop("2", None)
+    ap.save(p)
+    assert ap.wanting(ap.load(pid)) == [2, 3, 5]                               # no footage, or only partial
+    kept = ap.load(pid)["picks"][0]
+    asked = {}
+    monkeypatch.setattr(finder, "action_queries", lambda found: asked.setdefault("found", found) and
+                        {n: [f"action {n} fail compilation"] for n in range(len(found))})
+    monkeypatch.setattr(finder, "search_youtube", lambda q, n=8: [
+        {"url": f"https://www.youtube.com/watch?v={q[7]}vlog00000", "title": "My week", "duration": 300}])
+    checked = []
+
+    def check(url, scenes, plans, **kw):
+        checked.append(url)
+        lvl = {"0vlog00000": "exacte"}.get(url[-10:], "rien")
+        return {"verdict": "oui", "duration": 300, "title": "My week",
+                "par_scene": {"2": {"niveau": lvl, "moments": [{"debut": 40, "fin": 44}] if lvl != "rien" else []}}}
+    monkeypatch.setattr(finder, "check", check)
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    p = ap.load(pid)
+    assert [w["scene"] for w in asked["found"]] == [p["storyboard"]["plans"][k]["image"] for k in (2, 3, 5)]
+    assert p["status"] == "images_review" and "search_more" not in p
+    assert len(checked) == 3 and p["picks"][2]["url"].endswith("0vlog00000") and p["picks"][2]["moment"]["debut"] == 40
+    assert p["picks"][0] == kept and p["picks"][3]["niveau"] == "partielle"    # the others stay as they were
+    assert "plan(s) 3" in p["fetch_note"]
+    assert "action" in p["suggestions"]["scenes"][2]["candidats"][-1]["origines"]
+    with pytest.raises(ap.PipelineError):
+        p["picks"] = [x or p["picks"][2] for x in p["picks"]]
+        p["picks"][3]["niveau"] = "exacte"
+        p["storyboard"]["plans"][5]["retire"] = True
+        ap.save(p)
+        ap.start_more_images(pid)                                              # nothing left to look for
+
+
 def test_retime_reads_where_the_action_really_is():
     from adaptation import sources
 
