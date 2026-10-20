@@ -163,7 +163,7 @@ def test_normalise_cleans_gemini_output():
         {"clip": " a ", "texte": "  Une   phrase. ", "bandeau": "B", "mots_cles": ["x", "", "y", "z", "w"]},
         {"clip": "B", "texte": ""}]}, _clips())
     assert len(sc["titre"]) == 100 and sc["tags"] == ["a"]
-    assert sc["passages"] == [{"clip": "A", "bandeau": "B", "texte": "Une phrase.", "mots_cles": ["x", "y", "z"], "annotation": None}]
+    assert sc["passages"] == [{"clip": "A", "bandeau": "B", "texte": "Une phrase.", "mots_cles": ["x", "y", "z"], "annotation": None, "effets": None}]
     with pytest.raises(script.ScriptError):
         script.normalise({"error": "boom"}, _clips())
 
@@ -176,7 +176,7 @@ def test_critique_keeps_the_clips_and_falls_back_on_a_bad_answer():
         {"clip": "A", "texte": "Pourquoi ?", "bandeau": "", "mots_cles": []}]}
     good = {"passages": [{"clip": "B", "texte": "Pourquoi donc ?", "bandeau": "", "mots_cles": []}], "corrections": ["x"]}
     fixed = script.critique(sc, "fr", _clips(), gemini=Fake(good))
-    assert fixed["passages"][0] == {"clip": "A", "bandeau": "", "texte": "Pourquoi donc ?", "mots_cles": [], "annotation": None}
+    assert fixed["passages"][0] == {"clip": "A", "bandeau": "", "texte": "Pourquoi donc ?", "mots_cles": [], "annotation": None, "effets": None}
     assert fixed["corrections"] == ["x"]
     assert script.critique(sc, "fr", _clips(), gemini=Fake({"passages": []}))["passages"] == sc["passages"]
 
@@ -224,6 +224,28 @@ def test_preview_render_passes_the_automatic_checks(tmp_path):
     assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15
     assert all(o is not None and abs(o) <= 0.12 for o in v["measures"]["offsets"])
     assert not (tmp_path / "out.mp4.part.mp4").exists()
+
+
+def test_a_render_with_every_effect_keeps_picture_and_voice_together(tmp_path):
+    square, wide = tmp_path / "square.mp4", tmp_path / "wide.mp4"
+    _lavfi(square, ["-f", "lavfi", "-i", "testsrc=size=320x304:rate=30", "-f", "lavfi", "-i", "sine=frequency=200"],
+           6, ["-c:v", "libx264", "-c:a", "aac", "-shortest"])
+    _lavfi(wide, ["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"], 6, ["-c:v", "libx264"])
+    voice = tmp_path / "voice.wav"
+    _lavfi(voice, ["-f", "lavfi", "-i", "anoisesrc=color=pink:seed=1:duration=6.6:sample_rate=44100"], 6.6)
+    words = [{"w": w, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, w in enumerate("un deux trois quatre".split())]
+    words += [{"w": w, "start": 3.6 + i * 0.5, "end": 4.0 + i * 0.5} for i, w in enumerate("cinq six sept".split())]
+    clips = {"A": {**clip(src=str(square), start=0.5, end=4.5, impact=2.0), "w": 320, "h": 304, "audio_ok": True,
+                   "shock": True},
+             "B": {**clip(src=str(wide), start=1.0, end=2.6, impact=2.0), "w": 640, "h": 360}}
+    passages = [passage("A", 0.0, 3.0, words=[0, 1, 2, 3]), passage("B", 3.6, 6.6, words=[4, 5, 6])]
+    fx = [{"ralenti": True, "zoom": {"cx": 0.3, "cy": 0.7, "z": 1.3}}, {"arret": True, "transition": True}]
+    out = tmp_path / "out.mp4"
+    r = render.render(passages, words, clips, str(voice), "fr", str(out), str(tmp_path / "w"), preview=False, effects=fx)
+    v = checks.verify(str(out), str(voice), passages)
+    assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15
+    assert all(o is not None and abs(o) <= 0.12 for o in v["measures"]["offsets"])
+    assert r["segments"][0]["impact"] > 0.5 and (tmp_path / "w" / "whoosh.wav").exists()
 
 
 # ------------------------------------------- voice library & channel settings

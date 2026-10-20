@@ -3063,6 +3063,27 @@ function adAnnMissing(card){
   return true;
 }
 
+// Montage effects of a passage (chosen by the AI after the download, changeable here)
+function adFxHtml(e){
+  e = e || {};
+  const box = (cls, on, label, tip) => `<label class="tiny" title="${tip}" style="display:inline-flex;gap:4px;align-items:center;cursor:pointer">
+      <input type="checkbox" class="${cls}" ${on ? 'checked' : ''}>${label}</label>`;
+  return `<div class="ad-row ad-fx" style="gap:12px;align-items:center">
+      <span class="tiny" style="opacity:.7">Effets :</span>
+      ${box('sc-fx-slow', e.ralenti, '🐢 Ralenti', 'Le moment fort passe au ralenti (2× plus lent, images recalculées)')}
+      ${box('sc-fx-freeze', e.arret, '⏸ Arrêt sur image', 'L’image se fige un instant sur le moment fort (avec la flèche ou le cercle s’il y en a)')}
+      ${box('sc-fx-trans', e.transition, '💨 Transition', 'Coup de zoom et « whoosh » : une nouvelle partie de l’histoire commence')}
+      <input class="f sc-fx-zoom" value="${esc(e.zoom || '')}" placeholder="🔍 Zoom sur… (ex. les pieds de la femme)" style="flex:1;min-width:160px;font-size:12px"></div>`;
+}
+
+function adFxOf(row){
+  const q = c => row.querySelector(c);
+  if (!q('.sc-fx-slow')) return null;
+  const e = { ralenti: q('.sc-fx-slow').checked, arret: q('.sc-fx-freeze').checked,
+              transition: q('.sc-fx-trans').checked, zoom: q('.sc-fx-zoom').value.trim() || null };
+  return (e.ralenti || e.arret || e.transition || e.zoom) ? e : null;
+}
+
 function adAnnOf(row){
   const type = row.querySelector('.sc-ann-type').value, cible = row.querySelector('.sc-ann-cible').value.trim();
   return type && cible ? { type, cible } : null;
@@ -3310,7 +3331,7 @@ function renderAdScripts(body, p){
               `<option value="${i}" ${a.titre === t.angle.titre ? 'selected' : ''}>${esc(a.titre)}</option>`).join('')}<option value="custom">Mon propre angle…</option></select>
             <input class="f sc-angle-custom" placeholder="Décris ton angle" style="display:none;flex:1;min-width:200px">
             <button class="btn ghost small sc-angle-go" title="Le script de cette chaîne est réécrit (environ 1 minute)">Réécrire avec cet angle</button></div>` : ''}
-        ${p.annotations_reviewed || p.mode !== 'script' ? `<div class="tiny">${icon('eye', 12)} Flèches et cercles choisis par l'IA <b>en regardant les vrais clips</b> : clique ▶ pour voir un clip, change-les si besoin.</div>` : ''}
+        ${p.annotations_reviewed || p.mode !== 'script' ? `<div class="tiny">${icon('eye', 12)} Flèches, cercles et effets (ralenti, zoom, arrêt sur image, transition) choisis par l'IA <b>en regardant les vrais clips</b> : clique ▶ pour voir un clip, change-les si besoin.</div>` : ''}
         ${(sc.corrections || []).length ? `<details><summary class="tiny" style="cursor:pointer">Relecture automatique : ${sc.corrections.length} correction(s)</summary>
           <ul class="tiny">${sc.corrections.map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
@@ -3331,6 +3352,7 @@ function renderAdScripts(body, p){
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
               ${adAnnHtml(ps.annotation)}
+              ${adFxHtml(ps.effets)}
               ${adAccordHtml(t, ps, i)}
             </div>
           </div>`).join('')}</div>
@@ -3356,7 +3378,7 @@ function renderAdScripts(body, p){
       tags: card.querySelector('.sc-tags').value.split(',').map(x => x.trim()).filter(Boolean),
       passages: [...card.querySelectorAll('.ad-passage')].map(row => ({
         clip: row.querySelector('.sc-clip').value, bandeau: row.querySelector('.sc-banner').value,
-        texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
+        texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row), effets: adFxOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = null; renderAdScripts(body, np); adProject = np; };
     card.querySelectorAll('.sc-clip').forEach(sel => sel.onchange = () =>

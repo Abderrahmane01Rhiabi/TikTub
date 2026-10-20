@@ -543,6 +543,9 @@ Regarde cette video et dis, POUR CHAQUE plan, si elle peut servir :
 - "partielle" : le meme evenement ou la meme action, mais pas tout ce que decrit le plan (ex. le jet de gaz
   du puits, sans la tentative de le boucher) : utile, a regarder ;
 - "rien" : rien d'utilisable pour ce plan (seulement le meme theme general, ou une action differente).
+Le CADRAGE et la VITESSE ne comptent pas : le montage sait zoomer sur un detail et passer au ralenti. Un
+plan demande "serre" ou "au ralenti" et filme ici de loin ou a vitesse normale reste "equivalente" si l'action
+y est bien visible.
 Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en secondes depuis le debut de la video).
 {modele}"remontage" = true si cette video est elle-meme un montage d'un autre createur PAR-DESSUS les images de quelqu'un
 d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee), false si ce sont des images d'origine.

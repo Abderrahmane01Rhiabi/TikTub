@@ -36,7 +36,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
 import db
-from adaptation import annotate, checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
+from adaptation import annotate, checks, effects, finder, langs, reference, render, script, settings, sources, storyboard, voices
 
 BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
@@ -819,6 +819,12 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             for k, a in zip(active, seen):
                 p["storyboard"]["plans"][k]["annotation"] = a
             p["annotations_reviewed"] = True
+        report("effets de montage choisis avec les vrais clips", 0.94)
+        rough = [{**x, "annotation": p["storyboard"]["plans"][k].get("annotation")} for k, x in zip(active, rough)]
+        fx = effects.decide(rough, clips, os.path.join(project_dir(pid), "work"))
+        if fx is not None:              # shared by every language, like the arrows
+            for k, e in zip(active, fx):
+                p["storyboard"]["plans"][k]["effets"] = e
         for t in p["targets"]:
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
@@ -1192,6 +1198,9 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
             if seen is not None:        # the arrows decided again looking at the clips themselves
                 for x, a in zip(sc["passages"], seen):
                     x["annotation"] = a
+            fx = effects.decide(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
+            for x, e in zip(sc["passages"], fx or []):
+                x["effets"] = e
             for attempt in (1, 2):                     # what the re-read missed is fixed (twice at most), then shown
                 left = script.problems(sc, p["clips"], t["language"])
                 if not left:
@@ -1319,14 +1328,15 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
         t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3)
         t["voice"]["voice_id"] = t["voice_id"]
     out = os.path.join(base, "preview.mp4" if preview else "final.mp4")
-    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2)
+    fx = _effects(p, t, os.path.join(base, "work"))
+    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2, fx)
     report(f"{'aperçu' if preview else 'rendu'} {t['channel']}", offset + share * 0.3)
     r = render.render(t["voice"]["passages"], t["voice"]["words"], p["clips"], voice_mp3, t["language"], out,
                       os.path.join(base, "work"), credit=p["credits"],
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
                                                    offset + share * (0.3 + 0.6 * f)), annotations=anns,
-                      style=_style_of(t))
+                      style=_style_of(t), effects=fx)
     c = checks.verify(out, voice_mp3, t["voice"]["passages"])
     return {"path": out, "summary": r, "checks": c}
 
@@ -1341,7 +1351,34 @@ def _style_of(t: Dict) -> str:
         return t.get("style") or "classique"
 
 
-def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float) -> List[Dict]:
+def _effects(p: Dict, t: Dict, work: str) -> List[Optional[Dict]]:
+    """The montage effects of each passage, ready for render: a zoom's target
+    found once on the clip at its strong moment (kept for the final render)."""
+    passages = (t.get("script") or {}).get("passages") or []
+    cache, out = t.setdefault("fx_cache", {}), []
+    os.makedirs(work, exist_ok=True)
+    for k, x in enumerate(passages):
+        e, c = effects.clean(x.get("effets")), p["clips"].get(x.get("clip"))
+        if not e or not c:
+            out.append(None)
+            continue
+        e = dict(e)
+        if e.get("zoom"):
+            key = f"{x['clip']}|{round(c['impact'], 2)}|{e['zoom']}"
+            if key not in cache:
+                try:
+                    still = sources.still(c["src"], c["impact"], c.get("crop"), os.path.join(work, f"zoom{k}.jpg"),
+                                          c.get("delogo"), (c["w"], c["h"]))
+                    cache[key] = annotate.locate([still], e["zoom"])[0]
+                except Exception:
+                    cache[key] = None
+            e["zoom"] = effects.zoom_of(c, cache[key])     # not found: no zoom, never a wrong one
+        out.append(e)
+    return out
+
+
+def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float,
+                 fx: Optional[List[Optional[Dict]]] = None) -> List[Dict]:
     """The arrows/circles the script asks for, located once (the final render
     reuses the preview's track); a target not found is simply left out."""
     passages = (t.get("script") or {}).get("passages") or []
@@ -1349,7 +1386,7 @@ def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float) -> List
     if not wanted:
         return []
     report(f"flèches et cercles {t['channel']}", at)
-    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"])
+    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"], fx)
     cache, out = t.setdefault("ann_cache", {}), []
     os.makedirs(work, exist_ok=True)
     for k, ann in wanted:

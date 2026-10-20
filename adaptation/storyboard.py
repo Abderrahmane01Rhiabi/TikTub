@@ -57,7 +57,8 @@ IMAGES : pour chaque plan, "image" = la video qu'il faudra TROUVER pour l'illust
 (qui, quoi, ou, quelle camera, quel moment), comme on la chercherait sur YouTube. De preference une image
 que le modele montre deja ("plans_modele" = ses numeros) : ces videos existent. Une image nouvelle seulement si
 c'est une video tres courante. Jamais une idee, un schema, un texte ou une image impossible a filmer.
-Pas deux plans avec la meme image.
+Pas deux plans avec la meme image. Decris l'ACTION, pas la facon de filmer : le montage sait ralentir et zoomer,
+n'exige donc ni "au ralenti" ni "plan serre" (ces videos sont rares) ; et l'image montre ce que dit SA phrase.
 
 FLECHES ET CERCLES : sur 2 ou 3 plans seulement (jamais plus), ceux ou le spectateur doit ANTICIPER une action
 (la voiture qui va etre percutee, le tuyau qui va exploser) ou VOIR un detail qu'il raterait, donne "annotation" :
@@ -239,7 +240,8 @@ def script_for(bundle: Dict, code: str) -> Dict:
     """One language's script, in the format the rest of the app uses (no clips yet)."""
     m = (bundle.get("meta") or {}).get(code) or {}
     return {"titre": m.get("titre", ""), "description": m.get("description", ""), "tags": m.get("tags", []),
-            "passages": [{"clip": "", **p["textes"][code], "annotation": p.get("annotation")} for p in bundle["plans"]],
+            "passages": [{"clip": "", **p["textes"][code], "annotation": p.get("annotation"), "effets": p.get("effets")}
+                         for p in bundle["plans"]],
             "corrections": bundle.get("corrections", [])}
 
 

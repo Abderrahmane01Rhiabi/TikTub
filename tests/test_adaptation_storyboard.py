@@ -494,6 +494,38 @@ def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(
         ap.use_proposal(pid, t["channel"], 2)                               # a good match has nothing to propose
 
 
+def test_the_montage_effects_chosen_after_the_download_reach_the_script_and_the_render(project, fakes, monkeypatch, tmp_path):
+    from adaptation import sources, effects, annotate
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda url, d, name, sections=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b + 3, "impact": a + 1, "w": 1920, "h": 1080,
+        "usable": True, "marks": [], "desc": desc, "shock": True})
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    monkeypatch.setattr(effects, "decide", lambda passages, clips, work: [
+        {"ralenti": True, "zoom": "les pieds", "arret": False, "transition": False} if k == 1 else None
+        for k in range(len(passages))])
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert p["storyboard"]["plans"][1]["effets"]["zoom"] == "les pieds"
+    t = p["targets"][0]
+    assert t["script"]["passages"][1]["effets"] == {"ralenti": True, "zoom": "les pieds", "arret": False, "transition": False}
+    asked = []
+    monkeypatch.setattr(annotate, "locate", lambda stills, cible: asked.append(cible) or [[700, 400, 800, 500]])
+    fx = ap._effects(p, t, str(tmp_path / "w"))
+    assert fx[0] is None and fx[1]["ralenti"] and fx[1]["zoom"]["cx"] == 0.45 and asked == ["les pieds"]
+    ap._effects(p, t, str(tmp_path / "w"))
+    assert asked == ["les pieds"]                                      # found once, the final render reuses it
+    edited = ap.edit_script(pid, t["channel"], {"passages": [{**x, "effets": None} if k == 1 else x
+                                                             for k, x in enumerate(t["script"]["passages"])]})
+    assert edited["targets"][0]["script"]["passages"][1]["effets"] is None   # unticked by hand: gone
+
+
 def test_an_advert_is_a_warning_not_a_refusal():
     from adaptation import finder
     assert finder.real_faults("publicité") == "" and finder.warnings_of("publicité") == "publicité"

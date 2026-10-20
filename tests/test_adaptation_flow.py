@@ -62,7 +62,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(voices, "synthesize", synth)
 
     def fake_render(passages, words, clips, voice, lang, out, work, credit="", music=None, preview=False, progress_cb=None,
-                    annotations=None, style=None):
+                    annotations=None, style=None, effects=None):
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_bytes(b"mp4")
         return {"duration": 5.0, "segments": [], "captions": 2}

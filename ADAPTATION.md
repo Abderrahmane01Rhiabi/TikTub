@@ -95,6 +95,14 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
 - les **crédits** citent les chaînes de toutes les vidéos utilisées.
 - enfin l'IA **compare chaque phrase à ce que montre vraiment son clip** : ✅ va ensemble, 🟡 lien faible, ❌ on entend une chose et on voit autre chose (plus stricte pour l'accroche : le sujet doit se voir dès les 2 premières secondes). Un ❌ bloque la validation : **Prendre cette phrase** (une phrase écrite pour l'image), change de clip, ou **Garder quand même**. Mesuré sur le ralentisseur : l'accroche française « Ce dos d'âne ne pardonne rien aux chauffards » passait sur un homme qui frappe un bac dans un labo.
 
+- l'IA choisit aussi, en regardant les vrais clips, les **effets de montage** (peu, aux bons endroits) :
+  - 🐢 **ralenti** : vitesse normale, puis 2× plus lent pile sur le moment fort (images recalculées, pas répétées), puis normal — 2 plans au plus ;
+  - 🔍 **zoom** : on se rapproche doucement de la cible (« les pieds de la femme ») : un plan filmé de loin devient un gros plan — 3 plans au plus, jamais sur un plan qui a une flèche ;
+  - ⏸ **arrêt sur image** : l'image se fige un instant sur le moment fort, la flèche ou le cercle reste dessus — 1 plan ;
+  - 💨 **transition** : coup de zoom et « whoosh » quand une nouvelle partie de l'histoire commence — 3 plans au plus.
+
+  Tu peux les changer sous chaque phrase (cases et « Zoom sur… »). Un clip trop court pour sa phrase est **ralenti en entier** (jamais plus de 2×) au lieu de finir sur une image figée. Pour la recherche, le cadrage et la vitesse ne comptent plus : un atterrissage filmé de loin à vitesse normale est « équivalent » à un « plan serré au ralenti ». L'aperçu montre les ralentis de façon simple (rapide) ; le rendu final les calcule en qualité (environ 30 s de plus par ralenti).
+
 Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip (une phrase trop longue pour un clip resté court est **raccourcie automatiquement**, elle seule) ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
 
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »

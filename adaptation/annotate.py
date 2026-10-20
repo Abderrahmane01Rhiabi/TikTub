@@ -101,7 +101,8 @@ def locate(stills: List[str], cible: str, gemini=None) -> List[Optional[List[int
         raise AnnotateError(f"Cible introuvable : {str(r)[:160]}")
     out = []
     for k in range(len(stills)):
-        b = items[k].get("box_2d") if k < len(items) and isinstance(items[k], dict) else None
+        it = items[k] if k < len(items) and isinstance(items[k], dict) else {}
+        b = it.get("box_2d", next((v for key, v in it.items() if key.startswith("box")), None))   # once spelt "box_2"
         ok = isinstance(b, list) and len(b) == 4 and b[2] > b[0] and b[3] > b[1]
         out.append([int(v) for v in b] if ok else None)
     return out
@@ -231,8 +232,14 @@ def prepare(seg: Dict, clip: Dict, ann: Dict, work_dir: str, k: int, gemini=None
     d = os.path.join(work_dir, f"ann{k}")
     for f in os.listdir(d) if os.path.isdir(d) else []:
         os.remove(os.path.join(d, f))
-    n = frames(path, kind, a, b, d)
-    return {"k": k, "dir": d, "frames": n, "start": seg["out"] + (a - seg["ws"]),
+    from adaptation import effects as E
+    pcs = seg.get("pieces") or E.pieces(clip, seg)     # ramps and freezes: the arrow follows the time map
+    oa, ob = E.out_at(pcs, a), E.out_at(pcs, b)
+    for x in pcs:                                      # a freeze on the moment keeps the arrow on the frozen picture
+        if x["kind"] == "hold" and not x.get("pad") and a - 0.01 <= x["t"] <= b + 0.01:
+            ob = max(ob, x["o"] + x["len"])
+    n = frames([{**q, "t": E.out_at(pcs, q["t"])} for q in path], kind, oa, ob, d)
+    return {"k": k, "dir": d, "frames": n, "start": seg["out"] + oa,
             "cache": {"window": [round(a, 2), round(b, 2)], "cible": ann.get("cible"), "path": path}}
 
 

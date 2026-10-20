@@ -92,20 +92,29 @@ class RenderError(RuntimeError):
 
 # --------------------------------------------------------------- timeline
 
-def build_timeline(passages: List[Dict], clips: Dict[str, Dict]) -> Tuple[List[Dict], float]:
+def build_timeline(passages: List[Dict], clips: Dict[str, Dict],
+                   effects: Optional[List[Optional[Dict]]] = None) -> Tuple[List[Dict], float]:
     """One segment per sentence: where its voice is cut from (va..vb), where
-    it sits in the output, and which part of its clip plays under it."""
+    it sits in the output, and which part of its clip plays under it.
+    effects (one per passage, see adaptation/effects.py) change how the clip
+    plays: s["fx"] and s["pieces"], the time map every overlay follows."""
+    from adaptation import effects as E
     segs, t = [], 0.0
     for k, p in enumerate(passages):
         a, b = max(0.0, p["start"] - 0.04), p["end"] + 0.10
         dur = (b - a) + GAP
         c = clips[p["clip"]]
+        fx = (effects or [None] * (k + 1))[k] if k < len(effects or []) else None
         last = k == len(passages) - 1
         frac = 0.12 if k == 0 else (0.80 if last else 0.40)
         lead = min(0.9, dur * frac) if k == 0 else dur * frac
-        ws = min(max(c["start"], c["impact"] - lead), max(c["start"], c["end"] - dur))
-        segs.append({"k": k, "clip": p["clip"], "va": a, "vb": b, "out": t, "dur": dur, "ws": ws,
-                     "impact_out": t + (c["impact"] - ws)})
+        need = max(0.5, dur - E.extra(fx))            # a ramp or a freeze shows less of the clip
+        ws = min(max(c["start"], c["impact"] - lead), max(c["start"], c["end"] - need))
+        s = {"k": k, "clip": p["clip"], "va": a, "vb": b, "out": t, "dur": dur, "ws": ws}
+        s["fx"] = E.fit(c, s, fx)
+        s["pieces"] = E.pieces(c, s)
+        s["impact_out"] = t + E.out_at(s["pieces"], c["impact"])
+        segs.append(s)
         t += dur
     return segs, t
 
@@ -338,36 +347,111 @@ def _even(x: float) -> int:
     return max(2, int(round(x / 2)) * 2)
 
 
-def clip_chain(i: int, k: int, c: Dict, s: Dict) -> List[str]:
+def _ease(t0: float, t1: float) -> str:
+    """0 before t0, 1 after t1, smooth in between (ffmpeg expression of t)."""
+    p = f"clip((t-{t0:.3f})/{max(t1 - t0, 0.01):.3f},0,1)"
+    return f"({p}*{p}*(3-2*{p}))"
+
+
+def _played(i: int, k: int, c: Dict, s: Dict, crop_delogo: str, width: int = 0,
+            preview: bool = False) -> Tuple[List[str], str]:
+    """The clip as the time map plays it (ramps, freezes, slow-down), as one
+    stream at FPS lasting the segment: filters + its label. width: the
+    largest width the picture is shown at — slow motion is interpolated at
+    that size (measured: 32 s for 0.9 s of 1080p, 13 s at 1280 wide); the
+    preview repeats frames instead (seconds)."""
+    pcs = s.get("pieces") or [{"kind": "play", "a": s["ws"], "b": min(s["ws"] + s["dur"], c["end"]), "speed": 1.0,
+                               "o": 0.0, "len": min(s["dur"], c["end"] - s["ws"])}]
+    a0 = min(p["a"] if p["kind"] == "play" else p["t"] for p in pcs)
+    b0 = max(p["b"] if p["kind"] == "play" else p["t"] + 0.1 for p in pcs)
+    pre = f"[{i}:v]trim={a0:.3f}:{b0:.3f},setpts=PTS-STARTPTS,fps={FPS}{crop_delogo}"
+    simple = [p for p in pcs if not p.get("pad")]
+    if len(simple) == 1 and simple[0]["kind"] == "play" and simple[0]["speed"] == 1.0:
+        p, pad = simple[0], s["dur"] - simple[0]["len"]     # as before the effects: one cut, the last picture held
+        pre = f"[{i}:v]trim={p['a']:.3f}:{p['b']:.3f},setpts=PTS-STARTPTS,fps={FPS}"
+        if pad > 0.01:
+            pre += f",tpad=stop_mode=clone:stop_duration={pad:.3f}"
+        return [f"{pre}{crop_delogo}[pl{k}]"], f"pl{k}"
+    if width and any(p["kind"] == "play" and p["speed"] < 0.99 for p in pcs):
+        pre += f",scale='min(iw,{_even(width)})':-2"
+    g = [f"{pre},split={len(pcs)}" + "".join(f"[pi{k}_{j}]" for j in range(len(pcs)))]
+    for j, p in enumerate(pcs):
+        if p["kind"] == "play":
+            f = f"[pi{k}_{j}]trim={p['a'] - a0:.3f}:{p['b'] - a0:.3f},setpts=PTS-STARTPTS"
+            if p["speed"] < 0.99 and preview:
+                f += f",setpts=PTS/{p['speed']:.3f}"
+            elif p["speed"] < 0.99:                   # new frames in between, not the same ones twice
+                f += (f",setpts=PTS/{p['speed']:.3f},minterpolate=fps={FPS}:mi_mode=mci:mc_mode=aobmc:"
+                      f"me_mode=bidir:vsbmc=1")
+            f += f",trim=0:{p['len']:.3f},setpts=PTS-STARTPTS"
+        else:
+            t = max(0.0, p["t"] - a0)
+            f = (f"[pi{k}_{j}]trim={t:.3f}:{t + 1.5 / FPS:.3f},setpts=PTS-STARTPTS,trim=end_frame=1,"
+                 f"tpad=stop_mode=clone:stop_duration={p['len']:.3f},trim=0:{p['len']:.3f},setpts=PTS-STARTPTS")
+        g.append(f"{f},fps={FPS},setsar=1[pp{k}_{j}]")
+    g.append("".join(f"[pp{k}_{j}]" for j in range(len(pcs))) + f"concat=n={len(pcs)}:v=1:a=0,fps={FPS}[pl{k}]")
+    return g, f"pl{k}"
+
+
+def _zoom_filter(z: str, cx: str, cy: str, shake: str, vw: int, vh: int) -> str:
+    """Zoom z toward (cx, cy) (0-1 of the frame) at a FIXED frame size: a
+    perspective warp, sub-pixel and per frame. (A per-frame scale + crop was
+    tried: crop keeps the size of the first frame, the push-in missed its
+    target.) The view vw x vh is the centre of the output; it never leaves
+    the picture. Expressions of t, in seconds from the segment start."""
+    tt = lambda e: re.sub(r"\bt\b", f"(on/{FPS})", e)
+    Z = f"({tt(z)})"
+    xc = f"clip({tt(cx)}*W+{tt(shake)},{vw}/(2*{Z}),W-{vw}/(2*{Z}))"
+    yc = f"clip({tt(cy)}*H,{vh}/(2*{Z}),H-{vh}/(2*{Z}))"
+    x0, x1 = f"{xc}-W/(2*{Z})", f"{xc}+W/(2*{Z})"
+    y0, y2 = f"{yc}-H/(2*{Z})", f"{yc}+H/(2*{Z})"
+    return (f"perspective=x0='{x0}':y0='{y0}':x1='{x1}':y1='{y0}':x2='{x0}':y2='{y2}':x3='{x1}':y3='{y2}':"
+            f"interpolation=cubic:eval=frame")
+
+
+def clip_chain(i: int, k: int, c: Dict, s: Dict, preview: bool = False) -> List[str]:
     """Filters turning clip c (input i) into segment k: [v{k}] BOX_W x BOX_H."""
-    end = min(s["ws"] + s["dur"], c["end"])
-    pad = s["dur"] - (end - s["ws"])
+    from adaptation import effects as E
+    fx = s.get("fx") or {}
     T = s["impact_out"] - s["out"]
     punch = f"(1+0.07*exp(-pow((t-{T:.3f})/0.16,2)))"
     shake = f"9*sin(t*73)*exp(-pow((t-{T:.3f})/0.13,2))"
     if c.get("shock") is False:         # the zoom + shake is a crash's: a calm shot (no shock heard) stays still
         punch, shake = "1", "0"
-    pre = f"[{i}:v]trim={s['ws']:.3f}:{end:.3f},setpts=PTS-STARTPTS,fps={FPS}"
-    if pad > 0.01:
-        pre += f",tpad=stop_mode=clone:stop_duration={pad:.3f}"
-    if c.get("crop"):
-        pre += f",crop={c['crop']}"
+    if fx.get("transition"):            # a whip zoom into the new part of the story
+        punch += f"*(1+0.22*pow(1-clip(t/{E.TRANSITION},0,1),2))"
+    zoom, cx, cy = "1", "0.5", "0.5"
+    z = fx.get("zoom") if isinstance(fx.get("zoom"), dict) else None
+    held = E.hold_at(s.get("pieces") or [])
+    if z:                               # a slow push-in, reached at the strong moment, then held
+        t1 = T if 0.6 < T < s["dur"] - 0.2 else s["dur"] * 0.7
+        e = _ease(0.0, t1)
+        zoom = f"(1+{z['z'] - 1:.3f}*{e})"
+        cx, cy = f"(0.5+{z['cx'] - 0.5:.3f}*{e})", f"(0.5+{z['cy'] - 0.5:.3f}*{e})"
+    elif held:                          # a freeze frame breathes: a small push-in while it holds
+        zoom = f"(1+0.07*{_ease(held[0], held[0] + held[1])})"
+    crop_delogo = f",crop={c['crop']}" if c.get("crop") else ""
     from adaptation.sources import delogo_filters
     for f in delogo_filters(c.get("delogo"), c["w"], c["h"]):
-        pre += "," + f
+        crop_delogo += "," + f
     aspect, box_aspect = c["w"] / c["h"], BOX_W / BOX_H
-    g = []
-    if abs(math.log(aspect / box_aspect)) < 0.25:            # close to the box: fill it
-        cover_w = _even(max(BOX_W, BOX_H * aspect) * 1.08)
-        g.append(f"{pre},scale=w='{cover_w}*{punch}':h=-2:eval=frame:flags=bicubic,"
-                 f"crop={BOX_W}:{BOX_H}:x='(iw-ow)/2+{shake}':y='(ih-oh)/2',setsar=1[v{k}]")
+    fill = z or abs(math.log(aspect / box_aspect)) < 0.25
+    shown = (max(BOX_W, BOX_H * aspect) * (z["z"] if z else 1.08) if fill
+             else (BOX_W if aspect > box_aspect else BOX_H * aspect)) * 1.12
+    g, played = _played(i, k, c, s, crop_delogo, int(shown), preview)
+    pre = f"[{played}]"
+    if fill:                                                 # close to the box (or zoomed in): fill it
+        wc = _even(max(BOX_W, BOX_H * aspect))
+        hc = _even(wc / aspect)
+        g.append(f"{pre}scale={wc}:{hc}:flags=bicubic,"
+                 f"{_zoom_filter(f'{1.08 if not z else 1.02}*{punch}*{zoom}', cx, cy, shake, BOX_W, BOX_H)},"
+                 f"crop={BOX_W}:{BOX_H},setsar=1[v{k}]")
     else:                                                    # wide or tall: on a blurred copy of itself
         fw, fh = (BOX_W, _even(BOX_W / aspect)) if aspect > box_aspect else (_even(BOX_H * aspect), BOX_H)
         cover_w = _even(max(BOX_W, BOX_H * aspect) * 1.02)
-        g.append(f"{pre},split[c{k}a][c{k}b]")
+        g.append(f"{pre}split[c{k}a][c{k}b]")
         g.append(f"[c{k}b]scale={cover_w}:-2,crop={BOX_W}:{BOX_H},boxblur=24:4,eq=brightness=-0.12[bg{k}]")
-        g.append(f"[c{k}a]scale=w='{_even(fw * 1.04)}*{punch}':h=-2:eval=frame:flags=bicubic,"
-                 f"crop={fw}:{fh}:x='(iw-ow)/2+{shake}':y='(ih-oh)/2'[fg{k}]")
+        g.append(f"[c{k}a]scale={fw}:{fh}:flags=bicubic,{_zoom_filter(f'1.04*{punch}*{zoom}', cx, cy, shake, fw, fh)}[fg{k}]")
         g.append(f"[bg{k}][fg{k}]overlay=(W-w)/2:(H-h)/2,setsar=1[v{k}]")
     return g
 
@@ -393,10 +477,26 @@ def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
     return c if c.get("audio_ok") else donor
 
 
+WHOOSH_PEAK = 0.32                  # seconds into whoosh.wav where it is loudest
+
+
+def whoosh_wav(path: str) -> str:
+    """A whoosh made from filtered noise (no sound file to ship): it swells
+    to the cut, then falls away quickly."""
+    if not os.path.exists(path):
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                        "anoisesrc=d=0.55:c=pink:a=0.9:r=44100", "-af",
+                        "highpass=f=250,lowpass=f=4200,bandreject=f=60:width_type=h:w=40,"
+                        f"afade=t=in:st=0:d={WHOOSH_PEAK}:curve=exp,"
+                        f"afade=t=out:st={WHOOSH_PEAK}:d=0.22:curve=exp,aecho=0.6:0.4:35:0.25",
+                        "-ac", "2", path], check=True)
+    return path
+
+
 def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
            preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None,
-           style: Optional[str] = None) -> Dict:
+           style: Optional[str] = None, effects: Optional[List[Optional[Dict]]] = None) -> Dict:
     """annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
     picture box under the banners and captions.
     passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
@@ -404,7 +504,7 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
     delogo?, audio_ok?}. Returns {duration, segments, captions}."""
     lang = lang_of(lang_code)
     os.makedirs(work_dir, exist_ok=True)
-    segs, total = build_timeline(passages, clips)
+    segs, total = build_timeline(passages, clips, effects)
 
     look = style_of(style)
     banners = [banner_png(p["bandeau"], os.path.join(work_dir, f"banner_{k}.png"), lang, look) for k, p in enumerate(passages)]
@@ -427,7 +527,7 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
             src_index[c["src"]] = add_input("-i", c["src"])
     for s in segs:
         c = clips[s["clip"]]
-        g += clip_chain(src_index[c["src"]], s["k"], c, s)
+        g += clip_chain(src_index[c["src"]], s["k"], c, s, preview)
     g.append("".join(f"[v{s['k']}]" for s in segs) + f"concat=n={len(segs)}:v=1:a=0[box]")
     box = "box"
     for j, an in enumerate(annotations or []):              # each one a PNG sequence, shifted to its moment
@@ -461,6 +561,14 @@ def render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voic
                  f"afade=t=out:st={max(0.0, b - a - 0.3):.3f}:d=0.3,"
                  f"aformat=sample_rates=44100:channel_layouts=stereo,adelay={delay}:all=1[fx{s['k']}]")
         fx.append(f"[fx{s['k']}]")
+    cuts = [s for s in segs if (s.get("fx") or {}).get("transition") and s["k"] > 0]
+    if cuts:                            # a whoosh peaking on each transition's cut
+        wi = add_input("-i", whoosh_wav(os.path.join(work_dir, "whoosh.wav")))
+        g.append(f"[{wi}:a]aformat=sample_rates=44100:channel_layouts=stereo,asplit={len(cuts)}"
+                 + "".join(f"[wh{j}]" for j in range(len(cuts))))
+        for j, s in enumerate(cuts):
+            g.append(f"[wh{j}]adelay={int(max(0.0, s['out'] - WHOOSH_PEAK) * 1000)}:all=1,volume=1.4[wd{j}]")
+            fx.append(f"[wd{j}]")
     if fx:
         g.append("".join(fx) + f"amix=inputs={len(fx)}:normalize=0,volume={SFX_GAIN}[fx]")
         mix.append("[fx]")

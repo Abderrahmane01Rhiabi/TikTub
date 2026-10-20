@@ -174,10 +174,12 @@ def normalise(r, clips: Dict[str, Dict]) -> Dict:
         if not isinstance(p, dict) or not str(p.get("texte", "")).strip():
             continue
         from adaptation.storyboard import clean_annotation
+        from adaptation import effects
         passages.append({"clip": str(p.get("clip", "")).strip().upper(), "bandeau": str(p.get("bandeau", "")).strip(),
                          "texte": " ".join(str(p["texte"]).split()),
                          "mots_cles": [str(m) for m in p.get("mots_cles") or [] if str(m).strip()][:3],
-                         "annotation": clean_annotation(p.get("annotation"))})
+                         "annotation": clean_annotation(p.get("annotation")),
+                         "effets": effects.clean(p.get("effets"))})
     tags = [str(t).strip() for t in r.get("tags") or [] if str(t).strip()]
     return {"titre": str(r.get("titre", "")).strip()[:100], "description": str(r.get("description", "")).strip(),
             "tags": tags[:15], "passages": passages}
