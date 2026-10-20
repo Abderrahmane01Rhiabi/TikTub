@@ -747,6 +747,9 @@ def start_fetch(pid: str) -> Dict:
     return save(p)
 
 
+CUT_VERSION = 2          # how clips are cut; a clip cut an older way is cut again (2: re-timed, upright, no bars)
+
+
 def fit_window(a: float, b: float, need: float, shots: List[Tuple[float, float]],
                length: Optional[float] = None) -> Tuple[float, float]:
     """The clip for a sentence of `need` seconds from the moment [a, b] the AI
@@ -796,7 +799,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         durations.update({u: v.get("duration") for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
         def pick_key(k: int) -> List:
             m = picks[k]["moment"]
-            return [picks[k]["url"], round(m["debut"], 2), round(m["fin"], 2), 0 if picks[k].get("extrait") else plans[k]["duree"]]
+            return [picks[k]["url"], round(m["debut"], 2), round(m["fin"], 2), 0 if picks[k].get("extrait") else plans[k]["duree"],
+                    CUT_VERSION]
         old = p.get("clips") or {}
         clips = {f"P{k + 1}": old[f"P{k + 1}"] for k in _active(p)
                  if (old.get(f"P{k + 1}") or {}).get("pick_key") == pick_key(k) and os.path.exists(old[f"P{k + 1}"]["src"])}
@@ -860,7 +864,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             except Exception:
                 upload, gfile = None, None
             moments = [(k, file_time(a), file_time(a) + (b - a), need) for k, a, b, need in items]
-            absent, seen_moving = {}, {}
+            absent, seen_moving, action_at = {}, {}, {}
             asks = [(n, m) for n, m in enumerate(moments) if m[3] > 0]        # an excerpt stays where it was cut
             if gfile and asks:
                 report(f"vidéo {i + 1}/{len(by_url)} : l'IA recale chaque moment", 0.05 + 0.8 * (i + 0.5) / len(by_url))
@@ -872,8 +876,17 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     if r and r["visible"]:
                         moments[n] = (k, r["debut"], r["fin"], need)
                         seen_moving[k] = r["vu"]
+                        action_at[k] = (r["debut"], r["fin"])
                     elif r:
                         absent[k] = r["vu"] or "autre chose"
+            if gfile:                   # a video posted lying on its side is turned upright before anything is cut
+                deg = sources.orientation(gfile)
+                if deg:
+                    report(f"vidéo {i + 1}/{len(by_url)} : remise à l'endroit", 0.05 + 0.8 * (i + 0.55) / len(by_url))
+                    try:
+                        path = sources.rotated(path, deg)
+                    except Exception:
+                        pass
             times = []
             for k, fa, fb, need in moments:
                 start, end = fit_window(fa, fb, need, shots, length)
@@ -903,6 +916,10 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     c["absent"] = absent[k]
                 if seen_moving.get(k):          # what the re-timing saw, in motion: the judge trusts it over stills
                     c["action"] = seen_moving[k]
+                if k in action_at:              # the strong moment is IN the action (arrow, ramp, freeze follow it)
+                    ra, rb = max(action_at[k][0], c["start"]), min(action_at[k][1], c["end"])
+                    if rb > ra and not ra <= c["impact"] <= rb:
+                        c["impact"] = round(ra + 0.6 * (rb - ra), 2)
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c

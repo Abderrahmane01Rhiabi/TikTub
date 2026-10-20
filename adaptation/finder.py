@@ -376,8 +376,10 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
                     continue
                 if (url, round(a)) in used:
                     continue
-                # a presenter / split screen at that moment: only when nothing better
-                penalty = 6 if real_faults(e.get("defauts")) else 0
+                # a presenter / split screen at that moment: only when nothing better; a poor picture
+                # (a 320x240 hook, filmed sideways, once) after the clean ones of the same level
+                penalty = (6 if real_faults(e.get("defauts")) else 0) + \
+                          (2 if str(v.get("qualite") or "").lower().startswith("mauvaise") else 0)
                 options.append((RANK[e["niveau"]] + penalty, -(b - a), url, a, b, e))
         if not options:
             picks.append(None)

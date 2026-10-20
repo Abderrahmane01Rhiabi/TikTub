@@ -215,11 +215,14 @@ def credit_png(handles: str, path: str, lang: Dict) -> str:
     img = Image.new("RGBA", (W, 90), (0, 0, 0, 0))
     if handles:
         d = ImageDraw.Draw(img)
-        font = ImageFont.truetype(font_path(lang["credit_font"]), 30)
         col = (170, 176, 188, 255)
         label = lang["credit_label"]
         kw = {"direction": "rtl", "language": "ar"} if lang["rtl"] else {}
-        lw, hw = d.textlength(label, font=font, **kw), d.textlength(handles, font=font)
+        for size in range(30, 15, -2):          # four handles once ran off both edges: smaller until it fits
+            font = ImageFont.truetype(font_path(lang["credit_font"]), size)
+            lw, hw = d.textlength(label, font=font, **kw), d.textlength(handles, font=font)
+            if lw + 12 + hw <= W - 60:
+                break
         x0 = (W - (lw + 12 + hw)) / 2
         if lang["rtl"]:      # Arabic label on the right
             d.text((x0, 45), handles, font=font, fill=col, anchor="lm")

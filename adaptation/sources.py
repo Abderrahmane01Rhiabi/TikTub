@@ -543,6 +543,50 @@ def _to_band_coords(boxes: List[List[int]], h_full: int, top: int, height: int) 
     return out
 
 
+def black_bars(path: str, a: float, b: float) -> Optional[Tuple[int, int, int, int]]:
+    """(w, h, x, y) of the picture inside black bars over [a, b] — a vertical
+    video posted inside a horizontal file showed as a thin strip (measured:
+    608x1072 inside 1920x1080). None when there are no real bars."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{max(0.0, a):.2f}", "-i", path, "-t", f"{max(0.5, b - a):.2f}",
+                        "-vf", "cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    found = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", r.stderr)
+    if not found:
+        return None
+    w, h, x, y = (int(v) for v in found[-1])
+    info = probe(path)
+    if w < 64 or h < 64 or w * h > 0.85 * info["w"] * info["h"]:
+        return None
+    return w, h, x, y
+
+
+ORIENT_PROMPT = """Regarde cette video. Est-elle a l'endroit ? Si elle a ete filmee ou publiee couchee sur le cote ou a
+l'envers (le ciel sur un cote, le sol de l'autre, les gens penches a 90 degres), dis de combien de degres il faut la
+tourner DANS LE SENS DES AIGUILLES D'UNE MONTRE pour la remettre droite.
+JSON uniquement : {{"rotation": 0 | 90 | 180 | 270}}"""
+
+
+def orientation(file) -> int:
+    """Clockwise degrees that put a sideways video upright (a hook was once shown lying on its side)."""
+    g, part = file
+    try:
+        r = g._generate_content([{**part, "video_metadata": {"fps": 0.5}}, {"text": ORIENT_PROMPT.format()}],
+                                max_tokens=2000, timeout=120, temperature=0.0)
+        deg = int((r or {}).get("rotation") or 0) if isinstance(r, dict) else 0
+    except Exception:
+        return 0
+    return deg if deg in (90, 180, 270) else 0
+
+
+def rotated(path: str, deg: int) -> str:
+    """The file turned upright (re-encoded once; every later step sees it straight)."""
+    vf = {90: "transpose=1", 270: "transpose=2", 180: "hflip,vflip"}[deg]
+    out = os.path.splitext(path)[0] + f"_r{deg}.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", path, "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "18", "-c:a", "copy", out], check=True)
+    return out
+
+
 def clip_at(path: str, index: int, cid: str, a: float, b: float, found, desc: str = "") -> Dict:
     """"Script d'abord": one clip from a chosen moment [a, b] (already
     picked and checked), cleaned like the analysed ones — the real picture
@@ -565,11 +609,19 @@ def clip_at(path: str, index: int, cid: str, a: float, b: float, found, desc: st
         h = height
     crop = f"{w_full}:{h}:0:{top + cut_top}" if (on_band or cut_top or cut_bot) else None
     patches = [(x, y - cut_top, pw, ph) for x, y, pw, ph in patches if y - cut_top >= 0]
+    w = w_full
+    if not crop:                                # black bars Gemini's picture area missed
+        bars = black_bars(path, a, b)
+        if bars:
+            w, h, bx0, by0 = bars
+            crop = f"{w}:{h}:{bx0}:{by0}"
+            patches = [(x - bx0, y - by0, pw, ph) for x, y, pw, ph in patches
+                       if bx0 <= x < bx0 + w and by0 <= y < by0 + h]
     peak, from_sound = find_peak(path, a, b, crop)
     return {"id": cid, "source": index, "src": path, "start": a, "end": b, "impact": peak,
-            "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches, "desc": desc,
+            "w": w - w % 2, "h": h - h % 2, "crop": crop, "delogo": patches, "desc": desc,
             "camera": "", "usable": True, "why_not": "", "audio_ok": False, "shock": False,
-            "low_res": min(w_full, h) < 540, "marks": [m for m in marks if m]}
+            "low_res": min(w, h) < 540, "marks": [m for m in marks if m]}
 
 
 def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini: bool = True) -> List[Dict]:

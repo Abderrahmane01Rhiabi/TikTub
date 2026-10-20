@@ -645,6 +645,36 @@ def test_a_check_answer_wrapped_in_a_list_is_read():
     assert r["par_plan"]["0"]["niveau"] == "equivalente"
 
 
+def test_black_bars_around_a_vertical_video_are_found(tmp_path):
+    import subprocess
+    from adaptation import sources
+    f = str(tmp_path / "pillar.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=25", "-t", "2",
+                    "-vf", "pad=1008:568:344:0:black", "-c:v", "libx264", f], check=True)
+    w, h, x, y = sources.black_bars(f, 0, 2)
+    assert abs(w - 320) <= 4 and abs(x - 344) <= 4 and h >= 560
+    plain = str(tmp_path / "plain.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "2",
+                    "-c:v", "libx264", plain], check=True)
+    assert sources.black_bars(plain, 0, 2) is None
+
+
+def test_four_credited_handles_fit_on_the_line(tmp_path):
+    from PIL import Image
+    from adaptation import render, langs
+    out = render.credit_png("@GoPro · @OlegCricket · @johnnykaboom1920 · @DomTomato", str(tmp_path / "c.png"), langs.lang("fr"))
+    box = Image.open(out).getbbox()
+    assert box[0] > 0 and box[2] < render.W                                      # nothing cut at the edges
+
+
+def test_a_poor_picture_comes_after_a_clean_one_of_the_same_level():
+    from adaptation import finder
+    v = lambda q: {"verdict": "oui", "qualite": q, "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 1, "fin": 9}]}}}
+    sug = {"verifs": {"blurry": v("mauvaise (320x240)"), "clean": v("bonne")}}
+    sug["verifs"]["clean"]["par_scene"]["0"]["moments"] = [{"debut": 1, "fin": 3}]   # shorter, yet first
+    assert finder.auto_pick(sug, [{}])[0]["url"] == "clean"
+
+
 def test_retime_reads_where_the_action_really_is():
     from adaptation import sources
 
@@ -683,6 +713,10 @@ def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagg
     monkeypatch.setattr(sources, "describe", lambda path, segs, file=None: [{"visuel": "vu", "utilisable": True} for _ in segs])
     asked = []
 
+    turned = []
+    monkeypatch.setattr(sources, "orientation", lambda f: 90)
+    monkeypatch.setattr(sources, "rotated", lambda path, deg: turned.append(deg) or path.replace(".mp4", "_r90.mp4"))
+
     def retime(path, asks, length, file=None):
         asked.extend(asks)
         return [{"visible": True, "debut": x["a"] + 2.0, "fin": x["a"] + 2.5, "vu": "il glisse"} if n == 0 else
@@ -696,6 +730,9 @@ def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagg
     first = asked[0]["a"]
     assert made["P1"][0] == pytest.approx(first + 2.0)                       # cut where the action really is
     assert p["clips"]["P1"]["action"] == "il glisse" and p["clips"]["P2"]["absent"] == "un toit"
+    c1 = p["clips"]["P1"]
+    assert c1["start"] <= c1["impact"] <= c1["end"] and first + 2.0 <= c1["impact"] <= first + 2.5   # in the action
+    assert turned == [90] and c1["src"].endswith("_r90.mp4")                   # lying on its side: turned upright
     t = p["targets"][0]
     assert any("Passage 2 : l'action voulue ne se voit pas" in x for x in t["problems"])
     p = ap.force_clip(pid, "P2")
