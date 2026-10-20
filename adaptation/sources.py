@@ -321,6 +321,8 @@ Pour CHAQUE passage, dans le meme ordre, decris-le. JSON uniquement :
 {{"passages": [{{"camera": "cabine | camera avant | surveillance | telephone | plateau TV | autre",
   "visuel": "description precise : ce qui se passe, vehicules et COULEURS, jour/nuit, personnes",
   "utilisable": true/false, "pourquoi_pas": "si inutilisable : presentateur, interview, logo, ecran de fin, pub, flou...",
+  (un "presentateur" PARLE face a la camera ou sur un plateau ; quelqu'un qui FAIT l'action ou une demonstration
+   sans parler a la camera n'en est pas un, meme dans une salle de classe ou un tutoriel),
   "parole_dans_le_son": true/false,
   "choc_sonore": true/false (on ENTEND un vrai choc a son moment fort : collision, coup de marteau, explosion, chute,
                  eclaboussure violente ; pas une musique, un effet de montage ou un bruit d'ambiance)}}]}}"""
