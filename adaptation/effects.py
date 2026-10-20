@@ -245,3 +245,89 @@ def decide(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=N
                 fx["zoom"] = None                  # the arrow is placed on the unzoomed picture
             out[idx[n]] = clean(fx)
     return cap(out)
+
+
+# ------------------------------------------------------------------ zoom when the subject is small
+
+SMALL = 0.25          # the subject takes less than this share of the picture box: zoomed in on
+
+SUBJECT_PROMPT = """Voici {n} images, une par plan d'un YouTube Short (le moment fort de chaque clip), dans l'ordre.
+La phrase dite sur chaque plan :
+{plans}
+Dans CHAQUE image, trouve le SUJET de sa phrase : la personne ou l'objet dont elle parle, ou qui fait l'action
+(pour "atterrir jambes tendues" : les jambes de la personne qui atterrit).
+JSON uniquement : {{"plans": [{{"plan": numero, "sujet": "description courte pour le retrouver (couleur, position)",
+"box_2d": [ymin, xmin, ymax, xmax] ou null s'il n'est pas visible}}]}}
+Coordonnees entre 0 et 1000 sur l'image entiere."""
+
+
+def on_screen(c: Dict, box: List[int]) -> float:
+    """The share of the picture box a box_2d (0-1000 on the clean clip) takes
+    once framed as render.clip_chain frames it (filled, or on its blurred copy)."""
+    import math
+    from adaptation import render as R
+    y0, x0, y1, x1 = (v / 1000 for v in box)
+    aspect, box_aspect = c["w"] / c["h"], R.BOX_W / R.BOX_H
+    if abs(math.log(aspect / box_aspect)) < 0.25:                # fills the box
+        pw, ph = max(R.BOX_W, R.BOX_H * aspect) * 1.08, max(R.BOX_H, R.BOX_W / aspect) * 1.08
+    elif aspect > box_aspect:                                   # wide, on its blurred copy
+        pw, ph = R.BOX_W * 1.04, R.BOX_W / aspect * 1.04
+    else:                                                       # tall
+        pw, ph = R.BOX_H * aspect * 1.04, R.BOX_H * 1.04
+    return max((y1 - y0) * ph / R.BOX_H, (x1 - x0) * pw / R.BOX_W)
+
+
+def auto_zoom(passages: List[Dict], clips: Dict[str, Dict], fx: List[Optional[Dict]], work_dir: str,
+              gemini=None) -> List[Optional[Dict]]:
+    """Measured, not guessed: the subject of each sentence is found on its clip
+    and, when it takes less than a quarter of the picture, the plan gets a zoom
+    on it (measured on a parkour Short: a man landing stiff-legged in a wide
+    classroom shot, small, left unzoomed by the AI's eye). Never on a plan
+    with an arrow or a zoom already; the smallest subjects first, within MAX."""
+    from adaptation import sources
+    fx = list(fx) + [None] * (len(passages) - len(fx))
+    os.makedirs(work_dir, exist_ok=True)
+    idx, stills = [], []
+    for k, x in enumerate(passages):
+        c = clips.get(x.get("clip"))
+        if not c or (fx[k] or {}).get("zoom") or (x.get("annotation") or {}).get("cible"):
+            continue
+        out = os.path.join(work_dir, f"subject_{k}.jpg")
+        try:
+            sources.clip_still(c, out)
+        except Exception:
+            continue
+        if os.path.exists(out):
+            idx.append(k)
+            stills.append(out)
+    if not stills:
+        return fx
+    listing = "\n".join(f"{n}. « {passages[k].get('texte', '')} »" for n, k in enumerate(idx, 1))
+    parts = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(p, "rb").read()).decode()}}
+             for p in stills]
+    try:
+        r = (gemini or sources._gemini())._generate_content(
+            parts + [{"text": SUBJECT_PROMPT.format(n=len(stills), plans=listing)}],
+            max_tokens=4000, timeout=120, temperature=0.1)
+    except Exception:
+        return fx
+    small = []
+    for e in (r.get("plans") if isinstance(r, dict) else None) or []:
+        try:
+            n = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        b = e.get("box_2d", next((v for key, v in e.items() if str(key).startswith("box")), None))
+        sujet = " ".join(str(e.get("sujet") or "").split())[:120]
+        if not (0 <= n < len(idx) and sujet and isinstance(b, list) and len(b) == 4 and b[2] > b[0] and b[3] > b[1]):
+            continue
+        k = idx[n]
+        share = on_screen(clips[passages[k]["clip"]], [int(v) for v in b])
+        if share < SMALL:
+            small.append((share, k, sujet))
+    room = MAX["zoom"] - sum(1 for e in fx if e and e.get("zoom"))
+    for share, k, sujet in sorted(small)[:max(0, room)]:
+        e = dict(fx[k] or {"ralenti": False, "arret": False, "transition": False})
+        e["zoom"] = sujet
+        fx[k] = clean(e)
+    return fx

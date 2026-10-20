@@ -77,3 +77,27 @@ def test_the_timeline_and_the_filters_follow_the_effects():
     assert "minterpolate" not in quick                                        # the preview repeats frames: seconds
     frozen = " ; ".join(render.clip_chain(2, 1, clips["B"], segs[1]))
     assert "tpad=stop_mode=clone" in frozen and "concat=n=3" in frozen
+
+
+def test_a_small_subject_gets_a_zoom_measured_not_guessed(tmp_path, monkeypatch):
+    from PIL import Image
+    from adaptation import sources
+    monkeypatch.setattr(sources, "clip_still", lambda c, out: Image.new("RGB", (8, 8)).save(out) or out)
+    clips = {f"P{k}": clip() for k in range(1, 6)}
+    passages = [{"clip": f"P{k}", "texte": f"Phrase {k}."} for k in range(1, 6)]
+    passages[3]["annotation"] = {"type": "cercle", "cible": "x"}             # an arrow: never zoomed under it
+    fx = [None, {"ralenti": True, "zoom": None, "arret": False, "transition": False}, None, None,
+          {"ralenti": False, "zoom": "deja", "arret": False, "transition": False}]
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.n = sum("inline_data" in x for x in parts)
+            return {"plans": [{"plan": 1, "sujet": "l'homme au loin", "box_2d": [600, 500, 700, 540]},     # small
+                              {"plan": 2, "sujet": "les jambes", "box_2d": [200, 450, 900, 520]},          # big on screen
+                              {"plan": 3, "sujet": "rien", "box_2d": None}]}
+    out = E.auto_zoom(passages, clips, fx, str(tmp_path), gemini=G())
+    assert G.n == 3                                                            # plans 1, 2, 3 looked at
+    assert out[0]["zoom"] == "l'homme au loin" and out[1] == fx[1] and out[2] is None
+    assert out[3] is None and out[4]["zoom"] == "deja"
+    assert E.on_screen(clip(), [600, 500, 700, 540]) < E.SMALL < E.on_screen(clip(), [200, 450, 900, 520])
+    assert E.on_screen(clip(), [500, 450, 900, 520]) < E.SMALL                  # 40 % of a wide clip: small once shown

@@ -967,9 +967,9 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         report("effets de montage choisis avec les vrais clips", 0.94)
         rough = [{**x, "annotation": p["storyboard"]["plans"][k].get("annotation")} for k, x in zip(active, rough)]
         fx = effects.decide(rough, clips, os.path.join(project_dir(pid), "work"))
-        if fx is not None:              # shared by every language, like the arrows
-            for k, e in zip(active, fx):
-                p["storyboard"]["plans"][k]["effets"] = e
+        fx = effects.auto_zoom(rough, clips, fx or [], os.path.join(project_dir(pid), "work"))   # a small subject: zoomed
+        for k, e in zip(active, fx):        # shared by every language, like the arrows
+            p["storyboard"]["plans"][k]["effets"] = e
         for t in p["targets"]:
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
@@ -1377,7 +1377,8 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
                 for x, a in zip(sc["passages"], seen):
                     x["annotation"] = a
             fx = effects.decide(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
-            for x, e in zip(sc["passages"], fx or []):
+            fx = effects.auto_zoom(sc["passages"], p["clips"], fx or [], os.path.join(project_dir(pid), "work", t["channel"]))
+            for x, e in zip(sc["passages"], fx):
                 x["effets"] = e
             for attempt in (1, 2):                     # what the re-read missed is fixed (twice at most), then shown
                 left = script.problems(sc, p["clips"], t["language"])
