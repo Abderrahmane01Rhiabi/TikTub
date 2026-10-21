@@ -1240,3 +1240,20 @@ def test_search_more_frees_the_moment_a_plan_lets_go_for_the_next_plans(project,
     ap.run_images(pid)
     picks = ap.load(pid)["picks"]
     assert picks[3]["url"].endswith("byhand00000") and picks[5]["moment"]["debut"] == 129.0
+
+
+def test_an_adapted_hook_keeps_to_the_hook_length():
+    prompts = []
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            prompts.append(parts[0]["text"])
+            fr = "Le souffleur est-il vraiment l'outil idéal pour vider une gouttière ?" if len(prompts) == 1 \
+                else "Le souffleur suffit-il vraiment ?"
+            return {"choix": 1, "image": "un souffleur", "textes": {
+                "fr": {"bandeau": "A : B", "texte": fr, "mots_cles": []},
+                "ar": {"bandeau": "أ", "texte": "هل يكفي المنفاخ؟", "mots_cles": []}}}
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    _, new = sb.adapt_to(b, 0, [{"vu": "un souffleur"}], ["fr", "ar"], gemini=G())
+    assert "58 caracteres en fr" in prompts[0] and "trop longue en fr" in prompts[1]
+    assert new["textes"]["fr"]["texte"] == "Le souffleur suffit-il vraiment ?"
