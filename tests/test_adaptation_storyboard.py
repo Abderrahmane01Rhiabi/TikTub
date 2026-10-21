@@ -945,6 +945,8 @@ def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatc
     monkeypatch.setattr(sources, "detect_cuts", lambda *a, **k: [(0, 3), (3, 9)])
     monkeypatch.setattr(sources, "still", lambda *a, **k: "s.jpg")
     monkeypatch.setattr(sources, "find_boxes", lambda stills: [([0, 0, 1000, 1000], [], ["@createur_du_short"])])
+    left = []
+    monkeypatch.setattr(sources, "leftover_text", lambda clips, work, finder=None: left.extend(clips) or {})
     monkeypatch.setattr(sources, "source_meta", lambda path: {"handle": "@createur_du_short"})
     monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
         "id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920, "usable": True,
@@ -964,6 +966,7 @@ def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatc
     with pytest.raises(ap.PipelineError, match="déjà son extrait"):
         ap.add_excerpt_source(pid, 1)
     assert "extrait du Short modèle" in c["desc"] and "@createur_du_short" in p["credits"]
+    assert left == ["M1"]                                   # its leftover text looked at (as in Script d'abord)
     assert p["source_urls"] == ["https://youtube.com/shorts/ref"] and len(p["sources"]) == 1
     sc = {"passages": [{"clip": "M1", "texte": "Court.", "bandeau": "", "mots_cles": []}]}
     from adaptation import script
