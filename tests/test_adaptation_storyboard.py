@@ -1221,3 +1221,22 @@ def test_search_more_first_checks_what_another_version_of_the_short_found_useful
     ap.run_images(pid)
     assert checked[0].endswith("handinwater") and not any("bbcfilm" in u or "offtopic" in u for u in checked)
     assert ap.load(pid)["picks"][2]["url"].endswith("handinwater")
+
+
+def test_search_more_frees_the_moment_a_plan_lets_go_for_the_next_plans(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    old = {"url": "https://www.youtube.com/watch?v=backedup000", "titre": "u", "niveau": "partielle",
+           "moment": {"debut": 129.0, "fin": 135.0}, "raison": "", "auto": True}
+    p["picks"][3], p["picks"][5] = old, None
+    ap.save(p)
+    new3 = {**old, "url": "https://www.youtube.com/watch?v=byhand00000", "niveau": "exacte"}
+    new5 = {**old, "niveau": "equivalente", "moment": {"debut": 129.0, "fin": 147.0}}   # plan 4's old moment
+    monkeypatch.setattr(ap, "group_of", lambda q: [])
+    monkeypatch.setattr(finder, "action_queries", lambda found: {})
+    monkeypatch.setattr(finder, "auto_pick", lambda sug, plans: [None, None, None, new3, None, new5])
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    picks = ap.load(pid)["picks"]
+    assert picks[3]["url"].endswith("byhand00000") and picks[5]["moment"]["debut"] == 129.0

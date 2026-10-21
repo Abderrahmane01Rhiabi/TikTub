@@ -629,6 +629,8 @@ def _more_images(p: Dict, report: Report):
         b = best[k] if k < len(best) else None
         better = b and (not picks[k] or finder.RANK[b["niveau"]] < finder.RANK.get(picks[k]["niveau"], 9))
         if better and (b["url"], round(b["moment"]["debut"])) not in taken:
+            if picks[k]:                # its old moment is free for the next plans (measured: a plan left empty
+                taken.discard((picks[k]["url"], round(picks[k]["moment"]["debut"])))    # by a moment just let go)
             picks[k] = b
             taken.add((b["url"], round(b["moment"]["debut"])))
             found.append(k + 1)
