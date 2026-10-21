@@ -1494,6 +1494,18 @@ def update_adaptation_sources(pid: str, req: AdaptationSources):
     return _serialize_adaptation(_adaptation_call(ap.set_sources, pid, req.usable, req.credits))
 
 
+class AdaptationCredits(BaseModel):
+    credits: str
+
+
+@app.patch("/api/adaptations/{pid}/credits")
+def update_adaptation_credits(pid: str, req: AdaptationCredits):
+    """The credits line, corrected by hand until the final render."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.set_credits, pid, req.credits))
+
+
 class AdaptationAddSources(BaseModel):
     urls: list
 

@@ -1450,6 +1450,15 @@ def set_sources(pid: str, usable: Optional[Dict[str, bool]] = None, credits: Opt
     return save(p)
 
 
+def set_credits(pid: str, credits: str) -> Dict:
+    """The credits line, corrected by hand until the final render (Script
+    d'abord never showed it: a source could be left out unseen)."""
+    p = load(pid)
+    _expect(p, "sources_review", "script_review", "preview_review")
+    p["credits"] = " ".join((credits or "").split())[:160]
+    return save(p)
+
+
 # ---------------------------------------------------------------- 2. scripts
 
 def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] = None):

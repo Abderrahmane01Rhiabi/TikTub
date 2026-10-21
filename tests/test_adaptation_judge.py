@@ -127,3 +127,13 @@ def test_a_slow_check_never_writes_over_a_step_started_meanwhile(monkeypatch):
     with pytest.raises(ap.PipelineError, match="étape a démarré"):
         ap.edit_script("x", "c", {"passages": [{"clip": "P2", "texte": "A."}]})
     assert store["p"]["status"] == "voicing" and store["p"]["targets"][0]["approved"]
+
+
+def test_the_credits_can_be_corrected_until_the_final_render(monkeypatch):
+    p = {"project_id": "x", "status": "script_review", "credits": "@a"}
+    monkeypatch.setattr(ap, "load", lambda pid: p)
+    monkeypatch.setattr(ap, "save", lambda q: q)
+    assert ap.set_credits("x", "  @a ·  @TokyoSeaLifePark ")["credits"] == "@a · @TokyoSeaLifePark"
+    p["status"] = "rendering"
+    with pytest.raises(ap.PipelineError):
+        ap.set_credits("x", "@b")

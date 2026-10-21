@@ -3348,7 +3348,9 @@ function adAccordHtml(t, ps, i, p){
 
 function renderAdScripts(body, p){
   const allApproved = p.targets.every(t => t.approved);
-  body.innerHTML = p.targets.map(t => {
+  body.innerHTML = `<article class="chcard"><div class="chcard-body">
+      <label class="f">Crédits affichés en haut de la vidéo et dans la description <span class="tiny">(les comptes dont les images sont utilisées)</span></label>
+      <input class="f" id="adScriptCredits" value="${esc(p.credits || '')}"></div></article>` + p.targets.map(t => {
     const sc = t.script || { passages: [] };
     const dir = t.rtl ? 'dir="rtl"' : '';
     return `
@@ -3410,6 +3412,10 @@ function renderAdScripts(body, p){
       <button class="btn primary" id="adVoices" ${allApproved ? '' : 'disabled'} data-icon="mic">Générer les voix et les aperçus →</button></div>`;
   hydrateIcons(body);
   adBindPlay(body);
+  document.getElementById('adScriptCredits').onchange = async e => {
+    try { adProject = await api(`/api/adaptations/${p.project_id}/credits`, { method:'PATCH', body: JSON.stringify({ credits: e.target.value }) });
+          toast('Crédits enregistrés', 'success'); } catch (err){ log(err.message, 'error'); }
+  };
   body.querySelectorAll('.ad-target-card').forEach(card => {
     const ch = card.dataset.channel;
     const collect = () => ({
