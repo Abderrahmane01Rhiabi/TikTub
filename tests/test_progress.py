@@ -100,8 +100,10 @@ def test_import_processing_runs_in_background(client, project, monkeypatch):
     bp = m.get_batch_processor()
     halfway, release = threading.Event(), threading.Event()
 
-    def fake_process(raw, title, bg_mode, specific_bg=None, frame_mode=None, rounded=False, output_name=None, progress_cb=None):
+    def fake_process(raw, title, bg_mode, specific_bg=None, frame_mode=None, rounded=False, output_name=None, progress_cb=None,
+                     notes=None):
         progress_cb(0.5)
+        notes["fond"] = "couleur (10, 10, 10)"          # what the render picked, for the recipe
         halfway.set()
         release.wait(5)
         return f"processed_videos/{output_name}.mp4"
@@ -119,6 +121,8 @@ def test_import_processing_runs_in_background(client, project, monkeypatch):
     assert wait_until(lambda: client.get("/api/process_status").json()["done"])
     assert client.get("/api/process_status").json()["processed"] == 1
     assert db.get_video("v1")["status"] == "ready_for_upload"
+    r = db.get_video("v1")["recette"]
+    assert r["type"] == "import" and r["style"]["fond"] == "couleur (10, 10, 10)" and not r["reconstruite"]
 
 
 def test_restart_puts_interrupted_videos_back_where_they_can_be_relaunched(client, project):
