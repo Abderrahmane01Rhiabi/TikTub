@@ -37,6 +37,24 @@ MIN_CLIP = 1.0                            # shorter: unticked as "trop court"
 COOKIES_FILE = "youtube_cookies.txt"      # a cookies.txt export, when YouTube asks to "confirm you're not a bot"
 
 
+def reachable(url: str) -> Optional[bool]:
+    """Can this video be downloaded from here? Gemini watches YouTube from
+    Google's side: a video it judged exact was refused here ('This video is not
+    available', blocked in the country). False only for that kind of refusal;
+    None when YouTube just asks to prove we're not a bot (it comes and goes)."""
+    import yt_dlp
+    try:
+        with yt_dlp.YoutubeDL(ytdlp_opts(skip_download=True)) as ydl:
+            ydl.extract_info(url, download=False, process=False)
+        return True
+    except Exception as e:
+        msg = str(e).lower()
+        if any(k in msg for k in ("not available", "unavailable", "private video", "removed", "blocked",
+                                  "not made this video available", "copyright")):
+            return False
+        return None
+
+
 def ytdlp_opts(**extra) -> Dict:
     """What every yt-dlp call shares: quiet, the cookies file when there is
     one, node as JavaScript runtime (recent YouTube needs one)."""

@@ -363,7 +363,7 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     for i, pl in enumerate(sb_plans):
         options = []
         for url, v in verifs.items():
-            if url in dead or v.get("film") or v.get("remontage"):
+            if url in dead or v.get("film") or v.get("remontage") or v.get("telechargeable") is False:
                 continue                    # a film, or someone else's re-edit: only by hand (rights)
             e = (v.get("par_scene") or {}).get(str(i))
             if not e or e.get("niveau") not in RANK:
@@ -769,7 +769,12 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         par_plan = {k: {**e, "niveau": "rien", "moments": []} for k, e in par_plan.items()}
     moments = [m for e in par_plan.values() for m in e["moments"]]
     best = min((LEVELS.index(e["niveau"]) for e in par_plan.values()), default=3)
+    reach = None
+    if best <= 1 and not copy:          # a useful video: can it be downloaded from here? (a YouTube link is watched
+        from adaptation import sources  # by Gemini from Google's side; another site's file was just downloaded)
+        reach = sources.reachable(url) if _video_id(url) else True
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
             "copie": copy, "remontage": r.get("remontage") is True, "film": r.get("film") is True,
+            "telechargeable": reach,
             "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
             "title": seen.get("title") or ""}

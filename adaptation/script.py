@@ -246,12 +246,16 @@ Note chaque passage :
 - "non" : l'image montre autre chose ; le spectateur entend X et voit Y.
 Le passage 1 est l'ACCROCHE (les 2 premieres secondes) : sois strict, le sujet de la video doit se voir ; s'il ne se
 voit pas, c'est "non".
-Pour "moyen" et "non", propose une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP tout en gardant
-le role du passage dans l'histoire (accroche, explication, chute), complete, sans "…", au plus le nombre de
-caracteres indique pour son clip. Pour "bon", "proposition" est vide.
-
+Pour "moyen" et "non" :
+- "autre_clip" : si un des AUTRES CLIPS ci-dessous montre ce que dit la phrase, son identifiant (le meilleur) ;
+  null sinon. C'est la meilleure solution : la phrase et l'histoire restent intactes.
+- "proposition" : une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP en gardant ce que le
+  passage APPREND au spectateur et son role (accroche = la question du sujet, chute = la reponse), complete, sans
+  "…", au plus le nombre de caracteres indique ; laisse-la vide si c'est impossible sans changer l'histoire.
+Pour "bon", "autre_clip" est null et "proposition" vide.
+{autres}
 JSON uniquement : {{"passages": [{{"note": "bon|moyen|non", "pourquoi": "en francais, 1 phrase courte : on entend
-.../on voit ...", "proposition": "..."}}]}} dans l'ordre des passages."""
+.../on voit ...", "autre_clip": null, "proposition": "..."}}]}} dans l'ordre des passages."""
 
 
 def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
@@ -278,7 +282,13 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
                      for f in files]
     images = ("Trois images fixes de chaque clip suivent. Une image fixe peut etre ambigue (un saut fige au moment ou un "
               "bus passe) : l'\"action verifiee\", vue en mouvement, fait foi sur ce qui se passe.\n" if pics else "")
-    parts = [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines), images=images)}] + pics
+    used = {p["clip"] for p in ps}
+    spare = {cid: c for cid, c in clips.items() if cid not in used and c.get("usable", True)}
+    autres = ("AUTRES CLIPS disponibles (identifiant : ce qu'il montre, duree) :\n" + "\n".join(
+        f"- {cid} : {(c.get('action') or c.get('desc') or '?')[:160]} ({c['end'] - c['start']:.1f}s)"
+        for cid, c in list(spare.items())[:30])) if spare else "Aucun autre clip disponible : \"autre_clip\" est null."
+    parts = [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines), images=images,
+                                          autres=autres)}] + pics
     for _attempt in range(2):           # an answer once came back cut in the middle (long, with pictures)
         r = (gemini or _gemini())._generate_content(parts, max_tokens=32000, timeout=180, temperature=0.2)
         items = r.get("passages") if isinstance(r, dict) else r
@@ -292,6 +302,8 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
         note = str(x.get("note", "")).strip().lower()
         note = note if note in ("bon", "moyen", "non") else "bon"
         prop = " ".join(str(x.get("proposition") or "").split()) if note != "bon" else ""
+        other = str(x.get("autre_clip") or "").strip().upper()
         out.append({"clip": p["clip"], "texte": p["texte"], "note": note,
-                    "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop})
+                    "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop,
+                    "autre_clip": other if note != "bon" and other in spare else None})
     return out

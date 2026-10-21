@@ -1300,7 +1300,11 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
 
     def run():
         try:
-            report = lambda phase, f: progress.update(key, f, phase=phase)
+            seen = {"f": 0.0}            # never backwards: sources handled at once each report their own share
+
+            def report(phase, f):
+                seen["f"] = max(seen["f"], f)
+                progress.update(key, seen["f"], phase=phase)
             if step in ("voicing", "scripting") and only:
                 runner(pid, report, only=only)
             else:
@@ -1713,6 +1717,14 @@ def keep_adaptation_passage(pid: str, channel: str, k: int):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.keep_passage, pid, channel, k))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/clip")
+def use_adaptation_clip_proposal(pid: str, channel: str, k: int):
+    """Take the other clip the check found for this sentence (the sentence stays)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.use_clip_proposal, pid, channel, k))
 
 
 @app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/proposal")

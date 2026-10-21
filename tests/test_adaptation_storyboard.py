@@ -462,7 +462,7 @@ def test_each_sentence_is_compared_with_what_its_clip_really_shows():
     assert "un homme frappe un bac" in G.prompt and "ACCROCHE" in G.prompt
     assert [a["note"] for a in out] == ["non", "bon", "bon"] and out[1]["proposition"] == ""   # unknown note: never blocks
     assert out[0] == {"clip": "P1", "texte": "Phrase 1.", "note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
-                      "proposition": "Ce liquide cache un secret."}
+                      "proposition": "Ce liquide cache un secret.", "autre_clip": None}
     probs = ap._fetched_problems(sc, clips, "fr", out)
     assert any("Passage 1 : la phrase ne correspond pas" in x for x in probs)
     sc["passages"][0]["texte"] = "Une autre phrase."                       # the sentence changed: the verdict is stale
