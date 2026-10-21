@@ -245,7 +245,9 @@ Note chaque passage :
 - "moyen" : lien indirect, le spectateur comprend mais l'image n'illustre pas vraiment la phrase.
 - "non" : l'image montre autre chose ; le spectateur entend X et voit Y.
 Le passage 1 est l'ACCROCHE (les 2 premieres secondes) : sois strict, le sujet de la video doit se voir ; s'il ne se
-voit pas, c'est "non".
+voit pas, c'est "non". Elle doit aussi se comprendre en une seconde sur un telephone : le sujet grand, net et eclaire.
+Une image sombre, floue, ou le sujet n'est qu'une petite forme au loin, c'est "non" meme si c'est le bon sujet ; pour
+elle, "autre_clip" est le clip le plus frappant qui montre le sujet.
 Pour "moyen" et "non" :
 - "autre_clip" : si un des AUTRES CLIPS ci-dessous montre ce que dit la phrase, son identifiant (le meilleur) ;
   null sinon. C'est la meilleure solution : la phrase et l'histoire restent intactes.
