@@ -7,6 +7,13 @@ curl_cffi==0.15.0  # PINNED, not just >=: lets yt-dlp impersonate a real browser
                    # WAF blocks outright (confirmed: raw requests with it get a CDN error page, not
                    # TikTok's real page). 0.15.0 doesn't offer that target, so yt-dlp falls back to
                    # chrome-146, which works. Re-verify with a real TikTok download before bumping.
+yt-dlp-ejs==0.8.0  # solves YouTube's JavaScript challenge (without it: "n challenge solving failed",
+                   # formats missing, videos refused)
+bgutil-ytdlp-pot-provider==2.0.2  # PO tokens: YouTube videos refused as "not available" come down, in HD,
+                   # without cookies. Needs its service, same version, once:
+                   #   git clone --branch 2.0.2 https://github.com/Brainicism/bgutil-ytdlp-pot-provider ~/bgutil-ytdlp-pot-provider
+                   #   cd ~/bgutil-ytdlp-pot-provider/server && npm ci && npx tsc
+                   # The app starts it (port 4416) when it finds it there.
 moviepy>=1.0.3,<2.0  # moviepy 2.x removed the moviepy.editor module this codebase relies on
 google-api-python-client>=2.108.0
 google-auth-oauthlib>=1.1.0

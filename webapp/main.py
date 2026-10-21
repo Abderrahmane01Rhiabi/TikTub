@@ -45,6 +45,7 @@ CONFIG_PATH = DATA_ROOT / "config.yaml"
 async def lifespan(app):
     # each is best-effort: none of them may ever keep the app from starting
     _recover_interrupted_jobs()
+    _start_pot_server()
     _daily_backup_on_startup()
     _start_stats_tracker()
     yield
@@ -160,6 +161,16 @@ def _recover_interrupted_jobs():
         adaptation_pipeline.recover_interrupted()
     except Exception as e:
         print(f"⚠️ Recovery of interrupted adaptations skipped: {e}")
+
+
+def _start_pot_server():
+    """The PO token service that lets YouTube serve videos it refused (bgutil)."""
+    try:
+        from adaptation import sources
+        if sources.start_pot_server():
+            print("🔑 Jetons YouTube (bgutil) : prêts")
+    except Exception as e:
+        print(f"⚠️ bgutil skipped: {e}")
 
 
 def _daily_backup_on_startup():

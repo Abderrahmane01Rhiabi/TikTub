@@ -37,32 +37,68 @@ MIN_CLIP = 1.0                            # shorter: unticked as "trop court"
 COOKIES_FILE = "youtube_cookies.txt"      # a cookies.txt export, when YouTube asks to "confirm you're not a bot"
 
 
+POT_HOME = os.path.expanduser("~/bgutil-ytdlp-pot-provider/server")   # the PO token service (bgutil), when installed
+POT_PORT = 4416
+
+
+def start_pot_server() -> bool:
+    """YouTube's "This video is not available" was not a country block: only
+    the web player was refused (measured 2026-10-21 on three tuna videos).
+    With a PO token from the bgutil service, yt-dlp gets them up to 4K without
+    cookies. Started once with the app when installed; the plugin falls back to
+    running its script on each call when it is not."""
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", POT_PORT)) == 0:
+            return True
+    main = os.path.join(POT_HOME, "build", "main.js")
+    if not os.path.exists(main):
+        return False
+    import shutil as _sh
+    node = _sh.which("node")
+    if not node:
+        return False
+    subprocess.Popen([node, main], cwd=POT_HOME, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    return True
+
+
+def _youtube(url: str) -> bool:
+    return "youtube.com" in url or "youtu.be" in url
+
+
+def _unavailable(msg: str) -> bool:
+    msg = msg.lower()
+    return any(k in msg for k in ("not available", "unavailable", "private video", "removed", "blocked",
+                                  "not made this video available", "copyright"))
+
+
 def reachable(url: str) -> Optional[bool]:
     """Can this video be downloaded from here? Gemini watches YouTube from
     Google's side: a video it judged exact was refused here ('This video is not
-    available', blocked in the country). False only for that kind of refusal;
-    None when YouTube just asks to prove we're not a bot (it comes and goes)."""
+    available'). False only for that kind of refusal, with and without the
+    cookies; None when YouTube just asks to prove we're not a bot (it comes and goes)."""
     import yt_dlp
-    try:
-        with yt_dlp.YoutubeDL(ytdlp_opts(skip_download=True)) as ydl:
-            ydl.extract_info(url, download=False, process=False)
-        return True
-    except Exception as e:
-        msg = str(e).lower()
-        if any(k in msg for k in ("not available", "unavailable", "private video", "removed", "blocked",
-                                  "not made this video available", "copyright")):
-            return False
-        return None
+    last = ""
+    for cookies in ((False, True) if _youtube(url) else (True,)):
+        try:
+            with yt_dlp.YoutubeDL(ytdlp_opts(cookies=cookies, skip_download=True)) as ydl:
+                ydl.extract_info(url, download=False, process=False)
+            return True
+        except Exception as e:
+            last = str(e)
+    return False if _unavailable(last) else None
 
 
-def ytdlp_opts(**extra) -> Dict:
+def ytdlp_opts(cookies: bool = True, **extra) -> Dict:
     """What every yt-dlp call shares: quiet, the cookies file when there is
-    one, node as JavaScript runtime (recent YouTube needs one)."""
+    one (and wanted), node as JavaScript runtime (recent YouTube needs one)."""
     import shutil as _sh
     opts = {"quiet": True, "no_warnings": True, "noprogress": True}
-    cookies = os.getenv("YTDLP_COOKIES") or COOKIES_FILE
-    if os.path.exists(cookies):
-        opts["cookiefile"] = cookies
+    path = os.getenv("YTDLP_COOKIES") or COOKIES_FILE
+    if cookies and os.path.exists(path):
+        opts["cookiefile"] = path
     if _sh.which("node") and not _sh.which("deno"):
         opts["js_runtimes"] = {"node": {}}
     return {**opts, **extra}
@@ -92,22 +128,54 @@ def _refused(err: str) -> bool:
             or "http error 403" in low)          # YouTube's 403 on a video it served a minute before: passing
 
 
-def _fetch(url: str, opts: Dict) -> Dict:
-    """One yt-dlp run; YouTube's "not a bot" refusals come and go (measured: a
-    Short refused, then fetched a minute later), so a refusal is tried once more."""
+LOW_HEIGHT = 720                        # a YouTube download under this is tried once more
+
+
+def _fetch(url: str, opts: Dict, again_if_low: bool = True) -> Dict:
+    """One download. YouTube: without the cookies first (with them, the
+    logged-in account was refused three videos the PO token gets), then with
+    them; a picture under 720p once more (measured: 360p, then 1080p a moment
+    later, the token not ready). Other refusals come and go: tried again."""
+    first = _fetch_once(url, opts)
+    if not again_if_low or not _youtube(url) or (first["info"].get("height") or LOW_HEIGHT) >= LOW_HEIGHT:
+        return first
+    import glob
+    keep = {p: os.path.getsize(p) for p in glob.glob(os.path.splitext(first["path"])[0] + ".*")}
+    stash = {p: p + ".low" for p in keep}
+    for p, q in stash.items():
+        os.replace(p, q)
+    try:
+        second = _fetch_once(url, opts)
+    except SourceError:
+        second = None
+    if second and (second["info"].get("height") or 0) > (first["info"].get("height") or 0):
+        for q in stash.values():
+            os.remove(q)
+        return second
+    for p, q in stash.items():               # no better: the first one back
+        os.replace(q, p)
+    return first
+
+
+def _fetch_once(url: str, opts: Dict) -> Dict:
     import time
     import yt_dlp
+    plain = {k: v for k, v in opts.items() if k != "cookiefile"}
+    tries = [plain, opts] if _youtube(url) and "cookiefile" in opts else [opts]
     waits = (10, 25)                    # measured: a 403 still there after 8 s was gone a few minutes later
-    for attempt in range(len(waits) + 1):
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return {"info": info, "path": _final_path(ydl, info)}
-        except Exception as e:
-            if attempt < len(waits) and _refused(str(e)):
-                time.sleep(waits[attempt])
-                continue
-            raise SourceError(explain(url, str(e)))
+    for n, o in enumerate(tries):
+        for attempt in range(len(waits) + 1):
+            try:
+                with yt_dlp.YoutubeDL(o) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    return {"info": info, "path": _final_path(ydl, info)}
+            except Exception as e:
+                if n + 1 < len(tries) and (_unavailable(str(e)) or _refused(str(e))):
+                    break                       # the next way (with the cookies) at once
+                if attempt < len(waits) and _refused(str(e)):
+                    time.sleep(waits[attempt])
+                    continue
+                raise SourceError(explain(url, str(e)))
 
 
 def _handle(info: Dict) -> Optional[str]:
@@ -192,7 +260,7 @@ def _download_parts(url: str, dest_dir: str, name: str, sections: List[List[floa
     pattern = os.path.join(dest_dir, f"{name}_part%(section_start)08.2f.%(ext)s")
     opts = ytdlp_opts(outtmpl=pattern, format=VIDEO_FORMAT, merge_output_format="mp4", noplaylist=True, force_keyframes_at_cuts=True,
                       download_ranges=download_range_func(None, [tuple(sec) for sec in sections]))
-    got = _fetch(url, opts)
+    got = _fetch(url, opts, again_if_low=False)          # several files: not set aside and fetched again
     parts = sorted(p for p in glob.glob(os.path.join(dest_dir, f"{name}_part*"))
                    if not p.endswith((".json", ".txt", ".part")))
     if not parts:
