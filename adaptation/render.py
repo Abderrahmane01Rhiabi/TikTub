@@ -272,7 +272,7 @@ def credit_png(handles: str, path: str, lang: Dict) -> str:
         # one line, smaller until it fits (four handles once ran off both edges); too small to read
         # (six sources once): the names on two lines
         for lines in ([handles], [" · ".join(names[:(len(names) + 1) // 2]), " · ".join(names[(len(names) + 1) // 2:])]):
-            for size in range(30, 21 if len(lines) == 1 and len(names) > 1 else 15, -2):
+            for size in range(30, 25 if len(lines) == 1 and len(names) > 1 else 15, -2):   # 22 px was hard to read
                 font = ImageFont.truetype(font_path(lang["credit_font"]), size)
                 lw = d.textlength(label, font=font, **kw)
                 hw = max(d.textlength(x, font=font) for x in lines)

@@ -1172,7 +1172,7 @@ def test_six_credited_handles_go_on_two_readable_lines(tmp_path):
         box = img.getbbox()
         assert box[0] > 0 and box[2] < render.W
         rows = [y for y in range(img.size[1]) if any(img.getpixel((x, y))[3] for x in range(0, render.W, 3))]
-        assert rows[-1] - rows[0] > (45 if code == "fr" else 16)       # two lines, or one at a readable size
+        assert rows[-1] - rows[0] > 45                                         # two lines, not one tiny line
 
 
 def test_a_plan_adapted_to_another_picture_loses_the_arrow_of_the_old_one():
