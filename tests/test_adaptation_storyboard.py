@@ -255,7 +255,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
         return {"scenes": [{**w, "candidats": [{"url": "A", "title": "Compil"}]} for w in wanted], "comptes": [], "verifs": {}}
     monkeypatch.setattr(finder, "suggest", suggest)
 
-    def verify_best(sug, ref, n, report=None):
+    def verify_best(sug, ref, n, report=None, **kw):
         seen["n"], seen["plans"] = n, ref["plans"]
         sug["verifs"] = {"A": {"verdict": "oui", "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 2, "fin": 6}]}}}}
         return sug
@@ -292,7 +292,7 @@ def test_api_images_and_picks(client, project, fakes, monkeypatch):
     pid = _approved_project(project, fakes)
     monkeypatch.setattr(finder, "plan_queries", lambda found: {})
     monkeypatch.setattr(finder, "suggest", lambda *a, **k: {"scenes": [], "comptes": [], "verifs": {}})
-    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None, **kw: sug)
     import time
     assert client.post(f"/api/adaptations/{pid}/images").status_code == 200
     for _ in range(50):
@@ -328,7 +328,7 @@ def _images_project(project, fakes, monkeypatch, picks=None):
     v = {"verdict": "oui", "title": "Compil", "duration": 600, "par_scene": {
         str(k): {"niveau": "exacte", "moments": [{"debut": 100 + 30 * k, "fin": 104 + 30 * k, "ce_qu_on_voit": f"moment {k}"}]}
         for k in range(5)}}
-    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug.update(
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None, **kw: sug.update(
         verifs={"https://www.youtube.com/watch?v=aaaaaaaaaaa": v}) or sug)
     ap.run_images(pid)
     return pid
@@ -1098,7 +1098,7 @@ def test_the_versions_of_a_group_share_the_searches_that_are_the_same(project, f
     monkeypatch.setattr(finder, "plan_queries", lambda found: {i: {"recherches": ["tram crash"], "pays": "", "langue": "",
                                                                     "locales": []} for i in range(len(found))})
     monkeypatch.setattr(finder, "sort_out", lambda found, gemini=None, prompt=None: None)
-    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None, **kw: sug)
 
     def youtube(q, n=5):
         calls["youtube"].append(q)

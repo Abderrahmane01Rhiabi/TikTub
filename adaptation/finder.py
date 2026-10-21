@@ -536,10 +536,14 @@ def all_candidates(sug: Dict) -> List[Dict]:
 
 
 def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, workers: int = 3,
-                report: Optional[Callable[[str, float], None]] = None) -> Dict:
+                report: Optional[Callable[[str, float], None]] = None, words_share: float = 0.5) -> Dict:
     """Gemini watches the n most promising candidates, in parallel (a YouTube
     link takes ~15 s, a VK/Rutube file ~2 min). Results land in sug["verifs"];
-    a failure is noted, never fatal."""
+    a failure is noted, never fatal. words_share: the part of the budget for
+    each scene's best found by words (1.0 in Script d'abord: the pictures
+    searched are the model's shots, not the storyboard's plans — measured, the
+    tuna Short: plans 7 to 11 never had their "tuna spawning" result checked,
+    the budget went to marlin fishing found by picture)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     checker = checker or check
     report = report or (lambda phase, f: None)
@@ -555,7 +559,7 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
         todo.append(account[0])
         picked.add(account[0]["url"])
     # each scene: its best found by words, then its best found by a picture — half the budget each
-    for kind, cap in ((by_text, (n + 1) // 2), (lambda c: not by_text(c), n)):
+    for kind, cap in ((by_text, -(-n * words_share // 1)), (lambda c: not by_text(c), n)):
         for s in sug.get("scenes") or []:
             top = next((c for c in best(s.get("candidats") or []) if kind(c) and c["url"] not in picked), None)
             if top and len(todo) < cap:

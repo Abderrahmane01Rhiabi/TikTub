@@ -3252,7 +3252,7 @@ function renderAdImages(body, p){
             ${pick.remontage ? `<span class="pill bad">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
             ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
-            <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
+            <button class="btn ghost small ad-unpick" title="Ce plan n'aura plus de vidéo choisie : tu pourras en prendre une autre">Enlever ce choix</button></div>`
           : `<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan. Choisis-en une ci-dessous, donne ton lien, ou :</div>
              <div class="ad-row"><button class="btn secondary small ad-adapt" data-icon="sparkle" title="L'IA réécrit la phrase (toutes les langues) autour d'une image déjà trouvée">Adapter la phrase à une image trouvée</button>
                <button class="btn ghost small ad-skip">Retirer ce plan</button></div>`}

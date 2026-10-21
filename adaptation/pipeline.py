@@ -667,7 +667,7 @@ def run_images(pid: str, report: Optional[Report] = None):
         if shared.reused:
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
-                           n=min(14, 2 * len(plans)),
+                           n=min(14, 2 * len(plans)), words_share=1.0,
                            report=lambda ph, f: report(ph, 0.62 + 0.36 * f))
         p = load(pid)
         p.update(suggestions=sug, picks=finder.auto_pick(sug, plans), status="images_review", error=None,

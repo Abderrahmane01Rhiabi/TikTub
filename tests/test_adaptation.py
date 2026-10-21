@@ -507,6 +507,10 @@ def test_verify_best_gives_every_scene_a_check_before_the_high_scores():
     seen.clear()
     finder.verify_best(many, {}, n=4, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"}, workers=1)
     assert seen[0] == "acc"                                  # the credited account first
+    seen.clear()
+    finder.verify_best({"scenes": [{"candidats": [c(f"t{k}", 2), c(f"i{k}", 1, "image")]} for k in range(7)]}, {},
+                       n=8, words_share=1.0, workers=1, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"})
+    assert seen == [f"t{k}" for k in range(7)] + ["i0"]      # Script d'abord: every plan's words before any picture
 
 
 # ---------------------------------------------------------------- image search / frames
