@@ -257,10 +257,12 @@ Pour "moyen" et "non" :
 - "proposition" : une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP en gardant ce que le
   passage APPREND au spectateur et son role (accroche = la question du sujet, chute = la reponse), complete, sans
   "…", au plus le nombre de caracteres indique ; laisse-la vide si c'est impossible sans changer l'histoire.
-Pour "bon", "autre_clip" est null et "proposition" vide.
+- "bandeau" : avec une proposition, le bandeau qui va avec elle, au format du bandeau actuel ("TITRE : SOUS-TITRE"
+  et un emoji), qui ne contredit pas la nouvelle phrase ; vide sinon.
+Pour "bon", "autre_clip" est null, "proposition" et "bandeau" vides.
 {autres}
 JSON uniquement : {{"passages": [{{"note": "bon|moyen|non", "pourquoi": "en francais, 1 phrase courte : on entend
-.../on voit ...", "autre_clip": null, "proposition": "..."}}]}} dans l'ordre des passages."""
+.../on voit ...", "autre_clip": null, "proposition": "...", "bandeau": "..."}}]}} dans l'ordre des passages."""
 
 
 def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
@@ -276,7 +278,7 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
         c = clips.get(p["clip"]) or {}
         room = int((c.get("end", 0) - c.get("start", 0)) * lang["chars_per_second"]) or len(p["texte"])
         seen = f" | action verifiee en regardant la video en mouvement : {c['action']}" if c.get("action") else ""
-        lines.append(f"{k}. phrase : \"{p['texte']}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}{seen}")
+        lines.append(f"{k}. phrase : \"{p['texte']}\" | bandeau : \"{p.get('bandeau') or ''}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}{seen}")
     import base64
     pics = []
     for k in range(len(ps)):
@@ -310,5 +312,6 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
         other = str(x.get("autre_clip") or "").strip().upper()
         out.append({"clip": p["clip"], "texte": p["texte"], "note": note,
                     "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop,
+                    "bandeau": " ".join(str(x.get("bandeau") or "").split())[:80] if prop else "",
                     "autre_clip": other if note != "bon" and other in spare else None})
     return out

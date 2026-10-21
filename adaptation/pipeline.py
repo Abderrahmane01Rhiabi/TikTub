@@ -1654,11 +1654,14 @@ def use_proposal(pid: str, channel: str, k: int) -> Dict:
     if not a.get("proposition"):
         raise PipelineError("Pas de phrase proposée pour ce passage.")
     x["texte"] = a["proposition"]
+    if a.get("bandeau"):                # measured: "wet leaves: heavy mud" stayed over "the blower only works dry"
+        x["bandeau"] = a["bandeau"]
+    x["mots_cles"] = [m for m in x.get("mots_cles") or [] if m.lower() in x["texte"].lower()]   # words of the old one
     a.update(texte=x["texte"], note="bon", proposition="", pourquoi="phrase réécrite pour son image")
     if p.get("mode") == "script" and k < len(_active(p)):  # the storyboard says the same: a new fetch keeps it
         textes = p["storyboard"]["plans"][_active(p)[k]].get("textes") or {}
         if t["language"] in textes:
-            textes[t["language"]]["texte"] = x["texte"]
+            textes[t["language"]].update(texte=x["texte"], bandeau=x.get("bandeau", ""), mots_cles=x["mots_cles"])
     t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t["accords"]), approved=False)
     return save(p)
 

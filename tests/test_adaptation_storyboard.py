@@ -463,7 +463,7 @@ def test_each_sentence_is_compared_with_what_its_clip_really_shows():
         def _generate_content(self, parts, **kw):
             G.prompt = parts[0]["text"]
             return {"passages": [{"note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
-                                  "proposition": "Ce liquide cache un secret."}, {"note": "bon", "proposition": "x"},
+                                  "proposition": "Ce liquide cache un secret.", "bandeau": "LIQUIDE : SECRET 🧪"}, {"note": "bon", "proposition": "x"},
                                  {"note": "bizarre"}]}
     clips = {"P1": {"start": 0, "end": 4, "desc": "un homme frappe un bac"}, "P2": {"start": 0, "end": 3, "desc": "une roue"},
              "P3": {"start": 0, "end": 3, "desc": "?"}}
@@ -472,7 +472,8 @@ def test_each_sentence_is_compared_with_what_its_clip_really_shows():
     assert "un homme frappe un bac" in G.prompt and "ACCROCHE" in G.prompt
     assert [a["note"] for a in out] == ["non", "bon", "bon"] and out[1]["proposition"] == ""   # unknown note: never blocks
     assert out[0] == {"clip": "P1", "texte": "Phrase 1.", "note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
-                      "proposition": "Ce liquide cache un secret.", "autre_clip": None}
+                      "proposition": "Ce liquide cache un secret.", "autre_clip": None,
+                      "bandeau": "LIQUIDE : SECRET 🧪"}
     probs = ap._fetched_problems(sc, clips, "fr", out)
     assert any("Passage 1 : la phrase ne correspond pas" in x for x in probs)
     sc["passages"][0]["texte"] = "Une autre phrase."                       # the sentence changed: the verdict is stale
@@ -493,7 +494,8 @@ def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(
     monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
     monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: [
         {"clip": x["clip"], "texte": x["texte"], "note": "non" if k < 2 else "bon", "pourquoi": "autre chose",
-         "proposition": "Une phrase pour cette image." if k < 2 else ""} for k, x in enumerate(sc["passages"])])
+         "proposition": "Une phrase pour cette image." if k < 2 else "", "bandeau": "IMAGE : ENFIN 🎯" if k < 2 else ""}
+        for k, x in enumerate(sc["passages"])])
     ap.start_fetch(pid)
     ap.run_fetch(pid)
     t = ap.load(pid)["targets"][0]
@@ -501,6 +503,7 @@ def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(
     p = ap.use_proposal(pid, t["channel"], 0)
     t = p["targets"][0]
     assert t["script"]["passages"][0]["texte"] == "Une phrase pour cette image."
+    assert t["script"]["passages"][0]["bandeau"] == "IMAGE : ENFIN 🎯"                # the banner goes with it
     assert p["storyboard"]["plans"][0]["textes"][t["language"]]["texte"] == "Une phrase pour cette image."
     t = ap.keep_passage(pid, t["channel"], 1)["targets"][0]
     assert not any("ne correspond pas" in x for x in t["problems"])
