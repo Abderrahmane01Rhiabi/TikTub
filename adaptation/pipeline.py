@@ -1637,6 +1637,8 @@ def revise_script(pid: str, channel: str, request: str) -> Dict:
     _expect(p, "script_review")
     t = target(p, channel)
     sc = script.revise(t["script"], {k: c for k, c in p["clips"].items() if c.get("usable")}, request)
+    t["script"] = sc
+    _rejudge(p, t)                      # measured: a sentence the chat rewrote lost its ❌ and was never checked
     t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
     return save(p)
 

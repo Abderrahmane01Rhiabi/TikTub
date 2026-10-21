@@ -344,7 +344,9 @@ def adapt_to(bundle: Dict, k: int, options: List[Dict], codes: List[str], gemini
         raise ScriptError(f"Réponse inutilisable : {str(r)[:160]}")
     if not 0 <= choice < len(options):
         raise ScriptError("L'IA a choisi une image qui n'existe pas.")
-    fixed = normalise({"plans": [{**plan, "image": r.get("image") or options[choice]["vu"], "textes": r.get("textes")}],
+    # the old plan's arrow pointed at what its image showed (measured: "the white cloud" kept over a tuna swimming)
+    fixed = normalise({"plans": [{**plan, "image": r.get("image") or options[choice]["vu"], "textes": r.get("textes"),
+                                  "annotation": None}],
                        "meta": {}}, codes)
     if not fixed["plans"]:
         raise ScriptError("L'IA n'a pas réécrit le plan.")

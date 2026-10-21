@@ -95,3 +95,16 @@ def test_a_video_that_cannot_be_downloaded_from_here_is_never_picked_by_itself()
                       "https://y/ok": {"par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 0, "fin": 3}]}},
                                        "telechargeable": None}}}
     assert finder.auto_pick(sug, [{}])[0]["url"] == "https://y/ok"     # None: unknown, YouTube was just touchy
+
+
+def test_a_sentence_the_chat_rewrote_is_judged_again(monkeypatch):
+    p = {"project_id": "x", "status": "script_review", "clips": _clips(),
+         "targets": [{"channel": "c", "language": "fr", "script": {"passages": [{"clip": "P1", "texte": "A."}]},
+                      "accords": [{"clip": "P1", "texte": "A.", "note": "non", "pourquoi": ""}]}]}
+    monkeypatch.setattr(ap, "load", lambda pid: p)
+    monkeypatch.setattr(ap, "save", lambda q: q)
+    monkeypatch.setattr(script, "revise", lambda sc, clips, req: {"passages": [{"clip": "P1", "texte": "B."}]})
+    monkeypatch.setattr(ap, "_judge", lambda sc, clips, code, work=None: [
+        {"clip": x["clip"], "texte": x["texte"], "note": "non", "pourquoi": "toujours pas"} for x in sc["passages"]])
+    t = ap.revise_script("x", "c", "réécris")["targets"][0]
+    assert t["accords"][0]["texte"] == "B." and any("toujours pas" in x for x in t["problems"])

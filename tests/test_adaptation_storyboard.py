@@ -1173,3 +1173,16 @@ def test_six_credited_handles_go_on_two_readable_lines(tmp_path):
         assert box[0] > 0 and box[2] < render.W
         rows = [y for y in range(img.size[1]) if any(img.getpixel((x, y))[3] for x in range(0, render.W, 3))]
         assert rows[-1] - rows[0] > (45 if code == "fr" else 16)       # two lines, or one at a readable size
+
+
+def test_a_plan_adapted_to_another_picture_loses_the_arrow_of_the_old_one():
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.prompt = parts[0]["text"]
+            return {"choix": 1, "image": "un thon qui nage", "textes": {
+                "fr": {"bandeau": "A : B", "texte": "Un thon file sans jamais freiner.", "mots_cles": []},
+                "ar": {"bandeau": "أ", "texte": "سمكة تونة تسبح بلا توقف.", "mots_cles": []}}}
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    b["plans"][2]["annotation"] = {"type": "fleche", "cible": "le nuage blanc"}
+    _, new = sb.adapt_to(b, 2, [{"vu": "un thon qui nage"}], ["fr", "ar"], gemini=G())
+    assert new["annotation"] is None and "VOIT" in G.prompt
