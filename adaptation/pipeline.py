@@ -180,7 +180,8 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
     used = [c for c in clips.values() if c.get("usable")]
     marks = {id(c): [h.rstrip(".") for m in c.get("marks") or [] for h in re.findall(r"@[\w.]{3,}", m)] for c in used}
     logos = {id(c): [hit.group(1) for m in c.get("marks") or []
-                     if (hit := re.search(r"logo\s+(?:de\s+)?([A-Z0-9][\w]+)", m, re.I))
+                     # a name, written as one: "logo ampoule" (SpotLight's light bulb) once took @spotlight's place
+                     if (hit := re.search(r"(?i:logo)\s+(?:(?i:de)\s+)?([A-Z0-9][\w]+)", m))
                      and hit.group(1).lower() not in {"tiktok", "instagram", "youtube", "facebook", "de", "la", "du"}]
              for c in used}
     for c in used:
