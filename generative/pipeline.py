@@ -304,7 +304,16 @@ class GenerativePipeline:
         # Clear any error left over from a previous failed attempt on this
         # same video_id — otherwise it stays displayed forever even after a
         # later attempt succeeds.
-        self.url_manager.update_video_status(video_id, "ready_for_upload", video_path=out_path, render_error=None)
+        rec = None
+        try:                            # what made it, kept with the video (see recette.py)
+            import recette
+            from generative.ffmpeg_composer import MUSIC_LEVEL
+            voice = self.channel_manager.get_channel_profile(video["channel"]).get("tts_voice_id")
+            rec = recette.from_generation({**video, "video_path": out_path}, voice_id=voice, music_level=MUSIC_LEVEL)
+        except Exception:
+            pass                        # the recipe never blocks a video
+        self.url_manager.update_video_status(video_id, "ready_for_upload", video_path=out_path, render_error=None,
+                                             **({"recette": rec} if rec else {}))
         return out_path
 
     def advance_draft(self, video_id: str) -> Dict:

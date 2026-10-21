@@ -1886,7 +1886,11 @@ def run_final(pid: str, report: Optional[Report] = None):
             os.makedirs("processed_videos", exist_ok=True)
             shutil.copy(made["path"], dest)
             rec = publication_record(p, t, dest)
-            rec["recette"] = made.get("recette")
+            try:                        # the common shape (recette.py), the Adaptation's own one inside
+                import recette
+                rec["recette"] = recette.from_adaptation(made.get("recette") or {}, t.get("music_path"))
+            except Exception:
+                rec["recette"] = made.get("recette")
             thumb = _thumbnail(made, dest)
             if thumb:
                 rec["thumbnail_path"] = thumb

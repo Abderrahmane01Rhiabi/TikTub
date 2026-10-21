@@ -17,6 +17,8 @@ from ai_tags_generator import AITagsGenerator
 from youtube_scheduler import YouTubeScheduler
 from montage import pipeline as montage_pipeline
 from montage import recipes as montage_recipes
+import recette
+import db as _db
 
 # Import multi-channel support
 try:
@@ -287,15 +289,24 @@ class BatchProcessor:
                         continue
                     processed_path = self.render_montage(
                         video, profile, progress_cb=lambda f: report('montage', self.PROCESS_ENCODE_SHARE * f))
+                    rec = (_db.get_video(video['video_id']) or {}).get('recette')
                 else:
                     bg_mode, specific_bg = self.get_background_for_video(video)
                     frame_mode = video.get('frame_mode')
                     rounded_corners = video.get('rounded_corners', False)
+                    notes = {}              # the background really used, for the recipe
                     processed_path = self.process_tiktok_video(
                         raw_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
                         output_name=video['video_id'],  # unique per video, see video_processor
-                        progress_cb=lambda f: report('encodage', self.PROCESS_ENCODE_SHARE * f),
+                        progress_cb=lambda f: report('encodage', self.PROCESS_ENCODE_SHARE * f), notes=notes,
                     )
+                    rec = None
+                    if processed_path:
+                        try:
+                            rec = recette.from_import({**video, 'video_path': processed_path, 'background_mode': bg_mode},
+                                                      notes)
+                        except Exception as e:      # the recipe never blocks a video
+                            logger.warning(f"Recette non notée : {e}")
 
                 if not processed_path:
                     self.url_manager.update_video_status(video['video_id'], 'processing_failed')
@@ -314,7 +325,8 @@ class BatchProcessor:
 
                 self.url_manager.update_video_status(
                     video['video_id'], 'ready_for_upload',
-                    video_path=processed_path, ai_data=ai_data, reprocess_keep_ai=False
+                    video_path=processed_path, ai_data=ai_data, reprocess_keep_ai=False,
+                    **({'recette': rec} if rec else {})
                 )
                 processed_count += 1
                 print(f"✅ Traité: {ai_data.get('optimized_title', title)}")
@@ -479,12 +491,20 @@ class BatchProcessor:
         os.makedirs(os.path.dirname(out_path), exist_ok=True)
         summary = montage_pipeline.render_final(video, profile, self.music_dir(video.get('channel', 'default')),
                                                 out_path, progress_cb=progress_cb)
+        rec = None
+        try:                            # what made it: the settings and music of THIS render, not tomorrow's
+            settings = montage_recipes.resolve_settings(profile, video)
+            rec = recette.from_montage({**video, 'video_path': out_path}, settings, summary,
+                                       montage_pipeline.music_path(settings, self.music_dir(video.get('channel', 'default'))))
+        except Exception as e:
+            logger.warning(f"Recette non notée : {e}")
         # brolls may have been replaced (a shot deleted from the library since the review)
         self.url_manager.update_video_status(video['video_id'], 'processing',
-                                             montage={**video['montage'], 'summary': summary})
+                                             montage={**video['montage'], 'summary': summary},
+                                             **({'recette': rec} if rec else {}))
         return out_path
 
-    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False, output_name: str = None, progress_cb=None) -> str:
+    def process_tiktok_video(self, video_path: str, title: str, bg_mode: str, specific_bg: str = None, frame_mode: str = None, rounded_corners: bool = False, output_name: str = None, progress_cb=None, notes=None) -> str:
         """Interface avec le traitement vidéo existant"""
         # Réutilise la fonction de video_processor.py
         try:
@@ -492,7 +512,7 @@ class BatchProcessor:
 
             return process_video_with_background_options(
                 video_path, title, bg_mode, specific_bg, frame_mode, rounded_corners,
-                output_name=output_name, progress_cb=progress_cb
+                output_name=output_name, progress_cb=progress_cb, notes=notes
             )
 
         except Exception as e:
