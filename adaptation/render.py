@@ -176,7 +176,11 @@ def out_time(segs: List[Dict], vt: float) -> Optional[float]:
 # --------------------------------------------------------------- overlays
 
 def _is_emoji(ch: str) -> bool:
-    return unicodedata.category(ch) in ("So", "Sk") or ord(ch) >= 0x1F000 or ch == "️"
+    """The emoji blocks only: "°" (also a symbol for Unicode) was once taken for
+    the banner's emoji and cut out of "ANGLE À 90°"; © ® ™ € £ are text too."""
+    o = ord(ch)
+    return (o >= 0x1F000 or 0x2600 <= o <= 0x27BF or 0x2B00 <= o <= 0x2BFF or 0x2300 <= o <= 0x23FF
+            or 0x2190 <= o <= 0x21FF or ch in ("️", "‍", "⃣"))
 
 
 def split_emoji(text: str) -> Tuple[str, Optional[str]]:

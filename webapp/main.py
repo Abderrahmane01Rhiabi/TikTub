@@ -1326,7 +1326,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
     base["fetch_note"] = p.get("fetch_note")
     try:
-        base["wanting"] = [k + 1 for k in ap_wanting(p)] if p.get("status") == "images_review" else []
+        base["wanting"] = [k + 1 for k in ap_wanting(p)] if p.get("status") in ("images_review", "sources_search") else []
     except Exception:
         base["wanting"] = []
     base["group"] = p.get("group")

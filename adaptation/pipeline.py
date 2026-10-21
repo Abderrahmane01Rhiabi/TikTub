@@ -241,8 +241,21 @@ def run_analysis(pid: str, report: Optional[Report] = None):
                 metas[i] = {"url": url, "failed": str(e)}
                 continue
             meta = sources.source_meta(path)
+            try:                        # a video posted lying on its side is turned upright first (as in Script d'abord)
+                with sources.gemini_file(path) as gf:
+                    deg = sources.orientation(gf)
+                if deg:
+                    report(f"source {k + 1}/{n} : remise à l'endroit", 0.2 + 0.75 * (k + 0.2) / n)
+                    path = sources.rotated(path, deg)
+            except Exception:
+                pass
             report(f"source {k + 1}/{n} : découpage et analyse", 0.2 + 0.75 * (k + 0.3) / n)
-            for c in sources.analyse_source(path, i, os.path.join(base, "work"), ids):
+            made = sources.analyse_source(path, i, os.path.join(base, "work"), ids)
+            try:                        # added text the first cleaning missed is painted over too
+                sources.leftover_text({c["id"]: c for c in made if c["usable"]}, os.path.join(base, "work"))
+            except Exception:
+                pass
+            for c in made:
                 clips[c["id"]] = c
             metas[i] = meta
         p = load(pid)
@@ -480,18 +493,24 @@ class SharedSearch:
 
 
 def wanting(p: Dict) -> List[int]:
-    """The plans still without good footage: no pick, or only a partial one."""
+    """The plans still without good footage: no pick, or only a partial one
+    (Sources d'abord: the scenes no checked video shows well)."""
+    if p.get("mode") != "script":
+        sug = p.get("suggestions") or {}
+        good = {int(i) for v in (sug.get("verifs") or {}).values()
+                for i, e in (v.get("par_scene") or {}).items() if e.get("niveau") in ("exacte", "equivalente")}
+        return [i for i in range(len(sug.get("scenes") or [])) if i not in good]
     picks = p.get("picks") or []
     return [k for k in _active(p) if k >= len(picks) or not picks[k] or picks[k].get("niveau") == "partielle"]
 
 
 def start_more_images(pid: str) -> Dict:
     p = load(pid)
-    _expect(p, "images_review")
+    _expect(p, "images_review", "sources_search")
     todo = wanting(p)
     if not todo:
         raise PipelineError("Chaque plan a déjà une vidéo exacte ou équivalente.")
-    p.update(status="searching", search_more=todo)
+    p.update(status="searching", search_more=todo, search_more_back=p["status"])
     return save(p)
 
 
@@ -502,8 +521,10 @@ def _more_images(p: Dict, report: Report):
     there was none — the other plans' choices stay."""
     from concurrent.futures import ThreadPoolExecutor
     pid, todo = p["project_id"], p["search_more"]
-    plans, sug = p["storyboard"]["plans"], p["suggestions"]
-    wanted = finder.wanted_from_storyboard(plans, {})
+    sug = p["suggestions"]
+    script_first = p.get("mode") == "script"
+    plans = p["storyboard"]["plans"] if script_first else []
+    wanted = finder.wanted_from_storyboard(plans, {}) if script_first else sug["scenes"]
     report(f"recherches par action pour {len(todo)} plan(s)", 0.03)
     qs = finder.action_queries([wanted[k] for k in todo])
     jobs = [(k, q) for n, k in enumerate(todo) for q in qs.get(n, [])]
@@ -530,9 +551,11 @@ def _more_images(p: Dict, report: Report):
     model = finder.model_of(p.get("reference"))
     verifs, errors = sug.setdefault("verifs", {}), sug.setdefault("verif_errors", {})
 
+    ref_plans = None if script_first else (p.get("reference") or {}).get("plans")
+
     def look(url):
         try:
-            return url, finder.check(url, sug["scenes"], None, **({"model": model} if model else {})), None
+            return url, finder.check(url, sug["scenes"], ref_plans, **({"model": model} if model else {})), None
         except Exception as e:
             return url, None, str(e)[:200]
     done = 0
@@ -544,6 +567,14 @@ def _more_images(p: Dict, report: Report):
                 verifs[url] = r
             else:
                 errors[url] = err
+    if not script_first:                # the person ticks the videos: the useful ones are shown, nothing is picked
+        helped = sorted({int(i) + 1 for u in order if u in verifs
+                         for i, e in (verifs[u].get("par_scene") or {}).items()
+                         if e.get("niveau") in ("exacte", "equivalente") and int(i) in todo})
+        p["fetch_note"] = (f"Recherche par action : {len(order)} nouvelle(s) vidéo(s) regardée(s) par l'IA ; "
+                           + (f"utile(s) pour la/les scène(s) {', '.join(map(str, helped))} : coche-les."
+                              if helped else "rien de mieux pour ces scènes : donne ton lien ou un extrait du Short."))
+        return
     picks = p.get("picks") or [None] * len(plans)
     taken = {(x["url"], round(x["moment"]["debut"])) for x in picks if x}
     best = finder.auto_pick(sug, plans)
@@ -568,15 +599,18 @@ def run_images(pid: str, report: Optional[Report] = None):
     report = report or (lambda phase, f: None)
     p = load(pid)
     if p.get("search_more") is not None:      # "Chercher plus": only the plans still without footage
+        back = p.get("search_more_back") or "images_review"
         try:
             _more_images(p, report)
             p.pop("search_more", None)
-            p.update(status="images_review", error=None, failed_step=None)
+            p.pop("search_more_back", None)
+            p.update(status=back, error=None, failed_step=None)
             save(p)
         except Exception as e:              # the picks already made are worth more than this extra search
             p = load(pid)
             p.pop("search_more", None)
-            p.update(status="images_review", fetch_note=f"Recherche par action impossible : {str(e)[:200]}")
+            p.pop("search_more_back", None)
+            p.update(status=back, fetch_note=f"Recherche par action impossible : {str(e)[:200]}")
             save(p)
         report("terminé", 1.0)
         return
@@ -1286,6 +1320,7 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
         if sec:
             p.setdefault("source_sections", {})[u] = sec
     p["status"] = "analysing"
+    p.pop("fetch_note", None)          # the search note was for the step just left
     return save(p)
 
 
@@ -1410,7 +1445,9 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
                 if len(script.problems(fixed, p["clips"], t["language"])) >= len(left):
                     break
                 sc = {**fixed, "corrections": sc.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
-            t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False,
+            report(f"chaque phrase comparée à son image ({label})", (i + 0.95) / n)
+            t["accords"] = _judge(sc, p["clips"], t["language"], os.path.join(project_dir(pid), "work", t["channel"]))
+            t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t["accords"]), approved=False,
                      validated=False, preview=None, voice=None)
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max(1, n)) as pool:
@@ -1486,9 +1523,8 @@ def use_proposal(pid: str, channel: str, k: int) -> Dict:
         raise PipelineError("Pas de phrase proposée pour ce passage.")
     x["texte"] = a["proposition"]
     a.update(texte=x["texte"], note="bon", proposition="", pourquoi="phrase réécrite pour son image")
-    plans, active = p["storyboard"]["plans"], _active(p)
-    if p.get("mode") == "script" and k < len(active):      # the storyboard says the same: a new fetch keeps it
-        textes = plans[active[k]].get("textes") or {}
+    if p.get("mode") == "script" and k < len(_active(p)):  # the storyboard says the same: a new fetch keeps it
+        textes = p["storyboard"]["plans"][_active(p)[k]].get("textes") or {}
         if t["language"] in textes:
             textes[t["language"]]["texte"] = x["texte"]
     t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t["accords"]), approved=False)
@@ -1500,7 +1536,7 @@ def revise_script(pid: str, channel: str, request: str) -> Dict:
     _expect(p, "script_review")
     t = target(p, channel)
     sc = script.revise(t["script"], {k: c for k, c in p["clips"].items() if c.get("usable")}, request)
-    t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False)
+    t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
     return save(p)
 
 

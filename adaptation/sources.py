@@ -325,7 +325,10 @@ Pour CHAQUE passage, dans le meme ordre, decris-le. JSON uniquement :
    sans parler a la camera n'en est pas un, meme dans une salle de classe ou un tutoriel),
   "parole_dans_le_son": true/false,
   "choc_sonore": true/false (on ENTEND un vrai choc a son moment fort : collision, coup de marteau, explosion, chute,
-                 eclaboussure violente ; pas une musique, un effet de montage ou un bruit d'ambiance)}}]}}"""
+                 eclaboussure violente ; pas une musique, un effet de montage ou un bruit d'ambiance),
+  "action_debut": s, "action_fin": s (en secondes depuis le debut de la video : l'action principale du passage,
+                 sans l'attente avant ni ce qui suit ; null si rien ne se passe),
+  "fort": s (l'instant le plus spectaculaire du passage, en secondes depuis le debut de la video ; null sinon)}}]}}"""
 
 BOXES_PROMPT = """Voici {n} images (une par clip). Pour CHACUNE :
 1. "zone_image" : le rectangle de la VRAIE image filmee, sans le fond flou, les bandes noires ou les cadres
@@ -431,6 +434,9 @@ def describe(path: str, segments: List[Tuple[float, float]], file=None) -> List[
     return (items + [{}] * len(segments))[:len(segments)]
 
 
+BOX_BATCH = 10
+
+
 def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[int]], List[str]]]:
     """Per still: (picture area, boxes to erase, what they are), coordinates
     0-1000 on the full frame. Best effort: on failure, the whole frame and
@@ -439,6 +445,8 @@ def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[i
     import base64
     if not stills:
         return []
+    if len(stills) > BOX_BATCH:        # 40 stills of a 10-minute tutorial: the answer came back cut, nothing cleaned
+        return [r for k in range(0, len(stills), BOX_BATCH) for r in find_boxes(stills[k:k + BOX_BATCH])]
     parts = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(p, "rb").read()).decode()}}
              for p in stills]
     imgs = []
@@ -700,6 +708,7 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
     ids = id_gen or _ids()
     clips = []
     for (a, b), d, (area, bx, marks) in zip(segments, descriptions, found):
+        act = _action_of(d, a, b)
         own = band_from_area(area, w_full, h_full)
         on_band = bool(own)
         if own and band and abs(own[0] - band[0]) <= 60 and abs(own[1] - band[1]) <= 60:
@@ -715,10 +724,30 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             h = height
         crop = f"{w_full}:{h}:0:{top + cut_top}" if (on_band or cut_top or cut_bot) else None
         patches = [(x, y - cut_top, pw, ph) for x, y, pw, ph in patches if y - cut_top >= 0]
+        w = w_full
+        if not crop:                            # black bars Gemini's picture area missed (as in clip_at)
+            bars = black_bars(path, a, b)
+            if bars:
+                w, h, bx0, by0 = bars
+                crop = f"{w}:{h}:{bx0}:{by0}"
+                patches = [(x - bx0, y - by0, pw, ph) for x, y, pw, ph in patches
+                           if bx0 <= x < bx0 + w and by0 <= y < by0 + h]
         peak, from_sound = find_peak(path, a, b, crop)
+        extra = {}
+        if act:                                 # the action and its strongest instant, seen moving: no dead time
+            ra, rb, fort = act
+            if fort is not None:
+                peak = fort
+            elif not ra <= peak <= rb:
+                peak = round(ra + 0.6 * (rb - ra), 2)
+            s2, e2 = max(a, ra - 0.6), min(b, rb + 0.8)
+            extra = {"action_at": [ra, rb]}
+            if e2 - s2 >= 1.2 and e2 - s2 < b - a - 0.3:
+                a, b = round(s2, 2), round(e2, 2)
+                extra["compact"] = True
         clips.append({
             "id": next(ids), "source": index, "src": path, "start": a, "end": b, "impact": peak,
-            "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches,
+            "w": w - w % 2, "h": h - h % 2, "crop": crop, "delogo": patches,
             "desc": d.get("visuel") or "", "camera": d.get("camera") or "",
             # 1 s is enough for a short sentence (the script check keeps longer ones off it); fast TikTok
             # edits are made of 1.0-1.4 s shots, and merging them would mix unrelated scenes (measured)
@@ -726,7 +755,24 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < MIN_CLIP else ""),
             "audio_ok": from_sound and not d.get("parole_dans_le_son", False),
             **({"shock": bool(d.get("choc_sonore"))} if use_gemini else {}),
-            "low_res": min(w_full, h) < 540,
-            "marks": [m for m in marks if m],
+            "low_res": min(w, h) < 540,
+            "marks": [m for m in marks if m], **extra,
         })
     return clips
+
+
+def _action_of(d: Dict, a: float, b: float) -> Optional[Tuple[float, float, Optional[float]]]:
+    """(start, end, strongest) of a passage's action from Gemini's description, inside [a, b]."""
+    try:
+        ra, rb = sorted((float(d["action_debut"]), float(d["action_fin"])))
+    except (KeyError, TypeError, ValueError):
+        return None
+    ra, rb = max(a, ra), min(b, rb)
+    if rb - ra < 0.3:
+        return None
+    try:
+        fort = float(d.get("fort"))
+        fort = fort if ra <= fort <= rb else None
+    except (TypeError, ValueError):
+        fort = None
+    return round(ra, 2), round(rb, 2), (round(fort, 2) if fort is not None else None)

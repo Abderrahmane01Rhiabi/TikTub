@@ -2504,7 +2504,7 @@ function renderAdaptationChannel(card, ch, data){
 
 let adCurrent = null, adPoll = null, adProject = null;
 const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering'];
-const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'sources_review']], ['Script', ['scripting', 'script_review']],
+const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'searching', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
@@ -2944,8 +2944,16 @@ function renderAdFinder(box, p){
       <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
       <div class="chcard-foot"><span class="tiny ad-count"></span>
         <button class="btn secondary ad-own-check" data-icon="sparkle" title="L'IA regarde chaque lien et le compare aux plans du modèle (1 à 2 min)">Vérifier mes liens avec l'IA</button>
+        ${p.status === 'sources_search' && (p.wanting || []).length ? `<button class="btn secondary ad-more" title="Cherche l'ACTION des scènes sans bonne vidéo dans des compilations, vidéos GoPro, vlogs… même si la vidéo parle d'autre chose ; l'IA regarde les nouvelles vidéos (2 à 5 min)">🔎 Chercher plus pour ${p.wanting.length} scène(s)</button>` : ''}
         <button class="btn primary push ad-add" data-icon="download">Télécharger et analyser →</button></div></article>`;
+  if (p.fetch_note) box.insertAdjacentHTML('afterbegin', `<div class="warnbox">${esc(p.fetch_note)}</div>`);
   hydrateIcons(box);
+  const more = box.querySelector('.ad-more');
+  if (more) more.onclick = async () => {
+    more.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/images/more`, { method:'POST' }); adProject = null; loadAdProject(); }
+    catch (e){ log(e.message, 'error'); more.disabled = false; }
+  };
   const own = box.querySelector('.ad-own'), count = box.querySelector('.ad-count');
   const urls = () => [...adPicked, ...own.value.split('\n').map(x => x.trim()).filter(Boolean)].filter(u => !have.has(adKey(u)));
   const recount = () => {

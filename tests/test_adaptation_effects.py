@@ -215,3 +215,44 @@ def test_beats_are_plain_numbers_the_database_can_keep(tmp_path):
     beats = render.beats_of(clicks, 0, 10)
     assert beats and all(type(b) is float for b in beats)
     json.dumps(beats)                                   # a numpy number once broke the final render's save
+
+
+def test_a_passage_action_and_its_strongest_instant_are_read_inside_the_shot():
+    from adaptation import sources
+    assert sources._action_of({"action_debut": 12.0, "action_fin": 10.5, "fort": 11.2}, 10.0, 14.0) == (10.5, 12.0, 11.2)
+    assert sources._action_of({"action_debut": 9.0, "action_fin": 20.0, "fort": 30}, 10.0, 14.0) == (10.0, 14.0, None)
+    assert sources._action_of({"action_debut": None}, 10.0, 14.0) is None
+    assert sources._action_of({"action_debut": 11.0, "action_fin": 11.1}, 10.0, 14.0) is None     # nothing happens
+
+
+def test_a_degree_sign_is_text_not_the_banners_emoji():
+    assert render.split_emoji("POSTURE : ANGLE À 90° 📐") == ("POSTURE : ANGLE À 90°", "📐")
+    assert render.split_emoji("PRIX : 20 € 💰") == ("PRIX : 20 €", "💰")
+    assert render.split_emoji("AMORTI : MAINS 🖐️")[1] == "🖐"
+
+
+def test_many_stills_are_cleaned_in_batches(monkeypatch, tmp_path):
+    from PIL import Image
+    from adaptation import sources
+    shots = []
+    for k in range(23):
+        f = str(tmp_path / f"s{k}.jpg")
+        Image.new("RGB", (4, 4)).save(f)
+        shots.append(f)
+    sizes = []
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            n = len(parts) - 1
+            sizes.append(n)
+            return {"images": [{"zone_image": [0, 0, 1000, 1000], "boites": []} for _ in range(n)]}
+    monkeypatch.setattr(sources, "_gemini", lambda: G())
+    out = sources.find_boxes(shots)
+    assert len(out) == 23 and sizes == [10, 10, 3]
+
+
+def test_a_compact_clip_tells_the_writer_how_long_its_sentence_may_be():
+    from adaptation import script
+    listing = script.clip_listing({"A": {**clip(start=0, end=2.4), "compact": True, "desc": "un saut"},
+                                   "B": {**clip(start=0, end=3.0), "desc": "une rue"}})
+    assert "jusqu'a 4.0s de phrase au ralenti" in listing and listing.count("ralenti") == 1

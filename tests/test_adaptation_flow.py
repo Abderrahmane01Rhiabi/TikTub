@@ -429,3 +429,42 @@ def test_sources_first_versions_give_each_channel_its_angle_on_the_same_clips(pr
     assert ap.load(pid)["status"] == "script_review"
     with pytest.raises(ap.PipelineError):
         ap.change_target_angle(pid, "chanB")
+
+
+def test_sources_first_judges_each_sentence_against_its_clip(project, fakes, monkeypatch):
+    from adaptation import script
+    p = new_project(project)
+    ap.run_analysis(p["project_id"])
+    seen = []
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: seen.append(code) or [
+        {"clip": x["clip"], "texte": x["texte"], "note": "non" if k == 1 else "bon", "pourquoi": "autre chose",
+         "proposition": "Une phrase pour cette image."} for k, x in enumerate(sc["passages"])])
+    ap.start_scripts(p["project_id"])
+    ap.run_scripts(p["project_id"])
+    p = ap.load(p["project_id"])
+    t = p["targets"][0]
+    assert seen and t["accords"][1]["note"] == "non"
+    assert any("Passage 2 : la phrase ne correspond pas" in x for x in t["problems"])
+    p = ap.use_proposal(p["project_id"], t["channel"], 1)
+    assert p["targets"][0]["script"]["passages"][1]["texte"] == "Une phrase pour cette image."
+
+
+def test_sources_first_can_search_more_by_action(project, fakes, monkeypatch):
+    from adaptation import finder as F
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")])["project_id"]
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_search"
+    p["suggestions"]["verifs"] = {}
+    ap.save(p)
+    assert ap.wanting(ap.load(pid)) == list(range(len(p["suggestions"]["scenes"])))
+    monkeypatch.setattr(F, "action_queries", lambda found: {n: ["tram crash compilation"] for n in range(len(found))})
+    monkeypatch.setattr(F, "search_youtube", lambda q, n=8: [{"url": "https://www.youtube.com/watch?v=zzzzzzzzzzz",
+                                                              "title": "Fails 2024", "duration": 200}])
+    monkeypatch.setattr(F, "check", lambda url, scenes, plans, **kw: {"verdict": "oui", "title": "Fails",
+                        "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 3, "fin": 6}]}}})
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_search" and "scène(s) 1" in p["fetch_note"]
+    assert 0 not in ap.wanting(p) and "search_more_back" not in p

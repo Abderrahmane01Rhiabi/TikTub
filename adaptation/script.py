@@ -104,7 +104,14 @@ def _gemini(pro: bool = False):
 
 
 def clip_listing(clips: Dict[str, Dict]) -> str:
-    return "\n".join(f"- {cid}: {c.get('desc') or 'clip'} ({c['end'] - c['start']:.1f}s, moment fort a "
+    """The clips as the script writer sees them. A clip cut around its action
+    is slowed down to fill its sentence: its room is given too (measured: told
+    only its 2-3 s, the writer made a 20 s Short of short sentences)."""
+    from adaptation.effects import MIN_SPEED
+    def room(c):
+        d = c["end"] - c["start"]
+        return f"{d:.1f}s" + (f", jusqu'a {d / (MIN_SPEED + 0.1):.1f}s de phrase au ralenti" if c.get("compact") else "")
+    return "\n".join(f"- {cid}: {c.get('desc') or 'clip'} ({room(c)}, moment fort a "
                      f"{c['impact'] - c['start']:.1f}s)" for cid, c in clips.items() if c.get("usable", True))
 
 
