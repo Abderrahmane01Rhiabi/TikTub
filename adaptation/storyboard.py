@@ -29,7 +29,7 @@ from adaptation.script import LANG_RULES, ScriptError
 ROLES = ("accroche", "promesse", "montee", "reponse")
 HOOK_MAX_S = 4.0          # longer, the first sentence loses the scroller (it is asked 2-3 s; 3.6 s was still a good hook)
 PLAN_MAX_S = 7.0          # longer, a matching clip is hard to find
-TOTAL_S = (20.0, 45.0)
+TOTAL_S = (20.0, 38.0)    # of voice (estimated): 45 let a 41 s Arabic Short through, the aim is 25-35 s
 
 WRITE_PROMPT = """Tu ecris un YouTube Short explicatif (voix off sur des images) AVANT d'avoir les images.
 Il reprend la RECETTE d'un Short viral :

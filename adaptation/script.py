@@ -224,7 +224,7 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
             out.append(f"Passage {k} : phrase trop longue pour son clip ({len(p['texte'])} caractères, "
                        f"le clip {p['clip']} en laisse environ {int(room)}).")
     total = sum(len(p["texte"]) for p in ps) / lang["chars_per_second"]
-    if total > 45:
+    if total > 38:                      # 45 let a 41 s Arabic Short through
         out.append(f"Script trop long : environ {total:.0f} s de lecture (viser 27-33 s).")
     return out
 

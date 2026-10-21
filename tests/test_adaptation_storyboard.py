@@ -1186,3 +1186,14 @@ def test_a_plan_adapted_to_another_picture_loses_the_arrow_of_the_old_one():
     b["plans"][2]["annotation"] = {"type": "fleche", "cible": "le nuage blanc"}
     _, new = sb.adapt_to(b, 2, [{"vu": "un thon qui nage"}], ["fr", "ar"], gemini=G())
     assert new["annotation"] is None and "VOIT" in G.prompt
+
+
+def test_a_storyboard_of_about_40_seconds_is_too_long():
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    n = len(b["plans"])
+    for p in b["plans"]:                                  # 40 s of Arabic voice in all (measured: 40.2 s estimated, 41.1 s real)
+        p["textes"]["ar"]["texte"] = "ب" * int(40 * 12 / n - 1) + "."
+    assert any("Durée totale" in x for x in sb.problems(b, "ar"))
+    for p in b["plans"]:
+        p["textes"]["ar"]["texte"] = "ب" * int(30 * 12 / n - 1) + "."
+    assert not any("Durée totale" in x for x in sb.problems(b, "ar"))
