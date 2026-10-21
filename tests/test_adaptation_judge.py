@@ -108,3 +108,22 @@ def test_a_sentence_the_chat_rewrote_is_judged_again(monkeypatch):
         {"clip": x["clip"], "texte": x["texte"], "note": "non", "pourquoi": "toujours pas"} for x in sc["passages"]])
     t = ap.revise_script("x", "c", "réécris")["targets"][0]
     assert t["accords"][0]["texte"] == "B." and any("toujours pas" in x for x in t["problems"])
+
+
+def test_a_slow_check_never_writes_over_a_step_started_meanwhile(monkeypatch):
+    p = {"project_id": "x", "status": "script_review", "clips": _clips(),
+         "targets": [{"channel": "c", "language": "fr", "approved": True,
+                      "script": {"passages": [{"clip": "P1", "texte": "A."}]},
+                      "accords": [{"clip": "P1", "texte": "A.", "note": "bon", "pourquoi": ""}]}]}
+    import copy
+    store = {"p": p}
+    monkeypatch.setattr(ap, "load", lambda pid: copy.deepcopy(store["p"]))
+    monkeypatch.setattr(ap, "save", lambda q: store.update(p=q) or q)
+
+    def slow_judge(sc, clips, code, work=None):          # meanwhile, the voices were started
+        store["p"] = {**store["p"], "status": "voicing"}
+        return [{"clip": x["clip"], "texte": x["texte"], "note": "bon", "pourquoi": ""} for x in sc["passages"]]
+    monkeypatch.setattr(ap, "_judge", slow_judge)
+    with pytest.raises(ap.PipelineError, match="étape a démarré"):
+        ap.edit_script("x", "c", {"passages": [{"clip": "P2", "texte": "A."}]})
+    assert store["p"]["status"] == "voicing" and store["p"]["targets"][0]["approved"]

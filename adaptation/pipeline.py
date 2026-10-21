@@ -1570,6 +1570,18 @@ def _rejudge(p: Dict, t: Dict) -> None:
             t["accords"] = fresh
 
 
+def _commit(pid: str, channel: str, done: Dict) -> Dict:
+    """A slow check (the judge, the chat: 20 s to minutes) ran on a copy:
+    written on the project as it is now, never over a step started meanwhile
+    (measured: a save still judging wrote "script_review" over the voicing
+    that had just begun)."""
+    p = load(pid)
+    if p["status"] != "script_review":
+        raise PipelineError("Une étape a démarré pendant la vérification : ta modification n'est pas enregistrée.")
+    target(p, channel).update({k: done.get(k) for k in ("script", "accords", "problems", "approved")})
+    return save(p)
+
+
 def use_clip_proposal(pid: str, channel: str, k: int) -> Dict:
     """The other clip the check found for a sentence: the sentence stays."""
     p = load(pid)
@@ -1580,7 +1592,7 @@ def use_clip_proposal(pid: str, channel: str, k: int) -> Dict:
     x["clip"] = other
     _rejudge(p, t)
     t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t.get("accords")), approved=False)
-    return save(p)
+    return _commit(pid, channel, t)
 
 
 def edit_script(pid: str, channel: str, new: Dict) -> Dict:
@@ -1590,9 +1602,8 @@ def edit_script(pid: str, channel: str, new: Dict) -> Dict:
     sc = script.normalise({**(t["script"] or {}), **new}, p["clips"])
     t["script"] = {**sc, "corrections": (t["script"] or {}).get("corrections", [])}
     _rejudge(p, t)                      # a clip changed by hand is checked too
-    t.update(script={**sc, "corrections": (t["script"] or {}).get("corrections", [])},
-             problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
-    return save(p)
+    t.update(problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
+    return _commit(pid, channel, t)
 
 
 def _passage_accord(p: Dict, channel: str, k: int) -> Tuple[Dict, Dict, Dict]:
@@ -1639,8 +1650,8 @@ def revise_script(pid: str, channel: str, request: str) -> Dict:
     sc = script.revise(t["script"], {k: c for k, c in p["clips"].items() if c.get("usable")}, request)
     t["script"] = sc
     _rejudge(p, t)                      # measured: a sentence the chat rewrote lost its ❌ and was never checked
-    t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
-    return save(p)
+    t.update(problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
+    return _commit(pid, channel, t)
 
 
 def approve_script(pid: str, channel: str) -> Dict:
