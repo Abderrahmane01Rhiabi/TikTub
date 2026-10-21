@@ -19,6 +19,15 @@ import requests
 from PIL import Image
 import numpy as np
 
+CREDITS_OUT = "Crédits Gemini épuisés"
+
+
+def plain_error(r) -> str:
+    """A Gemini answer that is an error said plainly ("Crédits Gemini épuisés…"), else ""."""
+    e = str(r.get("error", "")) if isinstance(r, dict) else ""
+    return e if e.startswith(CREDITS_OUT) else ""
+
+
 class GeminiAIGenerator:
     def __init__(self, api_key: str = None):
         """Initialize Gemini with API key"""
@@ -274,6 +283,9 @@ Respond with JSON:
             else:
                 print(f"❌ Gemini API error: {response.status_code} - {response.text[:300]}")
                 self._api_error_count += 1
+                if response.status_code == 402 or "credits are depleted" in response.text:
+                    return {"error": f"{CREDITS_OUT} : recharge-les sur AI Studio (https://ai.studio/projects), "
+                                     "puis relance l'étape."}
                 return {"error": f"API error: {response.status_code}"}
 
         except Exception as e:

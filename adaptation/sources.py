@@ -516,7 +516,8 @@ def describe(path: str, segments: List[Tuple[float, float]], file=None) -> List[
                             max_tokens=16000, timeout=180, temperature=0.2)
     items = r if isinstance(r, list) else (r.get("passages") if isinstance(r, dict) else None)
     if not isinstance(items, list):
-        raise SourceError(f"Description de la source inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise SourceError(plain_error(r) or f"Description de la source inutilisable : {str(r)[:200]}")
     return (items + [{}] * len(segments))[:len(segments)]
 
 

@@ -178,6 +178,9 @@ def revise(script: Dict, clips: Dict[str, Dict], request: str, gemini=None) -> D
 
 
 def normalise(r, clips: Dict[str, Dict]) -> Dict:
+    from gemini_ai_generator import plain_error
+    if plain_error(r):                  # said plainly ("Script inutilisable : {'error': 'API error: 402'}")
+        raise ScriptError(plain_error(r))
     if not isinstance(r, dict) or "error" in r or not isinstance(r.get("passages"), list):
         raise ScriptError(f"Script inutilisable : {str(r)[:200]}")
     passages = []
@@ -303,7 +306,8 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
         if isinstance(items, list):
             break
     if not isinstance(items, list):
-        raise ScriptError(f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise ScriptError(plain_error(r) or f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
     out = []
     for p, x in zip(ps, items + [{}] * len(ps)):
         x = x if isinstance(x, dict) else {}

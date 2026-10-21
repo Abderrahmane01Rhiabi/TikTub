@@ -221,7 +221,8 @@ def _public(bundle: Dict) -> Dict:
 
 def normalise(r, codes: List[str]) -> Dict:
     if not isinstance(r, dict) or "error" in r or not isinstance(r.get("plans"), list):
-        raise ScriptError(f"Storyboard inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise ScriptError(plain_error(r) or f"Storyboard inutilisable : {str(r)[:200]}")
     plans = []
     for p in r["plans"]:
         if not isinstance(p, dict):
@@ -345,7 +346,8 @@ def adapt_to(bundle: Dict, k: int, options: List[Dict], codes: List[str], gemini
         try:
             choice = int(r.get("choix")) - 1
         except (TypeError, ValueError, AttributeError):
-            raise ScriptError(f"Réponse inutilisable : {str(r)[:160]}")
+            from gemini_ai_generator import plain_error
+            raise ScriptError(plain_error(r) or f"Réponse inutilisable : {str(r)[:160]}")
         if not 0 <= choice < len(options):
             raise ScriptError("L'IA a choisi une image qui n'existe pas.")
         # the old plan's arrow pointed at what its image showed (measured: "the white cloud" kept over a tuna swimming)

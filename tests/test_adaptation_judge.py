@@ -156,3 +156,15 @@ def test_a_logo_described_in_words_is_not_taken_for_a_name():
     clips = {"A": {**clips["P1"], "source": 1, "marks": ["logo ampoule"]}, "B": {**clips["P2"], "source": 0},
              "C": {**clips["P3"], "source": 0, "marks": ["logo de NEWS9"]}}
     assert ap.guess_credits(metas, clips) == "NEWS9 · @spotlight9923 · @viralhog"
+
+
+def test_gemini_credits_run_out_is_said_plainly(monkeypatch):
+    import requests
+    from gemini_ai_generator import GeminiAIGenerator
+
+    class R:
+        status_code, text = 402, '{"error": {"message": "Your prepayment credits are depleted."}}'
+    monkeypatch.setattr(requests, "post", lambda *a, **k: R())
+    g = GeminiAIGenerator(api_key="x")
+    with pytest.raises(script.ScriptError, match="Crédits Gemini épuisés"):
+        script.revise({"passages": [{"clip": "P1", "texte": "A."}]}, _clips(), "x", gemini=g)
