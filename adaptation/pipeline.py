@@ -747,7 +747,7 @@ def start_fetch(pid: str) -> Dict:
     return save(p)
 
 
-CUT_VERSION = 3          # how clips are cut; a clip cut an older way is cut again (3: no dead time, strongest instant)
+CUT_VERSION = 4          # how clips are cut; a clip cut an older way is cut again (4: leftover text painted over)
 ACTION_LEAD, ACTION_TAIL, MIN_ACTION = 0.6, 0.8, 1.2    # seconds kept before / after the action; shortest clip
 
 
@@ -968,6 +968,11 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         names = [n for n in guess.split(" · ") if n] + [m.get("handle") for m in metas if m.get("handle")]
         guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:4])
         p["credits"], p["credits_auto"] = guess, guess        # every channel whose footage is used, not only watermarks
+        report("texte encore visible après nettoyage ?", 0.91)
+        try:                            # added text the first cleaning missed is painted over too
+            sources.leftover_text(clips, os.path.join(project_dir(pid), "work"))
+        except Exception:
+            pass
         report("flèches et cercles revus avec les vrais clips", 0.92)
         active = _active(p)
         code = p["targets"][0]["language"]
@@ -1524,16 +1529,18 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
     for vp, sp in zip(t["voice"]["passages"], t["script"]["passages"]):      # back from the preview: a clip or a banner changed
         vp.update({k: sp[k] for k in ("clip", "bandeau", "mots_cles") if k in sp})
     out = os.path.join(base, "preview.mp4" if preview else "final.mp4")
+    _choose_music(p, t)
+    beats = _beats(t)
     fx = _effects(p, t, os.path.join(base, "work"))
-    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2, fx)
+    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2, fx, beats)
     report(f"{'aperçu' if preview else 'rendu'} {t['channel']}", offset + share * 0.3)
     r = render.render(t["voice"]["passages"], t["voice"]["words"], p["clips"], voice_mp3, t["language"], out,
                       os.path.join(base, "work"), credit=p["credits"],
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
                                                    offset + share * (0.3 + 0.6 * f)), annotations=anns,
-                      style=_style_of(t), effects=fx)
-    c = checks.verify(out, voice_mp3, t["voice"]["passages"])
+                      style=_style_of(t), effects=fx, beats=beats)
+    c = checks.verify(out, voice_mp3, t["voice"]["passages"], [x["start"] for x in r.get("segments") or []] or None)
     return {"path": out, "summary": r, "checks": c}
 
 
@@ -1575,8 +1582,80 @@ def _effects(p: Dict, t: Dict, work: str) -> List[Optional[Dict]]:
     return out
 
 
+MOOD_PROMPT = """Choisis la musique de fond d'un YouTube Short parmi les morceaux de la chaine.
+Le Short : « {titre} » — {resume}
+Morceaux (nom du fichier / tempo / energie mesures) :
+{morceaux}
+Prends celui dont l'ambiance colle le mieux au ton du Short (tension, danger, humour, emotion, science calme...).
+JSON uniquement : {{"morceau": numero, "pourquoi": "une phrase en francais"}}"""
+
+
+def _track_info(path: str) -> Dict:
+    """Tempo, energy and the strongest 40 s of a track (cached next to it)."""
+    import json as _json, hashlib
+    os.makedirs(os.path.join("temp", "music_info"), exist_ok=True)   # never a file in the person's music folder
+    cache = os.path.join("temp", "music_info", hashlib.md5(os.path.abspath(path).encode()).hexdigest() + ".json")
+    if os.path.exists(cache):
+        try:
+            return _json.load(open(cache, encoding="utf-8"))
+        except Exception:
+            pass
+    import numpy as np
+    raw = __import__("subprocess").run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "4000", "-f", "f32le", "-"],
+                                       capture_output=True).stdout
+    y = np.frombuffer(raw, np.float32)
+    dur = len(y) / 4000
+    rms = np.sqrt(np.convolve(np.square(y), np.ones(4000) / 4000, mode="valid")[::4000]) if len(y) > 4000 else np.array([0.0])
+    win = 40
+    best = max(range(max(1, len(rms) - win)), key=lambda i: float(rms[i:i + win].mean())) if len(rms) > win else 0
+    beats = render.beats_of(path, max(0.0, best), 20)
+    info = {"duree": round(dur, 1), "energie": round(float(rms.mean()) * 100, 1), "debut_fort": float(best),
+            "bpm": round(60 / (beats[1] - beats[0])) if len(beats) > 1 else None}
+    try:
+        _json.dump(info, open(cache, "w", encoding="utf-8"))
+    except OSError:
+        pass
+    return info
+
+
+def _choose_music(p: Dict, t: Dict) -> None:
+    """With several tracks in the channel's library, the AI picks the one that
+    fits this Short's tone (once per version) and its strongest part; with a
+    single track nothing changes. A track chosen by hand is kept."""
+    if t.get("music_chosen") or not t.get("music_path"):
+        return
+    folder = os.path.dirname(t["music_path"])
+    tracks = sorted(f for f in os.listdir(folder) if f.lower().endswith((".mp3", ".wav", ".m4a"))) if os.path.isdir(folder) else []
+    t["music_chosen"] = True
+    if len(tracks) < 2:
+        return
+    try:
+        infos = [_track_info(os.path.join(folder, f)) for f in tracks]
+        listing = "\n".join(f"{n}. {f} / {i['bpm'] or '?'} BPM / energie {i['energie']}" for n, (f, i) in enumerate(zip(tracks, infos), 1))
+        sc = t.get("script") or {}
+        r = script._gemini()._generate_content(
+            [{"text": MOOD_PROMPT.format(titre=sc.get("titre", ""), resume=" ".join(x["texte"] for x in sc.get("passages") or [])[:600],
+                                         morceaux=listing)}], max_tokens=1000, timeout=60, temperature=0.2)
+        n = int(r.get("morceau")) - 1
+    except Exception:
+        return
+    if 0 <= n < len(tracks):
+        t.update(music_path=os.path.join(folder, tracks[n]), music_start=infos[n]["debut_fort"],
+                 music_why=str(r.get("pourquoi") or "")[:200])
+
+
+def _beats(t: Dict) -> Optional[List[float]]:
+    """The music's beats in video time, for the cuts (none without music)."""
+    if not t.get("music_path") or not os.path.exists(t["music_path"]):
+        return None
+    try:
+        return render.beats_of(t["music_path"], float(t.get("music_start") or 0), 90) or None
+    except Exception:
+        return None
+
+
 def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float,
-                 fx: Optional[List[Optional[Dict]]] = None) -> List[Dict]:
+                 fx: Optional[List[Optional[Dict]]] = None, beats: Optional[List[float]] = None) -> List[Dict]:
     """The arrows/circles the script asks for, located once (the final render
     reuses the preview's track); a target not found is simply left out."""
     passages = (t.get("script") or {}).get("passages") or []
@@ -1584,7 +1663,7 @@ def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float,
     if not wanted:
         return []
     report(f"flèches et cercles {t['channel']}", at)
-    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"], fx)
+    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"], fx, beats)
     cache, out = t.setdefault("ann_cache", {}), []
     os.makedirs(work, exist_ok=True)
     for k, ann in wanted:
@@ -1650,6 +1729,19 @@ def validate_preview(pid: str, channel: str) -> Dict:
 
 # ---------------------------------------------------------------- 4. final render -> Publication
 
+def _thumbnail(made: Dict, video: str) -> Optional[str]:
+    """The cover picture: the hook's strongest instant (the most spectacular
+    second the re-timing saw), taken from the final video with its banner."""
+    segs = (made.get("summary") or {}).get("segments") or []
+    if not segs:
+        return None
+    at = min(max(segs[0].get("impact", 0.5), 0.2), max(0.2, segs[0]["end"] - 0.1))
+    out = os.path.splitext(video)[0] + ".jpg"
+    import subprocess as _sp
+    r = _sp.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", video, "-frames:v", "1", "-q:v", "2", out])
+    return out if r.returncode == 0 and os.path.exists(out) else None
+
+
 def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     sc = t["script"]
     label = langs.lang(t["language"])["credit_label"]
@@ -1688,6 +1780,9 @@ def run_final(pid: str, report: Optional[Report] = None):
             os.makedirs("processed_videos", exist_ok=True)
             shutil.copy(made["path"], dest)
             rec = publication_record(p, t, dest)
+            thumb = _thumbnail(made, dest)
+            if thumb:
+                rec["thumbnail_path"] = thumb
             db.upsert_video(rec["video_id"], rec)
             t.update(video_id=rec["video_id"], final=made)
             save(p)

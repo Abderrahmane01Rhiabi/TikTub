@@ -752,6 +752,14 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
         if youtube_video_id:
             url = f"https://youtube.com/watch?v={youtube_video_id}"
             print(f"✅ Upload réussi!")
+            try:                        # a cover picture made with the video (Adaptation): best effort
+                import db as _db
+                thumb = ((_db.get_video(video_id) or {}).get("thumbnail_path") if video_id else None)
+                if thumb and os.path.exists(thumb):
+                    youtube.thumbnails().set(videoId=youtube_video_id, media_body=MediaFileUpload(thumb)).execute()
+                    print("🖼️ Miniature envoyée")
+            except Exception as e:      # unverified channel, quota… the video is up anyway
+                print(f"⚠️ Miniature non envoyée : {str(e)[:120]}")
             print(f"🔗 URL: {url}")
             
             if scheduled_time:

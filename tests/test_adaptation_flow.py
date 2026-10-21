@@ -62,13 +62,13 @@ def fakes(monkeypatch):
     monkeypatch.setattr(voices, "synthesize", synth)
 
     def fake_render(passages, words, clips, voice, lang, out, work, credit="", music=None, preview=False, progress_cb=None,
-                    annotations=None, style=None, effects=None):
+                    annotations=None, style=None, effects=None, beats=None):
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_bytes(b"mp4")
         return {"duration": 5.0, "segments": [], "captions": 2}
     monkeypatch.setattr(render, "render", fake_render)
     calls["checks_ok"] = True
-    monkeypatch.setattr(checks, "verify", lambda out, voice, passages: {
+    monkeypatch.setattr(checks, "verify", lambda out, voice, passages, starts=None: {
         "ok": calls["checks_ok"], "problems": [] if calls["checks_ok"] else ["son trop court"], "measures": {}})
     return calls
 

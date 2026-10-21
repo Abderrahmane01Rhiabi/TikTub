@@ -462,6 +462,42 @@ def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[i
     return out
 
 
+def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[str, List[str]]:
+    """After the cleaning, what added text still shows (a "If you drive over it
+    too fast it hardens" caption stayed on a speed-bump clip): two cleaned
+    pictures of each clip looked at once more, what is found painted over too.
+    Returns, per clip, what was erased this way. Best effort."""
+    finder = finder or find_boxes
+    os.makedirs(work_dir, exist_ok=True)
+    shots, owners = [], []
+    for cid, c in clips.items():
+        for j, f in enumerate((0.3, 0.7)):
+            out = os.path.join(work_dir, f"left_{cid}_{j}.jpg")
+            still(c["src"], c["start"] + (c["end"] - c["start"]) * f, c.get("crop"), out, c.get("delogo"), (c["w"], c["h"]))
+            if os.path.exists(out):
+                shots.append(out)
+                owners.append(cid)
+    if not shots:
+        return {}
+    try:
+        found = finder(shots)
+    except Exception:
+        return {}
+    erased: Dict[str, List[str]] = {}
+    for cid, (_, boxes, what) in zip(owners, found):
+        c = clips[cid]
+        for (y0, x0, y1, x1), quoi in zip(boxes, what):
+            x, y = int(x0 * c["w"] / 1000) - 6, int(y0 * c["h"] / 1000) - 6
+            bw, bh = int((x1 - x0) * c["w"] / 1000) + 12, int((y1 - y0) * c["h"] / 1000) + 12
+            if bw <= 8 or bh <= 8 or bw * bh > 0.25 * c["w"] * c["h"]:
+                continue                        # too big to paint without ruining the clip
+            c["delogo"] = list(c.get("delogo") or []) + [(max(0, x), max(0, y), bw, bh)]
+            erased.setdefault(cid, []).append(quoi or "texte")
+    for cid, what in erased.items():
+        clips[cid]["texte_efface"] = list(dict.fromkeys(what))[:4]
+    return erased
+
+
 def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int, List[Tuple[int, int, int, int]]]:
     """Boxes (0-1000) -> rows to cut at the top/bottom, and boxes to paint over.
     A thin strip touching the top or bottom 12 % is cropped (cleaner than any

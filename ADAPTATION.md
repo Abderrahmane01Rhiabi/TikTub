@@ -110,6 +110,15 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
   - **cadrage sur le sujet** : une image recadrée reste centrée sur la personne ou l'objet de la phrase (les flèches suivent) ;
   - **lumière** : un clip trop sombre est éclairci ;
   - **musique** : elle baisse sous la voix et remonte dans les pauses.
+  - **coupes sur le rythme** : chaque changement de plan tombe sur un temps fort de la musique quand il y en a un tout près (la pause entre deux phrases bouge de 0,08 à 0,40 s ; une musique sans rythme net ne change rien) ;
+  - **couleurs** : un clip à la teinte marquée (sépia, orangé) est ramené vers le neutre, comme les autres ;
+  - **netteté** : un clip en basse résolution, agrandi, est débruité puis rendu plus net ;
+  - **stabilisation** (rendu final seulement) : un clip qui tremble (caméra à la main, GoPro) est stabilisé — et gardé seulement s'il tremble vraiment moins après ;
+  - **chiffres en grand** : l'IA peut afficher un chiffre fort (« 2 m », « 1481 N ») au moment fort d'un plan, 2 fois au plus (case « 🔢 Chiffre en grand ») ;
+  - **texte oublié** : après le nettoyage, l'IA revérifie chaque clip ; un texte ajouté encore lisible est effacé aussi (noté sur l'écran Script) ;
+  - **fin en boucle** : les 0,35 dernières secondes se fondent dans la toute première image : revue en boucle, la vidéo s'enchaîne sans coupure ;
+  - **musique selon le ton** : si la chaîne a plusieurs morceaux, l'IA choisit celui qui colle au Short et sa partie la plus forte (avec un seul morceau, rien ne change) ;
+  - **miniature** : l'image de couverture est prise à l'instant le plus fort de l'accroche et envoyée avec la vidéo (si YouTube l'accepte pour la chaîne).
   En plus, l'app **mesure** la taille du sujet de chaque phrase dans son image : s'il prend moins d'un quart du cadre (une personne filmée de loin), le zoom sur lui est ajouté tout seul (3 zooms au plus par vidéo, jamais sous une flèche).
   Tu peux les changer sous chaque phrase (cases et « Zoom sur… »). Un clip trop court pour sa phrase est **ralenti en entier** (jamais plus de 2×) au lieu de finir sur une image figée. La recherche juge chaque vidéo sur l'image voulue **et sur la phrase dite** ; un **film, une série, une émission TV** ou le **remontage d'un autre créateur** est marqué en rouge et n'est jamais choisi automatiquement (droits). Pour la recherche, le cadrage et la vitesse ne comptent plus : un atterrissage filmé de loin à vitesse normale est « équivalent » à un « plan serré au ralenti ». L'aperçu montre les ralentis de façon simple (rapide) ; le rendu final les calcule en qualité (environ 30 s de plus par ralenti).
 

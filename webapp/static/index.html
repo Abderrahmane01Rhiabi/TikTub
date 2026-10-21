@@ -3079,15 +3079,17 @@ function adFxHtml(e){
       ${box('sc-fx-slow', e.ralenti, '🐢 Ralenti', 'Le moment fort passe au ralenti (2× plus lent, images recalculées)')}
       ${box('sc-fx-freeze', e.arret, '⏸ Arrêt sur image', 'L’image se fige un instant sur le moment fort (avec la flèche ou le cercle s’il y en a)')}
       ${box('sc-fx-trans', e.transition, '💨 Transition', 'Coup de zoom et « whoosh » : une nouvelle partie de l’histoire commence')}
-      <input class="f sc-fx-zoom" value="${esc(e.zoom || '')}" placeholder="🔍 Zoom sur… (ex. les pieds de la femme)" style="flex:1;min-width:160px;font-size:12px"></div>`;
+      <input class="f sc-fx-zoom" value="${esc(e.zoom || '')}" placeholder="🔍 Zoom sur… (ex. les pieds de la femme)" style="flex:1;min-width:160px;font-size:12px">
+      <input class="f sc-fx-num" value="${esc(e.chiffre || '')}" maxlength="16" placeholder="🔢 Chiffre en grand (ex. 2 m)" title="Un chiffre fort qui apparaît en grand au moment fort du plan" style="width:170px;font-size:12px"></div>`;
 }
 
 function adFxOf(row){
   const q = c => row.querySelector(c);
   if (!q('.sc-fx-slow')) return null;
   const e = { ralenti: q('.sc-fx-slow').checked, arret: q('.sc-fx-freeze').checked,
-              transition: q('.sc-fx-trans').checked, zoom: q('.sc-fx-zoom').value.trim() || null };
-  return (e.ralenti || e.arret || e.transition || e.zoom) ? e : null;
+              transition: q('.sc-fx-trans').checked, zoom: q('.sc-fx-zoom').value.trim() || null,
+              chiffre: (q('.sc-fx-num') ? q('.sc-fx-num').value.trim() : '') || null };
+  return (e.ralenti || e.arret || e.transition || e.zoom || e.chiffre) ? e : null;
 }
 
 function adAnnOf(row){
@@ -3357,6 +3359,9 @@ function renderAdScripts(body, p){
         ${(() => { const noted = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
               .filter(c => c && c.usable && c.note);
             return noted.length ? `<div class="tiny" style="color:#f5c56d">${noted.map(c => `${esc(c.id)} : ${esc(c.note)} — vérifie-le avec ▶ (le logo est effacé)`).join(' · ')}</div>` : ''; })()}
+        ${(() => { const left = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
+              .filter(c => c && (c.texte_efface || []).length);
+            return left.length ? `<div class="tiny" style="opacity:.8">${left.map(c => `${esc(c.id)} : texte resté après nettoyage, effacé aussi (« ${esc(c.texte_efface.join(' », « '))} ») — vérifie avec ▶`).join(' · ')}</div>` : ''; })()}
         ${(() => { const low = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
               .filter(c => c && c.low_res);
             return low.length ? `<div class="tiny" style="color:#f5c56d">${low.map(c => `${esc(c.id)} : basse résolution (${c.w}×${c.h}), floue à l'écran${sc.passages[0] && sc.passages[0].clip === c.id ? ' — c\'est l\'accroche : cherche mieux si tu peux' : ''}`).join(' · ')}</div>` : ''; })()}

@@ -122,3 +122,86 @@ def test_a_dark_clip_is_lit_up_and_a_bright_one_left_alone(tmp_path):
                         f], check=True)
     assert render.light({"src": dark, "start": 0, "end": 2}).startswith("eq=gamma=")
     assert render.light({"src": bright, "start": 0, "end": 2}) is None
+
+
+def _ff(*args):
+    import subprocess
+    subprocess.run(["ffmpeg", "-v", "error", "-y", *args], check=True)
+
+
+def test_the_beat_of_a_click_track_is_found_and_cuts_land_on_it(tmp_path):
+    clicks = str(tmp_path / "clicks.wav")                  # 120 BPM: a short click every 0.5 s
+    _ff("-f", "lavfi", "-i", "sine=f=1000:d=0.03,apad=whole_dur=0.5", "-af", "aloop=loop=-1:size=22050",
+        "-t", "20", "-ar", "44100", clicks)
+    beats = render.beats_of(clicks, 0, 15)
+    gaps = [b - a for a, b in zip(beats, beats[1:])]
+    assert len(beats) > 20 and abs(sum(gaps) / len(gaps) - 0.5) < 0.03
+    clips = {"A": clip(end=9.0, impact=3.0), "B": clip(end=9.0, impact=3.0)}
+    passages = [{"clip": "A", "start": 0.0, "end": 2.13}, {"clip": "B", "start": 2.5, "end": 4.0}]
+    segs, _ = render.build_timeline(passages, clips, None, beats)
+    cut = segs[1]["out"]
+    assert min(abs(cut - b) for b in beats) < 0.01 and render.GAP_MIN <= cut - 2.23 <= render.GAP_MAX
+    assert render.beats_of(str(tmp_path / "missing.wav"), 0, 10) == []
+
+
+def test_a_strong_figure_is_drawn_popping_in(tmp_path):
+    from PIL import Image
+    from adaptation import langs
+    n = render.number_frames("1481 N", str(tmp_path / "n"), langs.lang("fr"), render.style_of("neon"), 1.0)
+    assert n == 30
+    first, mid = (Image.open(tmp_path / "n" / f"f_{i:03d}.png") for i in (0, 15))
+    assert mid.size == (render.BOX_W, render.BOX_H) and mid.getbbox()[1] > render.BOX_H * 0.5   # low in the box
+    assert (first.getbbox() or (0, 0, 0, 0))[2] - (first.getbbox() or (0, 0, 0, 0))[0] < mid.getbbox()[2] - mid.getbbox()[0]
+
+
+def test_a_colour_cast_is_pulled_back_and_a_neutral_clip_left_alone(tmp_path):
+    sepia, grey = str(tmp_path / "s.mp4"), str(tmp_path / "g.mp4")
+    _ff("-f", "lavfi", "-i", "color=c=0xb08850:s=320x240:d=2", "-c:v", "libx264", sepia)
+    _ff("-f", "lavfi", "-i", "color=c=0x909090:s=320x240:d=2", "-c:v", "libx264", grey)
+    assert "lutyuv" in render.look({"src": sepia, "start": 0, "end": 2})
+    assert render.look({"src": grey, "start": 0, "end": 2}) is None
+
+
+def test_a_shaky_clip_is_told_from_a_steady_one(tmp_path):
+    shaky, steady, scene = str(tmp_path / "shaky.mp4"), str(tmp_path / "steady.mp4"), str(tmp_path / "scene.png")
+    _ff("-f", "lavfi", "-i", "testsrc2=s=640x360", "-frames:v", "1", scene)      # a still scene, a shaking camera
+    _ff("-loop", "1", "-i", scene, "-t", "4", "-r", "30", "-vf", "crop=560:300:40+14*sin(n*0.9)+6*sin(n*2.3):30+10*cos(n*1.1)+5*sin(n*2.9)",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", shaky)
+    _ff("-loop", "1", "-i", scene, "-t", "4", "-r", "30", "-vf", "crop=560:300:40:30", "-c:v", "libx264",
+        "-pix_fmt", "yuv420p", steady)
+    assert render.shakiness(shaky, 0, 4) > render.SHAKY > render.shakiness(steady, 0, 4)
+    out = render.stabilised(shaky, 0, 4, str(tmp_path / "stab.mp4"))
+    assert render.shakiness(out, 0, 4) < 0.5 * render.shakiness(shaky, 0, 4)       # a hand-held wobble: much steadier
+
+
+def test_text_left_after_the_cleaning_is_painted_over(tmp_path, monkeypatch):
+    from adaptation import sources
+    monkeypatch.setattr(sources, "still", lambda src, t, crop, out, *a, **k: open(out, "wb").close() or out)
+    clips = {"P1": {**clip(w=1000, h=500), "delogo": [(1, 1, 10, 10)]}, "P2": clip(w=1000, h=500)}
+    seen = sources.leftover_text(clips, str(tmp_path), finder=lambda shots: [
+        (None, [[100, 200, 200, 600]], ["If you drive over it too fast"]), (None, [], []),
+        (None, [[0, 0, 900, 900]], ["huge"]), (None, [], [])])
+    assert seen == {"P1": ["If you drive over it too fast"]} and clips["P1"]["texte_efface"]
+    assert clips["P1"]["delogo"][-1] == (194, 44, 412, 62) and "texte_efface" not in clips["P2"]   # too big: left
+
+
+def test_a_latin_figure_stays_left_to_right_in_an_arabic_video(tmp_path, monkeypatch):
+    from PIL import ImageDraw
+    from adaptation import langs
+    seen = []
+    real = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", lambda self, xy, text, *a, **k: seen.append((text, k.get("direction"))) or real(self, xy, text, *a, **k))
+    render.number_frames("1481 N", str(tmp_path / "a"), langs.lang("ar"), render.style_of("flamme"), 0.2)
+    render.number_frames("٢ م", str(tmp_path / "b"), langs.lang("ar"), render.style_of("flamme"), 0.2)
+    assert ("1481 N", None) in seen and ("٢ م", "rtl") in seen
+
+
+def test_a_latin_figure_stays_left_to_right_in_an_arabic_video(tmp_path, monkeypatch):
+    from PIL import ImageDraw
+    from adaptation import langs
+    seen = []
+    real = ImageDraw.ImageDraw.text
+    monkeypatch.setattr(ImageDraw.ImageDraw, "text", lambda self, xy, text, *a, **k: seen.append((text, k.get("direction"))) or real(self, xy, text, *a, **k))
+    render.number_frames("1481 N", str(tmp_path / "a"), langs.lang("ar"), render.style_of("flamme"), 0.2)
+    render.number_frames("٢ م", str(tmp_path / "b"), langs.lang("ar"), render.style_of("flamme"), 0.2)
+    assert ("1481 N", None) in seen and ("٢ م", "rtl") in seen

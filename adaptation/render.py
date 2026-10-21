@@ -31,6 +31,7 @@ W, H, FPS = 1080, 1920, 30
 BOX_X, BOX_Y, BOX_W, BOX_H = 30, 380, 1020, 980
 BANNER_Y, CREDIT_Y, CAPTION_Y = 220, 150, 1500
 GAP = 0.18                                         # pause kept between two sentences
+GAP_MIN, GAP_MAX = 0.08, 0.40                      # the pause may move within this to put the cut on a beat
 KEY_COLORS = ["#FFD60A", "#FF4D8D", "#4ADE80"]     # yellow, pink, green — one per sentence
 
 # A channel's look (Réglages → Voix): its banners and captions, the same on every video it publishes.
@@ -95,7 +96,8 @@ class RenderError(RuntimeError):
 # --------------------------------------------------------------- timeline
 
 def build_timeline(passages: List[Dict], clips: Dict[str, Dict],
-                   effects: Optional[List[Optional[Dict]]] = None) -> Tuple[List[Dict], float]:
+                   effects: Optional[List[Optional[Dict]]] = None,
+                   beats: Optional[List[float]] = None) -> Tuple[List[Dict], float]:
     """One segment per sentence: where its voice is cut from (va..vb), where
     it sits in the output, and which part of its clip plays under it.
     effects (one per passage, see adaptation/effects.py) change how the clip
@@ -104,7 +106,12 @@ def build_timeline(passages: List[Dict], clips: Dict[str, Dict],
     segs, t = [], 0.0
     for k, p in enumerate(passages):
         a, b = max(0.0, p["start"] - 0.04), p["end"] + 0.10
-        dur = (b - a) + GAP
+        gap = GAP
+        if beats and k < len(passages) - 1:     # the cut to the next clip lands on a beat of the music, when one is near
+            near = [bt - (t + b - a) for bt in beats if GAP_MIN <= bt - (t + b - a) <= GAP_MAX]
+            if near:
+                gap = min(near, key=lambda g: abs(g - GAP))
+        dur = (b - a) + gap
         c = clips[p["clip"]]
         fx = (effects or [None] * (k + 1))[k] if k < len(effects or []) else None
         last = k == len(passages) - 1
@@ -119,6 +126,39 @@ def build_timeline(passages: List[Dict], clips: Dict[str, Dict],
         segs.append(s)
         t += dur
     return segs, t
+
+
+def beats_of(music: str, start: float, length: float) -> List[float]:
+    """The music's beats in video time (0 = the video's start): spectral flux,
+    the tempo by autocorrelation (70-170 BPM), the phase that fits it best.
+    Empty when no steady pulse is found (measured on the channels' tracks:
+    afrobeat 123 BPM, lo-fi 144, ballad 76; a plain energy curve missed them)."""
+    import numpy as np
+    sr, hop = 11025, 128
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-ss", f"{start:.3f}", "-t", f"{length + 1:.3f}", "-i", music,
+                          "-ac", "1", "-ar", str(sr), "-f", "f32le", "-"], capture_output=True).stdout
+    y = np.frombuffer(raw, np.float32)
+    if len(y) < sr * 4:
+        return []
+    n = len(y) // hop
+    mag = np.log1p(np.abs(np.fft.rfft(y[:n * hop].reshape(n, hop) * np.hanning(hop), axis=1)) * 10)
+    flux = np.maximum(np.diff(mag, axis=0, prepend=mag[:1]), 0).sum(1)
+    flux -= flux.mean()
+    fps = sr / hop
+    lags = list(range(int(fps * 60 / 170), int(fps * 60 / 70) + 1))
+    ac = np.array([np.dot(flux[:-l], flux[l:]) / (n - l) for l in lags])
+    if not len(ac) or ac.max() / (np.dot(flux, flux) / n + 1e-9) < 0.3:
+        return []                       # no steady pulse (an ambient pad): cuts stay where the voice puts them
+    i = int(ac.argmax())
+    period = float(lags[i])
+    if 0 < i < len(ac) - 1:             # between two lags: the peak of the parabola through them
+        den = ac[i - 1] - 2 * ac[i] + ac[i + 1]
+        if den < 0:
+            period += 0.5 * (ac[i - 1] - ac[i + 1]) / den
+    count = int(n / period)
+    phase = max(range(int(period)), key=lambda ph: float(sum(flux[min(n - 1, int(round(ph + j * period)))]
+                                                            for j in range(count))))
+    return [round((phase + j * period) / fps, 3) for j in range(count + 1) if phase + j * period < n]
 
 
 def out_time(segs: List[Dict], vt: float) -> Optional[float]:
@@ -408,24 +448,112 @@ def framing(c: Dict) -> Tuple[float, float]:
     return 0.5, 0.5
 
 
+SHARPEN = ",hqdn3d=1.5:1.5:3:3,unsharp=5:5:0.9:5:5:0.0"   # a blown-up low resolution clip: denoised, then sharpened
+NUMBER_S = 1.6                           # seconds a strong figure stays on screen
+LOOP_S = 0.35                            # the last instants dissolve into the first picture
+
+
+def number_frames(text: str, out_dir: str, lang: Dict, style: Dict, length: float) -> int:
+    """A strong figure ("2 m", "1481 N") as PNG frames the size of the picture
+    box: big, in the channel's key colour with a thick outline, popping in
+    like the arrows, low in the box (the subject stays visible)."""
+    from adaptation.annotate import _pop
+    os.makedirs(out_dir, exist_ok=True)
+    for f in os.listdir(out_dir):
+        os.remove(os.path.join(out_dir, f))
+    arabic = any("\u0600" <= ch <= "\u06ff" for ch in text)     # "1481 N" in an Arabic video stays left to right
+    kw = {"direction": "rtl", "language": "ar"} if lang["rtl"] and arabic else {}
+    size = 190
+    while size > 70:
+        font = ImageFont.truetype(font_path(lang["banner_font"]), size)
+        probe = ImageDraw.Draw(Image.new("RGBA", (10, 10)))
+        if probe.textlength(text, font=font, **kw) <= BOX_W - 120:
+            break
+        size -= 10
+    base = Image.new("RGBA", (BOX_W, int(size * 1.6)), (0, 0, 0, 0))
+    d = ImageDraw.Draw(base)
+    d.text((BOX_W / 2, base.height / 2), text, font=font, fill=style["key"], anchor="mm",
+           stroke_width=max(6, size // 14), stroke_fill=style["outline"], **kw)
+    glow = base.split()[3].filter(ImageFilter.GaussianBlur(14)).point(lambda v: int(v * 0.6))
+    shadow = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    shadow.putalpha(glow)
+    base = Image.alpha_composite(shadow, base)
+    n = max(1, int(round(length * FPS)))
+    cy = int(BOX_H * 0.74)
+    for i in range(n):
+        scale, alpha = _pop(i / FPS, n / FPS)
+        w, h = max(2, int(base.width * scale)), max(2, int(base.height * scale))
+        im = base.resize((w, h), Image.LANCZOS)
+        if alpha < 1:
+            im.putalpha(im.split()[3].point(lambda v: int(v * alpha)))
+        layer = Image.new("RGBA", (BOX_W, BOX_H), (0, 0, 0, 0))
+        layer.alpha_composite(im, ((BOX_W - w) // 2, cy - h // 2))
+        layer.save(os.path.join(out_dir, f"f_{i:03d}.png"))
+    return n
+
+
 DARK = 70                                # mean luma (0-255) under which a clip is lit up
+CAST = 6                                 # mean chroma this far from neutral (128): a colour cast, pulled back
+
+
+def look(c: Dict) -> Optional[str]:
+    """Filters that bring a clip in line with the others, measured on its own
+    frames: a dark clip lit up (a classroom came out almost black next to
+    sunny streets), a colour cast (a sepia shot among daylight ones) pulled
+    70 % of the way back to neutral. None when nothing is off."""
+    crop = f"crop={c['crop']}," if c.get("crop") else ""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{c['start']:.2f}", "-t", f"{max(0.5, c['end'] - c['start']):.2f}",
+                        "-i", c["src"], "-vf", f"{crop}fps=2,scale=96:-2,signalstats,"
+                        "metadata=print:key=lavfi.signalstats.YAVG,metadata=print:key=lavfi.signalstats.UAVG,"
+                        "metadata=print:key=lavfi.signalstats.VAVG", "-f", "null", "-"], capture_output=True, text=True)
+    avg = {}
+    for key in ("YAVG", "UAVG", "VAVG"):
+        vals = [float(v) for v in re.findall(key + r"=([\d.]+)", r.stderr)]
+        if vals:
+            avg[key] = sum(vals) / len(vals)
+    out = []
+    if avg.get("YAVG", 255) < DARK:
+        out.append(f"eq=gamma={min(1.7, 1.0 + (DARK + 30 - avg['YAVG']) / 100):.2f}:contrast=1.08:saturation=1.1")
+    du, dv = avg.get("UAVG", 128) - 128, avg.get("VAVG", 128) - 128
+    if max(abs(du), abs(dv)) > CAST:
+        out.append(f"lutyuv=u='clip(val-{0.7 * du:.1f},0,255)':v='clip(val-{0.7 * dv:.1f},0,255)'")
+    return ",".join(out) or None
 
 
 def light(c: Dict) -> Optional[str]:
-    """An eq filter for a dark clip, measured on its own frames (a classroom
-    clip came out almost black next to sunny streets), else None."""
-    crop = f"crop={c['crop']}," if c.get("crop") else ""
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{c['start']:.2f}", "-t", f"{max(0.5, c['end'] - c['start']):.2f}",
-                        "-i", c["src"], "-vf", f"{crop}fps=2,scale=96:-2,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
-                        "-f", "null", "-"], capture_output=True, text=True)
-    vals = [float(v) for v in re.findall(r"YAVG=([\d.]+)", r.stderr)]
-    if not vals:
-        return None
-    y = sum(vals) / len(vals)
-    if y >= DARK:
-        return None
-    gamma = min(1.7, 1.0 + (DARK + 30 - y) / 100)
-    return f"eq=gamma={gamma:.2f}:contrast=1.08:saturation=1.1"
+    return look(c)
+
+
+SHAKY = 0.012                            # frame-to-frame jitter (share of the width) above which a clip is stabilised
+
+
+def shakiness(path: str, t0: float, length: float, crop: Optional[str] = None) -> float:
+    """How much the picture jitters: the global shift between frames (phase
+    correlation on small frames), minus its smooth part (a pan is not a shake)."""
+    import cv2
+    import numpy as np
+    from adaptation.sources import _gray_frames
+    f = _gray_frames(path, 96, 54, 15.0, crop, ss=t0, t=length).astype(np.float32)
+    if len(f) < 8:
+        return 0.0
+    win = np.outer(np.hanning(54), np.hanning(96)).astype(np.float32)
+    shifts = np.array([cv2.phaseCorrelate(f[i] * win, f[i + 1] * win)[0] for i in range(len(f) - 1)])
+    path_ = np.cumsum(shifts, axis=0)
+    k = np.ones(7) / 7
+    smooth = np.stack([np.convolve(path_[:, j], k, mode="same") for j in (0, 1)], 1)
+    return float(np.sqrt(np.mean(np.sum((path_ - smooth)[3:-3] ** 2, 1))) / 96) if len(path_) > 8 else 0.0
+
+
+def stabilised(path: str, t0: float, length: float, out: str) -> str:
+    """The clip's seconds steadied (vid.stab, two passes): a smoothed camera
+    path, a slight zoom so no black edge shows."""
+    trf = out + ".trf"
+    common = ["ffmpeg", "-v", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{length:.3f}", "-i", path]
+    subprocess.run(common + ["-vf", f"vidstabdetect=shakiness=6:accuracy=9:result='{_filter_path(trf)}'", "-f", "null", "-"],
+                   check=True, capture_output=True)
+    subprocess.run(common + ["-vf", f"vidstabtransform=input='{_filter_path(trf)}':smoothing=12:optzoom=1:interpol=bicubic",
+                             "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-an", out], check=True, capture_output=True)
+    return out
 
 
 def _zoom_filter(z: str, cx: str, cy: str, shake: str, vw: int, vh: int) -> str:
@@ -483,13 +611,14 @@ def clip_chain(i: int, k: int, c: Dict, s: Dict, preview: bool = False) -> List[
         hc = _even(wc / aspect)
         g.append(f"{pre}scale={wc}:{hc}:flags=bicubic,"
                  f"{_zoom_filter(f'{1.08 if not z else 1.02}*{punch}*{zoom}', cx, cy, shake, BOX_W, BOX_H)},"
-                 f"crop={BOX_W}:{BOX_H},setsar=1[v{k}]")
+                 f"crop={BOX_W}:{BOX_H}{SHARPEN if c.get('low_res') else ''},setsar=1[v{k}]")
     else:                                                    # wide or tall: on a blurred copy of itself
         fw, fh = (BOX_W, _even(BOX_W / aspect)) if aspect > box_aspect else (_even(BOX_H * aspect), BOX_H)
         cover_w = _even(max(BOX_W, BOX_H * aspect) * 1.02)
         g.append(f"{pre}split[c{k}a][c{k}b]")
         g.append(f"[c{k}b]scale={cover_w}:-2,crop={BOX_W}:{BOX_H},boxblur=24:4,eq=brightness=-0.12[bg{k}]")
-        g.append(f"[c{k}a]scale={fw}:{fh}:flags=bicubic,{_zoom_filter(f'1.04*{punch}*{zoom}', cx, cy, shake, fw, fh)}[fg{k}]")
+        g.append(f"[c{k}a]scale={fw}:{fh}:flags=bicubic,{_zoom_filter(f'1.04*{punch}*{zoom}', cx, cy, shake, fw, fh)}"
+                 f"{SHARPEN if c.get('low_res') else ''}[fg{k}]")
         g.append(f"[bg{k}][fg{k}]overlay=(W-w)/2:(H-h)/2,setsar=1[v{k}]")
     return g
 
@@ -564,16 +693,26 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
         c = clips[s["clip"]]
         if s["clip"] not in lit:
             try:
-                lit[s["clip"]] = light(c)
+                lit[s["clip"]] = look(c)
             except Exception:
                 lit[s["clip"]] = None
         c = {**c, "eq": lit[s["clip"]]}
         t0, length = _window(s)
+        src, seek = c["src"], t0
+        if not preview:                 # a shaky hand-held shot is steadied (the preview stays fast)
+            try:
+                before = shakiness(c["src"], t0, length, c.get("crop"))
+                if before > SHAKY:
+                    steady = stabilised(c["src"], t0, length, os.path.join(work_dir, f"stab_{s['k']}.mp4"))
+                    if shakiness(steady, 0.0, length, c.get("crop")) < before * 0.7:   # kept only if clearly steadier
+                        src, seek = steady, 0.0
+            except Exception:
+                src, seek = c["src"], t0
         frames = max(1, round((s["out"] + s["dur"]) * FPS) - round(s["out"] * FPS))
         g = clip_chain(0, s["k"], *_shifted(c, s, t0), preview)
         g.append(f"[v{s['k']}]tpad=stop_mode=clone:stop_duration=1[vo]")
         out = os.path.join(work_dir, f"seg_{s['k']}.mp4")
-        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{length:.3f}", "-i", c["src"],
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{seek:.3f}", "-t", f"{length:.3f}", "-i", src,
                             "-filter_complex", ";".join(g), "-map", "[vo]", "-frames:v", str(frames), "-r", str(FPS),
                             "-c:v", "libx264", "-preset", "ultrafast" if preview else "veryfast",
                             "-crf", "24" if preview else "12", "-pix_fmt", "yuv420p", "-an", out],
@@ -605,7 +744,8 @@ def render(*args, **kw) -> Dict:
 def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voice_path: str, lang_code: str,
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
            preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None,
-           style: Optional[str] = None, effects: Optional[List[Optional[Dict]]] = None) -> Dict:
+           style: Optional[str] = None, effects: Optional[List[Optional[Dict]]] = None,
+           beats: Optional[List[float]] = None) -> Dict:
     """annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
     picture box under the banners and captions.
     passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
@@ -613,7 +753,7 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     delogo?, audio_ok?}. Returns {duration, segments, captions}."""
     lang = lang_of(lang_code)
     os.makedirs(work_dir, exist_ok=True)
-    segs, total = build_timeline(passages, clips, effects)
+    segs, total = build_timeline(passages, clips, effects, beats)
 
     look = style_of(style)
     banners = [banner_png(p["bandeau"], os.path.join(work_dir, f"banner_{k}.png"), lang, look) for k, p in enumerate(passages)]
@@ -634,7 +774,17 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     bi = add_input("-i", _picture_box(segs, clips, work_dir, preview, part(0.0, 0.5)))
     g.append(f"[{bi}:v]setpts=PTS-STARTPTS,fps={FPS}[box]")
     box = "box"
-    for j, an in enumerate(annotations or []):              # each one a PNG sequence, shifted to its moment
+    look_ = style_of(style)
+    numbers = []                                            # a strong figure, big, at the plan's strong moment
+    for s in segs:
+        text = (s.get("fx") or {}).get("chiffre")
+        if text:
+            start = min(max(s["out"], s["impact_out"] - 0.15), s["out"] + max(0.0, s["dur"] - 1.0))
+            length = min(NUMBER_S, s["out"] + s["dur"] - start)
+            d = os.path.join(work_dir, f"num{s['k']}")
+            if length > 0.4 and number_frames(text, d, lang, look_, length):
+                numbers.append({"dir": d, "start": start})
+    for j, an in enumerate(list(annotations or []) + numbers):  # each one a PNG sequence, shifted to its moment
         ai = add_input("-framerate", str(FPS), "-i", os.path.join(an["dir"], "f_%03d.png"))
         g.append(f"[{ai}:v]format=rgba,setpts=PTS-STARTPTS+{an['start']:.3f}/TB[an{j}]")
         g.append(f"[{box}][an{j}]overlay=0:0:eof_action=pass[bx{j}]")
@@ -693,6 +843,14 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     ki = add_input("-loop", "1", "-i", corners)
     bi = [add_input("-loop", "1", "-i", b) for b in banners]
     g.append(f"color=black:s={W}x{H}:r={FPS}:d={total:.3f}[bgc]")
+    first = os.path.join(work_dir, "first.png")
+    if total > 3 and subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", os.path.join(work_dir, "box.mp4"),
+                                     "-frames:v", "1", first]).returncode == 0 and os.path.exists(first):
+        # the end dissolves into the very first picture: watched again, the Short loops seamlessly
+        li = add_input("-loop", "1", "-framerate", str(FPS), "-t", f"{total:.3f}", "-i", first)
+        g.append(f"[{li}:v]format=rgba,fade=t=in:st={total - LOOP_S:.3f}:d={LOOP_S}:alpha=1[loopimg]")
+        g.append(f"[{box}][loopimg]overlay=0:0:eof_action=pass[boxl]")
+        box = "boxl"
     g.append(f"[bgc][{box}]overlay={BOX_X}:{BOX_Y}:shortest=1[p0]")
     g.append(f"[p0][{ki}:v]overlay={BOX_X}:{BOX_Y}:shortest=1[p1]")
     g.append(f"[p1][{ci}:v]overlay=0:{CREDIT_Y}:shortest=1[p2]")

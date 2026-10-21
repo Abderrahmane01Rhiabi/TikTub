@@ -30,19 +30,23 @@ MIN_SPEED = 0.5       # a short clip is never slowed more than this
 ZOOM = 1.35           # push-in on a target
 ZOOM_MAX_UPSCALE = 1.7  # beyond this the source pixels show
 TRANSITION = 0.2      # the whip zoom
-MAX = {"ralenti": 2, "zoom": 3, "arret": 1, "transition": 3}
-KEYS = ("ralenti", "zoom", "arret", "transition")
+MAX = {"ralenti": 2, "zoom": 3, "arret": 1, "transition": 3, "chiffre": 2}
+KEYS = ("ralenti", "zoom", "arret", "transition", "chiffre")
 
 
 def clean(e) -> Optional[Dict]:
-    """{"ralenti": bool, "zoom": "target" | None, "arret": bool, "transition": bool} or None when nothing."""
+    """{"ralenti": bool, "zoom": "target" | None, "arret": bool, "transition": bool,
+    "chiffre": "2 m" | None} or None when nothing."""
     if not isinstance(e, dict):
         return None
-    zoom = " ".join(str(e.get("zoom") or "").split())[:120] or None
-    if zoom and zoom.lower() in ("null", "none", "false", "non", "aucun"):
-        zoom = None
-    out = {"ralenti": bool(e.get("ralenti")), "zoom": zoom, "arret": bool(e.get("arret")),
+    texts = {}
+    for key, size in (("zoom", 120), ("chiffre", 16)):
+        v = " ".join(str(e.get(key) or "").split())[:size] or None
+        texts[key] = None if v and v.lower() in ("null", "none", "false", "non", "aucun") else v
+    out = {"ralenti": bool(e.get("ralenti")), "zoom": texts["zoom"], "arret": bool(e.get("arret")),
            "transition": bool(e.get("transition"))}
+    if texts["chiffre"]:
+        out["chiffre"] = texts["chiffre"]
     return out if any(out.values()) else None
 
 
@@ -56,7 +60,7 @@ def cap(fx: List[Optional[Dict]]) -> List[Optional[Dict]]:
             for key in KEYS:
                 if e.get(key):
                     if seen[key] >= MAX[key] or (key == "transition" and k == 0):   # the first plan has nothing before it
-                        e[key] = None if key == "zoom" else False
+                        e[key] = None if key in ("zoom", "chiffre") else False
                     else:
                         seen[key] += 1
         out.append(clean(e))
@@ -195,7 +199,11 @@ Choisis les effets de montage, PEU mais aux bons endroits (un montage pro n'en m
   1 plan au plus.
 - "transition": true -> ce plan commence une NOUVELLE partie de l'histoire (apres l'accroche, la reponse, la
   chute) ; 3 plans au plus, jamais le plan 1.
-JSON uniquement : {{"plans": [{{"plan": numero, "ralenti": false, "zoom": null, "arret": false, "transition": false}}]}}"""
+- "chiffre": "2 m" -> un CHIFFRE FORT dit dans la phrase ou lisible dans l'image (hauteur, vitesse, force, prix,
+  record), ecrit tres court (au plus 12 caracteres, dans la langue de la phrase) : il apparait en grand ; null
+  sinon ; 2 plans au plus, seulement si le chiffre frappe.
+JSON uniquement : {{"plans": [{{"plan": numero, "ralenti": false, "zoom": null, "arret": false, "transition": false,
+"chiffre": null}}]}}"""
 
 
 def decide(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=None) -> Optional[List[Optional[Dict]]]:
