@@ -205,3 +205,13 @@ def test_a_latin_figure_stays_left_to_right_in_an_arabic_video(tmp_path, monkeyp
     render.number_frames("1481 N", str(tmp_path / "a"), langs.lang("ar"), render.style_of("flamme"), 0.2)
     render.number_frames("٢ م", str(tmp_path / "b"), langs.lang("ar"), render.style_of("flamme"), 0.2)
     assert ("1481 N", None) in seen and ("٢ م", "rtl") in seen
+
+
+def test_beats_are_plain_numbers_the_database_can_keep(tmp_path):
+    import json
+    clicks = str(tmp_path / "clicks.wav")
+    _ff("-f", "lavfi", "-i", "sine=f=1000:d=0.03,apad=whole_dur=0.5", "-af", "aloop=loop=-1:size=22050",
+        "-t", "12", "-ar", "44100", clicks)
+    beats = render.beats_of(clicks, 0, 10)
+    assert beats and all(type(b) is float for b in beats)
+    json.dumps(beats)                                   # a numpy number once broke the final render's save

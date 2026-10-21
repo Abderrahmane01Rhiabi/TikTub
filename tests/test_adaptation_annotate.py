@@ -94,7 +94,7 @@ def test_locate_reads_boxes_and_ignores_bad_ones(tmp_path):
 def test_render_lays_the_annotations_on_the_picture_box(monkeypatch, tmp_path):
     seen = {}
     monkeypatch.setattr(R, "_run", lambda cmd, total, cb: seen.setdefault("cmd", cmd))
-    monkeypatch.setattr(R, "_picture_box", lambda segs, clips, work, preview, progress=None: "box.mp4")
+    monkeypatch.setattr(R, "_picture_box", lambda segs, clips, work, preview, progress=None, notes=None: "box.mp4")
     monkeypatch.setattr(os, "replace", lambda a, b: None)
     passages = [{"clip": "A", "bandeau": "X : Y", "texte": "Bonjour.", "mots_cles": [], "start": 0.0, "end": 1.0, "words": []}]
     clips = {"A": clip(1080, 1920, impact=1.0)}

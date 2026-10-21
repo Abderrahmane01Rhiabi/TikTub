@@ -1540,8 +1540,44 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
                                                    offset + share * (0.3 + 0.6 * f)), annotations=anns,
                       style=_style_of(t), effects=fx, beats=beats)
+    t["style"] = _style_of(t)           # the look really used (the channel's may have changed since the project began)
+    r["recette"] = _recipe(p, t, r.get("recette") or {})
     c = checks.verify(out, voice_mp3, t["voice"]["passages"], [x["start"] for x in r.get("segments") or []] or None)
-    return {"path": out, "summary": r, "checks": c}
+    return {"path": out, "summary": r, "checks": c, "recette": r["recette"]}
+
+
+def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
+    """Everything that made this video, in one place: kept with the final
+    render and its publication record, to compare with how the audience
+    liked it and to make another video the same way."""
+    sc, plans = t.get("script") or {}, rendered.get("plans") or []
+    segs = [x for x in plans]
+    total = round(sum(x.get("duree", 0) for x in segs), 2)
+    return {
+        "projet": p["project_id"], "mode": p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
+        "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
+        "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
+                    "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique")},
+        "structure": {"duree_s": total, "plans": len(segs), "accroche_s": segs[0]["duree"] if segs else None,
+                      "plan_moyen_s": round(total / len(segs), 2) if segs else None,
+                      "coupes_sur_le_temps": sum(1 for x in segs if x.get("coupe_sur_le_temps")),
+                      "fin_en_boucle": rendered.get("fin_en_boucle")},
+        "titre": sc.get("titre"),
+        "plans": [{**x, "texte": ps.get("texte"), "bandeau": ps.get("bandeau"), "mots_cles": ps.get("mots_cles"),
+                   "fleche": ps.get("annotation"), "effets_demandes": ps.get("effets"),
+                   "image": (p["clips"].get(ps.get("clip")) or {}).get("desc"),
+                   "source": _source_url(p, p["clips"].get(ps.get("clip")) or {})}
+                  for x, ps in zip(segs, sc.get("passages") or [])],
+    }
+
+
+def _source_url(p: Dict, c: Dict) -> Optional[str]:
+    """The video a clip was cut from: its pick (Script d'abord), else the
+    project's source list (Sources d'abord)."""
+    if c.get("pick_key"):
+        return c["pick_key"][0]
+    urls, i = p.get("source_urls") or [], c.get("source")
+    return urls[i] if isinstance(i, int) and 0 <= i < len(urls) else None
 
 
 def _style_of(t: Dict) -> str:
@@ -1780,6 +1816,7 @@ def run_final(pid: str, report: Optional[Report] = None):
             os.makedirs("processed_videos", exist_ok=True)
             shutil.copy(made["path"], dest)
             rec = publication_record(p, t, dest)
+            rec["recette"] = made.get("recette")
             thumb = _thumbnail(made, dest)
             if thumb:
                 rec["thumbnail_path"] = thumb

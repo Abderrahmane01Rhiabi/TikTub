@@ -15,6 +15,7 @@ first second: the hook; the last one late, just before the video loops).
               when the clip's sound has speech in it)
 """
 
+import json
 import math
 import os
 import re
@@ -158,7 +159,7 @@ def beats_of(music: str, start: float, length: float) -> List[float]:
     count = int(n / period)
     phase = max(range(int(period)), key=lambda ph: float(sum(flux[min(n - 1, int(round(ph + j * period)))]
                                                             for j in range(count))))
-    return [round((phase + j * period) / fps, 3) for j in range(count + 1) if phase + j * period < n]
+    return [round(float((phase + j * period) / fps), 3) for j in range(count + 1) if phase + j * period < n]
 
 
 def out_time(segs: List[Dict], vt: float) -> Optional[float]:
@@ -682,7 +683,8 @@ def _shifted(c: Dict, s: Dict, t0: float) -> Tuple[Dict, Dict]:
 RENDERING = threading.BoundedSemaphore(1)   # two final renders at once once ran out of memory
 
 
-def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, preview: bool, progress=None) -> str:
+def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, preview: bool, progress=None,
+                 notes: Optional[Dict[int, Dict]] = None) -> str:
     """The picture box of the whole video, made one segment at a time, then
     joined without re-encoding. In one graph ffmpeg reads every source at once
     and keeps the frames of the segments still waiting: a final render was
@@ -699,6 +701,8 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
         c = {**c, "eq": lit[s["clip"]]}
         t0, length = _window(s)
         src, seek = c["src"], t0
+        if notes is not None:           # what the render decided for this plan (the recipe)
+            notes[s["k"]] = {"correction_image": lit[s["clip"]], "nettete": bool(c.get("low_res")), "stabilise": False}
         if not preview:                 # a shaky hand-held shot is steadied (the preview stays fast)
             try:
                 before = shakiness(c["src"], t0, length, c.get("crop"))
@@ -706,6 +710,8 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
                     steady = stabilised(c["src"], t0, length, os.path.join(work_dir, f"stab_{s['k']}.mp4"))
                     if shakiness(steady, 0.0, length, c.get("crop")) < before * 0.7:   # kept only if clearly steadier
                         src, seek = steady, 0.0
+                        if notes is not None:
+                            notes[s["k"]]["stabilise"] = True
             except Exception:
                 src, seek = c["src"], t0
         frames = max(1, round((s["out"] + s["dur"]) * FPS) - round(s["out"] * FPS))
@@ -771,7 +777,8 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
 
     vin = add_input("-i", voice_path)
     part = lambda a, b: (lambda f: progress_cb(a + (b - a) * f)) if progress_cb else None
-    bi = add_input("-i", _picture_box(segs, clips, work_dir, preview, part(0.0, 0.5)))
+    notes: Dict[int, Dict] = {}
+    bi = add_input("-i", _picture_box(segs, clips, work_dir, preview, part(0.0, 0.5), notes))
     g.append(f"[{bi}:v]setpts=PTS-STARTPTS,fps={FPS}[box]")
     box = "box"
     look_ = style_of(style)
@@ -869,7 +876,19 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", tmp]
     _run(cmd, total, part(0.5, 1.0))
     os.replace(tmp, out_path)
-    return {"duration": round(total, 2), "captions": n_caps,
+    bpm = round(60 / (beats[1] - beats[0])) if beats and len(beats) > 1 else None
+    on_beat = lambda s: bool(beats and s["k"] > 0 and min(abs(s["out"] - b) for b in beats) < 0.02)
+    recipe = {"style": style or "classique", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
+              "tempo_musique": bpm, "plans": []}
+    for s in segs:
+        fx = dict(s.get("fx") or {})
+        if isinstance(fx.get("zoom"), dict):
+            fx["zoom"] = {"force": fx["zoom"]["z"], "vers": [fx["zoom"]["cx"], fx["zoom"]["cy"]]}
+        recipe["plans"].append({"clip": s["clip"], "debut": round(s["out"], 2), "duree": round(s["dur"], 2),
+                                "coupe_sur_le_temps": on_beat(s), "effets_appliques": fx,
+                                **notes.get(s["k"], {})})
+    recipe = json.loads(json.dumps(recipe, default=lambda o: o.item() if hasattr(o, "item") else str(o)))  # plain JSON
+    return {"duration": round(total, 2), "captions": n_caps, "recette": recipe,
             "segments": [{"clip": s["clip"], "start": round(s["out"], 2), "end": round(s["out"] + s["dur"], 2),
                           "impact": round(s["impact_out"], 2)} for s in segs]}
 
