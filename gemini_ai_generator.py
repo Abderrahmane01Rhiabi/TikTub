@@ -220,7 +220,8 @@ Respond with JSON:
                 })
         return self._generate_content(parts, max_tokens, temperature=temperature)
 
-    def _generate_content(self, parts: List[Dict], max_tokens: int = 1000, timeout: int = 30, temperature: float = 0.7) -> Dict:
+    def _generate_content(self, parts: List[Dict], max_tokens: int = 1000, timeout: int = 30, temperature: float = 0.7,
+                          thinking: Optional[int] = None) -> Dict:
         """Shared generateContent call/response-parsing path for both the
         inline-image prompts (call_gemini_api) and the native file_data
         (whole video, image+audio together) prompts used by analyze_video_native."""
@@ -233,6 +234,8 @@ Respond with JSON:
                     "response_mime_type": "application/json"
                 }
             }
+            if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
+                payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking}
 
             response = requests.post(
                 self.base_url,

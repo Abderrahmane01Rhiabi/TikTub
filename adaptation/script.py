@@ -68,9 +68,13 @@ JSON uniquement :
 
 REVISE_PROMPT = """Voici le script d'un Short (JSON) :
 {script}
-Clips (lettre: duree utilisable en secondes) : {durees}
+Les clips (ce qu'on y voit, duree utilisable) :
+{clips}
 Corrige-le selon cette demande, sans rien changer d'autre, et renvoie le JSON complet au meme format :
-{demande}"""
+{demande}
+La demande decrit le probleme avec les mots de la personne : ne les recopie pas dans le script. Ecris pour le
+spectateur, au ton du reste du script, des phrases naturelles et completes, pas plus longues que celles qu'elles
+remplacent (mauvais exemple, qui recopie la demande : "Comme ce thon qui nage autour d'une ligne de peche, …")."""
 
 
 CRITIQUE_PROMPT = """Tu es un relecteur exigeant de scripts de YouTube Shorts, langue : {langue}.
@@ -165,11 +169,10 @@ def critique(script: Dict, lang_code: str, clips: Dict[str, Dict], gemini=None) 
 
 
 def revise(script: Dict, clips: Dict[str, Dict], request: str, gemini=None) -> Dict:
-    durees = {cid: round(c["end"] - c["start"], 1) for cid, c in clips.items()}
-    r = (gemini or _gemini())._generate_content(
+    r = (gemini or _gemini())._generate_content(       # what each clip shows: "fit the picture" needs it
         [{"text": REVISE_PROMPT.format(script=json.dumps(script, ensure_ascii=False, indent=1),
-                                       durees=json.dumps(durees), demande=request)}],
-        max_tokens=16000, timeout=180, temperature=0.4)
+                                       clips=clip_listing(clips), demande=request)}],
+        max_tokens=16000, timeout=180, temperature=0.4, thinking=1024)    # measured: 56 s -> 10 s, as good
     return normalise(r, clips)
 
 

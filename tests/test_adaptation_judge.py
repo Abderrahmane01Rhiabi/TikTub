@@ -9,7 +9,7 @@ from adaptation import pipeline as ap
 
 
 def _clips():
-    return {f"P{k}": {"id": f"P{k}", "source": k - 1, "start": 0, "end": 4, "usable": True, "marks": [],
+    return {f"P{k}": {"id": f"P{k}", "source": k - 1, "start": 0, "end": 4, "impact": 1, "usable": True, "marks": [],
                       "desc": f"plan {k}"} for k in (1, 2, 3, 4)}
 
 
@@ -137,3 +137,13 @@ def test_the_credits_can_be_corrected_until_the_final_render(monkeypatch):
     p["status"] = "rendering"
     with pytest.raises(ap.PipelineError):
         ap.set_credits("x", "@b")
+
+
+def test_the_chat_sees_what_each_clip_shows_and_answers_quickly():
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.prompt, G.kw = parts[0]["text"], kw
+            return {"passages": [{"clip": "P1", "texte": "Une phrase naturelle."}]}
+    out = script.revise({"passages": [{"clip": "P1", "texte": "A."}]}, _clips(), "le clip montre plan 1", gemini=G())
+    assert out["passages"][0]["texte"] == "Une phrase naturelle."
+    assert "P1: plan 1" in G.prompt and "ne les recopie pas" in G.prompt and G.kw["thinking"] == 1024
