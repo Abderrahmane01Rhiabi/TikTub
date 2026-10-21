@@ -1239,7 +1239,22 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
     music_dir = Path(channel_manager.get_assets_dirs(channel_name)["music"])
     music = sorted(p.name for p in music_dir.iterdir() if p.suffix.lower() in MUSIC_EXTENSIONS) \
         if music_dir.exists() else []
-    return {"settings": s, "music_files": music, "voices": [_serialize_voice(v) for v in ad.voices_for(s["language"])]}
+    from adaptation.render import STYLES
+    return {"settings": s, "music_files": music, "voices": [_serialize_voice(v) for v in ad.voices_for(s["language"])],
+            "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
+
+
+@app.get("/api/adaptation/styles/{name}/preview")
+def adaptation_style_preview(name: str, lang: str = "fr"):
+    """A banner and a caption line drawn in one of the channel styles."""
+    from adaptation import render, langs
+    if name not in render.STYLES:
+        raise HTTPException(status_code=404, detail="Style inconnu")
+    out = os.path.join("temp", "style_previews", f"{name}_{lang}.jpg")
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        render.style_preview(name, langs.lang(lang), out)
+    return FileResponse(out, media_type="image/jpeg")
 
 
 @app.get("/api/channels/{channel_name}/adaptation")
@@ -1286,7 +1301,7 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
     def run():
         try:
             report = lambda phase, f: progress.update(key, f, phase=phase)
-            if step == "voicing":
+            if step in ("voicing", "scripting") and only:
                 runner(pid, report, only=only)
             else:
                 runner(pid, report)
@@ -1294,6 +1309,11 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
         except Exception as e:
             progress.finish(key, error=str(e))
     threading.Thread(target=run, daemon=True).start()
+
+
+def ap_wanting(p: dict):
+    from adaptation import pipeline as ap
+    return ap.wanting(p)
 
 
 def _serialize_adaptation(p: dict, full: bool = True) -> dict:
@@ -1305,6 +1325,10 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["mode"] = p.get("mode") or "sources"
     base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
     base["fetch_note"] = p.get("fetch_note")
+    try:
+        base["wanting"] = [k + 1 for k in ap_wanting(p)] if p.get("status") in ("images_review", "sources_search") else []
+    except Exception:
+        base["wanting"] = []
     base["group"] = p.get("group")
     base["angle"] = p.get("angle")
     base["angles"] = p.get("angles") or []
@@ -1325,6 +1349,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "rtl": langs.lang(t["language"])["rtl"], "voice_id": t["voice_id"], "approved": t.get("approved"),
             "validated": t.get("validated"), "video_id": t.get("video_id"), "script": t.get("script"),
             "problems": t.get("problems") or [], "music": os.path.basename(t["music_path"]) if t.get("music_path") else None,
+            "angle": t.get("angle"), "accords": t.get("accords"),
             "preview_url": video_media_url({"video_path": prev["path"]}) if prev.get("path") and os.path.exists(prev["path"]) else None,
             "checks": prev.get("checks"), "final_checks": fin.get("checks"),
             "duration": (prev.get("summary") or {}).get("duration"),
@@ -1334,7 +1359,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
-                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced")},
+                                                  "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced", "note", "absent", "action", "w", "h", "texte_efface")},
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
                          for c in (p.get("clips") or {}).values()]
         base["sources"] = p.get("sources") or []
@@ -1516,6 +1541,16 @@ class AdaptationNewVersion(BaseModel):
     channel: str
 
 
+@app.post("/api/adaptations/{pid}/targets/{channel}/angle")
+def change_adaptation_target_angle(pid: str, channel: str, req: AdaptationAngle):
+    """Sources d'abord with versions: another angle for one channel's script (about a minute)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.change_target_angle, pid, channel, req.index, req.custom)
+    _start_adaptation_step(pid, "scripting", only=channel)
+    return _serialize_adaptation(p)
+
+
 @app.post("/api/adaptations/{pid}/new-version")
 def new_adaptation_version(pid: str, req: AdaptationNewVersion):
     """Another channel's version of the same Short, with a new angle."""
@@ -1573,6 +1608,16 @@ def start_adaptation_images(pid: str):
     return _serialize_adaptation(p)
 
 
+@app.post("/api/adaptations/{pid}/images/more")
+def more_adaptation_images(pid: str):
+    """Search again, by action, for the plans still without footage (2 to 5 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.start_more_images, pid)
+    _start_adaptation_step(pid, "searching")
+    return _serialize_adaptation(p)
+
+
 class AdaptationPick(BaseModel):
     url: Optional[str] = None
     debut: float = 0.0
@@ -1617,6 +1662,14 @@ def adapt_adaptation_plan(pid: str, plan: int):
     return _serialize_adaptation(_adaptation_call(ap.adapt_plan, pid, plan))
 
 
+@app.post("/api/adaptations/{pid}/back-to-script")
+def back_to_adaptation_script(pid: str):
+    """From the previews back to the scripts (a clip or a sentence to change)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.back_to_script, pid))
+
+
 @app.post("/api/adaptations/{pid}/back-to-images")
 def back_to_adaptation_images(pid: str):
     from adaptation import pipeline as ap
@@ -1646,6 +1699,22 @@ def force_adaptation_clip(pid: str, cid: str):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.force_clip, pid, cid))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/keep")
+def keep_adaptation_passage(pid: str, channel: str, k: int):
+    """The check says the sentence and its picture don't match: keep it anyway."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.keep_passage, pid, channel, k))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/proposal")
+def use_adaptation_proposal(pid: str, channel: str, k: int):
+    """Take the sentence the check wrote for what the clip shows."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.use_proposal, pid, channel, k))
 
 
 @app.post("/api/adaptations/{pid}/fetch")

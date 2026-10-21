@@ -248,6 +248,45 @@ JSON uniquement : {{"plans": [{{"plan": numero, "anglais": ["", ""], "pays": "",
   "locales": ["", ""]}}]}}"""
 
 
+ACTION_QUERIES_PROMPT = """On cherche en video une ACTION precise, pour des plans d'un Short ou rien n'a ete trouve
+en cherchant le sujet. L'action peut se trouver au milieu d'une video qui parle d'AUTRE CHOSE : compilations
+(fails, best of, caught on camera, top 10), videos GoPro / POV / casque, ralentis, vlogs, reportages, highlights
+de sport, extraits de tournages amateurs. On prendra juste les 3 secondes utiles.
+{plans}
+Pour CHAQUE plan, 5 recherches YouTube en ANGLAIS (3 a 6 mots) qui ramenent ces videos-la, pas des tutoriels du
+sujet : decris l'action telle qu'un titre de compilation ou de video amateur la nommerait. Jamais de film ni de
+serie.
+JSON uniquement : {{"plans": [{{"plan": numero, "recherches": ["", "", "", "", ""]}}]}}"""
+
+
+def action_queries(found: List[Dict], gemini=None) -> Dict[int, List[str]]:
+    """Searches by ACTION for plans the subject search left empty: footage
+    where it happens inside a video about something else (measured on a
+    parkour Short: 5 plans of 7 without footage, every candidate a parkour
+    video). {index in found: [queries]}."""
+    if not found:
+        return {}
+    try:
+        from gemini_ai_generator import GeminiAIGenerator
+        g = gemini or GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
+        listing = "\n".join(f"{i + 1}. action : {s['scene']}" + (f" | phrase : « {s['phrase']} »" if s.get("phrase") else "")
+                            for i, s in enumerate(found))
+        r = g._generate_content([{"text": ACTION_QUERIES_PROMPT.format(plans=listing)}], max_tokens=4000, timeout=90,
+                                temperature=0.5)
+    except Exception:
+        return {}
+    out = {}
+    for e in (r.get("plans") if isinstance(r, dict) else None) or []:
+        try:
+            i = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        qs = [str(q).strip() for q in e.get("recherches") or [] if str(q).strip()][:5]
+        if 0 <= i < len(found) and qs:
+            out[i] = qs
+    return out
+
+
 def plan_queries(found: List[Dict], gemini=None) -> Dict[int, Dict]:
     """Search words for the storyboard's images (written in French, as a person
     would see them): {plan: {"recherches", "pays", "langue", "locales"}}."""
@@ -276,22 +315,36 @@ def plan_queries(found: List[Dict], gemini=None) -> Dict[int, Dict]:
 
 def wanted_from_storyboard(sb_plans: List[Dict], queries: Dict[int, Dict]) -> List[Dict]:
     """The storyboard's plans as "scenes to find" for suggest(): the image
-    is the scene, the reference shots it draws on bring their pictures."""
+    is the scene, the reference shots it draws on bring their pictures; the
+    sentence said over it goes along (measured on a parkour Short: the exact
+    footage of a glass dome was found for "redirect the shock's energy" —
+    judged on the image alone, nothing saw that it said something else)."""
     out = []
     for i, pl in enumerate(sb_plans):
         q = queries.get(i) or {}
+        textes = pl.get("textes") or {}
+        phrase = next((textes[c]["texte"] for c in ("fr", *textes) if c in textes and textes[c].get("texte")), "")
         out.append({"scene": pl["image"], "plans": [k - 1 for k in pl.get("plans_modele") or [] if k >= 1],
-                    "indices": "", "recherches": q.get("recherches") or [" ".join(pl["image"].split()[:8])]})
+                    "indices": "", "phrase": phrase,
+                    "recherches": q.get("recherches") or [" ".join(pl["image"].split()[:8])]})
     return out
 
 
 RANK = {"exacte": 0, "equivalente": 1, "partielle": 2}
 
 # What makes a moment unusable whatever the cleaning does: only what is seen and can't be removed. Not
-# burnt-in text or a logo (cropped or painted), not the sound (replaced by the narration), not "a compilation".
+# burnt-in text or a logo (cropped or painted), not the sound (replaced by the narration), not "a compilation",
+# not "an advert" (a brand's promo film shows real footage, its logo is painted: a warning, never a refusal).
 REAL_FAULTS = re.compile(r"pr[ée]sentat|presenter|interview|journaliste|plateau|split|[ée]cran (divis|partag|scind)|"
-                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|publicit|\bpub\b|flou|blur|"
+                         r"incrustation d.[ée]cran|[ée]cran de fin|end ?screen|g[ée]n[ée]rique|flou|blur|"
                          r"noir|black|image fixe|photo|diaporama|slide|dessin|anim[ée]|jeu vid[ée]o|t[ée]l[ée]phone film", re.I)
+WARNINGS = re.compile(r"publicit|\bpub\b|promo|sponsor", re.I)
+
+
+def warnings_of(text: str) -> str:
+    """Reasons worth a look but not a refusal (an advert's footage)."""
+    parts = [x.strip() for x in re.split(r"[,;/]| et ", text or "") if x.strip()]
+    return ", ".join(x for x in parts if WARNINGS.search(x) and not REAL_FAULTS.search(x))
 
 
 def real_faults(text: str) -> str:
@@ -310,8 +363,8 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     for i, pl in enumerate(sb_plans):
         options = []
         for url, v in verifs.items():
-            if url in dead:
-                continue
+            if url in dead or v.get("film") or v.get("remontage"):
+                continue                    # a film, or someone else's re-edit: only by hand (rights)
             e = (v.get("par_scene") or {}).get(str(i))
             if not e or e.get("niveau") not in RANK:
                 continue
@@ -323,8 +376,10 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
                     continue
                 if (url, round(a)) in used:
                     continue
-                # someone else's re-edit, or a presenter / split screen at that moment: only when nothing better
-                penalty = (3 if v.get("remontage") else 0) + (6 if real_faults(e.get("defauts")) else 0)
+                # a presenter / split screen at that moment: only when nothing better; a poor picture
+                # (a 320x240 hook, filmed sideways, once) after the clean ones of the same level
+                penalty = (6 if real_faults(e.get("defauts")) else 0) + \
+                          (2 if str(v.get("qualite") or "").lower().startswith("mauvaise") else 0)
                 options.append((RANK[e["niveau"]] + penalty, -(b - a), url, a, b, e))
         if not options:
             picks.append(None)
@@ -334,12 +389,12 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
         c = cands.get(url) or {}
         picks.append({"url": url, "titre": c.get("title") or verifs[url].get("title") or url, "niveau": e["niveau"],
                       "moment": {"debut": a, "fin": b}, "raison": e.get("raison") or "", "auto": True,
-                      "remontage": bool(verifs[url].get("remontage")), "defauts": real_faults(e.get("defauts"))})
+                      "remontage": False, "film": False, "defauts": real_faults(e.get("defauts"))})
     return picks
 
 
 ORIGINS = {"youtube": "recherche YouTube", "langue": "recherche en langue locale", "image": "trouvée par image",
-           "compte": "compte crédité"}
+           "compte": "compte crédité", "action": "recherche par action"}
 
 
 def _add(cands: List[Dict], c: Dict, origin: str, by_url: Dict[str, Dict]):
@@ -535,11 +590,19 @@ Regarde cette video et dis, POUR CHAQUE plan, si elle peut servir :
 - "partielle" : le meme evenement ou la meme action, mais pas tout ce que decrit le plan (ex. le jet de gaz
   du puits, sans la tentative de le boucher) : utile, a regarder ;
 - "rien" : rien d'utilisable pour ce plan (seulement le meme theme general, ou une action differente).
-Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en secondes depuis le debut de la video).
+Quand un plan donne la phrase dite pendant ce plan, le moment doit AUSSI l'illustrer : le spectateur entend la
+phrase en regardant ce moment (une roulade pour "la roulade absorbe le choc", pas un simple atterrissage).
+Le CADRAGE et la VITESSE ne comptent pas : le montage sait zoomer sur un detail et passer au ralenti. Un
+plan demande "serre" ou "au ralenti" et filme ici de loin ou a vitesse normale reste "equivalente" si l'action
+y est bien visible.
+Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en secondes depuis le debut de la video),
+PRECIS : du debut a la fin de l'action elle-meme, pas de la sequence autour.
 {modele}"remontage" = true si cette video est elle-meme un montage d'un autre createur PAR-DESSUS les images de quelqu'un
 d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee), false si ce sont des images d'origine.
+"film" = true si ce sont des images d'un FILM, d'une serie, d'un clip musical ou d'une emission TV (production
+professionnelle avec des droits), false pour des videos de particuliers, de sportifs ou de createurs.
 JSON uniquement :
-{{"copie_du_modele": true/false, "remontage": true/false,
+{{"copie_du_modele": true/false, "remontage": true/false, "film": true/false,
   "plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
              "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais",
              "defauts": "ce qui SE VOIT a ces moments et rend l'image inutilisable meme nettoyee : presentateur, interview,
@@ -587,7 +650,9 @@ def _units(scenes_: List[Dict], plans: List[Dict]) -> List[Dict]:
         if s is not None and text:
             units.append({"plan": k, "scene": s, "text": text, "indices": scenes_[s].get("indices") or ""})
     if not units:
-        units = [{"plan": i, "scene": i, "text": sc.get("scene", ""), "indices": sc.get("indices") or ""}
+        units = [{"plan": i, "scene": i, "indices": sc.get("indices") or "",
+                  "text": sc.get("scene", "") + (f" — phrase dite pendant ce plan : « {sc['phrase']} »"
+                                                 if sc.get("phrase") else "")}
                  for i, sc in enumerate(scenes_)]
     return units
 
@@ -670,6 +735,8 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
                         for n, u in enumerate(units, 1))       # numbered from 1: Gemini's reasons quote them
     seen = _watch(url, g, CHECK_PROMPT.format(plans=listing, modele=MODEL_PART.format(**model) if model else ""))
     r = seen["answer"]
+    if isinstance(r, list) and len(r) == 1 and isinstance(r[0], dict):      # once came back wrapped in a list
+        r = r[0]
     items = (r.get("plans") or r.get("scenes")) if isinstance(r, dict) else None
     if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or not isinstance(items, list):
         raise FinderError(f"Vérification impossible : {str(r)[:160]}")
@@ -703,6 +770,6 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
     moments = [m for e in par_plan.values() for m in e["moments"]]
     best = min((LEVELS.index(e["niveau"]) for e in par_plan.values()), default=3)
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
-            "copie": copy, "remontage": r.get("remontage") is True,
+            "copie": copy, "remontage": r.get("remontage") is True, "film": r.get("film") is True,
             "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
             "title": seen.get("title") or ""}

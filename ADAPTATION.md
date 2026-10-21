@@ -21,6 +21,8 @@ Tu valides à chaque étape importante.
   - **sa voix**, choisie parmi les voix de cette langue ;
   - **sa musique de fond** et **son point de départ**, avec le bouton **Prendre l'instant du lecteur**.
 
+  - **son style visuel** : **Classique** (noir et jaune), **Flamme** (rouge et or), **Néon** (cyan et rose), **Or** (bleu nuit et doré) ou **Clair** (blanc et bleu), avec un aperçu du bandeau et des sous-titres. Il s'applique aux bandeaux et aux sous-titres de **toutes les vidéos Adaptation de la chaîne** — une signature reconnaissable, différente d'une chaîne à l'autre. Un changement vaut aussi pour les projets en cours (au prochain aperçu).
+
 Une chaîne sans voix ne peut pas recevoir d'adaptation.
 
 La clé ElevenLabs doit avoir les permissions **Text to Speech** et **Voices : Read**.
@@ -45,6 +47,7 @@ En « Script d'abord », si tu coches **plusieurs chaînes**, la case **« Une v
 - le Short modèle n'est **analysé qu'une fois** ;
 - l'IA propose **plusieurs angles** (ex. « Arnaque ou coup de génie ? », « L'erreur fatale », « Le test sans pitié ») et en donne **un différent à chaque chaîne** : son accroche, son déroulé, sa fin. Ta vidéo n'est plus une traduction du modèle ni de ton autre chaîne ;
 - chaque projet suit ensuite son chemin (storyboard, images, voix, publication) ; la liste des projets montre la chaîne de chacun.
+- ce qui est identique pour toutes les versions est fait **une seule fois** et partagé : les **images du Short**, la **recherche par image** et les **recherches YouTube** avec les mêmes mots (la deuxième version cherche ses images environ 25 % plus vite). La vérification par l'IA reste propre à chaque version, puisqu'elle juge les vidéos par rapport à ses propres plans.
 
 En haut de chaque projet, les **onglets « Versions de ce Short »** montrent chaque chaîne, son angle et son étape : un clic pour passer de l'une à l'autre.
 
@@ -52,7 +55,9 @@ Dans le storyboard, **l'angle** est affiché en haut : choisis-en un autre, ou �
 
 **Nouvelle version pour une autre chaîne** (en haut d'un projet, même terminé) : la même vidéo pour une autre chaîne — par exemple une chaîne anglaise plus tard — avec **un angle jamais utilisé** dans le groupe, sans réanalyser le modèle.
 
-Sans la case : un seul projet, la même vidéo traduite dans chaque langue (comme avant).
+En **« Sources d'abord »**, la même case donne **un seul projet** : les clips sont trouvés et téléchargés **une fois**, et **chaque chaîne a son angle** au moment des scripts (écrits en même temps). L'angle de chaque chaîne est affiché sur l'écran Script, avec **Réécrire avec cet angle** (seul le script de cette chaîne est réécrit).
+
+Sans la case : la même vidéo traduite dans chaque langue (comme avant).
 
 #### Script d'abord : le storyboard
 
@@ -60,7 +65,7 @@ L'IA écrit **un storyboard commun à toutes les langues** et **un texte par lan
 - **Accroche** (2 à 3 secondes : une question ou un fait surprenant), **Promesse** (la réponse arrive), **Montée** (chaque plan apporte du nouveau), **Réponse** (une phrase complète qui répond à la question) ;
 - pour chaque plan, **🎬 l'image voulue** : une vidéo concrète, filmable et trouvable, de préférence une image du modèle (« plan 3 du modèle ») ; et sa **durée minimale** (la phrase la plus longue, toutes langues confondues).
 
-Un modèle plus puissant relit (rétention, langue, images, faits, pas de publicité), puis une correction automatique passe s'il reste un problème. **Tu relis et tu valides chaque langue** : modifier le texte d'une langue ne touche pas les autres ; modifier **une image** (commune) demande de revalider toutes les langues. La validation est refusée si l'accroche dépasse 4 secondes, si une phrase dépasse 7 secondes, si deux plans ont la même image, ou si une phrase est incomplète.
+Un modèle plus puissant relit (rétention, langue, images, faits, pas de publicité), puis une correction automatique passe s'il reste un problème. **Tu relis et tu valides chaque langue** : modifier le texte d'une langue ne touche pas les autres ; modifier **une image** (commune) demande de revalider toutes les langues. Avant toute recherche, l'IA vérifie aussi que **chaque phrase se voit dans son image** (une phrase abstraite comme « rediriger l'énergie du choc » sur une image de verrière est réécrite toute seule). La validation est refusée si l'accroche dépasse 4 secondes, si une phrase dépasse 7 secondes, si deux plans ont la même image, ou si une phrase est incomplète.
 
 #### Script d'abord : les images, plan par plan
 
@@ -82,13 +87,42 @@ Pour chaque plan, tu peux aussi :
 
 #### Script d'abord : télécharger et monter
 
+Des plans sans vidéo (ou seulement « partielle ») ? **🔎 Chercher plus** cherche leur **action** et non plus leur sujet : compilations (fails, best of, caught on camera), vidéos GoPro, vlogs, reportages… des vidéos qui parlent d'autre chose mais où l'action se passe — on n'en prend que les 3 secondes utiles. L'IA regarde les 4 meilleures nouvelles vidéos par plan (2 à 5 min) ; seuls les plans sans bonne vidéo changent. Une image impossible à filmer (animation, schéma) est refusée dès le storyboard.
+
 Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 minutes) :
 - seuls **les moments choisis** sont téléchargés (une vidéo courte entière), image **et** son ;
-- chaque plan reçoit **son clip**, coupé sur son moment et assez long pour sa phrase, **nettoyé** comme d'habitude (recadrage, logos effacés) ;
-- l'IA **contrôle chaque clip** : un présentateur, un texte incrusté, un écran partagé, une interview… le refusent (un simple logo non, il est effacé) ;
+- chaque plan reçoit **son clip**, coupé sur son moment et allongé pour sa phrase **seulement dans le même plan de la vidéo** : jamais au-delà d'une coupe (sinon une interview ou un écran de fin noir apparaissait). Si le plan est trop court, le clip reste court et le contrôle du script te demande une phrase plus courte ;
+- le clip est **nettoyé** comme d'habitude (recadrage, logos effacés) ;
+- avant de couper, l'IA **recale chaque moment** : elle regarde le morceau téléchargé de près (2 à 4 images par seconde, la recherche n'en voyait qu'environ une) et trouve la seconde exacte où l'action se voit. Mesuré sur le parkour : la glissade le long du poteau était à 316,2 s et non « 315-318 » ; un poteau annoncé à 41-43 s n'existait pas. Si l'action n'est nulle part, le plan est signalé (« l'action voulue ne se voit pas… ») avec « Utiliser quand même » ;
+- l'IA **contrôle le clip final**, tel qu'il sera montré : un présentateur, un texte incrusté, un écran partagé, une interview, un écran de fin… le refusent (un simple logo non, il est effacé). Une **vidéo publicitaire** n'est pas refusée : ses images sont souvent bonnes, une note jaune te demande juste de la vérifier avec ▶ ;
 - les **crédits** citent les chaînes de toutes les vidéos utilisées.
+- enfin l'IA **compare chaque phrase à ce que montre vraiment son clip** (3 images du clip, plus ce que le recalage a vu en mouvement : une image figée peut tromper) : ✅ va ensemble, 🟡 lien faible, ❌ on entend une chose et on voit autre chose (plus stricte pour l'accroche : le sujet doit se voir dès les 2 premières secondes). Un ❌ bloque la validation : **Prendre cette phrase** (une phrase écrite pour l'image), change de clip, ou **Garder quand même**. Mesuré sur le ralentisseur : l'accroche française « Ce dos d'âne ne pardonne rien aux chauffards » passait sur un homme qui frappe un bac dans un labo.
 
-Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
+- l'IA choisit aussi, en regardant les vrais clips, les **effets de montage** (peu, aux bons endroits) :
+  - 🐢 **ralenti** : vitesse normale, puis 2× plus lent pile sur le moment fort (images recalculées, pas répétées), puis normal — 2 plans au plus ;
+  - 🔍 **zoom** : on se rapproche doucement de la cible (« les pieds de la femme ») : un plan filmé de loin devient un gros plan — 3 plans au plus, jamais sur un plan qui a une flèche ;
+  - ⏸ **arrêt sur image** : l'image se fige un instant sur le moment fort, la flèche ou le cercle reste dessus — 1 plan ;
+  - 💨 **transition** : coup de zoom et « whoosh » quand une nouvelle partie de l'histoire commence — 3 plans au plus.
+
+  Règles automatiques du montage, mesurées sur chaque clip :
+  - **pas de temps mort** : le clip est coupé autour de l'action (0,6 s avant, 0,8 s après) et ralenti pour remplir sa phrase ; trop court même à mi-vitesse : arrêt sur image au moment fort ;
+  - **l'instant le plus fort** de chaque action (vu en mouvement) place la flèche, le ralenti, l'arrêt sur image — et l'**accroche démarre juste avant lui** ;
+  - **cadrage sur le sujet** : une image recadrée reste centrée sur la personne ou l'objet de la phrase (les flèches suivent) ;
+  - **lumière** : un clip trop sombre est éclairci ;
+  - **musique** : un niveau constant sous la voix (pas de « pompage » entre les phrases), puis elle monte doucement (+6 dB) pendant la petite fin (0,9 s) après le dernier mot.
+  - **coupes sur le rythme** : chaque changement de plan tombe sur un temps fort de la musique quand il y en a un tout près (la pause entre deux phrases bouge de 0,08 à 0,40 s ; une musique sans rythme net ne change rien) ;
+  - **couleurs** : un clip à la teinte marquée (sépia, orangé) est ramené vers le neutre, comme les autres ;
+  - **netteté** : un clip en basse résolution, agrandi, est débruité puis rendu plus net ;
+  - **stabilisation** (rendu final seulement) : un clip qui tremble (caméra à la main, GoPro) est stabilisé — et gardé seulement s'il tremble vraiment moins après ;
+  - **chiffres en grand** : l'IA peut afficher un chiffre fort (« 2 m », « 1481 N ») au moment fort d'un plan, 2 fois au plus (case « 🔢 Chiffre en grand ») ;
+  - **texte oublié** : après le nettoyage, l'IA revérifie chaque clip ; un texte ajouté encore lisible est effacé aussi (noté sur l'écran Script) ;
+  - **fin en boucle** : les 0,35 dernières secondes se fondent dans la toute première image : revue en boucle, la vidéo s'enchaîne sans coupure ;
+  - **musique selon le ton** : si la chaîne a plusieurs morceaux, l'IA choisit celui qui colle au Short et sa partie la plus forte (avec un seul morceau, rien ne change) ;
+  - **miniature** : l'image de couverture est prise à l'instant le plus fort de l'accroche et envoyée avec la vidéo (si YouTube l'accepte pour la chaîne).
+  En plus, l'app **mesure** la taille du sujet de chaque phrase dans son image : s'il prend moins d'un quart du cadre (une personne filmée de loin), le zoom sur lui est ajouté tout seul (3 zooms au plus par vidéo, jamais sous une flèche).
+  Tu peux les changer sous chaque phrase (cases et « Zoom sur… »). Un clip trop court pour sa phrase est **ralenti en entier** (jamais plus de 2×) au lieu de finir sur une image figée. La recherche juge chaque vidéo sur l'image voulue **et sur la phrase dite** ; un **film, une série, une émission TV** ou le **remontage d'un autre créateur** est marqué en rouge et n'est jamais choisi automatiquement (droits). Pour la recherche, le cadrage et la vitesse ne comptent plus : un atterrissage filmé de loin à vitesse normale est « équivalent » à un « plan serré au ralenti ». L'aperçu montre les ralentis de façon simple (rapide) ; le rendu final les calcule en qualité (environ 30 s de plus par ralenti).
+
+Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip (une phrase trop longue pour un clip resté court est **raccourcie automatiquement**, elle seule) ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
 
 ### Si tu n'as pas les sources : « Ce qu'il faut télécharger »
 

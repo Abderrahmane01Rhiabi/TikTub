@@ -19,7 +19,7 @@ from adaptation import voices as el
 
 PREVIEWS_DIR = "assets/voices"
 
-DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0}
+DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique"}
 
 
 def preview_path(voice_id: str) -> str:
@@ -74,6 +74,9 @@ def channel_settings(profile: Optional[Dict]) -> Dict:
         out["music_start"] = max(0.0, float(raw.get("music_start") or 0.0))
     except (TypeError, ValueError):
         pass
+    from adaptation.render import STYLES
+    if raw.get("style") in STYLES:
+        out["style"] = raw["style"]
     return out
 
 
@@ -86,6 +89,10 @@ def clean_update(update: Dict) -> Dict:
     if "music_file" in update:
         m = update["music_file"]
         out["music_file"] = os.path.basename(m.strip()) if isinstance(m, str) and m.strip() else None
+    if "style" in update:
+        from adaptation.render import STYLES
+        if update["style"] in STYLES:
+            out["style"] = update["style"]
     if "music_start" in update:
         try:
             out["music_start"] = max(0.0, float(update["music_start"]))

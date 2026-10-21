@@ -53,7 +53,7 @@ def fakes(monkeypatch):
         calls["analysed"].append(i)
         return [dict(c) for c in CLIPS.values() if c["source"] == i]
     monkeypatch.setattr(sources, "analyse_source", analyse_source)
-    monkeypatch.setattr(script, "write", lambda ref, clips, lang: json.loads(json.dumps(SCRIPT)))
+    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: json.loads(json.dumps(SCRIPT)))
     monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "corrections": ["fin complète"]})
 
     def synth(passages, voice_id, lang, out):
@@ -62,13 +62,13 @@ def fakes(monkeypatch):
     monkeypatch.setattr(voices, "synthesize", synth)
 
     def fake_render(passages, words, clips, voice, lang, out, work, credit="", music=None, preview=False, progress_cb=None,
-                    annotations=None):
+                    annotations=None, style=None, effects=None, beats=None):
         Path(out).parent.mkdir(parents=True, exist_ok=True)
         Path(out).write_bytes(b"mp4")
         return {"duration": 5.0, "segments": [], "captions": 2}
     monkeypatch.setattr(render, "render", fake_render)
     calls["checks_ok"] = True
-    monkeypatch.setattr(checks, "verify", lambda out, voice, passages: {
+    monkeypatch.setattr(checks, "verify", lambda out, voice, passages, starts=None: {
         "ok": calls["checks_ok"], "problems": [] if calls["checks_ok"] else ["son trop court"], "measures": {}})
     return calls
 
@@ -408,3 +408,63 @@ def test_a_clip_can_be_watched_cleaned(client, project, fakes, monkeypatch):
     client.get(f"/api/adaptations/{pid}/clips/A/video")
     assert made == ["A"]                                     # made once, then kept
     assert client.get(f"/api/adaptations/{pid}/clips/ZZ/video").status_code == 404
+
+
+def test_sources_first_versions_give_each_channel_its_angle_on_the_same_clips(project, fakes, monkeypatch):
+    from adaptation import script, storyboard
+    monkeypatch.setattr(storyboard, "angles", lambda ref, n=3, avoid=None: [{"titre": f"Angle {k}", "idee": "i"} for k in range(n)])
+    seen = []
+    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: seen.append((lang, (angle or {}).get("titre")))
+                        or json.loads(json.dumps(SCRIPT)))
+    p = ap.create("https://youtube.com/shorts/x", ["https://tiktok.com/a", "https://tiktok.com/b"],
+                  [channel(project), channel(project, "chanB", "ar", "v_ar")], versions=True)
+    assert p["versions"] and not p.get("group") and len(p["targets"]) == 2       # one project, shared clips
+    pid = p["project_id"]
+    ap.run_analysis(pid); ap.start_scripts(pid); ap.run_scripts(pid)
+    assert sorted(seen) == [("ar", "Angle 1"), ("fr", "Angle 0")]                # written at the same time
+    p = ap.change_target_angle(pid, "chanB", custom="Le point de vue du conducteur")
+    assert p["status"] == "scripting"
+    ap.run_scripts(pid, only="chanB")
+    assert seen[-1] == ("ar", "Le point de vue du conducteur") and len(seen) == 3       # only that channel rewritten
+    assert ap.load(pid)["status"] == "script_review"
+    with pytest.raises(ap.PipelineError):
+        ap.change_target_angle(pid, "chanB")
+
+
+def test_sources_first_judges_each_sentence_against_its_clip(project, fakes, monkeypatch):
+    from adaptation import script
+    p = new_project(project)
+    ap.run_analysis(p["project_id"])
+    seen = []
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: seen.append(code) or [
+        {"clip": x["clip"], "texte": x["texte"], "note": "non" if k == 1 else "bon", "pourquoi": "autre chose",
+         "proposition": "Une phrase pour cette image."} for k, x in enumerate(sc["passages"])])
+    ap.start_scripts(p["project_id"])
+    ap.run_scripts(p["project_id"])
+    p = ap.load(p["project_id"])
+    t = p["targets"][0]
+    assert seen and t["accords"][1]["note"] == "non"
+    assert any("Passage 2 : la phrase ne correspond pas" in x for x in t["problems"])
+    p = ap.use_proposal(p["project_id"], t["channel"], 1)
+    assert p["targets"][0]["script"]["passages"][1]["texte"] == "Une phrase pour cette image."
+
+
+def test_sources_first_can_search_more_by_action(project, fakes, monkeypatch):
+    from adaptation import finder as F
+    pid = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")])["project_id"]
+    ap.run_analysis(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_search"
+    p["suggestions"]["verifs"] = {}
+    ap.save(p)
+    assert ap.wanting(ap.load(pid)) == list(range(len(p["suggestions"]["scenes"])))
+    monkeypatch.setattr(F, "action_queries", lambda found: {n: ["tram crash compilation"] for n in range(len(found))})
+    monkeypatch.setattr(F, "search_youtube", lambda q, n=8: [{"url": "https://www.youtube.com/watch?v=zzzzzzzzzzz",
+                                                              "title": "Fails 2024", "duration": 200}])
+    monkeypatch.setattr(F, "check", lambda url, scenes, plans, **kw: {"verdict": "oui", "title": "Fails",
+                        "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 3, "fin": 6}]}}})
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    p = ap.load(pid)
+    assert p["status"] == "sources_search" and "scène(s) 1" in p["fetch_note"]
+    assert 0 not in ap.wanting(p) and "search_more_back" not in p

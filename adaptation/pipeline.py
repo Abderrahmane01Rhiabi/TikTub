@@ -36,7 +36,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
 import db
-from adaptation import annotate, checks, finder, langs, reference, render, script, settings, sources, storyboard, voices
+from adaptation import annotate, checks, effects, finder, langs, reference, render, script, settings, sources, storyboard, voices
 
 BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering"}
 Report = Callable[[str, float], None]
@@ -105,11 +105,13 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         music = os.path.join(c["music_dir"], s["music_file"]) if s["music_file"] else None
         targets.append({"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
                         "music_path": music if music and os.path.exists(music) else None,
-                        "music_start": s["music_start"], "script": None, "approved": False,
+                        "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
                         "validated": False, "video_id": None})
     base = {"status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
             "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
             "credits": "", "credits_auto": "", "error": None, "failed_step": None}
+    if mode == "sources" and versions and len(targets) > 1:
+        base["versions"] = True         # one project, the same clips, an angle per channel at the script step
     if mode == "script" and versions and len(targets) > 1:
         leader = _new_pid()
         for k, t in enumerate(targets):     # the leader's run reads the reference and writes every member
@@ -239,8 +241,21 @@ def run_analysis(pid: str, report: Optional[Report] = None):
                 metas[i] = {"url": url, "failed": str(e)}
                 continue
             meta = sources.source_meta(path)
+            try:                        # a video posted lying on its side is turned upright first (as in Script d'abord)
+                with sources.gemini_file(path) as gf:
+                    deg = sources.orientation(gf)
+                if deg:
+                    report(f"source {k + 1}/{n} : remise à l'endroit", 0.2 + 0.75 * (k + 0.2) / n)
+                    path = sources.rotated(path, deg)
+            except Exception:
+                pass
             report(f"source {k + 1}/{n} : découpage et analyse", 0.2 + 0.75 * (k + 0.3) / n)
-            for c in sources.analyse_source(path, i, os.path.join(base, "work"), ids):
+            made = sources.analyse_source(path, i, os.path.join(base, "work"), ids)
+            try:                        # added text the first cleaning missed is painted over too
+                sources.leftover_text({c["id"]: c for c in made if c["usable"]}, os.path.join(base, "work"))
+            except Exception:
+                pass
+            for c in made:
                 clips[c["id"]] = c
             metas[i] = meta
         p = load(pid)
@@ -324,7 +339,10 @@ def write_storyboard(p: Dict, report: Report):
     report("relecture (rétention, langue, images)", 0.65)
     b = storyboard.critique(b, codes)
     for attempt in (1, 2):              # what the re-read missed is fixed (twice at most), then shown
-        left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
+        hard = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
+        report("chaque phrase comparée à son image", 0.8)
+        seen = storyboard.illustration(b, codes[0]) + storyboard.unfilmable(b)   # images are shared: one language
+        left = hard + seen
         if not left:
             break
         report("correction", 0.85)
@@ -332,7 +350,8 @@ def write_storyboard(p: Dict, report: Report):
             fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + FIX_HOW)
         except script.ScriptError:
             break
-        if sum(len(storyboard.problems(fixed, c)) for c in codes) >= len(left):
+        now = sum(len(storyboard.problems(fixed, c)) for c in codes)
+        if now > len(hard) or (not seen and now >= len(hard)):     # a fix that breaks more than it mends: kept out
             break
         b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
     p = load(p["project_id"])
@@ -408,21 +427,207 @@ def start_images(pid: str) -> Dict:
     return save(p)
 
 
+class SharedSearch:
+    """What every version of a group searches the same way, done once: the
+    reference Short's pictures, their Yandex results, the YouTube searches
+    with the same words. Kept on the group's leader; the Gemini checks stay
+    per version (they judge a video against that version's own plans)."""
+
+    def __init__(self, p: Dict, wanted: List[Dict]):
+        self.p, self.wanted, self.reused = p, wanted, []
+        self.leader = p.get("group") or p["project_id"]
+        try:
+            self.cache = dict((load(self.leader).get("search_cache") or {}))
+        except PipelineError:
+            self.cache = {}
+        self.cache.setdefault("queries", {})
+        self.cache.setdefault("hits", {})
+
+    def search(self, q: str) -> List[Dict]:
+        if q in self.cache["queries"]:
+            if "recherches YouTube" not in self.reused:
+                self.reused.append("recherches YouTube")
+            return [dict(c) for c in self.cache["queries"][q]]
+        out = finder.search_youtube(q)
+        self.cache["queries"][q] = out
+        return out
+
+    def frames(self, ref: Dict, url: str, work_dir: str, scenes: List[Dict], report=None) -> Dict:
+        from adaptation import frames as frames_mod
+        got = self.cache.get("frames")
+        if got and got.get("frames") and all(os.path.exists(os.path.join(got["dir"], f["file"])) for f in got["frames"]):
+            os.makedirs(work_dir, exist_ok=True)
+            if os.path.abspath(got["dir"]) != os.path.abspath(work_dir):
+                for f in got["frames"]:
+                    shutil.copy(os.path.join(got["dir"], f["file"]), os.path.join(work_dir, f["file"]))
+            self.reused.append("images du Short")
+            return {**got, "frames": [{**f, "scene": frames_mod._scene_of(f.get("plan"), scenes)} for f in got["frames"]]}
+        out = frames_mod.reference_frames(ref, url, work_dir, scenes, report=report)
+        if out.get("frames"):
+            self.cache["frames"] = {**out, "dir": work_dir}
+        return out
+
+    def image_search(self, files: List[str]) -> Dict:
+        from adaptation import imagesearch
+        names = [os.path.basename(f) for f in files]
+        if names and all(n in self.cache["hits"] for n in names):
+            self.reused.append("recherche par image")
+            return {"hits": {f: self.cache["hits"][n] for f, n in zip(files, names)}, "error": None, "seconds": 0}
+        out = imagesearch.timed_search(files)
+        if not out.get("error"):
+            self.cache["hits"].update({os.path.basename(f): h for f, h in out["hits"].items()})
+        return out
+
+    def save(self):
+        try:
+            leader = load(self.leader)
+        except PipelineError:
+            return
+        mine = leader.get("search_cache") or {}
+        mine.setdefault("queries", {}).update(self.cache["queries"])
+        mine.setdefault("hits", {}).update(self.cache["hits"])
+        if self.cache.get("frames") and not mine.get("frames"):
+            mine["frames"] = self.cache["frames"]
+        leader["search_cache"] = mine
+        save(leader)
+
+
+def wanting(p: Dict) -> List[int]:
+    """The plans still without good footage: no pick, or only a partial one
+    (Sources d'abord: the scenes no checked video shows well)."""
+    if p.get("mode") != "script":
+        sug = p.get("suggestions") or {}
+        good = {int(i) for v in (sug.get("verifs") or {}).values()
+                for i, e in (v.get("par_scene") or {}).items() if e.get("niveau") in ("exacte", "equivalente")}
+        return [i for i in range(len(sug.get("scenes") or [])) if i not in good]
+    picks = p.get("picks") or []
+    return [k for k in _active(p) if k >= len(picks) or not picks[k] or picks[k].get("niveau") == "partielle"]
+
+
+def start_more_images(pid: str) -> Dict:
+    p = load(pid)
+    _expect(p, "images_review", "sources_search")
+    todo = wanting(p)
+    if not todo:
+        raise PipelineError("Chaque plan a déjà une vidéo exacte ou équivalente.")
+    p.update(status="searching", search_more=todo, search_more_back=p["status"])
+    return save(p)
+
+
+def _more_images(p: Dict, report: Report):
+    """The plans left without footage, searched again by ACTION (compilations,
+    GoPro, vlogs: videos about something else where it happens), the new
+    videos checked by Gemini against every plan, and a pick given only where
+    there was none — the other plans' choices stay."""
+    from concurrent.futures import ThreadPoolExecutor
+    pid, todo = p["project_id"], p["search_more"]
+    sug = p["suggestions"]
+    script_first = p.get("mode") == "script"
+    plans = p["storyboard"]["plans"] if script_first else []
+    wanted = finder.wanted_from_storyboard(plans, {}) if script_first else sug["scenes"]
+    report(f"recherches par action pour {len(todo)} plan(s)", 0.03)
+    qs = finder.action_queries([wanted[k] for k in todo])
+    jobs = [(k, q) for n, k in enumerate(todo) for q in qs.get(n, [])]
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(lambda kq: (kq[0], kq[1], finder.search_youtube(kq[1])), jobs))
+    known = {c["url"] for c in finder.all_candidates(sug)}
+    fresh: Dict[int, List[Dict]] = {}
+    for k, q, hits in results:
+        sc = sug["scenes"][k]
+        sc.setdefault("actions", [])
+        if q not in sc["actions"]:
+            sc["actions"].append(q)
+        by_url = {c["url"]: c for c in sc.setdefault("candidats", [])}
+        for h in hits:
+            if h["url"] not in known:
+                fresh.setdefault(k, []).append(h["url"])
+            finder._add(sc["candidats"], h, "action", by_url)
+    # the first results of each plan's searches, in turn, four per plan: Gemini's look is the expensive part
+    order = []
+    for k in todo:
+        urls = list(dict.fromkeys(fresh.get(k, [])))
+        order += [u for u in urls if u not in (sug.get("verifs") or {})][:4]
+    order = list(dict.fromkeys(order))
+    model = finder.model_of(p.get("reference"))
+    verifs, errors = sug.setdefault("verifs", {}), sug.setdefault("verif_errors", {})
+
+    ref_plans = None if script_first else (p.get("reference") or {}).get("plans")
+
+    def look(url):
+        try:
+            return url, finder.check(url, sug["scenes"], ref_plans, **({"model": model} if model else {})), None
+        except Exception as e:
+            return url, None, str(e)[:200]
+    done = 0
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        for url, r, err in pool.map(look, order):
+            done += 1
+            report(f"vérification par l'IA : {done}/{len(order)}", 0.1 + 0.85 * done / max(1, len(order)))
+            if r:
+                verifs[url] = r
+            else:
+                errors[url] = err
+    if not script_first:                # the person ticks the videos: the useful ones are shown, nothing is picked
+        helped = sorted({int(i) + 1 for u in order if u in verifs
+                         for i, e in (verifs[u].get("par_scene") or {}).items()
+                         if e.get("niveau") in ("exacte", "equivalente") and int(i) in todo})
+        p["fetch_note"] = (f"Recherche par action : {len(order)} nouvelle(s) vidéo(s) regardée(s) par l'IA ; "
+                           + (f"utile(s) pour la/les scène(s) {', '.join(map(str, helped))} : coche-les."
+                              if helped else "rien de mieux pour ces scènes : donne ton lien ou un extrait du Short."))
+        return
+    picks = p.get("picks") or [None] * len(plans)
+    taken = {(x["url"], round(x["moment"]["debut"])) for x in picks if x}
+    best = finder.auto_pick(sug, plans)
+    found = []
+    for k in todo:
+        b = best[k] if k < len(best) else None
+        better = b and (not picks[k] or finder.RANK[b["niveau"]] < finder.RANK.get(picks[k]["niveau"], 9))
+        if better and (b["url"], round(b["moment"]["debut"])) not in taken:
+            picks[k] = b
+            taken.add((b["url"], round(b["moment"]["debut"])))
+            found.append(k + 1)
+    p["picks"] = picks
+    p["fetch_note"] = (f"Recherche par action : {len(order)} nouvelle(s) vidéo(s) regardée(s) par l'IA ; "
+                       + (f"vidéo trouvée pour le(s) plan(s) {', '.join(map(str, found))}." if found
+                          else "rien de mieux pour ces plans : donne ton lien, adapte la phrase ou retire le plan."))
+
+
 def run_images(pid: str, report: Optional[Report] = None):
     """Every plan's footage: search words from its image, the four searches,
     Gemini's checks (twice as many as plans: each plan's best by words, then
     by picture), then the best checked moment picked for each plan."""
     report = report or (lambda phase, f: None)
     p = load(pid)
+    if p.get("search_more") is not None:      # "Chercher plus": only the plans still without footage
+        back = p.get("search_more_back") or "images_review"
+        try:
+            _more_images(p, report)
+            p.pop("search_more", None)
+            p.pop("search_more_back", None)
+            p.update(status=back, error=None, failed_step=None)
+            save(p)
+        except Exception as e:              # the picks already made are worth more than this extra search
+            p = load(pid)
+            p.pop("search_more", None)
+            p.pop("search_more_back", None)
+            p.update(status=back, fetch_note=f"Recherche par action impossible : {str(e)[:200]}")
+            save(p)
+        report("terminé", 1.0)
+        return
     try:
         plans = p["storyboard"]["plans"]
         report("recherches pour chaque plan", 0.02)
         queries = finder.plan_queries(finder.wanted_from_storyboard(plans, {}))
         local = lambda found: {i: {"pays": q["pays"], "langue": q["langue"], "recherches": q["locales"]}
                                for i, q in queries.items() if q.get("locales")}
+        wanted = finder.wanted_from_storyboard(plans, queries)
+        shared = SharedSearch(p, wanted)
         sug = finder.suggest(p["reference"], p["reference_url"], work_dir=os.path.join(project_dir(pid), "finder"),
-                             wanted=finder.wanted_from_storyboard(plans, queries), local=local,
-                             report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
+                             wanted=wanted, local=local, search=shared.search, frames_fn=shared.frames,
+                             image_search=shared.image_search, report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
+        shared.save()
+        if shared.reused:
+            report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(plans)),
                            report=lambda ph, f: report(ph, 0.62 + 0.36 * f))
@@ -451,6 +656,7 @@ def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin
         picks[plan] = {"url": url, "titre": c.get("title") or v.get("title") or url, "niveau": e.get("niveau") or "choisie",
                        "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
                        "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage")),
+                       "film": bool(v.get("film")),
                        "defauts": e.get("defauts") or ""}
     p["picks"] = picks
     return save(p)
@@ -575,6 +781,34 @@ def start_fetch(pid: str) -> Dict:
     return save(p)
 
 
+CUT_VERSION = 4          # how clips are cut; a clip cut an older way is cut again (4: leftover text painted over)
+ACTION_LEAD, ACTION_TAIL, MIN_ACTION = 0.6, 0.8, 1.2    # seconds kept before / after the action; shortest clip
+
+
+def fit_window(a: float, b: float, need: float, shots: List[Tuple[float, float]],
+               length: Optional[float] = None) -> Tuple[float, float]:
+    """The clip for a sentence of `need` seconds from the moment [a, b] the AI
+    checked: when it is too short, lengthened forward then backward but only
+    inside the shots the moment is in — never into the next shot (measured:
+    blindly lengthened, a clip took an interview after the bump, another the
+    black end screen of its video). Still short: kept short, the script check
+    then asks for a shorter sentence instead of showing the wrong picture."""
+    if need <= 0 or b - a >= need:
+        return round(a, 2), round(b, 2)
+    lo, hi = 0.0, length if length else b + need
+    for s, e in shots:              # detect_cuts trims its shots by 0.08 s: a moment edge on a cut still matches
+        if s - 0.15 <= a <= e + 0.15:
+            lo = max(lo, s)
+        if s - 0.15 <= b - 0.05 <= e + 0.15:
+            hi = min(hi, e)
+    if not shots:
+        lo, hi = max(0.0, a - need), (min(length, b + need) if length else b + need)
+    lo, hi = min(lo, a), max(hi, b)
+    end = min(hi, a + need)
+    start = max(lo, end - need)
+    return round(start, 2), round(end, 2)
+
+
 def _spans(items: List[Tuple[int, float, float]]) -> List[List[float]]:
     spans = []
     for _, a, b in sorted(items, key=lambda x: x[1]):
@@ -600,8 +834,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         durations.update({u: v.get("duration") for u, v in (sug.get("verifs") or {}).items() if v.get("duration")})
         def pick_key(k: int) -> List:
             m = picks[k]["moment"]
-            end = m["fin"] if picks[k].get("extrait") else max(m["fin"], m["debut"] + plans[k]["duree"])
-            return [picks[k]["url"], round(m["debut"], 2), round(end, 2)]
+            return [picks[k]["url"], round(m["debut"], 2), round(m["fin"], 2), 0 if picks[k].get("extrait") else plans[k]["duree"],
+                    CUT_VERSION]
         old = p.get("clips") or {}
         clips = {f"P{k + 1}": old[f"P{k + 1}"] for k in _active(p)
                  if (old.get(f"P{k + 1}") or {}).get("pick_key") == pick_key(k) and os.path.exists(old[f"P{k + 1}"]["src"])}
@@ -610,8 +844,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             if f"P{k + 1}" in clips:
                 continue
             m = picks[k]["moment"]
-            end = m["fin"] if picks[k].get("extrait") else max(m["fin"], m["debut"] + plans[k]["duree"])   # an excerpt stays short
-            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], end))
+            need = 0.0 if picks[k].get("extrait") else plans[k]["duree"]       # an excerpt stays as it is
+            by_url.setdefault(picks[k]["url"], []).append((k, m["debut"], max(m["fin"], m["debut"] + 0.5), need))
         if clips:
             report(f"{len(clips)} plan(s) inchangé(s) : clips gardés", 0.03)
         failed: Dict[str, Tuple[str, List[int]]] = {}
@@ -619,7 +853,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         for i, (url, items) in enumerate(by_url.items()):
             report(f"vidéo {i + 1}/{len(by_url)} : téléchargement des moments choisis", 0.05 + 0.8 * i / len(by_url))
             dur = durations.get(url)
-            spans = None if (dur and dur <= 120) else _spans(items)
+            room = lambda need: min(need, 6.0)                 # around the moment: room to lengthen it, both ways
+            spans = None if (dur and dur <= 120) else _spans([(k, max(0.0, a - room(n)), b + room(n)) for k, a, b, n in items])
             name = f"src{stamp}_{i}"           # never over a file a kept clip still uses
             try:
                 try:
@@ -630,7 +865,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     spans = None                # some sites refuse a section: the whole video, then
                     path = sources.download(url, os.path.join(base, "src"), name)
             except sources.SourceError as e:
-                failed[url] = (str(e), [k for k, _, _ in items])
+                failed[url] = (str(e), [k for k, _, _, _ in items])
                 continue
             meta = sources.source_meta(path)
 
@@ -644,7 +879,59 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     offset += b - a
                 return t
             report(f"vidéo {i + 1}/{len(by_url)} : nettoyage des images", 0.05 + 0.8 * (i + 0.6) / len(by_url))
-            times = [(k, file_time(a), file_time(a) + (b - a)) for k, a, b in items]
+            try:                        # the shots of the file: a clip is lengthened inside them, never across one
+                shots = sources.detect_cuts(path, sources.probe(path), None, min_len=0.1)
+                length = sources.probe(path)["duration"]
+            except Exception:
+                shots, length = [], None
+            if spans:                   # the spans are joined in one file: a join is a cut too, seen or not
+                joins, at = [], 0.0
+                for a, b in spans[:-1]:
+                    at += b - a
+                    joins.append(at)
+                bounds = [0.0] + joins + [length or at + spans[-1][1] - spans[-1][0]]
+                shots = [(max(s, x), min(e, y)) for s, e in (shots or [(0.0, bounds[-1])])
+                         for x, y in zip(bounds, bounds[1:]) if min(e, y) > max(s, x)]
+            upload = None
+            try:                        # one upload for the two looks below
+                upload = sources.gemini_file(path)
+                gfile = upload.__enter__()
+            except Exception:
+                upload, gfile = None, None
+            moments = [(k, file_time(a), file_time(a) + (b - a), need) for k, a, b, need in items]
+            absent, seen_moving, action_at = {}, {}, {}
+            asks = [(n, m) for n, m in enumerate(moments) if m[3] > 0]        # an excerpt stays where it was cut
+            if gfile and asks:
+                report(f"vidéo {i + 1}/{len(by_url)} : l'IA recale chaque moment", 0.05 + 0.8 * (i + 0.5) / len(by_url))
+                code = p["targets"][0]["language"]
+                found_at = sources.retime(path, [{"image": plans[m[0]]["image"], "a": m[1], "b": m[2],
+                                                  "phrase": (plans[m[0]].get("textes") or {}).get(code, {}).get("texte")}
+                                                 for _, m in asks], length or moments[-1][2] + 10, gfile)
+                for (n, (k, fa, fb, need)), r in zip(asks, found_at):
+                    if r and r["visible"]:
+                        moments[n] = (k, r["debut"], r["fin"], need)
+                        seen_moving[k] = r["vu"]
+                        action_at[k] = (r["debut"], r["fin"], r.get("fort"))
+                    elif r:
+                        absent[k] = r["vu"] or "autre chose"
+            if gfile:                   # a video posted lying on its side is turned upright before anything is cut
+                deg = sources.orientation(gfile)
+                if deg:
+                    report(f"vidéo {i + 1}/{len(by_url)} : remise à l'endroit", 0.05 + 0.8 * (i + 0.55) / len(by_url))
+                    try:
+                        path = sources.rotated(path, deg)
+                    except Exception:
+                        pass
+            times, compact = [], set()
+            for k, fa, fb, need in moments:
+                start, end = fit_window(fa, fb, need, shots, length)
+                if k in action_at:          # no dead time: around the action only; the render slows it to fill
+                    ra, rb = action_at[k][:2]
+                    s2, e2 = max(start, ra - ACTION_LEAD), min(end, rb + ACTION_TAIL)
+                    if e2 - s2 >= MIN_ACTION and e2 - s2 < end - start - 0.3:
+                        start, end = round(s2, 2), round(e2, 2)
+                        compact.add(k)
+                times.append((k, start, end))
             work = os.path.join(base, "work")
             os.makedirs(work, exist_ok=True)
             stills = [sources.still(path, (a + b) / 2, None, os.path.join(work, f"p{k}.jpg")) for k, a, b in times]
@@ -653,14 +940,33 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             found = [next(boxes, (None, [], [])) if os.path.exists(st) else (None, [], []) for st in stills]
             report(f"vidéo {i + 1}/{len(by_url)} : contrôle des moments par l'IA", 0.05 + 0.8 * (i + 0.8) / len(by_url))
             try:                        # the same check as an analysed source: a presenter, a title, a logo… is refused
-                seen = sources.describe(path, [(a, b) for _, a, b in times])
+                segs = [(a, b) for _, a, b in times]
+                seen = sources.describe(path, segs, file=gfile) if gfile else sources.describe(path, segs)
             except Exception:
                 seen = [{} for _ in times]
+            finally:
+                if upload:
+                    upload.__exit__(None, None, None)
             for (k, a, b), f, d in zip(times, found, seen):
                 c = sources.clip_at(path, i, f"P{k + 1}", a, b, f, desc=plans[k]["image"])
                 why = _real_faults(d.get("pourquoi_pas") or "")
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
-                         why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta)
+                         why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta,
+                         note=finder.warnings_of(d.get("pourquoi_pas") or ""))
+                if k in absent:                 # the wanted action is nowhere in what was downloaded
+                    c["absent"] = absent[k]
+                if seen_moving.get(k):          # what the re-timing saw, in motion: the judge trusts it over stills
+                    c["action"] = seen_moving[k]
+                if k in action_at:              # the strong moment is IN the action (arrow, ramp, freeze follow it)
+                    ra, rb = max(action_at[k][0], c["start"]), min(action_at[k][1], c["end"])
+                    fort = action_at[k][2]
+                    if fort is not None and c["start"] <= fort <= c["end"]:
+                        c["impact"] = round(fort, 2)        # the most spectacular instant, as Gemini saw it moving
+                    elif rb > ra and not ra <= c["impact"] <= rb:
+                        c["impact"] = round(ra + 0.6 * (rb - ra), 2)
+                    c["action_at"] = [round(action_at[k][0], 2), round(action_at[k][1], 2)]
+                if k in compact:                # cut around its action: slowed down to fill its sentence
+                    c["compact"] = True
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c
@@ -696,6 +1002,11 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         names = [n for n in guess.split(" · ") if n] + [m.get("handle") for m in metas if m.get("handle")]
         guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:4])
         p["credits"], p["credits_auto"] = guess, guess        # every channel whose footage is used, not only watermarks
+        report("texte encore visible après nettoyage ?", 0.91)
+        try:                            # added text the first cleaning missed is painted over too
+            sources.leftover_text(clips, os.path.join(project_dir(pid), "work"))
+        except Exception:
+            pass
         report("flèches et cercles revus avec les vrais clips", 0.92)
         active = _active(p)
         code = p["targets"][0]["language"]
@@ -705,10 +1016,19 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             for k, a in zip(active, seen):
                 p["storyboard"]["plans"][k]["annotation"] = a
             p["annotations_reviewed"] = True
+        report("effets de montage choisis avec les vrais clips", 0.94)
+        rough = [{**x, "annotation": p["storyboard"]["plans"][k].get("annotation")} for k, x in zip(active, rough)]
+        fx = effects.decide(rough, clips, os.path.join(project_dir(pid), "work"))
+        fx = effects.auto_zoom(rough, clips, fx or [], os.path.join(project_dir(pid), "work"))   # a small subject: zoomed
+        for k, e in zip(active, fx):        # shared by every language, like the arrows
+            p["storyboard"]["plans"][k]["effets"] = e
         for t in p["targets"]:
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
-            t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"]))
+            sc = _shorten(p, sc, clips, t["language"], report)
+            report("chaque phrase comparée à son image", 0.97)
+            t["accords"] = _judge(sc, clips, t["language"], os.path.join(project_dir(pid), "work"))
+            t.update(script=sc, problems=_fetched_problems(sc, clips, t["language"], t["accords"]))
             t["approved"] = not t["problems"]
         save(p)
     except Exception as e:
@@ -716,18 +1036,87 @@ def run_fetch(pid: str, report: Optional[Report] = None):
     report("terminé", 1.0)
 
 
+TOO_LONG = re.compile(r"Passage (\d+) : phrase trop longue pour son clip \(\d+ caract[eè]res, le clip \S+ en laisse environ (\d+)\)")
+
+
+def _shorten(p: Dict, sc: Dict, clips: Dict[str, Dict], code: str, report: Report) -> Dict:
+    """A clip kept inside its shot can be shorter than the sentence written for
+    the plan: the AI shortens only those sentences (twice at most), the others
+    stay word for word; the new sentence is kept in the storyboard too."""
+    for _ in range(2):
+        long = {int(n) - 1: int(room) for n, room in TOO_LONG.findall(" ".join(script.problems(sc, clips, code)))}
+        if not long:
+            break
+        report("phrases raccourcies pour leur clip", 0.95)
+        asks = " ".join(f"Passage {k + 1} : {max(room - 3, 12)} caracteres au plus." for k, room in long.items())
+        try:
+            new = script.revise(sc, clips, "Raccourcis UNIQUEMENT ces phrases, sans changer leur sens ni les autres "
+                                "passages (meme texte, meme clip) ; chaque phrase reste complete. " + asks)
+        except Exception:
+            break
+        if len(new["passages"]) != len(sc["passages"]):
+            break
+        sc = {**sc, "passages": [{**x, "texte": new["passages"][k]["texte"]} if k in long else x
+                                 for k, x in enumerate(sc["passages"])]}
+    plans = p["storyboard"]["plans"]
+    for k, x in zip(_active(p), sc["passages"]):       # the storyboard says the same: a new fetch keeps it
+        textes = plans[k].get("textes") or {}
+        if code in textes:
+            textes[code]["texte"] = x["texte"]
+    return sc
+
+
 REAL_FAULTS = finder.REAL_FAULTS
 _real_faults = finder.real_faults          # what really refuses a chosen moment (shared with the search)
 
 
-def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str) -> List[str]:
+def _judge(sc: Dict, clips: Dict[str, Dict], code: str, work: Optional[str] = None) -> Optional[List[Dict]]:
+    """Measured on the speed-bump Short: the French hook said "this bump
+    forgives nothing" over a man punching a tub in a lab — nothing checked that
+    a clip shows its sentence. Three pictures of each clip go with it. Best
+    effort: no verdict never blocks."""
+    stills = {}
+    if work:
+        os.makedirs(work, exist_ok=True)
+        for k, x in enumerate(sc.get("passages") or []):
+            c = clips.get(x.get("clip"))
+            if not c:
+                continue
+            try:
+                stills[k] = [sources.still(c["src"], c["start"] + (c["end"] - c["start"]) * f, c.get("crop"),
+                                           os.path.join(work, f"judge_{x['clip']}_{j}.jpg"), c.get("delogo"),
+                                           (c["w"], c["h"])) for j, f in enumerate((0.2, 0.5, 0.8))]
+            except Exception:
+                continue
+    try:
+        return script.match(sc, clips, code, stills=stills)
+    except Exception:
+        return None
+
+
+def _accord(accords: Optional[List[Dict]], k: int, x: Dict) -> Optional[Dict]:
+    """The verdict on passage k, if it still judges this sentence on this clip."""
+    a = accords[k] if accords and k < len(accords) else None
+    return a if a and a["clip"] == x["clip"] and a["texte"] == x["texte"] else None
+
+
+def _fetched_problems(sc: Dict, clips: Dict[str, Dict], code: str, accords: Optional[List[Dict]] = None) -> List[str]:
     out = script.problems(sc, clips, code)
+    for k, x in enumerate(sc.get("passages") or []):
+        a = _accord(accords, k, x)
+        if a and a["note"] == "non" and not a.get("garde"):
+            out.append(f"Passage {k + 1} : la phrase ne correspond pas à l'image ({a['pourquoi'] or 'autre chose à l’écran'}) : "
+                       f"prends la phrase proposée, change de clip ou « Garder quand même ».")
     for k, x in enumerate(sc["passages"], 1):
         c = clips.get(x["clip"]) or {}
         why = _real_faults(c.get("why_not") or "") if c and not c.get("usable", True) else ""
         if c and not c.get("usable", True) and (why or not c.get("why_not")):
             out.append(f"Passage {k} : le moment choisi ne convient pas ({why or 'refusé par le contrôle'}) : "
                        f"choisis un autre clip ou « Revenir aux images ».")
+        elif c and c.get("absent") and not c.get("forced") and not (_accord(accords, k - 1, x) or {}).get("note") == "bon":
+            # the final judge saw the clip's pictures and found the sentence shown: the re-timing was too literal
+            out.append(f"Passage {k} : l'action voulue ne se voit pas dans la vidéo téléchargée (on y voit : "
+                       f"{c['absent']}) : choisis un autre clip, « Revenir aux images » ou « Utiliser quand même ».")
     return out
 
 
@@ -739,12 +1128,27 @@ def force_clip(pid: str, cid: str) -> Dict:
     c = (p.get("clips") or {}).get(cid)
     if not c:
         raise PipelineError("Clip inconnu.")
-    c.update(usable=True, forced=c.get("why_not") or "refusé par le contrôle", why_not="")
+    c.update(usable=True, forced=c.get("why_not") or (f"action introuvable : {c['absent']}" if c.get("absent")
+                                                      else "refusé par le contrôle"), why_not="")
     for t in p["targets"]:
         if t.get("script"):
-            t["problems"] = _fetched_problems(t["script"], p["clips"], t["language"])
+            t["problems"] = _fetched_problems(t["script"], p["clips"], t["language"], t.get("accords"))
             if t["problems"]:
                 t["approved"] = False
+    return save(p)
+
+
+def back_to_script(pid: str) -> Dict:
+    """From the previews back to the scripts: a clip to change, a sentence to
+    fix. The narration is kept and only made again if a sentence changes."""
+    p = load(pid)
+    if not (p["status"] == "error" and p.get("failed_step") in ("voicing", "rendering")):   # a failed render too
+        _expect(p, "preview_review")
+    if any(t.get("video_id") for t in p["targets"]):
+        raise PipelineError("Une version est déjà rendue : fais une nouvelle version plutôt.")
+    p.update(status="script_review", error=None, failed_step=None)
+    for t in p["targets"]:
+        t["validated"] = False
     return save(p)
 
 
@@ -916,6 +1320,7 @@ def add_sources(pid: str, urls: List[str]) -> Dict:
         if sec:
             p.setdefault("source_sections", {})[u] = sec
     p["status"] = "analysing"
+    p.pop("fetch_note", None)          # the search note was for the step just left
     return save(p)
 
 
@@ -998,22 +1403,36 @@ def set_sources(pid: str, usable: Optional[Dict[str, bool]] = None, credits: Opt
 
 # ---------------------------------------------------------------- 2. scripts
 
-def run_scripts(pid: str, report: Optional[Report] = None):
+def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] = None):
+    """Every channel's script (or one, after an angle change). A project made
+    with "une version différente par chaîne" gives each channel its angle."""
     report = report or (lambda phase, f: None)
     p = load(pid)
     try:
         clips = {k: c for k, c in p["clips"].items() if c.get("usable")}
-        n = len(p["targets"])
-        for i, t in enumerate(p["targets"]):
+        if p.get("versions") and not p.get("angles"):
+            report("angles des versions", 0.02)
+            p["angles"] = storyboard.angles(p["reference"], max(3, len(p["targets"])))
+            for i, t in enumerate(p["targets"]):
+                t.setdefault("angle", p["angles"][i % len(p["angles"])])
+            save(p)
+        todo = [t for t in p["targets"] if only is None or t["channel"] == only]
+        n = len(todo)
+
+        def one(i, t):                  # every channel's script at the same time
             label = langs.lang(t["language"])["label"]
-            report(f"script {label}", (i + 0.1) / n)
-            sc = script.write(p["reference"], clips, t["language"])
+            report(f"script {label}" + (f" : « {t['angle']['titre']} »" if t.get("angle") else ""), (i + 0.1) / n)
+            sc = script.write(p["reference"], clips, t["language"], angle=t.get("angle"))
             report(f"relecture {label}", (i + 0.6) / n)
             sc = script.critique(sc, t["language"], clips)
             seen = annotate.review(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
             if seen is not None:        # the arrows decided again looking at the clips themselves
                 for x, a in zip(sc["passages"], seen):
                     x["annotation"] = a
+            fx = effects.decide(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
+            fx = effects.auto_zoom(sc["passages"], p["clips"], fx or [], os.path.join(project_dir(pid), "work", t["channel"]))
+            for x, e in zip(sc["passages"], fx):
+                x["effets"] = e
             for attempt in (1, 2):                     # what the re-read missed is fixed (twice at most), then shown
                 left = script.problems(sc, p["clips"], t["language"])
                 if not left:
@@ -1026,13 +1445,34 @@ def run_scripts(pid: str, report: Optional[Report] = None):
                 if len(script.problems(fixed, p["clips"], t["language"])) >= len(left):
                     break
                 sc = {**fixed, "corrections": sc.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
-            t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False,
+            report(f"chaque phrase comparée à son image ({label})", (i + 0.95) / n)
+            t["accords"] = _judge(sc, p["clips"], t["language"], os.path.join(project_dir(pid), "work", t["channel"]))
+            t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t["accords"]), approved=False,
                      validated=False, preview=None, voice=None)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=max(1, n)) as pool:
+            for f in [pool.submit(one, i, t) for i, t in enumerate(todo)]:
+                f.result()
         p.update(status="script_review", error=None, failed_step=None)
         save(p)
     except Exception as e:
         fail(pid, "scripting", e)
     report("terminé", 1.0)
+
+
+def change_target_angle(pid: str, channel: str, index: Optional[int] = None, custom: Optional[str] = None) -> Dict:
+    """"Sources d'abord" with versions: another angle for one channel, its script is written again."""
+    p = load(pid)
+    _expect(p, "script_review")
+    t = target(p, channel)
+    if custom and custom.strip():
+        t["angle"] = {"titre": custom.strip()[:80], "idee": custom.strip()[:400]}
+    elif index is not None and 0 <= index < len(p.get("angles") or []):
+        t["angle"] = p["angles"][index]
+    else:
+        raise PipelineError("Choisis un angle.")
+    p["status"] = "scripting"
+    return save(p)
 
 
 def start_scripts(pid: str) -> Dict:
@@ -1050,7 +1490,44 @@ def edit_script(pid: str, channel: str, new: Dict) -> Dict:
     t = target(p, channel)
     sc = script.normalise({**(t["script"] or {}), **new}, p["clips"])
     t.update(script={**sc, "corrections": (t["script"] or {}).get("corrections", [])},
-             problems=_fetched_problems(sc, p["clips"], t["language"]), approved=False)
+             problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
+    return save(p)
+
+
+def _passage_accord(p: Dict, channel: str, k: int) -> Tuple[Dict, Dict, Dict]:
+    _expect(p, "script_review")
+    t = target(p, channel)
+    ps = (t.get("script") or {}).get("passages") or []
+    if not 0 <= k < len(ps):
+        raise PipelineError("Passage inconnu.")
+    a = _accord(t.get("accords"), k, ps[k])
+    if not a:
+        raise PipelineError("Ce passage n'a pas de contrôle phrase/image en cours (la phrase ou le clip a changé).")
+    return t, ps[k], a
+
+
+def keep_passage(pid: str, channel: str, k: int) -> Dict:
+    """You have the last word: the sentence stays on its clip."""
+    p = load(pid)
+    t, _, a = _passage_accord(p, channel, k)
+    a["garde"] = True
+    t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t["accords"]), approved=False)
+    return save(p)
+
+
+def use_proposal(pid: str, channel: str, k: int) -> Dict:
+    """The sentence the check wrote for what the clip really shows."""
+    p = load(pid)
+    t, x, a = _passage_accord(p, channel, k)
+    if not a.get("proposition"):
+        raise PipelineError("Pas de phrase proposée pour ce passage.")
+    x["texte"] = a["proposition"]
+    a.update(texte=x["texte"], note="bon", proposition="", pourquoi="phrase réécrite pour son image")
+    if p.get("mode") == "script" and k < len(_active(p)):  # the storyboard says the same: a new fetch keeps it
+        textes = p["storyboard"]["plans"][_active(p)[k]].get("textes") or {}
+        if t["language"] in textes:
+            textes[t["language"]]["texte"] = x["texte"]
+    t.update(problems=_fetched_problems(t["script"], p["clips"], t["language"], t["accords"]), approved=False)
     return save(p)
 
 
@@ -1059,7 +1536,7 @@ def revise_script(pid: str, channel: str, request: str) -> Dict:
     _expect(p, "script_review")
     t = target(p, channel)
     sc = script.revise(t["script"], {k: c for k, c in p["clips"].items() if c.get("usable")}, request)
-    t.update(script=sc, problems=script.problems(sc, p["clips"], t["language"]), approved=False)
+    t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t.get("accords")), approved=False)
     return save(p)
 
 
@@ -1067,7 +1544,7 @@ def approve_script(pid: str, channel: str) -> Dict:
     p = load(pid)
     _expect(p, "script_review")
     t = target(p, channel)
-    problems = _fetched_problems(t["script"] or {}, p["clips"], t["language"])
+    problems = _fetched_problems(t["script"] or {}, p["clips"], t["language"], t.get("accords"))
     if problems:
         raise PipelineError("À corriger avant de valider : " + " ".join(problems))
     t["approved"] = True
@@ -1079,23 +1556,178 @@ def approve_script(pid: str, channel: str) -> Dict:
 def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset: float) -> Dict:
     base = os.path.join(project_dir(p["project_id"]), t["channel"])
     voice_mp3 = os.path.join(base, "voice.mp3")
-    if not t.get("voice") or t["voice"].get("voice_id") != t["voice_id"]:     # never pay twice for the same narration
+    texts = [x["texte"] for x in t["script"]["passages"]]
+    v = t.get("voice") or {}
+    if not v or v.get("voice_id") != t["voice_id"] or v.get("texts", texts) != texts:   # never pay twice for the same narration
         report(f"voix {t['channel']}", offset)
         t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3)
-        t["voice"]["voice_id"] = t["voice_id"]
+        t["voice"].update(voice_id=t["voice_id"], texts=texts)
+    for vp, sp in zip(t["voice"]["passages"], t["script"]["passages"]):      # back from the preview: a clip or a banner changed
+        vp.update({k: sp[k] for k in ("clip", "bandeau", "mots_cles") if k in sp})
     out = os.path.join(base, "preview.mp4" if preview else "final.mp4")
-    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2)
+    _choose_music(p, t)
+    beats = _beats(t)
+    fx = _effects(p, t, os.path.join(base, "work"))
+    anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2, fx, beats)
     report(f"{'aperçu' if preview else 'rendu'} {t['channel']}", offset + share * 0.3)
     r = render.render(t["voice"]["passages"], t["voice"]["words"], p["clips"], voice_mp3, t["language"], out,
                       os.path.join(base, "work"), credit=p["credits"],
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
-                                                   offset + share * (0.3 + 0.6 * f)), annotations=anns)
-    c = checks.verify(out, voice_mp3, t["voice"]["passages"])
-    return {"path": out, "summary": r, "checks": c}
+                                                   offset + share * (0.3 + 0.6 * f)), annotations=anns,
+                      style=_style_of(t), effects=fx, beats=beats)
+    t["style"] = _style_of(t)           # the look really used (the channel's may have changed since the project began)
+    r["recette"] = _recipe(p, t, r.get("recette") or {})
+    c = checks.verify(out, voice_mp3, t["voice"]["passages"], [x["start"] for x in r.get("segments") or []] or None)
+    return {"path": out, "summary": r, "checks": c, "recette": r["recette"]}
 
 
-def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float) -> List[Dict]:
+def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
+    """Everything that made this video, in one place: kept with the final
+    render and its publication record, to compare with how the audience
+    liked it and to make another video the same way."""
+    sc, plans = t.get("script") or {}, rendered.get("plans") or []
+    segs = [x for x in plans]
+    total = round(sum(x.get("duree", 0) for x in segs), 2)
+    return {
+        "projet": p["project_id"], "mode": p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
+        "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
+        "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
+                    "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique")},
+        "structure": {"duree_s": total, "plans": len(segs), "accroche_s": segs[0]["duree"] if segs else None,
+                      "plan_moyen_s": round(total / len(segs), 2) if segs else None,
+                      "coupes_sur_le_temps": sum(1 for x in segs if x.get("coupe_sur_le_temps")),
+                      "fin_en_boucle": rendered.get("fin_en_boucle")},
+        "titre": sc.get("titre"),
+        "plans": [{**x, "texte": ps.get("texte"), "bandeau": ps.get("bandeau"), "mots_cles": ps.get("mots_cles"),
+                   "fleche": ps.get("annotation"), "effets_demandes": ps.get("effets"),
+                   "image": (p["clips"].get(ps.get("clip")) or {}).get("desc"),
+                   "source": _source_url(p, p["clips"].get(ps.get("clip")) or {})}
+                  for x, ps in zip(segs, sc.get("passages") or [])],
+    }
+
+
+def _source_url(p: Dict, c: Dict) -> Optional[str]:
+    """The video a clip was cut from: its pick (Script d'abord), else the
+    project's source list (Sources d'abord)."""
+    if c.get("pick_key"):
+        return c["pick_key"][0]
+    urls, i = p.get("source_urls") or [], c.get("source")
+    return urls[i] if isinstance(i, int) and 0 <= i < len(urls) else None
+
+
+def _style_of(t: Dict) -> str:
+    """The channel's look as set now in Réglages → Voix (a change applies to the
+    projects under way), else the one it had when the project was made."""
+    try:
+        from channel_manager import ChannelManager
+        return settings.channel_settings(ChannelManager().get_channel_profile(t["channel"]))["style"]
+    except Exception:
+        return t.get("style") or "classique"
+
+
+def _effects(p: Dict, t: Dict, work: str) -> List[Optional[Dict]]:
+    """The montage effects of each passage, ready for render: a zoom's target
+    found once on the clip at its strong moment (kept for the final render)."""
+    passages = (t.get("script") or {}).get("passages") or []
+    cache, out = t.setdefault("fx_cache", {}), []
+    os.makedirs(work, exist_ok=True)
+    for k, x in enumerate(passages):
+        e, c = effects.clean(x.get("effets")), p["clips"].get(x.get("clip"))
+        if not e or not c:
+            out.append(None)
+            continue
+        e = dict(e)
+        if e.get("zoom") and (x.get("annotation") or {}).get("cible"):
+            e["zoom"] = None                    # the arrow is placed on the unzoomed picture: it wins
+        if e.get("zoom"):
+            key = f"{x['clip']}|{round(c['impact'], 2)}|{e['zoom']}"
+            if key not in cache:
+                try:
+                    still = sources.still(c["src"], c["impact"], c.get("crop"), os.path.join(work, f"zoom{k}.jpg"),
+                                          c.get("delogo"), (c["w"], c["h"]))
+                    cache[key] = annotate.locate([still], e["zoom"])[0]
+                except Exception:
+                    cache[key] = None
+            e["zoom"] = effects.zoom_of(c, cache[key])     # not found: no zoom, never a wrong one
+        out.append(e)
+    return out
+
+
+MOOD_PROMPT = """Choisis la musique de fond d'un YouTube Short parmi les morceaux de la chaine.
+Le Short : « {titre} » — {resume}
+Morceaux (nom du fichier / tempo / energie mesures) :
+{morceaux}
+Prends celui dont l'ambiance colle le mieux au ton du Short (tension, danger, humour, emotion, science calme...).
+JSON uniquement : {{"morceau": numero, "pourquoi": "une phrase en francais"}}"""
+
+
+def _track_info(path: str) -> Dict:
+    """Tempo, energy and the strongest 40 s of a track (cached next to it)."""
+    import json as _json, hashlib
+    os.makedirs(os.path.join("temp", "music_info"), exist_ok=True)   # never a file in the person's music folder
+    cache = os.path.join("temp", "music_info", hashlib.md5(os.path.abspath(path).encode()).hexdigest() + ".json")
+    if os.path.exists(cache):
+        try:
+            return _json.load(open(cache, encoding="utf-8"))
+        except Exception:
+            pass
+    import numpy as np
+    raw = __import__("subprocess").run(["ffmpeg", "-v", "error", "-i", path, "-ac", "1", "-ar", "4000", "-f", "f32le", "-"],
+                                       capture_output=True).stdout
+    y = np.frombuffer(raw, np.float32)
+    dur = len(y) / 4000
+    rms = np.sqrt(np.convolve(np.square(y), np.ones(4000) / 4000, mode="valid")[::4000]) if len(y) > 4000 else np.array([0.0])
+    win = 40
+    best = max(range(max(1, len(rms) - win)), key=lambda i: float(rms[i:i + win].mean())) if len(rms) > win else 0
+    beats = render.beats_of(path, max(0.0, best), 20)
+    info = {"duree": round(dur, 1), "energie": round(float(rms.mean()) * 100, 1), "debut_fort": float(best),
+            "bpm": round(60 / (beats[1] - beats[0])) if len(beats) > 1 else None}
+    try:
+        _json.dump(info, open(cache, "w", encoding="utf-8"))
+    except OSError:
+        pass
+    return info
+
+
+def _choose_music(p: Dict, t: Dict) -> None:
+    """With several tracks in the channel's library, the AI picks the one that
+    fits this Short's tone (once per version) and its strongest part; with a
+    single track nothing changes. A track chosen by hand is kept."""
+    if t.get("music_chosen") or not t.get("music_path"):
+        return
+    folder = os.path.dirname(t["music_path"])
+    tracks = sorted(f for f in os.listdir(folder) if f.lower().endswith((".mp3", ".wav", ".m4a"))) if os.path.isdir(folder) else []
+    t["music_chosen"] = True
+    if len(tracks) < 2:
+        return
+    try:
+        infos = [_track_info(os.path.join(folder, f)) for f in tracks]
+        listing = "\n".join(f"{n}. {f} / {i['bpm'] or '?'} BPM / energie {i['energie']}" for n, (f, i) in enumerate(zip(tracks, infos), 1))
+        sc = t.get("script") or {}
+        r = script._gemini()._generate_content(
+            [{"text": MOOD_PROMPT.format(titre=sc.get("titre", ""), resume=" ".join(x["texte"] for x in sc.get("passages") or [])[:600],
+                                         morceaux=listing)}], max_tokens=1000, timeout=60, temperature=0.2)
+        n = int(r.get("morceau")) - 1
+    except Exception:
+        return
+    if 0 <= n < len(tracks):
+        t.update(music_path=os.path.join(folder, tracks[n]), music_start=infos[n]["debut_fort"],
+                 music_why=str(r.get("pourquoi") or "")[:200])
+
+
+def _beats(t: Dict) -> Optional[List[float]]:
+    """The music's beats in video time, for the cuts (none without music)."""
+    if not t.get("music_path") or not os.path.exists(t["music_path"]):
+        return None
+    try:
+        return render.beats_of(t["music_path"], float(t.get("music_start") or 0), 90) or None
+    except Exception:
+        return None
+
+
+def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float,
+                 fx: Optional[List[Optional[Dict]]] = None, beats: Optional[List[float]] = None) -> List[Dict]:
     """The arrows/circles the script asks for, located once (the final render
     reuses the preview's track); a target not found is simply left out."""
     passages = (t.get("script") or {}).get("passages") or []
@@ -1103,7 +1735,7 @@ def _annotations(p: Dict, t: Dict, work: str, report: Report, at: float) -> List
     if not wanted:
         return []
     report(f"flèches et cercles {t['channel']}", at)
-    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"])
+    segs, _ = render.build_timeline(t["voice"]["passages"], p["clips"], fx, beats)
     cache, out = t.setdefault("ann_cache", {}), []
     os.makedirs(work, exist_ok=True)
     for k, ann in wanted:
@@ -1169,6 +1801,19 @@ def validate_preview(pid: str, channel: str) -> Dict:
 
 # ---------------------------------------------------------------- 4. final render -> Publication
 
+def _thumbnail(made: Dict, video: str) -> Optional[str]:
+    """The cover picture: the hook's strongest instant (the most spectacular
+    second the re-timing saw), taken from the final video with its banner."""
+    segs = (made.get("summary") or {}).get("segments") or []
+    if not segs:
+        return None
+    at = min(max(segs[0].get("impact", 0.5), 0.2), max(0.2, segs[0]["end"] - 0.1))
+    out = os.path.splitext(video)[0] + ".jpg"
+    import subprocess as _sp
+    r = _sp.run(["ffmpeg", "-v", "error", "-y", "-ss", f"{at:.2f}", "-i", video, "-frames:v", "1", "-q:v", "2", out])
+    return out if r.returncode == 0 and os.path.exists(out) else None
+
+
 def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     sc = t["script"]
     label = langs.lang(t["language"])["credit_label"]
@@ -1207,6 +1852,10 @@ def run_final(pid: str, report: Optional[Report] = None):
             os.makedirs("processed_videos", exist_ok=True)
             shutil.copy(made["path"], dest)
             rec = publication_record(p, t, dest)
+            rec["recette"] = made.get("recette")
+            thumb = _thumbnail(made, dest)
+            if thumb:
+                rec["thumbnail_path"] = thumb
             db.upsert_video(rec["video_id"], rec)
             t.update(video_id=rec["video_id"], final=made)
             save(p)

@@ -2480,6 +2480,11 @@ function renderAdaptationChannel(card, ch, data){
         <div class="entry-row"><input class="f ad-start" type="number" min="0" step="0.5" value="${s.music_start}"><span class="tiny">s : départ de la musique (${fmtSec(s.music_start)})</span>
         <button class="btn secondary small ad-take">Prendre l'instant du lecteur</button></div>` :
         '<div class="tiny">Les morceaux viennent du dossier musique de la chaîne (Réglages → Montage → Ajouter).</div>'}
+    </div>
+    <div class="chcard-body">
+      <label class="f">Style visuel (bandeaux et sous-titres de toutes ses vidéos Adaptation)</label>
+      <select class="f ad-style" style="width:auto">${(data.styles || []).map(st => `<option value="${st.name}" ${st.name === s.style ? 'selected' : ''}>${esc(st.label)}</option>`).join('')}</select>
+      <img class="ad-style-prev" src="/api/adaptation/styles/${s.style}/preview?lang=${s.language}" alt="" style="width:100%;max-width:540px;border-radius:8px;display:block">
     </div>`;
   const save = async body => {
     try { renderAdaptationChannel(card, ch, await api(`/api/channels/${ch.name}/adaptation`, { method:'PUT', body: JSON.stringify(body) })); }
@@ -2488,6 +2493,8 @@ function renderAdaptationChannel(card, ch, data){
   card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
   card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
   card.querySelector('.ad-music').onchange = e => save({ settings: { music_file: e.target.value || null } });
+  const styleSel = card.querySelector('.ad-style');
+  if (styleSel) styleSel.onchange = e => save({ settings: { style: e.target.value } });
   const start = card.querySelector('.ad-start'), audio = card.querySelector('.ad-audio');
   if (start) start.onchange = () => save({ settings: { music_start: parseFloat(start.value) || 0 } });
   if (start && audio) card.querySelector('.ad-take').onclick = () => save({ settings: { music_start: Math.round(audio.currentTime * 2) / 2 } });
@@ -2497,7 +2504,7 @@ function renderAdaptationChannel(card, ch, data){
 
 let adCurrent = null, adPoll = null, adProject = null;
 const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering'];
-const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'sources_review']], ['Script', ['scripting', 'script_review']],
+const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'searching', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
@@ -2559,7 +2566,7 @@ async function renderNewAdaptation(){
             <span class="tiny">tu as déjà les vidéos, ou tu préfères les choisir d'abord : le script est écrit avec les clips trouvés</span></label>
         </div>
         <label class="switch" id="adVersionsBox" style="color:var(--text);margin-top:4px"><input type="checkbox" id="adVersions" checked>
-          <b>Une version différente par chaîne</b> <span class="tiny">chaque chaîne a son angle, son accroche et sa fin (sinon : la même vidéo traduite)</span></label>
+          <b>Une version différente par chaîne</b> <span class="tiny">chaque chaîne a son angle, son accroche et sa fin (sinon : la même vidéo traduite) ; en « Sources d'abord », avec les mêmes clips</span></label>
         <div id="adSrcBox" style="display:none"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
         <textarea class="f" id="adSrc" rows="4" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
         <label class="f" style="margin-top:6px">3. Les chaînes qui recevront une version (chacune dans sa langue, avec sa voix)</label>
@@ -2576,8 +2583,7 @@ async function renderNewAdaptation(){
   hydrateIcons(stage);
   document.getElementById('adToVoices').onclick = () => goTo(13);
   const syncVersions = () => {
-    const script = (stage.querySelector('input[name="adMode"]:checked') || {}).value === 'script';
-    document.getElementById('adVersionsBox').style.display = script && stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
+    document.getElementById('adVersionsBox').style.display = stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
   };
   stage.querySelectorAll('.ad-target').forEach(x => x.addEventListener('change', syncVersions));
   syncVersions();
@@ -2589,7 +2595,7 @@ async function renderNewAdaptation(){
     const btn = ev.currentTarget;
     const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value || 'sources';
     const body = { reference_url: document.getElementById('adRef').value.trim(), mode,
-                   versions: mode === 'script' && document.getElementById('adVersions').checked,
+                   versions: document.getElementById('adVersions').checked,
                    source_urls: mode === 'script' ? [] : document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean),
                    channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value) };
     btn.disabled = true;
@@ -2673,8 +2679,13 @@ function adBusyHtml(p){
 
 function renderAdError(body, p){
   body.innerHTML = `<div class="errbox">${esc(p.error || 'Erreur')}</div>
-    <div class="ad-row"><button class="btn primary small" id="adRetry" data-icon="refresh">Réessayer cette étape</button></div>`;
+    <div class="ad-row"><button class="btn primary small" id="adRetry" data-icon="refresh">Réessayer cette étape</button>
+      ${['voicing', 'rendering'].includes(p.failed_step) ? '<button class="btn ghost small" id="adErrBack" data-icon="eye">← Revenir au script</button>' : ''}</div>`;
   hydrateIcons(body);
+  const errBack = document.getElementById('adErrBack');
+  if (errBack) errBack.onclick = async () => {
+    try { await api(`/api/adaptations/${p.project_id}/back-to-script`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
+  };
   document.getElementById('adRetry').onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/retry`, { method:'POST' }); loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };
@@ -2768,7 +2779,7 @@ const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images 
 const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'],
   partielle: ['warn', 'partielle : à regarder'], non: ['bad', 'rien d\'utile'] };
 const AD_RANK = { exacte: 0, equivalente: 1, partielle: 2, rien: 4 };
-const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien' };
+const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien', action: 'par action' };
 
 function adVerifOf(sug, url){
   const v = (sug.verifs || {})[url];
@@ -2777,7 +2788,8 @@ function adVerifOf(sug, url){
 
 function adVerifHtml(v, scene, long){
   if (v.copie) return `<span class="pill bad">copie du Short modèle</span><span>Un repost du Short que tu adaptes : ne pas l'utiliser (droits d'auteur).</span>`;
-  const remix = v.remontage ? `<span class="pill warn">remontage d'un autre créateur</span>` : '';
+  const remix = (v.film ? `<span class="pill bad">film / série / TV : droits d'auteur, jamais choisi automatiquement</span>` : '')
+    + (v.remontage ? `<span class="pill bad">remontage d'un autre créateur : jamais choisi automatiquement</span>` : '');
   const per = v.par_scene || {};
   const useful = Object.entries(per).filter(([, e]) => e.niveau !== 'rien').map(([i]) => +i);
   const here = scene >= 0 ? (per[scene] || { niveau: 'rien', moments: [], raison: '' }) : null;
@@ -2932,8 +2944,16 @@ function renderAdFinder(box, p){
       <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
       <div class="chcard-foot"><span class="tiny ad-count"></span>
         <button class="btn secondary ad-own-check" data-icon="sparkle" title="L'IA regarde chaque lien et le compare aux plans du modèle (1 à 2 min)">Vérifier mes liens avec l'IA</button>
+        ${p.status === 'sources_search' && (p.wanting || []).length ? `<button class="btn secondary ad-more" title="Cherche l'ACTION des scènes sans bonne vidéo dans des compilations, vidéos GoPro, vlogs… même si la vidéo parle d'autre chose ; l'IA regarde les nouvelles vidéos (2 à 5 min)">🔎 Chercher plus pour ${p.wanting.length} scène(s)</button>` : ''}
         <button class="btn primary push ad-add" data-icon="download">Télécharger et analyser →</button></div></article>`;
+  if (p.fetch_note) box.insertAdjacentHTML('afterbegin', `<div class="warnbox">${esc(p.fetch_note)}</div>`);
   hydrateIcons(box);
+  const more = box.querySelector('.ad-more');
+  if (more) more.onclick = async () => {
+    more.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/images/more`, { method:'POST' }); adProject = null; loadAdProject(); }
+    catch (e){ log(e.message, 'error'); more.disabled = false; }
+  };
   const own = box.querySelector('.ad-own'), count = box.querySelector('.ad-count');
   const urls = () => [...adPicked, ...own.value.split('\n').map(x => x.trim()).filter(Boolean)].filter(u => !have.has(adKey(u)));
   const recount = () => {
@@ -3055,6 +3075,29 @@ function adAnnMissing(card){
   input.style.borderColor = 'var(--danger)'; input.focus();
   toast(`Plan ${k + 1} : écris quoi pointer (ex. la semelle collée au sol), ou choisis « Pas de flèche »`, 'error');
   return true;
+}
+
+// Montage effects of a passage (chosen by the AI after the download, changeable here)
+function adFxHtml(e){
+  e = e || {};
+  const box = (cls, on, label, tip) => `<label class="tiny" title="${tip}" style="display:inline-flex;gap:4px;align-items:center;cursor:pointer">
+      <input type="checkbox" class="${cls}" ${on ? 'checked' : ''}>${label}</label>`;
+  return `<div class="ad-row ad-fx" style="gap:12px;align-items:center">
+      <span class="tiny" style="opacity:.7">Effets :</span>
+      ${box('sc-fx-slow', e.ralenti, '🐢 Ralenti', 'Le moment fort passe au ralenti (2× plus lent, images recalculées)')}
+      ${box('sc-fx-freeze', e.arret, '⏸ Arrêt sur image', 'L’image se fige un instant sur le moment fort (avec la flèche ou le cercle s’il y en a)')}
+      ${box('sc-fx-trans', e.transition, '💨 Transition', 'Coup de zoom et « whoosh » : une nouvelle partie de l’histoire commence')}
+      <input class="f sc-fx-zoom" value="${esc(e.zoom || '')}" placeholder="🔍 Zoom sur… (ex. les pieds de la femme)" style="flex:1;min-width:160px;font-size:12px">
+      <input class="f sc-fx-num" value="${esc(e.chiffre || '')}" maxlength="16" placeholder="🔢 Chiffre en grand (ex. 2 m)" title="Un chiffre fort qui apparaît en grand au moment fort du plan" style="width:170px;font-size:12px"></div>`;
+}
+
+function adFxOf(row){
+  const q = c => row.querySelector(c);
+  if (!q('.sc-fx-slow')) return null;
+  const e = { ralenti: q('.sc-fx-slow').checked, arret: q('.sc-fx-freeze').checked,
+              transition: q('.sc-fx-trans').checked, zoom: q('.sc-fx-zoom').value.trim() || null,
+              chiffre: (q('.sc-fx-num') ? q('.sc-fx-num').value.trim() : '') || null };
+  return (e.ralenti || e.arret || e.transition || e.zoom || e.chiffre) ? e : null;
 }
 
 function adAnnOf(row){
@@ -3204,7 +3247,8 @@ function renderAdImages(body, p){
         <div class="tiny">🎬 ${esc(pl.image)}</div>
         ${pick ? `<div class="ad-chosen">${icon('check', 13)} <b>${esc(pick.titre)}</b> — de ${adDuration(pick.moment.debut) || '0:00'} à ${adDuration(pick.moment.fin) || '0:00'}
             <a href="${esc(adAt(pick.url, pick.moment.debut))}" target="_blank" rel="noopener">voir ce moment ↗</a>
-            ${pick.remontage ? `<span class="pill warn">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
+            ${pick.film ? `<span class="pill bad">film / série / TV : droits d'auteur, à remplacer</span>` : ''}
+            ${pick.remontage ? `<span class="pill bad">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
             ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
             <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
@@ -3223,7 +3267,8 @@ function renderAdImages(body, p){
         ${(sc.candidats || []).length ? `<details ${pick ? '' : 'open'}><summary class="tiny" style="cursor:pointer">Autres vidéos trouvées pour ce plan (${sc.candidats.length})</summary>
           <div class="ad-clips" style="margin-top:8px">${adSortCands(sc.candidats, k, sug).map(c => adCandHtml(c, k, sug, new Set(), { plan: k, chosen: pick && pick.url === c.url })).join('')}</div></details>` : ''}
       </div></article>`;
-  }).join('') + `<div class="navbar"><span class="progress-text">${got.length}/${n} plan(s) avec une vidéo</span><span></span>
+  }).join('') + `<div class="navbar"><span class="progress-text">${got.length}/${n} plan(s) avec une vidéo</span>
+      ${p.wanting && p.wanting.length ? `<button class="btn secondary" id="adMore" title="Cherche l'ACTION de chaque plan sans vidéo (ou seulement partielle) dans des compilations, vidéos GoPro, vlogs… même si la vidéo parle d'autre chose ; l'IA regarde les nouvelles vidéos (2 à 5 min). Les autres plans ne changent pas.">🔎 Chercher plus pour ${p.wanting.length} plan(s)</button>` : '<span></span>'}
       <button class="btn primary" id="adFetch" ${got.length === n ? '' : 'disabled'} title="Télécharge seulement les moments choisis et fabrique un clip par plan (1 à 4 min)" data-icon="download">Télécharger les images choisies →</button></div>`;
   hydrateIcons(body);
   body.querySelectorAll('[data-copy]').forEach(b => b.onclick = () =>
@@ -3240,6 +3285,12 @@ function renderAdImages(body, p){
     try { const np = await api(`/api/adaptations/${p.project_id}/${path}`, { method:'POST', body: JSON.stringify(payload || {}) });
           adProject = np; renderAdImages(body, np); return np; }
     catch (e){ log(e.message, 'error'); if (btn){ btn.disabled = false; btn.textContent = btn.dataset.label || 'Réessayer'; } }
+  };
+  const moreBtn = document.getElementById('adMore');
+  if (moreBtn) moreBtn.onclick = async () => {
+    moreBtn.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/images/more`, { method:'POST' }); adProject = null; loadAdProject(); }
+    catch (e){ log(e.message, 'error'); moreBtn.disabled = false; }
   };
   const fetchBtn = document.getElementById('adFetch');
   if (fetchBtn) fetchBtn.onclick = async () => {
@@ -3276,6 +3327,18 @@ function renderAdImages(body, p){
   });
 }
 
+// Does the clip show what its sentence says? (checked after the download; stale once the sentence or the clip changes)
+function adAccordHtml(t, ps, i){
+  const a = (t.accords || [])[i];
+  if (!a || a.texte !== ps.texte || a.clip !== ps.clip) return '';
+  if (a.note === 'bon') return `<div class="tiny" style="color:#6fd08c">✅ La phrase va avec son image</div>`;
+  const red = a.note === 'non' && !a.garde;
+  return `<div class="tiny" style="color:${red ? '#ff7b7b' : '#f5c56d'}">${a.note === 'non' ? (a.garde ? '❌ gardé quand même' : '❌ Ne va pas avec l\'image') : '🟡 Lien faible avec l\'image'}${a.pourquoi ? ' : ' + esc(a.pourquoi) : ''}</div>
+    ${a.proposition ? `<div class="ad-row"><span class="tiny">Proposé : « ${esc(a.proposition)} »</span>
+      <button class="btn ghost small ad-acc" data-act="proposal">Prendre cette phrase</button></div>` : ''}
+    ${red ? `<button class="btn ghost small ad-acc" data-act="keep" title="Regarde le clip avec ▶ : tu as le dernier mot">Garder quand même</button>` : ''}`;
+}
+
 function renderAdScripts(body, p){
   const allApproved = p.targets.every(t => t.approved);
   body.innerHTML = p.targets.map(t => {
@@ -3287,14 +3350,29 @@ function renderAdScripts(body, p){
         ${esc((channels.find(c => c.name === t.channel) || {}).display_name || t.channel)} · ${esc(t.language_label)}</div></div>
         ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
       <div class="chcard-body">
-        ${p.annotations_reviewed || p.mode !== 'script' ? `<div class="tiny">${icon('eye', 12)} Flèches et cercles choisis par l'IA <b>en regardant les vrais clips</b> : clique ▶ pour voir un clip, change-les si besoin.</div>` : ''}
+        ${t.angle && (p.angles || []).length ? `<div class="ad-row ad-tangle" style="gap:6px"><b>Angle : « ${esc(t.angle.titre)} »</b>
+            <select class="f sc-angle" style="width:auto;max-width:100%">${p.angles.map((a, i) =>
+              `<option value="${i}" ${a.titre === t.angle.titre ? 'selected' : ''}>${esc(a.titre)}</option>`).join('')}<option value="custom">Mon propre angle…</option></select>
+            <input class="f sc-angle-custom" placeholder="Décris ton angle" style="display:none;flex:1;min-width:200px">
+            <button class="btn ghost small sc-angle-go" title="Le script de cette chaîne est réécrit (environ 1 minute)">Réécrire avec cet angle</button></div>` : ''}
+        ${p.annotations_reviewed || p.mode !== 'script' ? `<div class="tiny">${icon('eye', 12)} Flèches, cercles et effets (ralenti, zoom, arrêt sur image, transition) choisis par l'IA <b>en regardant les vrais clips</b> : clique ▶ pour voir un clip, change-les si besoin.</div>` : ''}
         ${(sc.corrections || []).length ? `<details><summary class="tiny" style="cursor:pointer">Relecture automatique : ${sc.corrections.length} correction(s)</summary>
           <ul class="tiny">${sc.corrections.map(c => `<li>${esc(c)}</li>`).join('')}</ul></details>` : ''}
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
         ${(() => { const refused = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
-              .filter(c => c && !c.usable);
-            return refused.length ? `<div class="ad-row">${refused.map(c => `<span class="tiny">${esc(c.id)} refusé (${esc(c.why_not || 'contrôle')}) :</span>
+              .filter(c => c && (!c.usable || (c.absent && !c.forced && !(t.accords || []).some((a, i) =>
+                a && a.clip === c.id && a.note === 'bon' && (sc.passages[i] || {}).texte === a.texte))));
+            return refused.length ? `<div class="ad-row">${refused.map(c => `<span class="tiny">${esc(c.id)} ${c.usable ? `: action introuvable (on y voit : ${esc(c.absent)})` : `refusé (${esc(c.why_not || 'contrôle')})`} :</span>
               <button class="btn ghost small ad-force" data-clip="${esc(c.id)}" title="Regarde-le avec ▶ d'abord : tu as le dernier mot">Utiliser quand même</button>`).join('')}</div>` : ''; })()}
+        ${(() => { const noted = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
+              .filter(c => c && c.usable && c.note);
+            return noted.length ? `<div class="tiny" style="color:#f5c56d">${noted.map(c => `${esc(c.id)} : ${esc(c.note)} — vérifie-le avec ▶ (le logo est effacé)`).join(' · ')}</div>` : ''; })()}
+        ${(() => { const left = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
+              .filter(c => c && (c.texte_efface || []).length);
+            return left.length ? `<div class="tiny" style="opacity:.8">${left.map(c => `${esc(c.id)} : texte resté après nettoyage, effacé aussi (« ${esc(c.texte_efface.join(' », « '))} ») — vérifie avec ▶`).join(' · ')}</div>` : ''; })()}
+        ${(() => { const low = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
+              .filter(c => c && c.low_res);
+            return low.length ? `<div class="tiny" style="color:#f5c56d">${low.map(c => `${esc(c.id)} : basse résolution (${c.w}×${c.h}), floue à l'écran${sc.passages[0] && sc.passages[0].clip === c.id ? ' — c\'est l\'accroche : cherche mieux si tu peux' : ''}`).join(' · ')}</div>` : ''; })()}
         <label class="f">Titre</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
         <div>${sc.passages.map((ps, i) => `
           <div class="ad-passage" data-i="${i}">
@@ -3305,6 +3383,9 @@ function renderAdScripts(body, p){
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
               ${adAnnHtml(ps.annotation)}
+              ${adFxHtml(ps.effets)}
+              ${ps.effets && ps.effets.zoom && ps.annotation ? `<div class="tiny" style="color:#f5c56d">Zoom ignoré : ce plan a une flèche ou un cercle (elle serait mal placée sur l'image zoomée). Choisis l'un ou l'autre.</div>` : ''}
+              ${adAccordHtml(t, ps, i)}
             </div>
           </div>`).join('')}</div>
         <label class="f">Description</label><textarea class="f sc-desc" ${dir}>${esc(sc.description || '')}</textarea>
@@ -3329,7 +3410,7 @@ function renderAdScripts(body, p){
       tags: card.querySelector('.sc-tags').value.split(',').map(x => x.trim()).filter(Boolean),
       passages: [...card.querySelectorAll('.ad-passage')].map(row => ({
         clip: row.querySelector('.sc-clip').value, bandeau: row.querySelector('.sc-banner').value,
-        texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
+        texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row), effets: adFxOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = null; renderAdScripts(body, np); adProject = np; };
     card.querySelectorAll('.sc-clip').forEach(sel => sel.onchange = () =>
@@ -3360,6 +3441,27 @@ function renderAdScripts(body, p){
   if (go) go.onclick = async () => {
     try { await api(`/api/adaptations/${p.project_id}/voices`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };
+  body.querySelectorAll('.ad-target-card').forEach(card => {
+    const sel = card.querySelector('.sc-angle');
+    if (!sel) return;
+    const custom = card.querySelector('.sc-angle-custom');
+    sel.onchange = () => custom.style.display = sel.value === 'custom' ? '' : 'none';
+    card.querySelector('.sc-angle-go').onclick = async ev => {
+      const own = sel.value === 'custom' ? custom.value.trim() : null;
+      if (sel.value === 'custom' && !own){ toast('Décris ton angle', 'error'); return; }
+      ev.currentTarget.disabled = true;
+      try { await api(`/api/adaptations/${p.project_id}/targets/${card.dataset.channel}/angle`, { method:'POST',
+              body: JSON.stringify(own ? { custom: own } : { index: +sel.value }) }); adProject = null; loadAdProject(); }
+      catch (e){ log(e.message, 'error'); ev.currentTarget.disabled = false; }
+    };
+  });
+  body.querySelectorAll('.ad-acc').forEach(b => b.onclick = async () => {
+    const card = b.closest('[data-channel]'), k = b.closest('.ad-passage').dataset.i;
+    b.disabled = true;
+    try { const np = await api(`/api/adaptations/${p.project_id}/targets/${card.dataset.channel}/passages/${k}/${b.dataset.act}`, { method:'POST' });
+          adProject = null; renderAdScripts(body, np); adProject = np; }
+    catch (e){ log(e.message, 'error'); b.disabled = false; }
+  });
   body.querySelectorAll('.ad-force').forEach(b => b.onclick = async () => {
     b.disabled = true;
     try { const np = await api(`/api/adaptations/${p.project_id}/clips/${b.dataset.clip}/force`, { method:'POST' });
@@ -3401,9 +3503,14 @@ async function renderAdPreviews(body, p){
       </div></div>
       <div class="chcard-foot">${t.video_id ? '' : `<button class="btn primary small push pv-validate" data-icon="check" ${ok && !t.validated ? '' : 'disabled'}>Valider cet aperçu</button>`}</div>
     </article>`;
-  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} aperçu(s) validé(s)</span><span></span>
+  }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} aperçu(s) validé(s)</span>
+      ${p.targets.some(t => t.video_id) ? '<span></span>' : '<button class="btn ghost small" id="adBackScript" data-icon="eye" title="Changer un clip, une phrase, un effet : la voix est gardée si les phrases ne changent pas">← Revenir au script</button>'}
       <button class="btn primary" id="adRender" ${anyValidated ? '' : 'disabled'} data-icon="film">Rendu final des aperçus validés →</button></div>`;
   hydrateIcons(body);
+  const backScript = document.getElementById('adBackScript');
+  if (backScript) backScript.onclick = async () => {
+    try { await api(`/api/adaptations/${p.project_id}/back-to-script`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
+  };
   body.querySelectorAll('.ad-prev-card').forEach(card => {
     const ch = card.dataset.channel;
     const sel = card.querySelector('.pv-voice');

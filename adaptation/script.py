@@ -18,7 +18,7 @@ A person always reviews and can edit the script before any voice is made.
 
 import json
 import os
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from adaptation.langs import lang as lang_of
 
@@ -39,7 +39,7 @@ Il reprend la RECETTE d'un Short viral (a garder) :
 
 Clips disponibles (lettre: contenu, duree utilisable, instant du moment fort depuis le debut du clip) :
 {clips}
-
+{angle}
 REGLES
 - Langue : {regles}
 - REECRIS avec tes propres phrases, ne traduis jamais le texte d'origine mot a mot.
@@ -104,11 +104,25 @@ def _gemini(pro: bool = False):
 
 
 def clip_listing(clips: Dict[str, Dict]) -> str:
-    return "\n".join(f"- {cid}: {c.get('desc') or 'clip'} ({c['end'] - c['start']:.1f}s, moment fort a "
+    """The clips as the script writer sees them. A clip cut around its action
+    is slowed down to fill its sentence: its room is given too (measured: told
+    only its 2-3 s, the writer made a 20 s Short of short sentences)."""
+    from adaptation.effects import MIN_SPEED
+    def room(c):
+        d = c["end"] - c["start"]
+        return f"{d:.1f}s" + (f", jusqu'a {d / (MIN_SPEED + 0.1):.1f}s de phrase au ralenti" if c.get("compact") else "")
+    return "\n".join(f"- {cid}: {c.get('desc') or 'clip'} ({room(c)}, moment fort a "
                      f"{c['impact'] - c['start']:.1f}s)" for cid, c in clips.items() if c.get("usable", True))
 
 
-def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) -> Dict:
+ANGLE_PART = """
+ANGLE IMPOSE pour CETTE chaine (sa video doit etre differente du modele et des autres chaines) : "{titre}" — {idee}
+Le script suit cet angle : sa propre accroche, son propre ordre de clips, sa propre fin. Ne reprends ni l'accroche
+ni la fin du modele.
+"""
+
+
+def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None, angle: Optional[Dict] = None) -> Dict:
     lang = lang_of(lang_code)
     plans = " | ".join(f"[{p.get('role')}] {p.get('visuel')} -> \"{p.get('paroles')}\"" for p in reference.get("plans", []))
     prompt = PROMPT.format(langue=lang["label"], sujet=reference.get("sujet"), question=reference.get("question"),
@@ -116,7 +130,7 @@ def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None) 
                            douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
                            pub=reference.get("publicite") or "aucune",
                            clips=clip_listing(clips), regles=LANG_RULES.get(lang["code"], LANG_RULES["fr"]),
-                           cps=lang["chars_per_second"])
+                           cps=lang["chars_per_second"], angle=ANGLE_PART.format(**angle) if angle else "")
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.6)
     return normalise(r, clips)
 
@@ -167,10 +181,12 @@ def normalise(r, clips: Dict[str, Dict]) -> Dict:
         if not isinstance(p, dict) or not str(p.get("texte", "")).strip():
             continue
         from adaptation.storyboard import clean_annotation
+        from adaptation import effects
         passages.append({"clip": str(p.get("clip", "")).strip().upper(), "bandeau": str(p.get("bandeau", "")).strip(),
                          "texte": " ".join(str(p["texte"]).split()),
                          "mots_cles": [str(m) for m in p.get("mots_cles") or [] if str(m).strip()][:3],
-                         "annotation": clean_annotation(p.get("annotation"))})
+                         "annotation": clean_annotation(p.get("annotation")),
+                         "effets": effects.clean(p.get("effets"))})
     tags = [str(t).strip() for t in r.get("tags") or [] if str(t).strip()]
     return {"titre": str(r.get("titre", "")).strip()[:100], "description": str(r.get("description", "")).strip(),
             "tags": tags[:15], "passages": passages}
@@ -201,7 +217,9 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
         if not c:
             out.append(f"Passage {k} : le clip « {p['clip']} » n'existe pas.")
             continue
-        room = (c["end"] - c["start"]) * lang["chars_per_second"]
+        from adaptation.effects import MIN_SPEED
+        # a clip cut around its action is slowed down to fill its sentence (never below MIN_SPEED)
+        room = (c["end"] - c["start"]) / (MIN_SPEED + 0.1 if c.get("compact") else 1.0) * lang["chars_per_second"]
         if len(p["texte"]) > room * 1.15:
             out.append(f"Passage {k} : phrase trop longue pour son clip ({len(p['texte'])} caractères, "
                        f"le clip {p['clip']} en laisse environ {int(room)}).")
@@ -213,3 +231,67 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
 
 def estimated_seconds(script: Dict, lang_code: str) -> float:
     return round(sum(len(p["texte"]) for p in script.get("passages") or []) / lang_of(lang_code)["chars_per_second"], 1)
+
+
+MATCH_PROMPT = """Tu verifies une video courte (Short) narree en {langue} : chaque phrase est dite PENDANT que son clip
+passe a l'ecran. Le spectateur doit voir ce qu'il entend.
+
+Pour chaque passage : la phrase, et ce que montre REELLEMENT son clip (decrit par quelqu'un qui l'a regarde).
+{passages}
+{images}
+Note chaque passage :
+- "bon" : l'image montre ce que dit la phrase (ou son effet direct, ex. des passagers secoues pour "un mur pour les
+  trop rapides").
+- "moyen" : lien indirect, le spectateur comprend mais l'image n'illustre pas vraiment la phrase.
+- "non" : l'image montre autre chose ; le spectateur entend X et voit Y.
+Le passage 1 est l'ACCROCHE (les 2 premieres secondes) : sois strict, le sujet de la video doit se voir ; s'il ne se
+voit pas, c'est "non".
+Pour "moyen" et "non", propose une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP tout en gardant
+le role du passage dans l'histoire (accroche, explication, chute), complete, sans "…", au plus le nombre de
+caracteres indique pour son clip. Pour "bon", "proposition" est vide.
+
+JSON uniquement : {{"passages": [{{"note": "bon|moyen|non", "pourquoi": "en francais, 1 phrase courte : on entend
+.../on voit ...", "proposition": "..."}}]}} dans l'ordre des passages."""
+
+
+def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
+          stills: Optional[Dict[int, List[str]]] = None) -> List[Dict]:
+    """Does each clip show what its sentence says? Judged on what the final
+    clip really shows: its description, and its own pictures when given
+    (stills: passage index -> image files) — a description once said "a
+    bus" where the pictures show the lamp-post the sentence talks about."""
+    lang = lang_of(lang_code)
+    ps = script.get("passages") or []
+    lines = []
+    for k, p in enumerate(ps, 1):
+        c = clips.get(p["clip"]) or {}
+        room = int((c.get("end", 0) - c.get("start", 0)) * lang["chars_per_second"]) or len(p["texte"])
+        seen = f" | action verifiee en regardant la video en mouvement : {c['action']}" if c.get("action") else ""
+        lines.append(f"{k}. phrase : \"{p['texte']}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}{seen}")
+    import base64
+    pics = []
+    for k in range(len(ps)):
+        files = [f for f in (stills or {}).get(k) or [] if os.path.exists(f)]
+        if files:
+            pics.append({"text": f"Images du clip du passage {k + 1} :"})
+            pics += [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(f, "rb").read()).decode()}}
+                     for f in files]
+    images = ("Trois images fixes de chaque clip suivent. Une image fixe peut etre ambigue (un saut fige au moment ou un "
+              "bus passe) : l'\"action verifiee\", vue en mouvement, fait foi sur ce qui se passe.\n" if pics else "")
+    parts = [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines), images=images)}] + pics
+    for _attempt in range(2):           # an answer once came back cut in the middle (long, with pictures)
+        r = (gemini or _gemini())._generate_content(parts, max_tokens=32000, timeout=180, temperature=0.2)
+        items = r.get("passages") if isinstance(r, dict) else r
+        if isinstance(items, list):
+            break
+    if not isinstance(items, list):
+        raise ScriptError(f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
+    out = []
+    for p, x in zip(ps, items + [{}] * len(ps)):
+        x = x if isinstance(x, dict) else {}
+        note = str(x.get("note", "")).strip().lower()
+        note = note if note in ("bon", "moyen", "non") else "bon"
+        prop = " ".join(str(x.get("proposition") or "").split()) if note != "bon" else ""
+        out.append({"clip": p["clip"], "texte": p["texte"], "note": note,
+                    "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop})
+    return out

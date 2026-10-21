@@ -2,12 +2,15 @@
 plan shared by every language, texts per language, retention rules, review."""
 
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from adaptation import pipeline as ap
 from adaptation import storyboard as sb
+
+REAL_ILLUSTRATION = sb.illustration          # the fixture below fakes it for the flows
 
 
 def plan(role, image, fr, ar=None, ref=(1,)):
@@ -101,6 +104,7 @@ def fakes(monkeypatch):
         return sb.normalise(b, codes)
     monkeypatch.setattr(sb, "write", write)
     monkeypatch.setattr(sb, "critique", lambda b, codes: {**b, "corrections": ["relu"]})
+    monkeypatch.setattr(sb, "illustration", lambda b, code: calls.setdefault("illustrated", []).append(code) or [])
 
     def revise(b, codes, request):
         calls["revise"].append(request)
@@ -205,7 +209,8 @@ def test_plan_queries_and_wanted_scenes():
     q = finder.plan_queries(finder.wanted_from_storyboard(plans, {}), gemini=G())
     assert q == {0: {"recherches": ["tram hits car cab view"], "pays": "Biélorussie", "langue": "Russe", "locales": ["трамвай авария"]}}
     w = finder.wanted_from_storyboard(plans, q)
-    assert w[0] == {"scene": "un tram percute une voiture", "plans": [0, 2], "indices": "", "recherches": ["tram hits car cab view"]}
+    assert w[0] == {"scene": "un tram percute une voiture", "plans": [0, 2], "indices": "", "phrase": "",
+                    "recherches": ["tram hits car cab view"]}
     assert w[1]["recherches"] == ["le visage du conducteur"] and w[1]["plans"] == []
 
 
@@ -245,7 +250,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
     monkeypatch.setattr(finder, "plan_queries", lambda found: {0: {"recherches": ["tram crash"], "pays": "Russie",
                                                                     "langue": "Russe", "locales": ["трамвай"]}})
 
-    def suggest(ref, url, work_dir=None, wanted=None, local=None, report=None):
+    def suggest(ref, url, work_dir=None, wanted=None, local=None, report=None, **kw):
         seen["wanted"], seen["local"] = wanted, local(wanted)
         return {"scenes": [{**w, "candidats": [{"url": "A", "title": "Compil"}]} for w in wanted], "comptes": [], "verifs": {}}
     monkeypatch.setattr(finder, "suggest", suggest)
@@ -266,7 +271,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
 
     p = ap.choose_pick(pid, 1, "A", 30, 35)
     assert p["picks"][1] == {"url": "A", "titre": "Compil", "niveau": "choisie", "moment": {"debut": 30.0, "fin": 35.0},
-                             "raison": "", "auto": False, "remontage": False, "defauts": ""}
+                             "raison": "", "auto": False, "remontage": False, "film": False, "defauts": ""}
     assert ap.choose_pick(pid, 0, None)["picks"][0] is None
     with pytest.raises(ap.PipelineError):
         ap.choose_pick(pid, 9, "A")
@@ -300,14 +305,14 @@ def test_api_images_and_picks(client, project, fakes, monkeypatch):
     assert r.status_code == 200 and r.json()["picks"][2]["moment"] == {"debut": 4.0, "fin": 8.0}
 
 
-def test_auto_pick_prefers_original_footage_to_someone_elses_re_edit():
+def test_auto_pick_never_takes_a_film_or_someone_elses_re_edit():
     from adaptation import finder
-    v = lambda lvl, remix: {"verdict": "oui", "remontage": remix, "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}}
+    v = lambda lvl, remix, film=False: {"verdict": "oui", "remontage": remix, "film": film,
+                                        "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}}
     sug = {"verifs": {"remix": v("exacte", True), "orig": v("equivalente", False)}}
     assert finder.auto_pick(sug, [{}])[0]["url"] == "orig"
-    sug = {"verifs": {"remix": v("exacte", True)}}
-    pick = finder.auto_pick(sug, [{}])[0]
-    assert pick["url"] == "remix" and pick["remontage"]                       # nothing else: taken, flagged
+    sug = {"verifs": {"remix": v("exacte", True), "movie": v("exacte", False, film=True)}}
+    assert finder.auto_pick(sug, [{}]) == [None]                              # rights: only chosen by hand
 
 
 # ---------------------------------------------------------------- steps 4-5: your link, adapt, set aside, fetch
@@ -317,7 +322,7 @@ def _images_project(project, fakes, monkeypatch, picks=None):
     pid = _approved_project(project, fakes)
     ap.start_images(pid)
     monkeypatch.setattr(finder, "plan_queries", lambda found: {})
-    monkeypatch.setattr(finder, "suggest", lambda ref, url, work_dir=None, wanted=None, local=None, report=None: {
+    monkeypatch.setattr(finder, "suggest", lambda ref, url, work_dir=None, wanted=None, local=None, report=None, **kw: {
         "scenes": [{**w, "candidats": [{"url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "title": "Compil", "duration": 600}]}
                    for w in wanted], "comptes": [], "verifs": {}})
     v = {"verdict": "oui", "title": "Compil", "duration": 600, "par_scene": {
@@ -397,10 +402,11 @@ def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, 
     p = ap.load(pid)
     assert p["status"] == "script_review" and p["source_urls"] == ["https://www.youtube.com/watch?v=aaaaaaaaaaa"]
     plans = p["storyboard"]["plans"]
-    assert got["sections"][0][0] == 99.0 and len(got["sections"]) == 5         # one span per moment, 1 s around
+    room = [min(pl["duree"], 6.0) for pl in plans]                             # room to lengthen inside the shot
+    assert got["sections"][0][0] == pytest.approx(100 - room[0] - 1) and len(got["sections"]) == 5
     # times in the downloaded file: the spans are joined one after the other
     lens = [b - a for a, b in got["sections"]]
-    assert made[1][1] == round(lens[0] + 1.0, 2)
+    assert made[1][1] == pytest.approx(lens[0] + 1.0 + room[1], abs=0.01)
     assert made[0][2] - made[0][1] == pytest.approx(max(4, plans[0]["duree"]))   # long enough for its sentence
     assert set(p["clips"]) == {"P1", "P2", "P3", "P4", "P5"} and p["credits"] == "@auteur"
     assert p["clips"]["P1"]["desc"] == "vu 0" and not p["clips"]["P5"]["usable"]
@@ -409,6 +415,373 @@ def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, 
     assert any("présentateur" in x for x in t["problems"]) and not t["approved"]          # the check refused plan 5's moment
     p = ap.back_to_images(pid)
     assert p["status"] == "images_review" and p["picks"][0]                                # pick another moment there
+
+
+def test_a_short_moment_is_lengthened_inside_its_shot_never_across_a_cut():
+    # measured: 24-27 then an interview from 28.1 s; 0-3 then a black end screen from 3.8 s
+    assert ap.fit_window(24, 27, 5.4, [(10.08, 27.98), (28.18, 40)], 99) == (22.58, 27.98)
+    assert ap.fit_window(0, 3, 5.5, [(0.08, 3.62), (3.82, 6.42)], 6.5) == (0, 3.62)
+    assert ap.fit_window(10, 12, 4, [(5, 30)], 60) == (10, 14)                  # room ahead: forward first
+    assert ap.fit_window(10, 16, 4, [(5, 30)], 60) == (10, 16)                  # long enough: as it is
+    assert ap.fit_window(10, 12, 0, [(11, 30)], 60) == (10, 12)                 # an excerpt: untouched
+
+
+def test_a_sentence_too_long_for_its_shorter_clip_is_shortened_alone(monkeypatch):
+    from adaptation import script
+    clips = {"P1": {"start": 0, "end": 4}, "P2": {"start": 0, "end": 2}, "P3": {"start": 0, "end": 4}}
+    texts = ["Une phrase courte.", "Une phrase beaucoup trop longue pour un clip de deux secondes seulement.", "Fin."]
+    sc = {"titre": "T", "passages": [{"clip": f"P{k + 1}", "texte": t, "bandeau": ""} for k, t in enumerate(texts)]}
+    p = {"storyboard": {"plans": [{"textes": {"fr": {"texte": t}}} for t in texts]}, "skipped": []}
+    asked = []
+
+    def revise(sc, clips, request, gemini=None):
+        asked.append(request)
+        return {"passages": [{**x, "texte": "Tout autre chose."} if k != 1 else {**x, "texte": "Trop court pour lui."}
+                             for k, x in enumerate(sc["passages"])]}
+    monkeypatch.setattr(script, "revise", revise)
+    monkeypatch.setattr(ap, "_active", lambda p: [0, 1, 2])
+    out = ap._shorten(p, sc, clips, "fr", lambda *a: None)
+    assert [x["texte"] for x in out["passages"]] == ["Une phrase courte.", "Trop court pour lui.", "Fin."]   # only passage 2
+    assert len(asked) == 1 and "Passage 2" in asked[0]
+    assert p["storyboard"]["plans"][1]["textes"]["fr"]["texte"] == "Trop court pour lui."
+
+
+def test_each_sentence_is_compared_with_what_its_clip_really_shows():
+    from adaptation import script
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.prompt = parts[0]["text"]
+            return {"passages": [{"note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
+                                  "proposition": "Ce liquide cache un secret."}, {"note": "bon", "proposition": "x"},
+                                 {"note": "bizarre"}]}
+    clips = {"P1": {"start": 0, "end": 4, "desc": "un homme frappe un bac"}, "P2": {"start": 0, "end": 3, "desc": "une roue"},
+             "P3": {"start": 0, "end": 3, "desc": "?"}}
+    sc = {"passages": [{"clip": f"P{k}", "texte": f"Phrase {k}."} for k in (1, 2, 3)]}
+    out = script.match(sc, clips, "fr", gemini=G())
+    assert "un homme frappe un bac" in G.prompt and "ACCROCHE" in G.prompt
+    assert [a["note"] for a in out] == ["non", "bon", "bon"] and out[1]["proposition"] == ""   # unknown note: never blocks
+    assert out[0] == {"clip": "P1", "texte": "Phrase 1.", "note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
+                      "proposition": "Ce liquide cache un secret."}
+    probs = ap._fetched_problems(sc, clips, "fr", out)
+    assert any("Passage 1 : la phrase ne correspond pas" in x for x in probs)
+    sc["passages"][0]["texte"] = "Une autre phrase."                       # the sentence changed: the verdict is stale
+    assert not any("ne correspond pas" in x for x in ap._fetched_problems(sc, clips, "fr", out))
+
+
+def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(project, fakes, monkeypatch):
+    from adaptation import sources, script
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda url, d, name, sections=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b + 3, "impact": a, "w": 1080, "h": 1920, "usable": True,
+        "marks": [], "desc": desc, "shock": False})
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: [
+        {"clip": x["clip"], "texte": x["texte"], "note": "non" if k < 2 else "bon", "pourquoi": "autre chose",
+         "proposition": "Une phrase pour cette image." if k < 2 else ""} for k, x in enumerate(sc["passages"])])
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    t = ap.load(pid)["targets"][0]
+    assert sum("ne correspond pas" in x for x in t["problems"]) == 2 and not t["approved"]
+    p = ap.use_proposal(pid, t["channel"], 0)
+    t = p["targets"][0]
+    assert t["script"]["passages"][0]["texte"] == "Une phrase pour cette image."
+    assert p["storyboard"]["plans"][0]["textes"][t["language"]]["texte"] == "Une phrase pour cette image."
+    t = ap.keep_passage(pid, t["channel"], 1)["targets"][0]
+    assert not any("ne correspond pas" in x for x in t["problems"])
+    with pytest.raises(ap.PipelineError):
+        ap.use_proposal(pid, t["channel"], 2)                               # a good match has nothing to propose
+
+
+def test_the_montage_effects_chosen_after_the_download_reach_the_script_and_the_render(project, fakes, monkeypatch, tmp_path):
+    from adaptation import sources, effects, annotate
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda url, d, name, sections=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b + 3, "impact": a + 1, "w": 1920, "h": 1080,
+        "usable": True, "marks": [], "desc": desc, "shock": True})
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    monkeypatch.setattr(effects, "decide", lambda passages, clips, work: [
+        {"ralenti": True, "zoom": "les pieds", "arret": False, "transition": False} if k == 1 else None
+        for k in range(len(passages))])
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert p["storyboard"]["plans"][1]["effets"]["zoom"] == "les pieds"
+    t = p["targets"][0]
+    assert t["script"]["passages"][1]["effets"] == {"ralenti": True, "zoom": "les pieds", "arret": False, "transition": False}
+    asked = []
+    monkeypatch.setattr(annotate, "locate", lambda stills, cible: asked.append(cible) or [[700, 400, 800, 500]])
+    fx = ap._effects(p, t, str(tmp_path / "w"))
+    assert fx[0] is None and fx[1]["ralenti"] and fx[1]["zoom"]["cx"] == 0.45 and asked == ["les pieds"]
+    ap._effects(p, t, str(tmp_path / "w"))
+    assert asked == ["les pieds"]                                      # found once, the final render reuses it
+    t["script"]["passages"][1]["annotation"] = {"type": "cercle", "cible": "les pieds"}
+    assert ap._effects(p, t, str(tmp_path / "w"))[1]["zoom"] is None   # with an arrow, no zoom (it would misplace it)
+    edited = ap.edit_script(pid, t["channel"], {"passages": [{**x, "effets": None} if k == 1 else x
+                                                             for k, x in enumerate(t["script"]["passages"])]})
+    assert edited["targets"][0]["script"]["passages"][1]["effets"] is None   # unticked by hand: gone
+
+
+def test_a_sentence_that_cannot_be_seen_in_its_image_is_rewritten_before_any_search(project, fakes, monkeypatch):
+    from adaptation import script
+    seen = []
+
+    def match(sc, clips, code, gemini=None, **kw):
+        seen.append([(x["texte"], clips[x["clip"]]["desc"]) for x in sc["passages"]])
+        return [{"clip": x["clip"], "texte": x["texte"], "note": "non" if k == 2 else "bon", "pourquoi": "on entend X, on voit Y",
+                 "proposition": ""} for k, x in enumerate(sc["passages"])]
+    monkeypatch.setattr(script, "match", match)
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    out = REAL_ILLUSTRATION(b, "fr")
+    assert seen[0][2] == (b["plans"][2]["textes"]["fr"]["texte"], b["plans"][2]["image"])   # each sentence with ITS image
+    assert len(out) == 1 and out[0].startswith("Plan 3 : la phrase ne se voit pas dans son image")
+    monkeypatch.setattr(sb, "illustration", lambda bundle, code: out if not fakes["revise"] else [])
+    ap.run_analysis(new_project(project)["project_id"])
+    assert any("ne se voit pas dans son image" in r for r in fakes["revise"])                # sent to the fix
+
+
+def test_the_judge_sees_the_clip_pictures_and_what_was_seen_in_motion(tmp_path):
+    from adaptation import script
+    from PIL import Image
+    pic = str(tmp_path / "a.jpg")
+    Image.new("RGB", (8, 8)).save(pic)
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.parts = parts
+            return {"passages": [{"note": "bon"}]}
+    clips = {"P1": {"start": 0, "end": 4, "desc": "un bus passe", "action": "il saute vers le lampadaire"}}
+    script.match({"passages": [{"clip": "P1", "texte": "Il saute vers le lampadaire."}]}, clips, "fr", gemini=G(),
+                 stills={0: [pic, pic, str(tmp_path / "missing.jpg")]})
+    assert "action verifiee en regardant la video en mouvement : il saute vers le lampadaire" in G.parts[0]["text"]
+    assert sum("inline_data" in x for x in G.parts) == 2 and "fait foi" in G.parts[0]["text"]
+
+
+def test_a_film_is_recognised_by_the_check():
+    from adaptation import finder
+
+    class G:
+        pass
+    seen = {"answer": {"film": True, "remontage": False, "plans": [{"plan": 1, "niveau": "exacte", "moments": [{"debut": 1, "fin": 3}]}]},
+            "duration": 600, "title": "Banlieue 13"}
+    old = finder._watch
+    finder._watch = lambda url, g, prompt: seen
+    try:
+        r = finder.check("https://youtu.be/x", [{"scene": "il glisse le long d'un poteau", "phrase": "Ce frottement freine."}],
+                         None, gemini=G())
+    finally:
+        finder._watch = old
+    assert r["film"] is True and r["par_plan"]["0"]["niveau"] == "exacte"
+
+
+def test_search_more_looks_for_the_action_only_where_footage_is_missing(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["picks"][2] = None
+    p["picks"][3] = {**p["picks"][3], "niveau": "partielle"}
+    for v in p["suggestions"]["verifs"].values():                             # nothing found for plan 3 so far
+        v["par_scene"].pop("2", None)
+    ap.save(p)
+    assert ap.wanting(ap.load(pid)) == [2, 3, 5]                               # no footage, or only partial
+    kept = ap.load(pid)["picks"][0]
+    asked = {}
+    monkeypatch.setattr(finder, "action_queries", lambda found: asked.setdefault("found", found) and
+                        {n: [f"action {n} fail compilation"] for n in range(len(found))})
+    monkeypatch.setattr(finder, "search_youtube", lambda q, n=8: [
+        {"url": f"https://www.youtube.com/watch?v={q[7]}vlog00000", "title": "My week", "duration": 300}])
+    checked = []
+
+    def check(url, scenes, plans, **kw):
+        checked.append(url)
+        lvl = {"0vlog00000": "exacte"}.get(url[-10:], "rien")
+        return {"verdict": "oui", "duration": 300, "title": "My week",
+                "par_scene": {"2": {"niveau": lvl, "moments": [{"debut": 40, "fin": 44}] if lvl != "rien" else []}}}
+    monkeypatch.setattr(finder, "check", check)
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    p = ap.load(pid)
+    assert [w["scene"] for w in asked["found"]] == [p["storyboard"]["plans"][k]["image"] for k in (2, 3, 5)]
+    assert p["status"] == "images_review" and "search_more" not in p
+    assert len(checked) == 3 and p["picks"][2]["url"].endswith("0vlog00000") and p["picks"][2]["moment"]["debut"] == 40
+    assert p["picks"][0] == kept and p["picks"][3]["niveau"] == "partielle"    # the others stay as they were
+    assert "plan(s) 3" in p["fetch_note"]
+    assert "action" in p["suggestions"]["scenes"][2]["candidats"][-1]["origines"]
+    with pytest.raises(ap.PipelineError):
+        p["picks"] = [x or p["picks"][2] for x in p["picks"]]
+        p["picks"][3]["niveau"] = "exacte"
+        p["storyboard"]["plans"][5]["retire"] = True
+        ap.save(p)
+        ap.start_more_images(pid)                                              # nothing left to look for
+
+
+def test_an_animation_is_fixed_when_written_but_never_blocks_a_found_video():
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    b["plans"][2]["image"] = "Animation schematique de l'onde de choc dans la colonne"
+    assert sb.unfilmable(b) == ["Plan 3 : une animation ou un schema se trouve rarement en video : decris une scene reelle filmee."]
+    assert not any("animation" in x for x in sb.problems(b, "fr"))
+
+
+def test_a_check_answer_wrapped_in_a_list_is_read():
+    from adaptation import finder
+    seen = {"answer": [{"plans": [{"plan": 1, "niveau": "equivalente", "moments": [{"debut": 4, "fin": 13}]}]}],
+            "duration": 13, "title": "Spine"}
+    old = finder._watch
+    finder._watch = lambda url, g, prompt: seen
+    try:
+        r = finder.check("https://youtu.be/x", [{"scene": "onde de choc"}], None, gemini=object())
+    finally:
+        finder._watch = old
+    assert r["par_plan"]["0"]["niveau"] == "equivalente"
+
+
+def test_black_bars_around_a_vertical_video_are_found(tmp_path):
+    import subprocess
+    from adaptation import sources
+    f = str(tmp_path / "pillar.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x568:rate=25", "-t", "2",
+                    "-vf", "pad=1008:568:344:0:black", "-c:v", "libx264", f], check=True)
+    w, h, x, y = sources.black_bars(f, 0, 2)
+    assert abs(w - 320) <= 4 and abs(x - 344) <= 4 and h >= 560
+    plain = str(tmp_path / "plain.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25", "-t", "2",
+                    "-c:v", "libx264", plain], check=True)
+    assert sources.black_bars(plain, 0, 2) is None
+
+
+def test_four_credited_handles_fit_on_the_line(tmp_path):
+    from PIL import Image
+    from adaptation import render, langs
+    out = render.credit_png("@GoPro · @OlegCricket · @johnnykaboom1920 · @DomTomato", str(tmp_path / "c.png"), langs.lang("fr"))
+    box = Image.open(out).getbbox()
+    assert box[0] > 0 and box[2] < render.W                                      # nothing cut at the edges
+
+
+def test_a_poor_picture_comes_after_a_clean_one_of_the_same_level():
+    from adaptation import finder
+    v = lambda q: {"verdict": "oui", "qualite": q, "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 1, "fin": 9}]}}}
+    sug = {"verifs": {"blurry": v("mauvaise (320x240)"), "clean": v("bonne")}}
+    sug["verifs"]["clean"]["par_scene"]["0"]["moments"] = [{"debut": 1, "fin": 3}]   # shorter, yet first
+    assert finder.auto_pick(sug, [{}])[0]["url"] == "clean"
+
+
+def test_back_from_the_preview_keeps_the_voice_unless_a_sentence_changes(project, fakes, monkeypatch, tmp_path):
+    from adaptation import voices
+    calls = []
+    monkeypatch.setattr(voices, "synthesize", lambda passages, vid, code, out: calls.append(1) or {
+        "passages": [{**x, "start": k, "end": k + 0.8, "words": []} for k, x in enumerate(passages)], "words": [], "duration": 5})
+    p = {"project_id": "x", "clips": {}, "credits": "", "targets": [{"channel": "c", "language": "fr", "voice_id": "v",
+         "script": {"passages": [{"clip": "P1", "texte": "Un.", "bandeau": "A"}, {"clip": "P2", "texte": "Deux.", "bandeau": "B"}]}}]}
+    t = p["targets"][0]
+    monkeypatch.setattr(ap, "_effects", lambda p, t, w: [])
+    monkeypatch.setattr(ap, "_annotations", lambda *a, **k: [])
+    monkeypatch.setattr(ap.render, "render", lambda *a, **k: {})
+    monkeypatch.setattr(ap.checks, "verify", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(ap, "project_dir", lambda pid: str(tmp_path))
+    ap._make(p, t, True, lambda *a: None, 1, 0)
+    t["script"]["passages"][1].update(clip="P3", bandeau="C")                   # another clip: same narration
+    ap._make(p, t, True, lambda *a: None, 1, 0)
+    assert len(calls) == 1 and t["voice"]["passages"][1]["clip"] == "P3" and t["voice"]["passages"][1]["bandeau"] == "C"
+    t["script"]["passages"][0]["texte"] = "Un autre."                             # a new sentence: a new narration
+    ap._make(p, t, True, lambda *a: None, 1, 0)
+    assert len(calls) == 2
+
+
+def test_a_failed_render_can_go_back_to_the_script(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p.update(status="error", failed_step="rendering", error="ffmpeg a été arrêté par le système (mémoire pleine)")
+    ap.save(p)
+    p = ap.back_to_script(pid)
+    assert p["status"] == "script_review" and not p["error"]
+    p.update(status="error", failed_step="fetching")
+    ap.save(p)
+    with pytest.raises(ap.PipelineError):
+        ap.back_to_script(pid)                                                 # only after the voice or the render
+
+
+def test_retime_reads_where_the_action_really_is():
+    from adaptation import sources
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.parts = parts
+            return {"plans": [{"plan": 1, "visible": True, "debut": 7.1, "fin": 8.3, "ce_qu_on_voit": "il glisse"},
+                              {"plan": 2, "visible": False, "ce_qu_on_voit": "un toit"}, {"plan": 3, "debut": "x"}]}
+    asks = [{"image": "glisse le long du mat", "phrase": "Ce frottement…", "a": 6, "b": 9}] * 3
+    out = sources.retime("f.mp4", asks, 15.0, file=(G(), {"file_data": {"file_uri": "u"}}))
+    assert out == [{"visible": True, "debut": 7.1, "fin": 8.3, "vu": "il glisse"}, {"visible": False, "vu": "un toit"}, None]
+    assert G.parts[0]["video_metadata"] == {"fps": 4} and "6.0-9.0 s" in G.parts[1]["text"]
+
+
+def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagged(project, fakes, monkeypatch):
+    from adaptation import sources, script
+    from contextlib import contextmanager
+    pid = _images_project(project, fakes, monkeypatch)
+    ap.skip_plan(pid, 5)
+    monkeypatch.setattr(sources, "download", lambda url, d, name, sections=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    made = {}
+
+    def clip_at(path, i, cid, a, b, found, desc=""):
+        made[cid] = (round(a, 2), round(b, 2))
+        return {"id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920,
+                "usable": True, "marks": [], "desc": desc, "shock": False}
+    monkeypatch.setattr(sources, "clip_at", clip_at)
+
+    @contextmanager
+    def gemini_file(path):
+        yield ("g", {"file_data": {}})
+    monkeypatch.setattr(sources, "gemini_file", gemini_file)
+    monkeypatch.setattr(sources, "describe", lambda path, segs, file=None: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    asked = []
+
+    turned = []
+    monkeypatch.setattr(sources, "orientation", lambda f: 90)
+    monkeypatch.setattr(sources, "rotated", lambda path, deg: turned.append(deg) or path.replace(".mp4", "_r90.mp4"))
+
+    def retime(path, asks, length, file=None):
+        asked.extend(asks)
+        return [{"visible": True, "debut": x["a"] + 2.0, "fin": x["a"] + 2.5, "vu": "il glisse"} if n == 0 else
+                ({"visible": False, "vu": "un toit"} if n == 1 else None) for n, x in enumerate(asks)]
+    monkeypatch.setattr(sources, "retime", retime)
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: None)
+    ap.start_fetch(pid)
+    ap.run_fetch(pid)
+    p = ap.load(pid)
+    assert asked[0]["image"] == p["storyboard"]["plans"][0]["image"] and asked[0]["phrase"]
+    first = asked[0]["a"]
+    assert made["P1"][0] == pytest.approx(first + 2.0)                       # cut where the action really is
+    assert p["clips"]["P1"]["action"] == "il glisse" and p["clips"]["P2"]["absent"] == "un toit"
+    c1 = p["clips"]["P1"]
+    assert c1["start"] <= c1["impact"] <= c1["end"] and first + 2.0 <= c1["impact"] <= first + 2.5   # in the action
+    assert turned == [90] and c1["src"].endswith("_r90.mp4")                   # lying on its side: turned upright
+    t = p["targets"][0]
+    assert any("Passage 2 : l'action voulue ne se voit pas" in x for x in t["problems"])
+    p = ap.force_clip(pid, "P2")
+    assert not any("Passage 2 : l'action voulue" in x for x in p["targets"][0]["problems"])
+    sc, clips = t["script"], {**p["clips"], "P2": {**p["clips"]["P2"], "forced": None}}
+    good = [None, {"clip": "P2", "texte": sc["passages"][1]["texte"], "note": "bon"}]
+    assert any("Passage 2 : l'action voulue" in x for x in ap._fetched_problems(sc, clips, "fr"))
+    assert not any("Passage 2 : l'action voulue" in x for x in ap._fetched_problems(sc, clips, "fr", good))  # pictures win
+
+
+def test_an_advert_is_a_warning_not_a_refusal():
+    from adaptation import finder
+    assert finder.real_faults("publicité") == "" and finder.warnings_of("publicité") == "publicité"
+    assert finder.real_faults("présentateur, pub") == "présentateur" and finder.warnings_of("présentateur, pub") == "pub"
 
 
 def test_spans_merge_close_moments_and_calm_clips_do_not_shake():
@@ -713,3 +1086,44 @@ def test_force_a_refused_clip_and_the_versions_tabs(client, project, fakes):
     assert clip["usable"] and clip["forced"] == "trop flou"
     assert not any("ne convient pas" in x for x in r["targets"][0]["problems"])
     assert client.post(f"/api/adaptations/{lead['project_id']}/clips/ZZ/force").status_code == 400
+
+
+def test_the_versions_of_a_group_share_the_searches_that_are_the_same(project, fakes, monkeypatch):
+    from adaptation import finder, frames, imagesearch
+    a, b = channel(project, "chanA", "fr", "v_fr"), channel(project, "chanB", "ar", "v_ar")
+    lead = ap.create("https://youtube.com/shorts/x", [], [a, b], mode="script", versions=True)
+    ap.run_analysis(lead["project_id"])
+    members = [ap.load(lead["project_id"])] + ap.group_of(ap.load(lead["project_id"]))
+    calls = {"frames": 0, "yandex": 0, "youtube": []}
+    monkeypatch.setattr(finder, "plan_queries", lambda found: {i: {"recherches": ["tram crash"], "pays": "", "langue": "",
+                                                                    "locales": []} for i in range(len(found))})
+    monkeypatch.setattr(finder, "sort_out", lambda found, gemini=None, prompt=None: None)
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+
+    def youtube(q, n=5):
+        calls["youtube"].append(q)
+        return [{"id": "aaaaaaaaaaa", "url": "https://www.youtube.com/watch?v=aaaaaaaaaaa", "title": "t", "channel": "c"}]
+    monkeypatch.setattr(finder, "search_youtube", youtube)
+
+    def ref_frames(ref, url, work, scenes, report=None):
+        calls["frames"] += 1
+        os.makedirs(work, exist_ok=True)
+        Path(work, "f00.jpg").write_bytes(b"jpg")
+        return {"frames": [{"file": "f00.jpg", "t": 1.0, "plan": 0, "scene": None}], "source": "short", "error": None}
+    monkeypatch.setattr(frames, "reference_frames", ref_frames)
+
+    def yandex(files):
+        calls["yandex"] += 1
+        return {"hits": {f: [{"url": "https://vkvideo.ru/video-1_2", "title": "v", "thumb": "", "platform": "VK"}] for f in files},
+                "error": None, "seconds": 1}
+    monkeypatch.setattr(imagesearch, "timed_search", yandex)
+    for m in members:
+        for t in m["targets"]:
+            ap.approve_plan(m["project_id"], t["channel"])
+        ap.start_images(m["project_id"]); ap.run_images(m["project_id"])
+    assert calls["frames"] == 1 and calls["yandex"] == 1                 # done once for the group
+    assert len(calls["youtube"]) == 1                                    # the same words searched once
+    second = ap.load(members[1]["project_id"])
+    assert second["status"] == "images_review" and second["suggestions"]["images"]["frames"][0]["file"] == "f00.jpg"
+    assert Path(ap.project_dir(members[1]["project_id"]), "finder", "f00.jpg").exists()     # copied for its page
+    assert "search_cache" in ap.load(lead["project_id"])

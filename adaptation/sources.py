@@ -15,6 +15,7 @@ What was done by hand for the tram prototype, made generic:
     else is painted over (ffmpeg delogo)
 """
 
+from contextlib import contextmanager
 import json
 import math
 import os
@@ -320,9 +321,14 @@ Pour CHAQUE passage, dans le meme ordre, decris-le. JSON uniquement :
 {{"passages": [{{"camera": "cabine | camera avant | surveillance | telephone | plateau TV | autre",
   "visuel": "description precise : ce qui se passe, vehicules et COULEURS, jour/nuit, personnes",
   "utilisable": true/false, "pourquoi_pas": "si inutilisable : presentateur, interview, logo, ecran de fin, pub, flou...",
+  (un "presentateur" PARLE face a la camera ou sur un plateau ; quelqu'un qui FAIT l'action ou une demonstration
+   sans parler a la camera n'en est pas un, meme dans une salle de classe ou un tutoriel),
   "parole_dans_le_son": true/false,
   "choc_sonore": true/false (on ENTEND un vrai choc a son moment fort : collision, coup de marteau, explosion, chute,
-                 eclaboussure violente ; pas une musique, un effet de montage ou un bruit d'ambiance)}}]}}"""
+                 eclaboussure violente ; pas une musique, un effet de montage ou un bruit d'ambiance),
+  "action_debut": s, "action_fin": s (en secondes depuis le debut de la video : l'action principale du passage,
+                 sans l'attente avant ni ce qui suit ; null si rien ne se passe),
+  "fort": s (l'instant le plus spectaculaire du passage, en secondes depuis le debut de la video ; null sinon)}}]}}"""
 
 BOXES_PROMPT = """Voici {n} images (une par clip). Pour CHACUNE :
 1. "zone_image" : le rectangle de la VRAIE image filmee, sans le fond flou, les bandes noires ou les cadres
@@ -335,7 +341,9 @@ JSON uniquement : {{"images": [{{"zone_image": [ymin, xmin, ymax, xmax],
 Coordonnees entre 0 et 1000, sur l'image ENTIERE. "boites" vide si rien a effacer."""
 
 
-def describe(path: str, segments: List[Tuple[float, float]]) -> List[Dict]:
+@contextmanager
+def gemini_file(path: str):
+    """The file sent to Gemini once, for several questions: (gemini, file part)."""
     g = _gemini()
     up = g._upload_video_file(path)
     if not up:
@@ -343,16 +351,90 @@ def describe(path: str, segments: List[Tuple[float, float]]) -> List[Dict]:
     try:
         if not g._wait_for_file_active(up["name"], timeout=180):
             raise SourceError("Gemini n'a pas fini de lire la source à temps.")
-        listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
-        r = g._generate_content([{"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}},
-                                 {"text": DESCRIBE_PROMPT.format(segments=listing)}],
-                                max_tokens=16000, timeout=180, temperature=0.2)
+        yield g, {"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}}
     finally:
         g._delete_file(up["name"])
+
+
+RETIME_PROMPT = """Voici une video (les secondes comptent depuis son debut). Pour chaque plan d'un Short, on cherche le
+moment ou l'on VOIT l'action decrite, pendant que la phrase est dite. Un moment approximatif est donne : il peut
+etre decale de plusieurs secondes, cherche autour d'abord, puis dans toute la video.
+{plans}
+On cherche l'ACTION qui illustre la phrase : le lieu, les personnes, le decor et le cadrage peuvent etre
+differents de la description (un saut jambes tendues dans une salle de classe illustre "atterrir jambes tendues"
+meme si la description dit "sur du goudron, en gros plan").
+Pour chaque plan : "visible" = true si cette action se voit vraiment ; "debut" et "fin" au dixieme de seconde, du
+debut a la fin de l'action elle-meme (pas de la sequence autour, pas l'hesitation avant ni la marche apres) ;
+"fort" = l'instant le plus spectaculaire de l'action (l'impact, le contact, le saut, la chute) ; "ce_qu_on_voit" en
+francais.
+"visible" = false si l'action n'apparait nulle part dans la video.
+JSON uniquement : {{"plans": [{{"plan": numero, "visible": true, "debut": s, "fin": s, "fort": s, "ce_qu_on_voit": "..."}}]}}"""
+
+
+def retime(path: str, asks: List[Dict], length: float, file=None) -> List[Optional[Dict]]:
+    """Where each wanted action really is in a downloaded file — measured on a
+    parkour Short: the search's seconds, given watching a 6-minute video at
+    about one image a second, missed the pole slide by a few seconds twice.
+    asks: [{"image", "phrase", "a", "b"}] (file times). Per ask {"visible",
+    "debut", "fin", "vu"}, or None when Gemini can't say (the old moment stays)."""
+    if not asks:
+        return []
+    if file is None:
+        with gemini_file(path) as f:
+            return retime(path, asks, length, f)
+    g, part = file
+    listing = "\n".join(f"{n}. action : {x['image']} | phrase : « {x.get('phrase') or ''} » | moment approximatif : "
+                        f"{x['a']:.1f}-{x['b']:.1f} s" for n, x in enumerate(asks, 1))
+    fps = 4 if length <= 40 else 2                  # finer than the search's look, within a sensible token budget
+    try:
+        r = g._generate_content([{**part, "video_metadata": {"fps": fps}}, {"text": RETIME_PROMPT.format(plans=listing)}],
+                                max_tokens=4000, timeout=180, temperature=0.1)
+    except Exception:
+        return [None] * len(asks)
+    items = r.get("plans") if isinstance(r, dict) else None
+    out: List[Optional[Dict]] = [None] * len(asks)
+    for e in items if isinstance(items, list) else []:
+        try:
+            n = int(e.get("plan")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if not 0 <= n < len(asks):
+            continue
+        vu = str(e.get("ce_qu_on_voit") or "").strip()[:200]
+        if e.get("visible") is False:
+            out[n] = {"visible": False, "vu": vu}
+            continue
+        try:
+            a, b = sorted((float(e["debut"]), float(e["fin"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+        a, b = max(0.0, min(a, length)), max(0.0, min(b, length))
+        if b - a >= 0.3:
+            out[n] = {"visible": True, "debut": round(a, 2), "fin": round(b, 2), "vu": vu}
+            try:
+                fort = float(e.get("fort"))
+                if a <= fort <= b:
+                    out[n]["fort"] = round(fort, 2)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def describe(path: str, segments: List[Tuple[float, float]], file=None) -> List[Dict]:
+    if file is None:
+        with gemini_file(path) as f:
+            return describe(path, segments, f)
+    g, part = file
+    listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
+    r = g._generate_content([part, {"text": DESCRIBE_PROMPT.format(segments=listing)}],
+                            max_tokens=16000, timeout=180, temperature=0.2)
     items = r if isinstance(r, list) else (r.get("passages") if isinstance(r, dict) else None)
     if not isinstance(items, list):
         raise SourceError(f"Description de la source inutilisable : {str(r)[:200]}")
     return (items + [{}] * len(segments))[:len(segments)]
+
+
+BOX_BATCH = 10
 
 
 def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[int]], List[str]]]:
@@ -363,6 +445,8 @@ def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[i
     import base64
     if not stills:
         return []
+    if len(stills) > BOX_BATCH:        # 40 stills of a 10-minute tutorial: the answer came back cut, nothing cleaned
+        return [r for k in range(0, len(stills), BOX_BATCH) for r in find_boxes(stills[k:k + BOX_BATCH])]
     parts = [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(p, "rb").read()).decode()}}
              for p in stills]
     imgs = []
@@ -384,6 +468,42 @@ def find_boxes(stills: List[str]) -> List[Tuple[Optional[List[int]], List[List[i
         kept = [b for b in item.get("boites") or [] if isinstance(b, dict) and len(b.get("box_2d") or []) == 4]
         out.append((area, [b["box_2d"] for b in kept], [str(b.get("quoi") or "") for b in kept]))
     return out
+
+
+def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[str, List[str]]:
+    """After the cleaning, what added text still shows (a "If you drive over it
+    too fast it hardens" caption stayed on a speed-bump clip): two cleaned
+    pictures of each clip looked at once more, what is found painted over too.
+    Returns, per clip, what was erased this way. Best effort."""
+    finder = finder or find_boxes
+    os.makedirs(work_dir, exist_ok=True)
+    shots, owners = [], []
+    for cid, c in clips.items():
+        for j, f in enumerate((0.3, 0.7)):
+            out = os.path.join(work_dir, f"left_{cid}_{j}.jpg")
+            still(c["src"], c["start"] + (c["end"] - c["start"]) * f, c.get("crop"), out, c.get("delogo"), (c["w"], c["h"]))
+            if os.path.exists(out):
+                shots.append(out)
+                owners.append(cid)
+    if not shots:
+        return {}
+    try:
+        found = finder(shots)
+    except Exception:
+        return {}
+    erased: Dict[str, List[str]] = {}
+    for cid, (_, boxes, what) in zip(owners, found):
+        c = clips[cid]
+        for (y0, x0, y1, x1), quoi in zip(boxes, what):
+            x, y = int(x0 * c["w"] / 1000) - 6, int(y0 * c["h"] / 1000) - 6
+            bw, bh = int((x1 - x0) * c["w"] / 1000) + 12, int((y1 - y0) * c["h"] / 1000) + 12
+            if bw <= 8 or bh <= 8 or bw * bh > 0.25 * c["w"] * c["h"]:
+                continue                        # too big to paint without ruining the clip
+            c["delogo"] = list(c.get("delogo") or []) + [(max(0, x), max(0, y), bw, bh)]
+            erased.setdefault(cid, []).append(quoi or "texte")
+    for cid, what in erased.items():
+        clips[cid]["texte_efface"] = list(dict.fromkeys(what))[:4]
+    return erased
 
 
 def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int, List[Tuple[int, int, int, int]]]:
@@ -477,6 +597,50 @@ def _to_band_coords(boxes: List[List[int]], h_full: int, top: int, height: int) 
     return out
 
 
+def black_bars(path: str, a: float, b: float) -> Optional[Tuple[int, int, int, int]]:
+    """(w, h, x, y) of the picture inside black bars over [a, b] — a vertical
+    video posted inside a horizontal file showed as a thin strip (measured:
+    608x1072 inside 1920x1080). None when there are no real bars."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{max(0.0, a):.2f}", "-i", path, "-t", f"{max(0.5, b - a):.2f}",
+                        "-vf", "cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"],
+                       capture_output=True, text=True)
+    found = re.findall(r"crop=(\d+):(\d+):(\d+):(\d+)", r.stderr)
+    if not found:
+        return None
+    w, h, x, y = (int(v) for v in found[-1])
+    info = probe(path)
+    if w < 64 or h < 64 or w * h > 0.85 * info["w"] * info["h"]:
+        return None
+    return w, h, x, y
+
+
+ORIENT_PROMPT = """Regarde cette video. Est-elle a l'endroit ? Si elle a ete filmee ou publiee couchee sur le cote ou a
+l'envers (le ciel sur un cote, le sol de l'autre, les gens penches a 90 degres), dis de combien de degres il faut la
+tourner DANS LE SENS DES AIGUILLES D'UNE MONTRE pour la remettre droite.
+JSON uniquement : {{"rotation": 0 | 90 | 180 | 270}}"""
+
+
+def orientation(file) -> int:
+    """Clockwise degrees that put a sideways video upright (a hook was once shown lying on its side)."""
+    g, part = file
+    try:
+        r = g._generate_content([{**part, "video_metadata": {"fps": 0.5}}, {"text": ORIENT_PROMPT.format()}],
+                                max_tokens=2000, timeout=120, temperature=0.0)
+        deg = int((r or {}).get("rotation") or 0) if isinstance(r, dict) else 0
+    except Exception:
+        return 0
+    return deg if deg in (90, 180, 270) else 0
+
+
+def rotated(path: str, deg: int) -> str:
+    """The file turned upright (re-encoded once; every later step sees it straight)."""
+    vf = {90: "transpose=1", 270: "transpose=2", 180: "hflip,vflip"}[deg]
+    out = os.path.splitext(path)[0] + f"_r{deg}.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", path, "-vf", vf, "-c:v", "libx264", "-preset", "veryfast",
+                    "-crf", "18", "-c:a", "copy", out], check=True)
+    return out
+
+
 def clip_at(path: str, index: int, cid: str, a: float, b: float, found, desc: str = "") -> Dict:
     """"Script d'abord": one clip from a chosen moment [a, b] (already
     picked and checked), cleaned like the analysed ones — the real picture
@@ -499,11 +663,19 @@ def clip_at(path: str, index: int, cid: str, a: float, b: float, found, desc: st
         h = height
     crop = f"{w_full}:{h}:0:{top + cut_top}" if (on_band or cut_top or cut_bot) else None
     patches = [(x, y - cut_top, pw, ph) for x, y, pw, ph in patches if y - cut_top >= 0]
+    w = w_full
+    if not crop:                                # black bars Gemini's picture area missed
+        bars = black_bars(path, a, b)
+        if bars:
+            w, h, bx0, by0 = bars
+            crop = f"{w}:{h}:{bx0}:{by0}"
+            patches = [(x - bx0, y - by0, pw, ph) for x, y, pw, ph in patches
+                       if bx0 <= x < bx0 + w and by0 <= y < by0 + h]
     peak, from_sound = find_peak(path, a, b, crop)
     return {"id": cid, "source": index, "src": path, "start": a, "end": b, "impact": peak,
-            "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches, "desc": desc,
+            "w": w - w % 2, "h": h - h % 2, "crop": crop, "delogo": patches, "desc": desc,
             "camera": "", "usable": True, "why_not": "", "audio_ok": False, "shock": False,
-            "low_res": min(w_full, h) < 540, "marks": [m for m in marks if m]}
+            "low_res": min(w, h) < 540, "marks": [m for m in marks if m]}
 
 
 def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini: bool = True) -> List[Dict]:
@@ -536,6 +708,7 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
     ids = id_gen or _ids()
     clips = []
     for (a, b), d, (area, bx, marks) in zip(segments, descriptions, found):
+        act = _action_of(d, a, b)
         own = band_from_area(area, w_full, h_full)
         on_band = bool(own)
         if own and band and abs(own[0] - band[0]) <= 60 and abs(own[1] - band[1]) <= 60:
@@ -551,10 +724,30 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             h = height
         crop = f"{w_full}:{h}:0:{top + cut_top}" if (on_band or cut_top or cut_bot) else None
         patches = [(x, y - cut_top, pw, ph) for x, y, pw, ph in patches if y - cut_top >= 0]
+        w = w_full
+        if not crop:                            # black bars Gemini's picture area missed (as in clip_at)
+            bars = black_bars(path, a, b)
+            if bars:
+                w, h, bx0, by0 = bars
+                crop = f"{w}:{h}:{bx0}:{by0}"
+                patches = [(x - bx0, y - by0, pw, ph) for x, y, pw, ph in patches
+                           if bx0 <= x < bx0 + w and by0 <= y < by0 + h]
         peak, from_sound = find_peak(path, a, b, crop)
+        extra = {}
+        if act:                                 # the action and its strongest instant, seen moving: no dead time
+            ra, rb, fort = act
+            if fort is not None:
+                peak = fort
+            elif not ra <= peak <= rb:
+                peak = round(ra + 0.6 * (rb - ra), 2)
+            s2, e2 = max(a, ra - 0.6), min(b, rb + 0.8)
+            extra = {"action_at": [ra, rb]}
+            if e2 - s2 >= 1.2 and e2 - s2 < b - a - 0.3:
+                a, b = round(s2, 2), round(e2, 2)
+                extra["compact"] = True
         clips.append({
             "id": next(ids), "source": index, "src": path, "start": a, "end": b, "impact": peak,
-            "w": w_full - w_full % 2, "h": h - h % 2, "crop": crop, "delogo": patches,
+            "w": w - w % 2, "h": h - h % 2, "crop": crop, "delogo": patches,
             "desc": d.get("visuel") or "", "camera": d.get("camera") or "",
             # 1 s is enough for a short sentence (the script check keeps longer ones off it); fast TikTok
             # edits are made of 1.0-1.4 s shots, and merging them would mix unrelated scenes (measured)
@@ -562,7 +755,24 @@ def analyse_source(path: str, index: int, work_dir: str, id_gen=None, use_gemini
             "why_not": d.get("pourquoi_pas") or ("trop court" if b - a < MIN_CLIP else ""),
             "audio_ok": from_sound and not d.get("parole_dans_le_son", False),
             **({"shock": bool(d.get("choc_sonore"))} if use_gemini else {}),
-            "low_res": min(w_full, h) < 540,
-            "marks": [m for m in marks if m],
+            "low_res": min(w, h) < 540,
+            "marks": [m for m in marks if m], **extra,
         })
     return clips
+
+
+def _action_of(d: Dict, a: float, b: float) -> Optional[Tuple[float, float, Optional[float]]]:
+    """(start, end, strongest) of a passage's action from Gemini's description, inside [a, b]."""
+    try:
+        ra, rb = sorted((float(d["action_debut"]), float(d["action_fin"])))
+    except (KeyError, TypeError, ValueError):
+        return None
+    ra, rb = max(a, ra), min(b, rb)
+    if rb - ra < 0.3:
+        return None
+    try:
+        fort = float(d.get("fort"))
+        fort = fort if ra <= fort <= rb else None
+    except (TypeError, ValueError):
+        fort = None
+    return round(ra, 2), round(rb, 2), (round(fort, 2) if fort is not None else None)

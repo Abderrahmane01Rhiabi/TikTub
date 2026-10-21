@@ -8,7 +8,7 @@ only volume had been checked. Every check here is a measurement, not a guess.
 import json
 import re
 import subprocess
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -47,13 +47,16 @@ def _match(win: np.ndarray, ref: np.ndarray, step: int = 8) -> Tuple[float, int]
     return max((score(i), i) for c in coarse for i in range(max(0, c - step), min(len(win) - n, c + step + 1)))
 
 
-def sentence_offsets(out_path: str, voice_path: str, passages: List[Dict]) -> List[float]:
+def sentence_offsets(out_path: str, voice_path: str, passages: List[Dict],
+                     starts: Optional[List[float]] = None) -> List[float]:
     """Where each sentence of the narration really starts in the render,
     minus where it should: cosine match of its first 1.2 s (skipping the
     quiet attack), searched ±0.5 s around the planned spot."""
     offsets, t = [], 0.0
-    for p in passages:
+    for k, p in enumerate(passages):
         a, b = max(0.0, p["start"] - 0.04), p["end"] + 0.10
+        if starts and k < len(starts):     # the pauses may differ (cuts on the music's beats): where the render put it
+            t = starts[k]
         ref = _pcm(voice_path, a + 0.2, 1.2)
         win = _pcm(out_path, t - 0.3, 2.0)
         if len(ref) and len(win) > len(ref):
@@ -66,7 +69,7 @@ def sentence_offsets(out_path: str, voice_path: str, passages: List[Dict]) -> Li
     return offsets
 
 
-def verify(out_path: str, voice_path: str, passages: List[Dict]) -> Dict:
+def verify(out_path: str, voice_path: str, passages: List[Dict], starts: Optional[List[float]] = None) -> Dict:
     """{"ok": bool, "problems": [...], "measures": {...}} — problems are in French,
     for the person reviewing the preview."""
     problems = []
@@ -77,7 +80,7 @@ def verify(out_path: str, voice_path: str, passages: List[Dict]) -> Dict:
     lufs = loudness(out_path)
     if not (-17.0 <= lufs <= -11.0):
         problems.append(f"Volume global hors norme : {lufs:.1f} LUFS (attendu entre -17 et -11).")
-    offs = sentence_offsets(out_path, voice_path, passages)
+    offs = sentence_offsets(out_path, voice_path, passages, starts)
     for k, o in enumerate(offs):
         if o is None:
             problems.append(f"Phrase {k + 1} introuvable dans le son de la vidéo.")

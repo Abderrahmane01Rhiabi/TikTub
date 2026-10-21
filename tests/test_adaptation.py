@@ -163,7 +163,7 @@ def test_normalise_cleans_gemini_output():
         {"clip": " a ", "texte": "  Une   phrase. ", "bandeau": "B", "mots_cles": ["x", "", "y", "z", "w"]},
         {"clip": "B", "texte": ""}]}, _clips())
     assert len(sc["titre"]) == 100 and sc["tags"] == ["a"]
-    assert sc["passages"] == [{"clip": "A", "bandeau": "B", "texte": "Une phrase.", "mots_cles": ["x", "y", "z"], "annotation": None}]
+    assert sc["passages"] == [{"clip": "A", "bandeau": "B", "texte": "Une phrase.", "mots_cles": ["x", "y", "z"], "annotation": None, "effets": None}]
     with pytest.raises(script.ScriptError):
         script.normalise({"error": "boom"}, _clips())
 
@@ -176,7 +176,7 @@ def test_critique_keeps_the_clips_and_falls_back_on_a_bad_answer():
         {"clip": "A", "texte": "Pourquoi ?", "bandeau": "", "mots_cles": []}]}
     good = {"passages": [{"clip": "B", "texte": "Pourquoi donc ?", "bandeau": "", "mots_cles": []}], "corrections": ["x"]}
     fixed = script.critique(sc, "fr", _clips(), gemini=Fake(good))
-    assert fixed["passages"][0] == {"clip": "A", "bandeau": "", "texte": "Pourquoi donc ?", "mots_cles": [], "annotation": None}
+    assert fixed["passages"][0] == {"clip": "A", "bandeau": "", "texte": "Pourquoi donc ?", "mots_cles": [], "annotation": None, "effets": None}
     assert fixed["corrections"] == ["x"]
     assert script.critique(sc, "fr", _clips(), gemini=Fake({"passages": []}))["passages"] == sc["passages"]
 
@@ -226,6 +226,28 @@ def test_preview_render_passes_the_automatic_checks(tmp_path):
     assert not (tmp_path / "out.mp4.part.mp4").exists()
 
 
+def test_a_render_with_every_effect_keeps_picture_and_voice_together(tmp_path):
+    square, wide = tmp_path / "square.mp4", tmp_path / "wide.mp4"
+    _lavfi(square, ["-f", "lavfi", "-i", "testsrc=size=320x304:rate=30", "-f", "lavfi", "-i", "sine=frequency=200"],
+           6, ["-c:v", "libx264", "-c:a", "aac", "-shortest"])
+    _lavfi(wide, ["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"], 6, ["-c:v", "libx264"])
+    voice = tmp_path / "voice.wav"
+    _lavfi(voice, ["-f", "lavfi", "-i", "anoisesrc=color=pink:seed=1:duration=6.6:sample_rate=44100"], 6.6)
+    words = [{"w": w, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, w in enumerate("un deux trois quatre".split())]
+    words += [{"w": w, "start": 3.6 + i * 0.5, "end": 4.0 + i * 0.5} for i, w in enumerate("cinq six sept".split())]
+    clips = {"A": {**clip(src=str(square), start=0.5, end=4.5, impact=2.0), "w": 320, "h": 304, "audio_ok": True,
+                   "shock": True},
+             "B": {**clip(src=str(wide), start=1.0, end=2.6, impact=2.0), "w": 640, "h": 360}}
+    passages = [passage("A", 0.0, 3.0, words=[0, 1, 2, 3]), passage("B", 3.6, 6.6, words=[4, 5, 6])]
+    fx = [{"ralenti": True, "zoom": {"cx": 0.3, "cy": 0.7, "z": 1.3}}, {"arret": True, "transition": True}]
+    out = tmp_path / "out.mp4"
+    r = render.render(passages, words, clips, str(voice), "fr", str(out), str(tmp_path / "w"), preview=False, effects=fx)
+    v = checks.verify(str(out), str(voice), passages)
+    assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15
+    assert all(o is not None and abs(o) <= 0.12 for o in v["measures"]["offsets"])
+    assert r["segments"][0]["impact"] > 0.5 and (tmp_path / "w" / "whoosh.wav").exists()
+
+
 # ------------------------------------------- voice library & channel settings
 
 def _fake_elevenlabs(monkeypatch, known):
@@ -266,7 +288,9 @@ def test_channel_adaptation_settings_language_voice_music(client, project, monke
     project.add_channel("chanA")
     r = client.put("/api/channels/chanA/adaptation", json={"language": "ar", "settings": {
         "voice_id": "v1", "music_file": "../x/song.mp3", "music_start": "33", "bogus": 1}}).json()
-    assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0}
+    assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0,
+                             "style": "classique"}
+    assert [x["name"] for x in r["styles"]][:2] == ["classique", "flamme"]
     assert [v["voice_id"] for v in r["voices"]] == ["v1"]                    # only voices of its language
     assert client.put("/api/channels/chanA/adaptation", json={"language": "xx"}).status_code == 400
 
@@ -656,3 +680,27 @@ def test_a_download_without_picture_is_never_returned(monkeypatch, tmp_path):
     monkeypatch.setattr(sources, "has_picture", lambda path: True)
     assert sources.download("u", str(tmp_path), "c").endswith("c.mp4")
     assert sources.VIDEO_FORMAT.startswith("bv*[vcodec^=avc1]")
+
+
+def test_a_channel_style_colours_its_banners_and_captions(tmp_path):
+    from PIL import Image
+    from adaptation import render, settings
+    from adaptation.langs import lang
+    st = render.style_of("flamme")
+    out = render.banner_png("PNEUS : DÉFORMATION", str(tmp_path / "b.png"), lang("fr"), st)
+    im = Image.open(out).convert("RGBA")
+    reds = sum(1 for x in range(0, render.W, 6) for y in range(20, 140, 6)
+               if im.getpixel((x, y))[0] > 180 and im.getpixel((x, y))[1] < 60 and im.getpixel((x, y))[3] > 200)
+    assert reds > 50                                         # the Flamme box is red
+    ass = tmp_path / "c.ass"
+    passages = [{"mots_cles": ["pneu"], "words": [0, 1]}]
+    words = [{"w": "Le", "start": 0.0, "end": 0.3}, {"w": "pneu", "start": 0.3, "end": 0.7}]
+    segs = [{"k": 0, "va": 0.0, "vb": 1.0, "out": 0.0, "dur": 1.2, "ws": 0.0}]
+    render.captions_ass(passages, words, segs, str(ass), lang("fr"), render.style_of("neon"))
+    assert render._ass_color("#00E5FF") in ass.read_text()   # the Néon keyword colour
+    assert render.style_of("inconnu") is render.STYLES["classique"]
+    assert settings.channel_settings({"adaptation": {"style": "or"}})["style"] == "or"
+    assert settings.channel_settings({"adaptation": {"style": "n'importe"}})["style"] == "classique"
+    assert settings.clean_update({"style": "neon"}) == {"style": "neon"} and settings.clean_update({"style": "x"}) == {}
+    render.style_preview("clair", lang("ar"), str(tmp_path / "p.jpg"))
+    assert (tmp_path / "p.jpg").exists()
