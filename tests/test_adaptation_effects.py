@@ -265,3 +265,20 @@ def test_the_music_stays_level_then_comes_up_after_the_last_word():
     assert segs[-1]["dur"] == pytest.approx((4.10 - 2.36) + render.GAP + render.OUTRO_S)   # a short outro
     assert segs[0]["dur"] == pytest.approx(2.10 + render.GAP)                                # not between sentences
     assert 1.8 < render.MUSIC_OUTRO / render.MUSIC_GAIN < 2.2                                # about +6 dB
+
+
+def test_every_track_is_brought_to_the_same_loudness_under_the_voice(tmp_path):
+    loud, soft = str(tmp_path / "loud.wav"), str(tmp_path / "soft.wav")
+    _ff("-f", "lavfi", "-i", "anoisesrc=c=pink:a=0.8:d=12", loud)
+    _ff("-f", "lavfi", "-i", "anoisesrc=c=pink:a=0.4:d=12", soft)
+    gl, gs = render.music_gain(loud, 0, 10), render.music_gain(soft, 0, 10)
+    assert gs < 1.0 and 1.8 < gs / gl < 2.2                                  # 6 dB apart -> the gains compensate
+
+
+def test_the_music_holds_its_breath_before_the_first_real_crash_only():
+    clips = {"A": clip(end=9.0, shock=True), "B": clip(end=9.0, shock=False), "C": clip(end=9.0, shock=True),
+             "D": clip(end=9.0, shock=True)}
+    passages = [{"clip": x, "start": 2.0 * k, "end": 2.0 * k + 1.8} for k, x in enumerate("ABCD")]
+    segs, _ = render.build_timeline(passages, clips)
+    assert render.hush_at(segs, clips) == round(segs[2]["impact_out"], 3)   # not the hook, not the last plan
+    assert render.hush_at(segs, {**clips, "C": {**clips["C"], "shock": False}}) is None

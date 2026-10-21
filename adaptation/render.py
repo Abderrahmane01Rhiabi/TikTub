@@ -637,6 +637,32 @@ def _filter_path(p: str) -> str:
     return os.path.abspath(p).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
+MUSIC_LUFS = -26.0       # the music bed's loudness under a -16 LUFS voice (the level the person approved)
+HUSH_S = 0.5             # the music stops this long before the strongest crash
+
+
+def music_gain(path: str, start: float, length: float) -> float:
+    """The volume that brings this track's part to MUSIC_LUFS (measured: from
+    -9.9 LUFS to -18.2 between two tracks of the same channel; one fixed
+    volume made one cover the voice and the other vanish)."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{start:.2f}", "-t", f"{max(5.0, length):.2f}", "-i", path,
+                        "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True)
+    found = re.findall(r"^\s+I:\s+(-?[\d.]+) LUFS", r.stderr, re.M)
+    if not found:
+        return MUSIC_GAIN
+    return round(min(1.0, max(0.05, 10 ** ((MUSIC_LUFS - float(found[-1])) / 20))), 4)   # never amplified
+
+
+def hush_at(segs: List[Dict], clips: Dict[str, Dict]) -> Optional[float]:
+    """When the music stops for a breath: just before the first real crash
+    heard after the hook (a trailer's trick, once per video), else None."""
+    for s in segs[1:-1]:
+        c = clips[s["clip"]]
+        if c.get("shock") and s["impact_out"] - s["out"] > HUSH_S + 0.2:
+            return round(s["impact_out"], 3)
+    return None
+
+
 def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
     """Whose sound plays at a clip's strong moment. Made for crash Shorts: on
     a salt-lake Short, the "loudest moment" of a reel's music (a boom) was
@@ -841,13 +867,20 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     if fx:
         g.append("".join(fx) + f"amix=inputs={len(fx)}:normalize=0,volume={SFX_GAIN}[fx]")
         mix.append("[fx]")
+    music_info: Dict = {}
     if music and music[0] and os.path.exists(music[0]):
         mi = add_input("-ss", f"{music[1]:.3f}", "-i", music[0])
         # one steady level under the voice (ducking between sentences 0.2 s apart made it pump: tiring),
         # then, once the last word is said, the music comes up for the outro
         said = segs[-1]["out"] + (segs[-1]["vb"] - segs[-1]["va"])
-        level = (f"if(lt(t,{said:.3f}),{MUSIC_GAIN},"
-                 f"{MUSIC_GAIN}+{MUSIC_OUTRO - MUSIC_GAIN:.3f}*min(1,(t-{said:.3f})/{OUTRO_RISE}))")
+        gain = music_gain(music[0], music[1], total)          # every track as loud under the voice
+        up = gain * MUSIC_OUTRO / MUSIC_GAIN
+        level = f"if(lt(t,{said:.3f}),{gain:.4f},{gain:.4f}+{up - gain:.4f}*min(1,(t-{said:.3f})/{OUTRO_RISE}))"
+        hush = hush_at(segs, clips)
+        if hush is not None:            # the music holds its breath half a second before the strongest crash
+            a0 = hush - HUSH_S
+            level = (f"({level})*(1-clip((t-{a0:.3f})/0.08,0,1)*clip(({hush:.3f}-t)/0.04,0,1))")
+        music_info.update(gain=round(gain, 3), silence_avant_choc=hush)
         g.append(f"[{mi}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{total:.3f},"
                  f"afade=t=in:d=0.4,volume='{level}':eval=frame,"
                  f"afade=t=out:st={max(0.0, total - 0.15):.3f}:d=0.15[mus]")
@@ -890,6 +923,7 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     on_beat = lambda s: bool(beats and s["k"] > 0 and min(abs(s["out"] - b) for b in beats) < 0.02)
     recipe = {"style": style or "classique", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
               "musique_niveau": "constant sous la voix, monte à la fin" if music and music[0] else None,
+              "musique_gain": music_info.get("gain"), "silence_avant_choc": music_info.get("silence_avant_choc"),
               "tempo_musique": bpm, "plans": []}
     for s in segs:
         fx = dict(s.get("fx") or {})

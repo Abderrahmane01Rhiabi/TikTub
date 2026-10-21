@@ -193,6 +193,24 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
     return " · ".join(out[:4])
 
 
+ANALYSE_WORKERS = 2      # whole source videos analysed at once (cut detection is CPU-heavy)
+
+
+class _SafeIds:
+    """A clip-name generator several threads can draw from."""
+
+    def __init__(self, gen):
+        import threading
+        self._gen, self._lock = gen, threading.Lock()
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        with self._lock:
+            return next(self._gen)
+
+
 def run_analysis(pid: str, report: Optional[Report] = None):
     """The reference and the suggestions are made once; only the sources not
     analysed yet are downloaded (sources can be added in several goes)."""
@@ -228,10 +246,11 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             return
         base = project_dir(pid)
         clips, metas = dict(p.get("clips") or {}), list(p.get("sources") or [])
-        ids = (i for i in sources._ids() if i not in clips)
+        ids = _SafeIds(i for i in sources._ids() if i not in clips)    # clip names drawn by several sources at once
         metas += [None] * (len(p["source_urls"]) - len(metas))
         todo = [i for i, m in enumerate(metas) if m is None or m.get("failed")]    # new ones, and the failed ones again
-        for k, i in enumerate(todo):
+
+        def one(k: int, i: int) -> None:      # one source: download, turn upright, cut, describe, clean
             url, n = p["source_urls"][i], len(todo)
             report(f"source {k + 1}/{n} : téléchargement", 0.2 + 0.75 * k / n)
             try:
@@ -239,7 +258,7 @@ def run_analysis(pid: str, report: Optional[Report] = None):
                                         (p.get("source_sections") or {}).get(url))
             except sources.SourceError as e:        # one dead link must not block the others
                 metas[i] = {"url": url, "failed": str(e)}
-                continue
+                return
             meta = sources.source_meta(path)
             try:                        # a video posted lying on its side is turned upright first (as in Script d'abord)
                 with sources.gemini_file(path) as gf:
@@ -258,6 +277,10 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             for c in made:
                 clips[c["id"]] = c
             metas[i] = meta
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=ANALYSE_WORKERS) as pool:   # whole videos are analysed: two at once
+            for f in [pool.submit(one, k, i) for k, i in enumerate(todo)]:
+                f.result()
         p = load(pid)
         guess = guess_credits(metas, clips)
         if not p.get("credits") or p.get("credits") == p.get("credits_auto"):     # never overwrite a correction
@@ -781,6 +804,7 @@ def start_fetch(pid: str) -> Dict:
     return save(p)
 
 
+FETCH_WORKERS = 3        # source videos handled at once (memory: one segment-sized ffmpeg each)
 CUT_VERSION = 4          # how clips are cut; a clip cut an older way is cut again (4: leftover text painted over)
 ACTION_LEAD, ACTION_TAIL, MIN_ACTION = 0.6, 0.8, 1.2    # seconds kept before / after the action; shortest clip
 
@@ -850,7 +874,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             report(f"{len(clips)} plan(s) inchangé(s) : clips gardés", 0.03)
         failed: Dict[str, Tuple[str, List[int]]] = {}
         base, stamp = project_dir(pid), datetime.now().strftime("%H%M%S") + "_" + uuid.uuid4().hex[:4]   # two in one second
-        for i, (url, items) in enumerate(by_url.items()):
+        def one(i: int, url: str, items: List) -> None:      # one source video: download, clean, check, cut
             report(f"vidéo {i + 1}/{len(by_url)} : téléchargement des moments choisis", 0.05 + 0.8 * i / len(by_url))
             dur = durations.get(url)
             room = lambda need: min(need, 6.0)                 # around the moment: room to lengthen it, both ways
@@ -866,7 +890,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                     path = sources.download(url, os.path.join(base, "src"), name)
             except sources.SourceError as e:
                 failed[url] = (str(e), [k for k, _, _, _ in items])
-                continue
+                return
             meta = sources.source_meta(path)
 
             def file_time(t: float) -> float:
@@ -970,6 +994,10 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 if picks[k].get("extrait"):     # the reference's own captions are cleaned: not a reason to refuse
                     c.update(extrait=True, usable=True, why_not="")
                 clips[f"P{k + 1}"] = c
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:     # several sources at once (9 min -> about 4)
+            for f in [pool.submit(one, i, url, items) for i, (url, items) in enumerate(by_url.items())]:
+                f.result()
         if failed:                      # a video that won't download: replaced where possible, back to the picks
             p = load(pid)
             sug = p["suggestions"]
@@ -1597,7 +1625,9 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
         "projet": p["project_id"], "mode": p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
         "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
         "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
-                    "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique")},
+                    "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique"),
+                    "niveau": rendered.get("musique_niveau"), "gain": rendered.get("musique_gain"),
+                    "silence_avant_choc_s": rendered.get("silence_avant_choc")},
         "structure": {"duree_s": total, "plans": len(segs), "accroche_s": segs[0]["duree"] if segs else None,
                       "plan_moyen_s": round(total / len(segs), 2) if segs else None,
                       "coupes_sur_le_temps": sum(1 for x in segs if x.get("coupe_sur_le_temps")),
