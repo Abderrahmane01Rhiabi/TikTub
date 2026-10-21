@@ -1197,3 +1197,27 @@ def test_a_storyboard_of_about_40_seconds_is_too_long():
     for p in b["plans"]:
         p["textes"]["ar"]["texte"] = "ب" * int(30 * 12 / n - 1) + "."
     assert not any("Durée totale" in x for x in sb.problems(b, "ar"))
+
+
+def test_search_more_first_checks_what_another_version_of_the_short_found_useful(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["picks"][2] = None
+    ap.save(p)
+    seen = lambda lvl, **kw: {"par_scene": {"4": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}, **kw}
+    other = {"project_id": "other", "suggestions": {"verifs": {
+        "https://www.youtube.com/watch?v=handinwater": seen("exacte"),
+        "https://www.youtube.com/watch?v=bbcfilm0000": seen("exacte", film=True),
+        "https://www.youtube.com/watch?v=offtopic000": seen("rien")}}}
+    monkeypatch.setattr(ap, "group_of", lambda q: [other])
+    monkeypatch.setattr(finder, "action_queries", lambda found: {})
+    checked = []
+    monkeypatch.setattr(finder, "check", lambda url, scenes, plans, **kw: checked.append(url) or {
+        "verdict": "oui", "duration": 60, "title": "x",
+        "par_scene": {"2": {"niveau": "exacte" if url.endswith("handinwater") else "rien",
+                            "moments": [{"debut": 3, "fin": 8}]}}})
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    assert checked[0].endswith("handinwater") and not any("bbcfilm" in u or "offtopic" in u for u in checked)
+    assert ap.load(pid)["picks"][2]["url"].endswith("handinwater")

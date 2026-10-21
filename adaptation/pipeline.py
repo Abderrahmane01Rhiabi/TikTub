@@ -582,7 +582,15 @@ def _more_images(p: Dict, report: Report):
                                                         and (c.get("duration") or 0) <= finder.MAX_DURATION]}
              for k in todo]
     finder.sort_out(pools)              # Gemini keeps the plausible titles, most likely first
-    order = []
+    # what the AI found useful for another channel's version of the same Short comes first (measured: the
+    # French version had the original "unclog by hand" video, exact; the Arabic one, same scenes, never saw it)
+    shared = []
+    for other in group_of(p):
+        for url, v in ((other.get("suggestions") or {}).get("verifs") or {}).items():
+            if url not in done_urls and not (v.get("film") or v.get("copie") or v.get("telechargeable") is False) \
+                    and any((e or {}).get("niveau") in finder.RANK for e in (v.get("par_scene") or {}).values()):
+                shared.append(url)
+    order = shared[:6]
     for pool in pools:
         order += [c["url"] for c in pool["candidats"]][:4]
     order = list(dict.fromkeys(order))
