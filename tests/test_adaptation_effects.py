@@ -256,3 +256,12 @@ def test_a_compact_clip_tells_the_writer_how_long_its_sentence_may_be():
     listing = script.clip_listing({"A": {**clip(start=0, end=2.4), "compact": True, "desc": "un saut"},
                                    "B": {**clip(start=0, end=3.0), "desc": "une rue"}})
     assert "jusqu'a 4.0s de phrase au ralenti" in listing and listing.count("ralenti") == 1
+
+
+def test_the_music_stays_level_then_comes_up_after_the_last_word():
+    clips = {"A": clip(end=9.0), "B": clip(end=9.0)}
+    passages = [{"clip": "A", "start": 0.0, "end": 2.0}, {"clip": "B", "start": 2.4, "end": 4.0}]
+    segs, total = render.build_timeline(passages, clips)
+    assert segs[-1]["dur"] == pytest.approx((4.10 - 2.36) + render.GAP + render.OUTRO_S)   # a short outro
+    assert segs[0]["dur"] == pytest.approx(2.10 + render.GAP)                                # not between sentences
+    assert 1.8 < render.MUSIC_OUTRO / render.MUSIC_GAIN < 2.2                                # about +6 dB

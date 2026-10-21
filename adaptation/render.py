@@ -86,7 +86,8 @@ def style_preview(name: str, lang: Dict, path: str) -> str:
 BANNER_KEY = "#FFD60A"
 EMOJI_FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
 MUSIC_GAIN = 0.16                                  # under a -16 LUFS voice
-MUSIC_DUCKED = 0.26                                # louder in the pauses, ducked under the voice
+MUSIC_OUTRO = 0.32                                 # +6 dB once the last word is said (a usual outro swell)
+OUTRO_S, OUTRO_RISE = 0.9, 0.45                    # seconds of picture after the last word; how fast it rises
 SFX_GAIN = 0.55
 
 
@@ -112,6 +113,8 @@ def build_timeline(passages: List[Dict], clips: Dict[str, Dict],
             near = [bt - (t + b - a) for bt in beats if GAP_MIN <= bt - (t + b - a) <= GAP_MAX]
             if near:
                 gap = min(near, key=lambda g: abs(g - GAP))
+        if k == len(passages) - 1:      # after the last word: a short outro, the music up (see render)
+            gap += OUTRO_S
         dur = (b - a) + gap
         c = clips[p["clip"]]
         fx = (effects or [None] * (k + 1))[k] if k < len(effects or []) else None
@@ -840,12 +843,15 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
         mix.append("[fx]")
     if music and music[0] and os.path.exists(music[0]):
         mi = add_input("-ss", f"{music[1]:.3f}", "-i", music[0])
+        # one steady level under the voice (ducking between sentences 0.2 s apart made it pump: tiring),
+        # then, once the last word is said, the music comes up for the outro
+        said = segs[-1]["out"] + (segs[-1]["vb"] - segs[-1]["va"])
+        level = (f"if(lt(t,{said:.3f}),{MUSIC_GAIN},"
+                 f"{MUSIC_GAIN}+{MUSIC_OUTRO - MUSIC_GAIN:.3f}*min(1,(t-{said:.3f})/{OUTRO_RISE}))")
         g.append(f"[{mi}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{total:.3f},"
-                 f"afade=t=in:d=0.4,afade=t=out:st={max(0.0, total - 0.6):.3f}:d=0.6,volume={MUSIC_DUCKED}[mus]")
-        # the music steps back while a sentence is said and comes up in the pauses (it was one level throughout)
-        g.append("[voice]asplit=2[voice][vkey]")
-        g.append("[mus][vkey]sidechaincompress=threshold=0.03:ratio=6:attack=20:release=400:makeup=1[musd]")
-        mix.append("[musd]")
+                 f"afade=t=in:d=0.4,volume='{level}':eval=frame,"
+                 f"afade=t=out:st={max(0.0, total - 0.15):.3f}:d=0.15[mus]")
+        mix.append("[mus]")
     g.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:normalize=0,alimiter=limit=0.95,"
              f"aresample=48000,apad,atrim=0:{total:.3f}[aout]")
 
@@ -883,6 +889,7 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     bpm = round(60 / (beats[1] - beats[0])) if beats and len(beats) > 1 else None
     on_beat = lambda s: bool(beats and s["k"] > 0 and min(abs(s["out"] - b) for b in beats) < 0.02)
     recipe = {"style": style or "classique", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
+              "musique_niveau": "constant sous la voix, monte à la fin" if music and music[0] else None,
               "tempo_musique": bpm, "plans": []}
     for s in segs:
         fx = dict(s.get("fx") or {})

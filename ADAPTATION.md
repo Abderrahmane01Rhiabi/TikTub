@@ -109,7 +109,7 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
   - **l'instant le plus fort** de chaque action (vu en mouvement) place la flèche, le ralenti, l'arrêt sur image — et l'**accroche démarre juste avant lui** ;
   - **cadrage sur le sujet** : une image recadrée reste centrée sur la personne ou l'objet de la phrase (les flèches suivent) ;
   - **lumière** : un clip trop sombre est éclairci ;
-  - **musique** : elle baisse sous la voix et remonte dans les pauses.
+  - **musique** : un niveau constant sous la voix (pas de « pompage » entre les phrases), puis elle monte doucement (+6 dB) pendant la petite fin (0,9 s) après le dernier mot.
   - **coupes sur le rythme** : chaque changement de plan tombe sur un temps fort de la musique quand il y en a un tout près (la pause entre deux phrases bouge de 0,08 à 0,40 s ; une musique sans rythme net ne change rien) ;
   - **couleurs** : un clip à la teinte marquée (sépia, orangé) est ramené vers le neutre, comme les autres ;
   - **netteté** : un clip en basse résolution, agrandi, est débruité puis rendu plus net ;
