@@ -617,24 +617,39 @@ def erase_drawn_marks(clips: Dict[str, Dict], work_dir: str) -> List[str]:
             continue
         out = os.path.join(work_dir, f"marks_{cid}.mp4")
         try:
-            if _inpaint_red(c["src"], c["end"] + 0.5, out):
-                c.update(src=out, marques_effacees=True)
+            if _inpaint_red(c["src"], c["end"] + 0.5, out, mark_hues(seen)):
+                c.update(src=out, src_brut=c["src"], marques_effacees=True)
                 done.append(cid)
         except Exception:
             pass
     return done
 
 
-def red_mask(frame):
-    """The pixels of a drawn red mark (saturated, bright red), widened a little."""
+HUES = {"rouge": [(0, 10), (170, 180)], "red": [(0, 10), (170, 180)], "orange": [(8, 20)],
+        "jaune": [(18, 35)], "yellow": [(18, 35)], "vert": [(40, 85)], "green": [(40, 85)]}
+
+
+def mark_hues(seen: List[str]) -> List[Tuple[int, int]]:
+    """The OpenCV hue ranges of the colours the AI named for the drawn marks
+    (measured: a "yellow arrow" stayed, the cleaning knew only red); red when none is named."""
+    text = " ".join(str(m) for m in seen).lower()      # whole words: "Credits" holds "red"
+    hues = [r for word, rs in HUES.items() if re.search(rf"\b{word}\b", text) for r in rs]
+    return list(dict.fromkeys(hues)) or HUES["rouge"]
+
+
+def red_mask(frame, hues: Optional[List[Tuple[int, int]]] = None):
+    """The pixels of a drawn mark (saturated, bright, of its colour), widened a little."""
     import cv2
     import numpy as np
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    m = cv2.inRange(hsv, (0, 140, 110), (10, 255, 255)) | cv2.inRange(hsv, (170, 140, 110), (180, 255, 255))
-    return cv2.dilate(m, np.ones((9, 9), np.uint8))
+    m = None
+    for lo, hi in hues or HUES["rouge"]:
+        part = cv2.inRange(hsv, (lo, 140, 110), (hi, 255, 255))
+        m = part if m is None else m | part
+    return cv2.dilate(m, np.ones((15, 15), np.uint8))    # its dark outline too (a ghost was left at 9)
 
 
-def _inpaint_red(src: str, until: float, out: str) -> bool:
+def _inpaint_red(src: str, until: float, out: str, hues: Optional[List[Tuple[int, int]]] = None) -> bool:
     """A copy of src from 0 to `until` (same timeline, same sound) with the red marks rebuilt."""
     import cv2
     cap = cv2.VideoCapture(src)
@@ -651,7 +666,7 @@ def _inpaint_red(src: str, until: float, out: str) -> bool:
         ok, frame = cap.read()
         if not ok:
             break
-        m = red_mask(frame)
+        m = red_mask(frame, hues)
         if m.any():
             frame = cv2.inpaint(frame, m, 7, cv2.INPAINT_TELEA)
             changed += 1

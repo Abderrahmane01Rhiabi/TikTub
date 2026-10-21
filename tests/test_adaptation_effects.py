@@ -307,3 +307,9 @@ def test_a_drawn_red_arrow_that_moves_is_erased_on_every_frame(tmp_path):
         red += int((sources.red_mask(frame) > 0).sum())
     assert red == 0                                        # no red left anywhere, wherever the mark went
     assert sources.erase_drawn_marks({"A": marked}, str(tmp_path)) == []        # done once
+
+
+def test_the_colour_of_a_drawn_mark_is_the_one_the_ai_named():
+    from adaptation import sources
+    assert sources.mark_hues(["Credits: @jeffthegutterguy", "yellow arrow", "flèche jaune"]) == [(18, 35)]   # not "red"
+    assert sources.mark_hues(["flèche rouge"]) == [(0, 10), (170, 180)] == sources.mark_hues(["arrow"])
