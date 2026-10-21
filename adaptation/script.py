@@ -74,7 +74,8 @@ Corrige-le selon cette demande, sans rien changer d'autre, et renvoie le JSON co
 {demande}
 La demande decrit le probleme avec les mots de la personne : ne les recopie pas dans le script. Ecris pour le
 spectateur, au ton du reste du script, des phrases naturelles et completes, pas plus longues que celles qu'elles
-remplacent (mauvais exemple, qui recopie la demande : "Comme ce thon qui nage autour d'une ligne de peche, …")."""
+remplacent (mauvais exemple, qui recopie la demande : "Comme ce thon qui nage autour d'une ligne de peche, …").
+Le bandeau d'une phrase changee doit aller avec elle (meme format) et ses mots_cles etre des mots de la phrase."""
 
 
 CRITIQUE_PROMPT = """Tu es un relecteur exigeant de scripts de YouTube Shorts, langue : {langue}.

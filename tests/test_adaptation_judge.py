@@ -147,6 +147,7 @@ def test_the_chat_sees_what_each_clip_shows_and_answers_quickly():
     out = script.revise({"passages": [{"clip": "P1", "texte": "A."}]}, _clips(), "le clip montre plan 1", gemini=G())
     assert out["passages"][0]["texte"] == "Une phrase naturelle."
     assert "P1: plan 1" in G.prompt and "ne les recopie pas" in G.prompt and G.kw["thinking"] == 1024
+    assert "Le bandeau d'une phrase changee doit aller avec elle" in G.prompt
 
 
 def test_a_logo_described_in_words_is_not_taken_for_a_name():
