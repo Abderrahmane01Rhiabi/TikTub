@@ -244,8 +244,9 @@ def run_analysis(pid: str, report: Optional[Report] = None):
                                               work_dir=os.path.join(project_dir(pid), "finder"),
                                               report=lambda ph, f: report(ph, 0.1 + share * f))
             save(p)
-            if alone:
-                finder.verify_best(p["suggestions"], p["reference"],
+            if alone:                   # two per scene: each one's best by words AND by picture (measured: 8 for
+                n = min(14, max(8, 2 * len(p["suggestions"].get("scenes") or [])))   # 6 scenes left scene 5's
+                finder.verify_best(p["suggestions"], p["reference"], n=n,          # eight obvious videos unchecked)
                                    report=lambda ph, f: report(ph, 0.7 + 0.28 * f))
                 save(p)
         if not p["source_urls"] and not p.get("pending_excerpts"):
