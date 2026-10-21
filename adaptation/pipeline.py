@@ -1216,9 +1216,11 @@ def _excerpts_used(p: Dict) -> int:
         sum(1 for c in (p.get("clips") or {}).values() if c.get("extrait") and not str(c.get("id", "")).startswith("P"))
 
 
-def use_excerpt_for_plan(pid: str, plan: int) -> Dict:
+def use_excerpt_for_plan(pid: str, plan: int, ref: Optional[int] = None) -> Dict:
     """"Script d'abord", last resort: a plan nobody filmed takes a few seconds
-    of the reference itself (never the hook, two per video at most)."""
+    of the reference itself (never the hook, two per video at most). ref: the
+    reference's shot to take (1-based), chosen by the person — any plan can
+    have one, not only those the storyboard drew from the reference."""
     p = load(pid)
     _expect(p, "images_review")
     plans = p["storyboard"]["plans"]
@@ -1228,7 +1230,9 @@ def use_excerpt_for_plan(pid: str, plan: int) -> Dict:
         raise PipelineError("Pas pour l'accroche : c'est la scène la plus reconnaissable du modèle.")
     if _excerpts_used(p) >= EXCERPTS_PER_VIDEO and not (p["picks"][plan] or {}).get("extrait"):
         raise PipelineError(f"Déjà {EXCERPTS_PER_VIDEO} extraits du Short modèle : c'est le maximum par vidéo.")
-    ref_plans = [k - 1 for k in plans[plan].get("plans_modele") or [] if k >= 1]
+    ref_plans = [ref - 1] if ref else [k - 1 for k in plans[plan].get("plans_modele") or [] if k >= 1]
+    if not ref_plans:
+        raise PipelineError("Choisis le moment du Short modèle à prendre pour ce plan.")
     a, b = excerpt_window(p, ref_plans)
     need = plans[plan]["duree"]
     p = load(pid)

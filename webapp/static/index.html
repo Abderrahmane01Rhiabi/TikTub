@@ -3258,8 +3258,10 @@ function renderAdImages(body, p){
         <div class="ad-row"><input class="f ad-plan-link" placeholder="Ton lien pour ce plan (TikTok, YouTube, VK…)" style="flex:1;min-width:220px">
           <button class="btn secondary small ad-plan-check" title="L'IA vérifie ce lien pour ce plan (15 s à 2 min)">Vérifier pour ce plan</button>
           ${pick ? '<button class="btn ghost small ad-skip">Retirer ce plan</button>' : ''}
-          ${k > 0 && pl.role !== 'accroche' && (pl.plans_modele || []).length && !(pick && pick.extrait)
-            ? `<button class="btn ghost small ad-excerpt" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>
+          ${k > 0 && pl.role !== 'accroche' && ((p.reference || {}).plans || []).length && !(pick && pick.extrait)
+            ? `<select class="f ad-excerpt-ref" style="width:auto;max-width:260px;font-size:12px" title="Le moment du Short modèle à prendre">
+                ${p.reference.plans.map((r, i) => `<option value="${i + 1}" ${(pl.plans_modele || [])[0] === i + 1 ? 'selected' : ''}>Modèle ${i + 1} (${adDuration(r.debut) || '0:00'}–${adDuration(r.fin) || '0:00'}) — ${esc((r.visuel || '').slice(0, 50))}</option>`).join('')}</select>
+              <button class="btn ghost small ad-excerpt" title="3 secondes maximum du moment choisi, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>
         ${frames.length ? adFramesHtml(p, frames) : ''}
         <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches || [])}</div>
         ${links(sc.liens || [])}
@@ -3304,7 +3306,9 @@ function renderAdImages(body, p){
     const unskip = card.querySelector('.ad-unskip');
     if (unskip) unskip.onclick = () => post(`plans/${k}/skip`, null, '', { skip: false });
     const excerpt = card.querySelector('.ad-excerpt');
-    if (excerpt){ excerpt.dataset.label = excerpt.textContent.trim(); excerpt.onclick = () => post(`plans/${k}/excerpt`, excerpt, 'repérage dans le Short…'); }
+    if (excerpt){ excerpt.dataset.label = excerpt.textContent.trim();
+      excerpt.onclick = () => post(`plans/${k}/excerpt`, excerpt, 'repérage dans le Short…',
+                                   { ref: +((card.querySelector('.ad-excerpt-ref') || {}).value || 0) || null }); }
     const adapt = card.querySelector('.ad-adapt');
     if (adapt){ adapt.dataset.label = adapt.textContent.trim(); adapt.onclick = () => post(`plans/${k}/adapt`, adapt, 'l\'IA réécrit…'); }
     const chkLink = card.querySelector('.ad-plan-check');

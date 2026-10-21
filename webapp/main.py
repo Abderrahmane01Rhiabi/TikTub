@@ -1358,6 +1358,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     if full:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
+        base["reference"]["plans"] = [{k: x.get(k) for k in ("debut", "fin", "visuel")}
+                                      for x in ref.get("plans") or [] if isinstance(x, dict)]
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
                                                   "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced", "note", "absent", "action", "w", "h", "texte_efface")},
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
@@ -1677,12 +1679,16 @@ def back_to_adaptation_images(pid: str):
     return _serialize_adaptation(_adaptation_call(ap.back_to_images, pid))
 
 
+class AdaptationExcerpt(BaseModel):
+    ref: Optional[int] = None
+
+
 @app.post("/api/adaptations/{pid}/plans/{plan}/excerpt")
-def excerpt_for_adaptation_plan(pid: str, plan: int):
-    """Last resort: a few seconds of the reference Short for a plan nobody filmed."""
+def excerpt_for_adaptation_plan(pid: str, plan: int, req: Optional[AdaptationExcerpt] = None):
+    """Last resort: a few seconds of the reference Short for a plan nobody filmed (ref: which of its shots)."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
-    return _serialize_adaptation(_adaptation_call(ap.use_excerpt_for_plan, pid, plan))
+    return _serialize_adaptation(_adaptation_call(ap.use_excerpt_for_plan, pid, plan, (req.ref if req else None)))
 
 
 @app.post("/api/adaptations/{pid}/scenes/{scene}/excerpt")

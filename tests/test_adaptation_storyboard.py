@@ -1127,3 +1127,27 @@ def test_the_versions_of_a_group_share_the_searches_that_are_the_same(project, f
     assert second["status"] == "images_review" and second["suggestions"]["images"]["frames"][0]["file"] == "f00.jpg"
     assert Path(ap.project_dir(members[1]["project_id"]), "finder", "f00.jpg").exists()     # copied for its page
     assert "search_cache" in ap.load(lead["project_id"])
+
+
+def test_any_plan_can_take_the_reference_moment_the_person_chooses(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["storyboard"]["plans"][3]["plans_modele"] = []                        # an image the storyboard invented
+    ap.save(p)
+    asked = []
+    monkeypatch.setattr(ap, "excerpt_window", lambda p, refs: asked.append(refs) or (5.0, 8.0))
+    with pytest.raises(ap.PipelineError):
+        ap.use_excerpt_for_plan(pid, 3)                                     # nothing to go on: the person chooses
+    p = ap.use_excerpt_for_plan(pid, 3, ref=2)
+    assert asked == [[1]] and p["picks"][3]["extrait"] and p["picks"][3]["moment"] == {"debut": 5.0, "fin": 8.0}
+    with pytest.raises(ap.PipelineError):
+        ap.use_excerpt_for_plan(pid, 0, ref=1)                              # never the hook
+
+
+def test_api_excerpt_with_a_chosen_moment(client, project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    monkeypatch.setattr(ap, "excerpt_window", lambda p, refs: (refs[0] + 1.0, refs[0] + 3.0))
+    r = client.post(f"/api/adaptations/{pid}/plans/3/excerpt", json={"ref": 2})
+    assert r.status_code == 200 and r.json()["picks"][3]["moment"] == {"debut": 2.0, "fin": 4.0}
+    assert "plans" in r.json()["reference"]                                  # the list the page offers
+    assert client.post(f"/api/adaptations/{pid}/plans/4/excerpt").status_code == 200   # no body: the storyboard's
