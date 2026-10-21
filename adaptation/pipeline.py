@@ -772,9 +772,10 @@ def adapt_plan(pid: str, plan: int) -> Dict:
     b, sug, picks = p["storyboard"], p["suggestions"], p["picks"]
     used = {(x["url"], round(x["moment"]["debut"])) for k, x in enumerate(picks) if x and k != plan}
     options = []
+    dead = set(sug.get("unavailable") or [])
     for url, v in (sug.get("verifs") or {}).items():
-        if v.get("copie"):
-            continue
+        if v.get("copie") or v.get("film") or v.get("remontage") or v.get("telechargeable") is False or url in dead:
+            continue                    # what auto_pick never takes either (measured: a BBC film was proposed)
         for e in (v.get("par_scene") or {}).values():
             if e.get("niveau") not in finder.RANK:
                 continue
@@ -1043,7 +1044,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                  status="script_review", error=None, failed_step=None)
         guess = guess_credits(metas, clips)
         names = [n for n in guess.split(" · ") if n] + [m.get("handle") for m in metas if m.get("handle")]
-        guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:4])
+        guess = " · ".join(list(dict.fromkeys(n for n in names if n and not re.fullmatch(r"@?[-\d_.]*", n)))[:6])
+        # 6, not 4: measured, the 4 first names left out the aquarium that filmed 4 clips of 10
         p["credits"], p["credits_auto"] = guess, guess        # every channel whose footage is used, not only watermarks
         report("texte encore visible après nettoyage ?", 0.91)
         try:                            # added text the first cleaning missed is painted over too

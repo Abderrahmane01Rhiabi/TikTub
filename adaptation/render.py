@@ -268,18 +268,31 @@ def credit_png(handles: str, path: str, lang: Dict) -> str:
         col = (170, 176, 188, 255)
         label = lang["credit_label"]
         kw = {"direction": "rtl", "language": "ar"} if lang["rtl"] else {}
-        for size in range(30, 15, -2):          # four handles once ran off both edges: smaller until it fits
-            font = ImageFont.truetype(font_path(lang["credit_font"]), size)
-            lw, hw = d.textlength(label, font=font, **kw), d.textlength(handles, font=font)
-            if lw + 12 + hw <= W - 60:
-                break
+        names = handles.split(" · ")
+        # one line, smaller until it fits (four handles once ran off both edges); too small to read
+        # (six sources once): the names on two lines
+        for lines in ([handles], [" · ".join(names[:(len(names) + 1) // 2]), " · ".join(names[(len(names) + 1) // 2:])]):
+            for size in range(30, 21 if len(lines) == 1 and len(names) > 1 else 15, -2):
+                font = ImageFont.truetype(font_path(lang["credit_font"]), size)
+                lw = d.textlength(label, font=font, **kw)
+                hw = max(d.textlength(x, font=font) for x in lines)
+                if lw + 12 + hw <= W - 60:
+                    break
+            else:
+                continue
+            break
         x0 = (W - (lw + 12 + hw)) / 2
-        if lang["rtl"]:      # Arabic label on the right
-            d.text((x0, 45), handles, font=font, fill=col, anchor="lm")
+        ys = [45] if len(lines) == 1 else [25, 65]
+        for y, text in zip(ys, lines):
+            tw = d.textlength(text, font=font)
+            if lang["rtl"]:      # Arabic label on the right
+                d.text((x0 + hw - tw, y), text, font=font, fill=col, anchor="lm")
+            else:
+                d.text((x0 + lw + 12, y), text, font=font, fill=col, anchor="lm")
+        if lang["rtl"]:
             d.text((x0 + hw + 12, 45), label, font=font, fill=col, anchor="lm", **kw)
         else:
             d.text((x0, 45), label, font=font, fill=col, anchor="lm")
-            d.text((x0 + lw + 12, 45), handles, font=font, fill=col, anchor="lm")
     img.save(path)
     return path
 

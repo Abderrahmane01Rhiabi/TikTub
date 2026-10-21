@@ -319,8 +319,10 @@ Le plan {num} ({role}) n'a pas de video : personne n'a filme "{image}".
 Voici des images DEJA TROUVEES et verifiees, disponibles :
 {options}
 Choisis l'option qui sert le mieux l'histoire a cet endroit, et REECRIS seulement le plan {num} pour qu'il colle a cette
-image : meme role dans l'histoire, l'enchainement avec les plans voisins reste naturel, phrases completes, au plus
-6 secondes de voix, dans chaque langue ({langues}). Ne change aucun autre plan.
+image : le spectateur entend la phrase EN REGARDANT l'image, elle dit donc ce qu'on y VOIT (ou le commente) et ne
+parle d'aucune action absente de l'image (pas d'oeufs sur un thon qui nage seul). Garde le role dans l'histoire et ce
+que le plan apprend quand l'image le permet ; l'enchainement avec les plans voisins reste naturel, phrases completes,
+au plus 6 secondes de voix, dans chaque langue ({langues}). Ne change aucun autre plan.
 JSON uniquement : {{"choix": numero de l'option, "image": "ce qu'on voit dans l'option choisie",
   "textes": {{{exemple}}}}}"""
 

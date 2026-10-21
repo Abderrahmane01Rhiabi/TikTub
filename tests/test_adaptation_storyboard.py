@@ -361,6 +361,8 @@ def test_a_plan_without_video_is_adapted_to_an_image_found(project, fakes, monke
 
     def adapt_to(bundle, k, options, codes):
         seen["options"], seen["k"] = options, k
+        if not options:
+            raise ap.script.ScriptError("Aucune image trouvée à proposer")
         new = {**bundle["plans"][k], "image": "moment 4 vu autrement",
                "textes": {"fr": {"bandeau": "X : Y 😐", "texte": "Une phrase adaptée et complète.", "mots_cles": []},
                           "ar": {"bandeau": "س", "texte": "جملة جديدة كاملة.", "mots_cles": []}}}
@@ -372,6 +374,14 @@ def test_a_plan_without_video_is_adapted_to_an_image_found(project, fakes, monke
     assert p["storyboard"]["plans"][5]["image"] == "moment 4 vu autrement" and p["storyboard"]["plans"][5]["adapte"]
     assert p["picks"][5]["niveau"] == "adaptée" and p["picks"][5]["moment"] == {"debut": 220.0, "fin": 224.0}
     assert p["targets"][0]["script"]["passages"][5]["texte"] == "Une phrase adaptée et complète."
+    ap.choose_pick(pid, 5, None)
+    p = ap.load(pid)
+    for v in p["suggestions"]["verifs"].values():
+        v["film"] = True                                      # a film (rights): never offered, like auto_pick
+    ap.save(p)
+    with pytest.raises(ap.PipelineError, match="Aucune image"):
+        ap.adapt_plan(pid, 5)
+    assert seen["options"] == []
 
 
 def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, fakes, monkeypatch):
@@ -1151,3 +1161,15 @@ def test_api_excerpt_with_a_chosen_moment(client, project, fakes, monkeypatch):
     assert r.status_code == 200 and r.json()["picks"][3]["moment"] == {"debut": 2.0, "fin": 4.0}
     assert "plans" in r.json()["reference"]                                  # the list the page offers
     assert client.post(f"/api/adaptations/{pid}/plans/4/excerpt").status_code == 200   # no body: the storyboard's
+
+
+def test_six_credited_handles_go_on_two_readable_lines(tmp_path):
+    from PIL import Image
+    from adaptation import render, langs
+    six = "@mffltd6342 · @MrClaixa · @TokyoSeaLifePark · @hopehouse8084 · @MatthiasBojar · @Klimt-YT"
+    for code in ("fr", "ar"):
+        img = Image.open(render.credit_png(six, str(tmp_path / f"{code}.png"), langs.lang(code)))
+        box = img.getbbox()
+        assert box[0] > 0 and box[2] < render.W
+        rows = [y for y in range(img.size[1]) if any(img.getpixel((x, y))[3] for x in range(0, render.W, 3))]
+        assert rows[-1] - rows[0] > (45 if code == "fr" else 16)       # two lines, or one at a readable size
