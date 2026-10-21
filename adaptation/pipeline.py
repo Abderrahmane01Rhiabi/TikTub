@@ -1307,6 +1307,7 @@ def _make_excerpt(p: Dict, scene: int):
     n = sum(1 for c in p["clips"].values() if c.get("extrait")) + 1
     c = sources.clip_at(path, idx, f"M{n}", a, b, found[0], desc=scenes[scene]["scene"] + " (extrait du Short modèle)")
     c.update(extrait=True, usable=True, scene=scene)
+    sources.erase_drawn_marks({c["id"]: c}, os.path.join(project_dir(p["project_id"]), "work"))  # the model's own arrows
     p["clips"][c["id"]] = c
     p["sources"] = metas
     guess = guess_credits(metas, p["clips"])

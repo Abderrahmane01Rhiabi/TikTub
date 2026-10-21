@@ -565,7 +565,10 @@ def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[st
     os.makedirs(work_dir, exist_ok=True)
     shots, owners = [], []
     for cid, c in clips.items():
-        for j, f in enumerate((0.3, 0.7)):
+        # something already painted may be an overlay that moves (measured: a red arrow erased where it was,
+        # then drawn lower right a second later): such a clip is looked at all along
+        at = (0.05, 0.3, 0.5, 0.7, 0.95) if c.get("delogo") else (0.3, 0.7)
+        for j, f in enumerate(at):
             out = os.path.join(work_dir, f"left_{cid}_{j}.jpg")
             still(c["src"], c["start"] + (c["end"] - c["start"]) * f, c.get("crop"), out, c.get("delogo"), (c["w"], c["h"]))
             if os.path.exists(out):
@@ -585,11 +588,86 @@ def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[st
             bw, bh = int((x1 - x0) * c["w"] / 1000) + 12, int((y1 - y0) * c["h"] / 1000) + 12
             if bw <= 8 or bh <= 8 or bw * bh > 0.25 * c["w"] * c["h"]:
                 continue                        # too big to paint without ruining the clip
-            c["delogo"] = list(c.get("delogo") or []) + [(max(0, x), max(0, y), bw, bh)]
+            box = (max(0, x), max(0, y), bw, bh)
+            if any(_overlap(box, old) > 0.5 * bw * bh for old in c.get("delogo") or []):
+                continue                        # our own painting, seen as "a blurred overlay": not painted twice
+            c["delogo"] = list(c.get("delogo") or []) + [box]
             erased.setdefault(cid, []).append(quoi or "texte")
     for cid, what in erased.items():
         clips[cid]["texte_efface"] = list(dict.fromkeys(what))[:4]
+    erase_drawn_marks(clips, work_dir)
     return erased
+
+
+DRAWN = re.compile(r"fl[eè]che|arrow|cercle|circle|entour", re.I)
+
+
+def erase_drawn_marks(clips: Dict[str, Dict], work_dir: str) -> List[str]:
+    """A red arrow or circle drawn by the Short's maker moves with what it
+    points at: a painted box stays where it was seen (measured: the arrow,
+    erased at 4.9 s, showed again lower right at 6.2 s as a red smear; the AI
+    places such a box too roughly to follow it). Its pure red is rare in real
+    footage: on the clips where a drawn mark was seen, every frame has those
+    pixels rebuilt from their surroundings (OpenCV inpainting) in a copy the
+    clip then uses. Returns the clips cleaned this way. Best effort."""
+    done = []
+    for cid, c in clips.items():
+        seen = (c.get("marks") or []) + (c.get("texte_efface") or [])
+        if c.get("marques_effacees") or not any(DRAWN.search(str(m)) for m in seen):
+            continue
+        out = os.path.join(work_dir, f"marks_{cid}.mp4")
+        try:
+            if _inpaint_red(c["src"], c["end"] + 0.5, out):
+                c.update(src=out, marques_effacees=True)
+                done.append(cid)
+        except Exception:
+            pass
+    return done
+
+
+def red_mask(frame):
+    """The pixels of a drawn red mark (saturated, bright red), widened a little."""
+    import cv2
+    import numpy as np
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    m = cv2.inRange(hsv, (0, 140, 110), (10, 255, 255)) | cv2.inRange(hsv, (170, 140, 110), (180, 255, 255))
+    return cv2.dilate(m, np.ones((9, 9), np.uint8))
+
+
+def _inpaint_red(src: str, until: float, out: str) -> bool:
+    """A copy of src from 0 to `until` (same timeline, same sound) with the red marks rebuilt."""
+    import cv2
+    cap = cv2.VideoCapture(src)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if not w or not h:
+        return False
+    enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
+                            "-r", f"{fps}", "-i", "-", "-i", src, "-map", "0:v", "-map", "1:a?", "-t", f"{until:.2f}",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+                            "-c:a", "aac", out], stdin=subprocess.PIPE)
+    n, changed = 0, 0
+    while n < until * fps:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        m = red_mask(frame)
+        if m.any():
+            frame = cv2.inpaint(frame, m, 7, cv2.INPAINT_TELEA)
+            changed += 1
+        enc.stdin.write(frame.tobytes())
+        n += 1
+    cap.release()
+    enc.stdin.close()
+    enc.wait()
+    return enc.returncode == 0 and changed > 0 and os.path.exists(out)
+
+
+def _overlap(a, b) -> float:
+    """The area two (x, y, w, h) boxes share."""
+    w = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    h = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return max(0, w) * max(0, h)
 
 
 def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int, List[Tuple[int, int, int, int]]]:

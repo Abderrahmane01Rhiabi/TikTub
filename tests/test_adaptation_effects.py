@@ -178,11 +178,15 @@ def test_text_left_after_the_cleaning_is_painted_over(tmp_path, monkeypatch):
     from adaptation import sources
     monkeypatch.setattr(sources, "still", lambda src, t, crop, out, *a, **k: open(out, "wb").close() or out)
     clips = {"P1": {**clip(w=1000, h=500), "delogo": [(1, 1, 10, 10)]}, "P2": clip(w=1000, h=500)}
-    seen = sources.leftover_text(clips, str(tmp_path), finder=lambda shots: [
-        (None, [[100, 200, 200, 600]], ["If you drive over it too fast"]), (None, [], []),
-        (None, [[0, 0, 900, 900]], ["huge"]), (None, [], [])])
-    assert seen == {"P1": ["If you drive over it too fast"]} and clips["P1"]["texte_efface"]
-    assert clips["P1"]["delogo"][-1] == (194, 44, 412, 62) and "texte_efface" not in clips["P2"]   # too big: left
+    asked = []
+    seen = sources.leftover_text(clips, str(tmp_path), finder=lambda shots: asked.append(len(shots)) or [
+        (None, [[100, 200, 200, 600]], ["If you drive over it too fast"]), (None, [], []), (None, [], []),
+        (None, [], []), (None, [[700, 600, 800, 700]], ["flèche rouge"]),           # P1, 5 pictures: an arrow that moved
+        (None, [[0, 0, 900, 900]], ["huge"]), (None, [], [])])                      # P2, nothing painted yet: 2
+    assert asked == [7]
+    assert seen == {"P1": ["If you drive over it too fast", "flèche rouge"]} and clips["P1"]["texte_efface"]
+    assert clips["P1"]["delogo"][1] == (194, 44, 412, 62) and "texte_efface" not in clips["P2"]   # too big: left
+    assert clips["P1"]["delogo"][2] == (594, 344, 112, 62)
 
 
 def test_a_latin_figure_stays_left_to_right_in_an_arabic_video(tmp_path, monkeypatch):
@@ -282,3 +286,24 @@ def test_the_music_holds_its_breath_before_the_first_real_crash_only():
     segs, _ = render.build_timeline(passages, clips)
     assert render.hush_at(segs, clips) == round(segs[2]["impact_out"], 3)   # not the hook, not the last plan
     assert render.hush_at(segs, {**clips, "C": {**clips["C"], "shock": False}}) is None
+
+
+def test_a_drawn_red_arrow_that_moves_is_erased_on_every_frame(tmp_path):
+    import cv2
+    from adaptation import sources
+    src = str(tmp_path / "arrow.mp4")                      # a red mark crossing a blue picture, 2 s
+    _ff("-f", "lavfi", "-i", "color=c=0x2060B0:s=320x240:d=2:r=15", "-f", "lavfi", "-i", "color=c=0xE01010:s=40x20:d=2:r=15",
+        "-f", "lavfi", "-i", "sine=d=2", "-filter_complex", "[0][1]overlay=x='20+100*t':y=100", "-map", "2:a",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-shortest", src)
+    marked = {**clip(end=1.5, w=320, h=240), "src": src, "marks": ["flèche rouge"]}
+    plain = {**clip(end=1.5, w=320, h=240), "src": src, "marks": ["logo"]}
+    assert sources.erase_drawn_marks({"A": marked, "B": plain}, str(tmp_path)) == ["A"]
+    assert plain["src"] == src and marked["src"] != src and marked["marques_effacees"]
+    cap, red = cv2.VideoCapture(marked["src"]), 0
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        red += int((sources.red_mask(frame) > 0).sum())
+    assert red == 0                                        # no red left anywhere, wherever the mark went
+    assert sources.erase_drawn_marks({"A": marked}, str(tmp_path)) == []        # done once
