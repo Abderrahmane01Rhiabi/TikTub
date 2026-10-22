@@ -190,3 +190,34 @@ def test_recipe_overrides_the_models_decor_and_format(client, project, monkeypat
 
     from generative.script_generator import _build_prompt
     assert 'Indique "D"' in _build_prompt({}, ["ex"], ["t"], ["A"], {"format": "D"})
+
+
+def adaptation_recipe(duree, hook, plans, mode="script", fleches=0, ralenti=False, sfx=None, voice="v1"):
+    details = {"mode": mode, "plans": [{"debut": i, "duree": 1, "fleche": {"type": "fleche"} if i < fleches else None,
+                                        "effets_appliques": {"ralenti": ralenti and i == 1}} for i in range(plans)]}
+    if sfx is not None:
+        details["effets_sonores"] = sfx
+    return {"type": "adaptation", "accroche": {"texte": "Q ?", "duree_s": hook},
+            "structure": {"duree_s": duree, "plans": plans, "plan_moyen_s": round(duree / plans, 2)},
+            "voix": {"id": voice}, "style": {"visuel": "neon"}, "details": details}
+
+
+def test_the_recipe_of_each_video_is_compared_too():
+    items = [make("s1", 400, recette=adaptation_recipe(25, 2.5, 10, fleches=2, ralenti=True, sfx=[{"son": "pop"}])),
+             make("s2", 300, recette=adaptation_recipe(28, 2.8, 9, fleches=2, ralenti=True, sfx=[])),
+             make("l1", 100, recette=adaptation_recipe(44, 4.6, 6, mode="sources")),
+             make("l2", 120, recette=adaptation_recipe(42, 4.2, 6, mode="sources"))]
+    insights = {i["dimension"]: i for i in run(items)["insights"]}
+    assert insights["duration"]["best"]["value"] == "20 à 30 s" and insights["duration"]["worst"]["value"] == "40 s et plus"
+    assert insights["hook"]["best"]["value"] == "2 à 3 s"
+    assert insights["mode"]["best"]["value"] == "Script d'abord"
+    assert insights["arrows"]["best"]["value"] == "2 flèches ou cercles et plus"
+    assert insights["slowmo"]["best"]["value"] == "avec ralenti"
+    assert "sfx" not in insights                          # one recipe with, one without, two that never said
+
+
+def test_a_rebuilt_recipe_gets_its_length_from_the_retention():
+    rec = {"type": "import", "structure": {"duree_s": None, "plans": 1}, "accroche": {}}
+    v, h = make("i1", 50, recette=rec, retention_7d={"average_view_duration": 9.0, "average_view_percentage": 60.0})
+    assert performance.video_row(v, h)["attrs"]["duration"] == "moins de 20 s"            # 9 s watched = 60 % of 15 s
+    assert performance.recipe_attrs(None) == {}

@@ -42,7 +42,70 @@ DIMENSIONS = [
     ("hour_slot", "Heure de publication"),
     ("method", "Méthode de planning"),
     ("content_type", "Type de contenu"),
+    # from the recipe every video now keeps (recette.py): how it was made
+    ("video_type", "Type de vidéo"),
+    ("mode", "Mode d'Adaptation"),
+    ("duration", "Durée de la vidéo"),
+    ("hook", "Durée de l'accroche"),
+    ("pace", "Rythme des plans"),
+    ("voice", "Voix"),
+    ("visual_style", "Style visuel"),
+    ("arrows", "Flèches et cercles"),
+    ("slowmo", "Ralenti"),
+    ("sfx", "Effets sonores"),
 ]
+
+TYPE_LABELS = {"adaptation": "Adaptation", "generation": "Génération", "montage": "Montage auto", "import": "Import"}
+
+
+def _bucket(x: Optional[float], edges: List[float], labels: List[str]) -> Optional[str]:
+    """The range a number falls in: labels has one more item than edges."""
+    if x is None:
+        return None
+    for edge, lab in zip(edges, labels):
+        if x < edge:
+            return lab
+    return labels[-1]
+
+
+def recipe_attrs(rec: Optional[Dict]) -> Dict[str, Optional[str]]:
+    """What a video's recipe says, as groups to compare (None: not known)."""
+    if not rec:
+        return {}
+    st, d = rec.get("structure") or {}, rec.get("details") or {}
+    plans = [p for p in d.get("plans") or [] if isinstance(p, dict)]
+    out = {"video_type": TYPE_LABELS.get(rec.get("type")),
+           "duration": _bucket(st.get("duree_s"), [20, 30, 40], ["moins de 20 s", "20 à 30 s", "30 à 40 s", "40 s et plus"]),
+           "hook": _bucket((rec.get("accroche") or {}).get("duree_s"), [2, 3, 4],
+                           ["moins de 2 s", "2 à 3 s", "3 à 4 s", "4 s et plus"]),
+           "pace": _bucket(st.get("plan_moyen_s"), [2, 3, 5], ["plans de moins de 2 s", "plans de 2 à 3 s",
+                                                               "plans de 3 à 5 s", "plans de 5 s et plus"])
+           if (st.get("plans") or 0) > 1 else None,
+           "voice": (rec.get("voix") or {}).get("id") if isinstance(rec.get("voix"), dict) else None,
+           "visual_style": (rec.get("style") or {}).get("visuel") or (rec.get("style") or {}).get("recette")}
+    if rec.get("type") == "adaptation":
+        n = sum(1 for p in plans if p.get("fleche"))
+        out.update(mode="Script d'abord" if d.get("mode") == "script" else "Sources d'abord",
+                   arrows="sans flèche" if not n else "1 flèche ou cercle" if n == 1 else "2 flèches ou cercles et plus",
+                   slowmo="avec ralenti" if any((p.get("effets_appliques") or {}).get("ralenti") for p in plans)
+                   else "sans ralenti")
+        if "effets_sonores" in d:          # recipes made before the sound effects existed say nothing
+            out["sfx"] = "avec effets sonores" if d["effets_sonores"] else "sans effets sonores"
+    return out
+
+
+_VOICE_NAMES: Dict[str, str] = {}
+
+
+def _voice_name(voice_id: str) -> str:
+    if voice_id not in _VOICE_NAMES:
+        try:
+            import db
+            v = db.get_voice(voice_id) or {}
+        except Exception:
+            v = {}
+        _VOICE_NAMES[voice_id] = v.get("name") or voice_id
+    return _VOICE_NAMES[voice_id]
 
 
 def _basename(path: Optional[str]) -> Optional[str]:
@@ -65,6 +128,12 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
     views, likes = snap.get("view_count") or 0, snap.get("like_count")
     latest = history[-1] if history else snap
     retention = video.get("retention_7d") or {}
+    rec = video.get("recette") or {}
+    made = recipe_attrs(rec)
+    if not made.get("duration") and retention.get("average_view_duration") and retention.get("average_view_percentage"):
+        # a rebuilt recipe lost the length (file deleted after upload): watched time / share watched
+        made["duration"] = _bucket(retention["average_view_duration"] * 100 / retention["average_view_percentage"],
+                                   [20, 30, 40], ["moins de 20 s", "20 à 30 s", "30 à 40 s", "40 s et plus"])
     return {
         "video_id": video["video_id"],
         "title": ai.get("optimized_title") or video.get("original_title") or video.get("title") or video["video_id"],
@@ -82,12 +151,13 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
         "attrs": {
             "script_format": video.get("script_format") or None,
             "background": _basename(video.get("bg_video_path")),
-            "music": _basename(video.get("bg_music_path")),
+            "music": _basename(video.get("bg_music_path")) or (rec.get("musique") or {}).get("fichier"),
             "caption_style": video.get("caption_style") or ("karaoke" if video.get("source") == "generated" else None),
             "weekday": WEEKDAYS[published.weekday()] if published else None,
             "hour_slot": _hour_slot(published.hour) if published else None,
             "method": (video.get("publish_decision") or {}).get("method"),
             "content_type": ai.get("content_type"),
+            **made,
         },
         # What "Refaire ce style" would reuse — generated videos only
         "remakeable": video.get("source") == "generated" and bool(video.get("script_text")),
@@ -97,6 +167,8 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
 def label(dimension: str, value: str) -> str:
     if dimension == "script_format":
         return f"{value} · {FORMAT_LABELS.get(value, value)}"
+    if dimension == "voice":
+        return _voice_name(value)
     return value
 
 
