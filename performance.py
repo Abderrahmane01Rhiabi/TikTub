@@ -269,6 +269,73 @@ def curve_by_shot(points: List[List[float]], shots: List[Dict], duration: Option
             "apres_accroche": out[0]["fin_pct"] if len(out) > 1 else None}
 
 
+# ------------------------------------------------------------------ versions of one Short, side by side
+
+TIE_POINTS = 3.0          # retention closer than this (points of % watched): no winner
+
+
+def versions(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> List[Dict]:
+    """The Shorts made in several versions (one per channel, same model Short,
+    its own angle and hook): a free A/B test of the writing, since the
+    pictures are the same. Views are scored against each version's OWN channel
+    (a French and an Arabic audience differ); the winner is the version that
+    keeps people longer (first-week retention), else the one after the hook."""
+    rows_by_channel: Dict[str, List[Dict]] = {}
+    for v in videos:
+        if v.get("youtube_id"):
+            row = video_row(v, history_by_video.get(v["video_id"], []))
+            if row:
+                rows_by_channel.setdefault(v.get("channel"), []).append(row)
+    medians = {ch: median(r["views_7d"] for r in rows) for ch, rows in rows_by_channel.items() if rows}
+    rows = {r["video_id"]: r for rs in rows_by_channel.values() for r in rs}
+    groups: Dict[str, List[Dict]] = {}
+    for v in videos:
+        # Adaptations only: an import posted on two channels is the same video, not two versions
+        if v.get("youtube_id") and v.get("url") and (v.get("recette") or {}).get("type") == "adaptation":
+            groups.setdefault(v["url"], []).append(v)
+    out = []
+    for url, vs in groups.items():
+        if len({v.get("channel") for v in vs}) < 2:
+            continue
+        items = []
+        for v in vs:
+            rec, r = v.get("recette") or {}, rows.get(v["video_id"])
+            d = rec.get("details") or {}
+            curve = curve_by_shot((v.get("retention_curve") or {}).get("points") or [], shots_of(rec),
+                                  (rec.get("structure") or {}).get("duree_s"))
+            base = medians.get(v.get("channel"))
+            items.append({
+                "video_id": v["video_id"], "channel": v.get("channel"), "langue": rec.get("langue") or d.get("langue"),
+                "titre": (v.get("ai_data") or {}).get("optimized_title") or d.get("titre") or v.get("title"),
+                "youtube_url": v.get("youtube_url"), "angle": d.get("angle"),
+                "accroche": (rec.get("accroche") or {}).get("texte"), "accroche_s": (rec.get("accroche") or {}).get("duree_s"),
+                "duree_s": (rec.get("structure") or {}).get("duree_s"), "plans": (rec.get("structure") or {}).get("plans"),
+                "published": (r or {}).get("published") or (published_moment(v).isoformat() if published_moment(v) else None),
+                "views_7d": (r or {}).get("views_7d"),
+                "views_latest": ((history_by_video.get(v["video_id"]) or [{}])[-1]).get("view_count"),
+                "score": round((r["views_7d"] + SCORE_SMOOTHING) / (base + SCORE_SMOOTHING), 2) if r and base is not None else None,
+                "retention_7d": (r or {}).get("retention_7d"),
+                "apres_accroche": curve.get("apres_accroche")})
+        items.sort(key=lambda x: (x["channel"] or ""))
+        out.append({"reference_url": url, "versions": items, **_winner(items),
+                    "published": max((x["published"] or "") for x in items)})
+    out.sort(key=lambda g: g["published"], reverse=True)
+    return out
+
+
+def _winner(items: List[Dict]) -> Dict:
+    """Who keeps people longer, and on what it is decided (None: too close / not measured yet)."""
+    for key, why in (("retention_7d", "rétention 1re semaine"), ("apres_accroche", "après l'accroche")):
+        measured = [x for x in items if x.get(key) is not None]
+        if len(measured) >= 2:
+            measured.sort(key=lambda x: x[key], reverse=True)
+            gap = round(measured[0][key] - measured[1][key], 1)
+            if gap < TIE_POINTS:
+                return {"gagnant": None, "critere": why, "ecart": gap}
+            return {"gagnant": measured[0]["video_id"], "critere": why, "ecart": gap}
+    return {"gagnant": None, "critere": None, "ecart": None}
+
+
 # What "Refaire ce style" carries over to new scripts: only these choices
 # can be suggested (a publish weekday isn't something a remake reuses).
 REMAKE_DIMENSIONS = {"script_format", "background", "music", "caption_style"}

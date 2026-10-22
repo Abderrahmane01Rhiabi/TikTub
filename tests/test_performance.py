@@ -256,3 +256,50 @@ def test_the_curve_is_asked_once_a_day_and_an_expired_connection_is_said(client,
     d = client.get("/api/videos/pub/retention?refresh=true").json()
     assert "reconnecte-la" in d["error"] and len(d["points"]) == 100      # the old curve stays shown
     assert client.get("/api/videos/draft/retention").status_code == 404
+
+
+def version(vid, channel, views, url="https://youtube.com/shorts/REF", ret=None, curve=None, kind="adaptation", lang="fr"):
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec.update(type=kind, langue=lang)
+    rec["details"]["plans"] = [{"debut": 0, "duree": 2}, {"debut": 2, "duree": 18}]
+    v, h = make(vid, views, url=url, recette=rec, **({"retention_7d": {"average_view_percentage": ret}} if ret else {}),
+                **({"retention_curve": {"points": curve}} if curve else {}))
+    v["channel"] = channel
+    return v, h
+
+
+def run_versions(items):
+    return performance.versions([v for v, _ in items], {v["video_id"]: h for v, h in items})
+
+
+def test_versions_of_one_short_are_compared_on_what_keeps_people():
+    items = [version("fr", "chanFR", 2000, ret=62.0), version("ar", "chanAR", 300, ret=48.0, lang="ar"),
+             version("frx", "chanFR", 1000, url="other1"),
+             version("arx", "chanAR", 100, url="other2"),
+             version("imp1", "chanFR", 50, url="tiktok1", kind="import"), version("imp2", "chanAR", 50, url="tiktok1", kind="import")]
+    g = run_versions(items)
+    assert len(g) == 1 and [v["video_id"] for v in g[0]["versions"]] == ["ar", "fr"]       # imports reposted: not versions
+    assert g[0]["gagnant"] == "fr" and g[0]["critere"] == "rétention 1re semaine" and g[0]["ecart"] == 14.0
+    by = {v["video_id"]: v for v in g[0]["versions"]}
+    assert by["ar"]["score"] > 1 and by["fr"]["score"] > 1           # each against its OWN channel's usual
+
+
+def test_without_the_week_the_hook_decides_and_close_is_a_tie():
+    keeps = lambda after: [[r / 100, 1.2 if r <= 5 else after, 0.5] for r in range(1, 101)]    # who leaves during the hook
+    g = run_versions([version("fr", "chanFR", 500, curve=keeps(0.9)), version("ar", "chanAR", 500, curve=keeps(0.6))])
+    assert g[0]["gagnant"] == "fr" and g[0]["critere"] == "après l'accroche"
+    g = run_versions([version("fr", "chanFR", 500, ret=50.0), version("ar", "chanAR", 500, ret=48.5)])
+    assert g[0]["gagnant"] is None and g[0]["ecart"] == 1.5
+
+
+def test_the_versions_endpoint_asks_each_version_its_curve(client, project, monkeypatch):
+    import youtube_uploader
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec["type"] = "adaptation"
+    for vid, ch in (("fr", "chanA"), ("ar", "chanB"), ("solo", "chanA")):
+        project.add_video(vid, channel=ch, youtube_id="Y" + vid, status="uploaded", youtube_published_at="2026-09-01T10:00:00",
+                          url="https://youtube.com/shorts/REF" if vid != "solo" else "https://youtube.com/shorts/OTHER", recette=rec)
+    asked = []
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: asked.append(yid) or CURVE)
+    g = client.get("/api/versions").json()
+    assert sorted(asked) == ["Yar", "Yfr"] and len(g) == 1 and all(v["apres_accroche"] for v in g[0]["versions"])
