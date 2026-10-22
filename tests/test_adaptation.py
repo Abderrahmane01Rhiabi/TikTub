@@ -401,6 +401,7 @@ def test_finder_check_accepts_a_video_without_a_known_duration(monkeypatch, tmp_
         def prepare_filename(self, info): return seen["opts"]["outtmpl"].replace("%(ext)s", "mp4")
     monkeypatch.setattr(yt_dlp, "YoutubeDL", DL)
     monkeypatch.setattr(sources, "probe", lambda p: {"w": 576, "h": 1024, "duration": 22.1})
+    monkeypatch.setattr(sources, "has_picture", lambda p: True)          # the fake file stands for a real video
 
     class G:
         def _upload_video_file(self, path): return {"name": "f", "uri": "u", "mime_type": "video/mp4"}

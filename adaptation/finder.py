@@ -699,6 +699,8 @@ def _watch(url: str, g, prompt: str) -> Dict:
             raise FinderError(sources.explain(url, str(e)))
         if not os.path.exists(path):
             raise FinderError(f"Vidéo trop longue ou introuvable : {url}")
+        if not sources.has_picture(path):     # a web page or a photo post: Gemini refused it (400, text/html)
+            raise FinderError(f"Ce lien ne donne pas de vidéo (page web ou photos) : {url}")
         up = g._upload_video_file(path)
         if not up:
             raise FinderError("Envoi de la vidéo à Gemini impossible.")

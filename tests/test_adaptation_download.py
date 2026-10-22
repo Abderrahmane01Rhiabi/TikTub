@@ -78,3 +78,25 @@ def test_reachable_says_no_only_when_refused_with_and_without_the_cookies(ydl):
     assert REACHABLE("https://www.youtube.com/watch?v=x") is False
     ydl.answers = ["Sign in to confirm you're not a bot", "Sign in to confirm you're not a bot"]
     assert REACHABLE("https://www.youtube.com/watch?v=x") is None
+
+
+def test_a_link_that_gives_no_video_is_not_sent_to_gemini(monkeypatch, tmp_path):
+    from adaptation import finder
+
+    class YDL(FakeYDL):
+        def extract_info(self, url, download=True, process=True):
+            path = self.opts["outtmpl"].replace("%(ext)s", "html")
+            open(path, "w").write("<html>photos</html>")
+            return {"ext": "html"}
+
+        def prepare_filename(self, info):
+            return self.opts["outtmpl"].replace("%(ext)s", "html")
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", YDL)
+    sent = []
+
+    class G:
+        def _upload_video_file(self, path):
+            sent.append(path)
+    with pytest.raises(finder.FinderError, match="ne donne pas de vidéo"):
+        finder._watch("https://www.tiktok.com/@a/video/1", G(), "prompt")
+    assert sent == []
