@@ -504,7 +504,7 @@
   #remakeDialog::backdrop{background:rgba(0,0,0,.55);}
   #curveDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 32px);}
   #curveDialog::backdrop{background:rgba(0,0,0,.55);}
-  .curve svg{width:100%;height:auto;display:block}
+  .curve svg.curve-chart{width:100%;height:auto;display:block}
   .curve .shot-row{display:grid;grid-template-columns:28px 92px 1fr 70px;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12.5px}
   .curve .shot-row.worst{color:var(--danger)}
   .curve .shot-row .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -5338,7 +5338,7 @@ async function openCurveDialog(videoId, refresh){
       <text x="${(x0 + x1) / 2}" y="${H - 6}" font-size="11" text-anchor="middle" fill="var(--muted)">${p.k + 1}</text>`;
   }).join('') : '';
   const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
-  const svg = pts.length ? `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de rétention">
+  const svg = pts.length ? `<svg class="curve-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de rétention">
       ${shots}
       <line x1="${pad}" y1="${Y(1)}" x2="${W - 8}" y2="${Y(1)}" stroke="var(--muted)" stroke-width=".6" opacity=".6"/>
       <text x="${pad - 4}" y="${Y(1) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">100</text>
@@ -5355,7 +5355,7 @@ async function openCurveDialog(videoId, refresh){
       <div class="chcard-body">
         ${d.error ? `<div class="warnbox">${esc(d.error)}</div>` : ''}
         ${svg || (d.error ? '' : '<div class="tiny">Pas encore de courbe.</div>')}
-        ${pts.length ? `<div class="tiny">Part des spectateurs encore là à chaque instant (100 = tous ceux qui ont lancé la vidéo ; au-dessus, des gens revoient le passage). Les numéros sont les plans.${d.fetched_at ? ` Courbe du ${esc(d.fetched_at.replace('T', ' ').slice(0, 16))}.` : ''}</div>` : ''}
+        ${pts.length ? `<div class="tiny">Part des spectateurs encore là à chaque instant (100 = tous ceux qui ont lancé la vidéo ; au-dessus, des gens revoient le passage).${(d.plans || []).length > 1 ? ' Les numéros sont les plans.' : ''}${d.fetched_at ? ` Courbe du ${esc(d.fetched_at.replace('T', ' ').slice(0, 16))}.` : ''}</div>` : ''}
         ${worst ? `<div class="warnbox" style="border-color:var(--danger)">Le plan ${worst.k + 1} perd le plus de monde : ${worst.perte} points en ${(worst.fin - worst.debut).toFixed(1)} s${worst.texte ? ` — « ${esc(worst.texte)} »` : ''}.</div>` : ''}
         ${d.apres_accroche != null ? `<div class="tiny">Après l'accroche, il reste ${Math.round(d.apres_accroche)} % des spectateurs.</div>` : ''}
         ${(d.plans || []).length > 1 ? `<div>${d.plans.map(p => `
