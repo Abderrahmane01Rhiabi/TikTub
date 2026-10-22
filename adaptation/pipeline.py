@@ -191,7 +191,9 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
         for name in logos[id(c)]:
             add(name)
     for c in used:                      # a clip with no name on it: its source's account (one clip's watermark
-        if not marks[id(c)] and not logos[id(c)]:    # once took the place of every source's account)
+        # once took the place of every source's account); an excerpt of the model Short: its creator, always
+        # (the names written on it are those IT credits — measured: @Klimt-YT dropped for "Credits: @jeffthegutterguy")
+        if c.get("extrait") or (not marks[id(c)] and not logos[id(c)]):
             i = c.get("source")
             add((metas[i] if isinstance(i, int) and i < len(metas) else {}).get("handle"))
     return " · ".join(out[:6])
