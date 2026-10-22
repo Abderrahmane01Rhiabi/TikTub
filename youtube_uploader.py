@@ -351,6 +351,29 @@ def get_first_week_retention(channel_name: str, videos: List[Dict]) -> Dict[str,
     return out
 
 
+def get_retention_curve(channel_name: str, youtube_id: str, start: str) -> List[List[float]]:
+    """Where viewers leave: YouTube Analytics' audience retention of one
+    video since `start` (YYYY-MM-DD), 100 points [share of the video,
+    audienceWatchRatio, relativeRetentionPerformance]. The watch ratio goes
+    above 1 where people watch again (a Short loops). Empty when YouTube has
+    no data yet (too few views). Needs the yt-analytics.readonly scope."""
+    token_path = get_token_path(channel_name)
+    if not os.path.exists(token_path):
+        raise FileNotFoundError(f"La chaîne {channel_name} n'est pas connectée à YouTube.")
+    if not has_analytics_scope(channel_name):
+        raise PermissionError("Cette chaîne n'a pas autorisé les statistiques YouTube : reconnecte-la dans Réglages.")
+    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        with open(token_path, 'w') as f:
+            f.write(creds.to_json())
+    yta = build('youtubeAnalytics', 'v2', credentials=creds)
+    resp = yta.reports().query(ids='channel==MINE', startDate=start, endDate=datetime.now().strftime("%Y-%m-%d"),
+                               metrics='audienceWatchRatio,relativeRetentionPerformance',
+                               dimensions='elapsedVideoTimeRatio', filters=f'video=={youtube_id}').execute()
+    return [[float(x) for x in row] for row in resp.get('rows') or []]
+
+
 def get_channel_analytics(channel_name: str, days: int = 30) -> Dict:
     """Channel-wide YouTube Analytics over the last `days` days: totals, a
     day-by-day view trend, traffic sources, and the top-performing videos

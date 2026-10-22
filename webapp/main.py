@@ -13,7 +13,7 @@ import os
 import sys
 import shutil
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, Optional
 from urllib.parse import quote
@@ -2262,6 +2262,49 @@ def get_narration_preview(video_id: str):
     if not video or not video.get("narration_path") or not os.path.exists(video["narration_path"]):
         raise HTTPException(status_code=404, detail="No narration generated yet")
     return FileResponse(video["narration_path"])
+
+
+@app.get("/api/videos/{video_id}/retention")
+def get_video_retention(video_id: str, refresh: bool = False):
+    """Where viewers leave this video, shot by shot: YouTube's audience
+    retention curve (kept a day on the video, then asked again) laid over the
+    shots of its recipe, next to the recipe itself."""
+    import db as _db
+    import performance
+    import youtube_uploader
+    from stats_tracker import published_moment
+    video = _db.get_video(video_id)
+    if not video or not video.get("youtube_id"):
+        raise HTTPException(status_code=404, detail="Vidéo non publiée sur YouTube.")
+    cache, error = video.get("retention_curve") or {}, None
+    try:
+        fresh = cache.get("points") and datetime.fromisoformat(cache["fetched_at"]) > datetime.now() - timedelta(days=1)
+    except (KeyError, ValueError, TypeError):
+        fresh = False
+    if refresh or not fresh:
+        published = published_moment(video)
+        start = (published or datetime.now() - timedelta(days=28)).strftime("%Y-%m-%d")
+        try:
+            points = youtube_uploader.get_retention_curve(video.get("channel"), video["youtube_id"], start)
+            if points:
+                cache = {"points": points, "fetched_at": datetime.now().isoformat(timespec="seconds")}
+                get_batch_processor().url_manager.update_video_status(video_id, video.get("status"), retention_curve=cache)
+            elif not cache.get("points"):
+                error = "YouTube n'a pas encore de courbe pour cette vidéo (trop peu de vues)."
+        except Exception as e:      # an expired connection, no analytics scope: said, the old curve kept
+            msg = str(e)
+            error = ("La connexion YouTube de cette chaîne a expiré : reconnecte-la dans Réglages."
+                     if "invalid_grant" in msg or "expired" in msg.lower() else msg[:200])
+    rec = video.get("recette") or {}
+    duration = (rec.get("structure") or {}).get("duree_s")
+    ret = video.get("retention_7d") or {}
+    if not duration and ret.get("average_view_duration") and ret.get("average_view_percentage"):
+        duration = round(ret["average_view_duration"] * 100 / ret["average_view_percentage"], 1)
+    points = cache.get("points") or []
+    return {"video_id": video_id, "title": (video.get("ai_data") or {}).get("optimized_title") or video.get("title"),
+            "youtube_url": video.get("youtube_url"), "points": points, "fetched_at": cache.get("fetched_at"),
+            "duration": duration, "error": error, "recette": rec,
+            **performance.curve_by_shot(points, performance.shots_of(rec), duration)}
 
 
 @app.get("/api/videos/{video_id}/stats_history")

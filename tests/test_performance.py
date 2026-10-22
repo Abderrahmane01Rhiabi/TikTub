@@ -221,3 +221,38 @@ def test_a_rebuilt_recipe_gets_its_length_from_the_retention():
     v, h = make("i1", 50, recette=rec, retention_7d={"average_view_duration": 9.0, "average_view_percentage": 60.0})
     assert performance.video_row(v, h)["attrs"]["duration"] == "moins de 20 s"            # 9 s watched = 60 % of 15 s
     assert performance.recipe_attrs(None) == {}
+
+
+CURVE = [[i / 100, 1.5 - i / 100, 0.6] for i in range(1, 101)]           # loses 1 point per 1 % of the video
+
+
+def test_each_shot_gets_its_audience_and_the_worst_one_is_named():
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec["details"]["plans"] = [{"debut": 0, "duree": 2, "texte": "Q ?"}, {"debut": 2, "duree": 8, "texte": "A"},
+                               {"debut": 10, "duree": 2, "texte": "B"}, {"debut": 12, "duree": 8, "texte": "C"}]
+    shots = performance.shots_of(rec)
+    assert [(s["debut"], s["fin"]) for s in shots] == [(0, 2), (2, 10), (10, 12), (12, 20)]
+    curve = [[r, w if r < 0.5 or r > 0.6 else w - (r - 0.5) * 3, x] for r, w, x in CURVE]   # a cliff in shot 3
+    out = performance.curve_by_shot(curve, shots, 20)
+    assert out["pire"] == 2 and out["plans"][2]["perte_par_s"] > out["plans"][1]["perte_par_s"]   # as much lost, 4× faster
+    assert out["apres_accroche"] == out["plans"][0]["fin_pct"] and out["plans"][0]["debut_pct"] == 149.0
+    assert performance.shots_of({"type": "import", "structure": {"duree_s": 15}})[0]["fin"] == 15
+    assert performance.curve_by_shot([], shots, 20)["plans"] == []
+
+
+def test_the_curve_is_asked_once_a_day_and_an_expired_connection_is_said(client, project, monkeypatch):
+    import youtube_uploader
+    project.add_video("pub", youtube_id="Y1", status="uploaded", youtube_published_at="2026-09-01T10:00:00",
+                      recette=adaptation_recipe(20, 2.0, 4))
+    asked = []
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: asked.append((yid, start)) or CURVE)
+    d = client.get("/api/videos/pub/retention").json()
+    assert asked == [("Y1", "2026-09-01")] and len(d["points"]) == 100 and len(d["plans"]) == 4 and d["error"] is None
+    client.get("/api/videos/pub/retention")
+    assert len(asked) == 1                                 # kept a day on the video
+    def expired(*a):
+        raise RuntimeError("('invalid_grant: Token has been expired or revoked.', {})")
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", expired)
+    d = client.get("/api/videos/pub/retention?refresh=true").json()
+    assert "reconnecte-la" in d["error"] and len(d["points"]) == 100      # the old curve stays shown
+    assert client.get("/api/videos/draft/retention").status_code == 404

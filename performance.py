@@ -225,6 +225,50 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
             "videos": rows, "insights": insights}
 
 
+# ------------------------------------------------------------------ where viewers leave, shot by shot
+
+def shots_of(rec: Optional[Dict]) -> List[Dict]:
+    """The video's shots from its recipe: [{k, debut, fin, texte, bandeau}] (one
+    shot for a video without a plan list: an import, a generated video)."""
+    rec = rec or {}
+    plans = [p for p in (rec.get("details") or {}).get("plans") or [] if isinstance(p, dict)]
+    if plans and all(p.get("debut") is not None and p.get("duree") for p in plans):
+        return [{"k": i, "debut": round(p["debut"], 2), "fin": round(p["debut"] + p["duree"], 2),
+                 "texte": p.get("texte"), "bandeau": p.get("bandeau")} for i, p in enumerate(plans)]
+    dur = (rec.get("structure") or {}).get("duree_s")
+    return [{"k": 0, "debut": 0.0, "fin": dur, "texte": (rec.get("accroche") or {}).get("texte"), "bandeau": None}] if dur else []
+
+
+def _watch_at(points: List[List[float]], ratio: float) -> Optional[float]:
+    """The audience watch ratio at a share of the video (linear between YouTube's points)."""
+    if not points:
+        return None
+    pts = sorted(points)
+    if ratio <= pts[0][0]:
+        return pts[0][1]
+    for (r0, w0, *_), (r1, w1, *_) in zip(pts, pts[1:]):
+        if r0 <= ratio <= r1:
+            return w0 + (w1 - w0) * (ratio - r0) / ((r1 - r0) or 1)
+    return pts[-1][1]
+
+
+def curve_by_shot(points: List[List[float]], shots: List[Dict], duration: Optional[float]) -> Dict:
+    """Each shot's audience at its start and its end (in % of the viewers who
+    started the video, above 100 % where people watch again) and what it
+    loses; the shot that loses the most, the hook's keep."""
+    if not points or not shots or not duration:
+        return {"plans": [], "pire": None, "apres_accroche": None}
+    out = []
+    for s in shots:
+        a = _watch_at(points, min(1.0, s["debut"] / duration))
+        b = _watch_at(points, min(1.0, s["fin"] / duration))
+        out.append({**s, "debut_pct": round(a * 100, 1), "fin_pct": round(b * 100, 1), "perte": round((a - b) * 100, 1),
+                    "perte_par_s": round((a - b) * 100 / max(0.1, s["fin"] - s["debut"]), 1)})
+    worst = max(out, key=lambda x: x["perte_par_s"]) if len(out) > 1 else None
+    return {"plans": out, "pire": worst["k"] if worst and worst["perte"] > 0 else None,
+            "apres_accroche": out[0]["fin_pct"] if len(out) > 1 else None}
+
+
 # What "Refaire ce style" carries over to new scripts: only these choices
 # can be suggested (a publish weekday isn't something a remake reuses).
 REMAKE_DIMENSIONS = {"script_format", "background", "music", "caption_style"}
