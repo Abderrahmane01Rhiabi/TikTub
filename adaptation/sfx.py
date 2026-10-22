@@ -10,7 +10,9 @@ turns. Each of those has its sound, the way editors do it:
                                   clip's own crash is heard there)
     a figure appears              pop
     the main transition           whoosh (one only: on every cut, none stands out)
-    the final answer              ding, when there is room left
+
+No ding on the last sentence: nothing says it is a reveal (on the cactus Short a ding
+over a plain conclusion sounded out of place); the file stays for a moment marked as one.
 
 At most MAX moments a video, GAP seconds apart, each sound's loudest instant
 on its event, variants taken in turn (the same whoosh three times sounds cheap).
@@ -82,8 +84,6 @@ def plan(segs: List[Dict], annotations: List[Dict], numbers: List[Dict], total: 
     if cuts:
         main = min(cuts, key=lambda s: abs(s["out"] - TURN * total))
         wanted.append({"t": main["out"], "sons": ["whoosh"], "pourquoi": "transition principale"})
-    if len(segs) > 1:
-        wanted.append({"t": segs[-1]["out"] + 0.05, "sons": ["ding"], "pourquoi": "la réponse"})
     kept: List[Dict] = []
     for w in wanted:
         if len(kept) >= MAX:

@@ -57,3 +57,8 @@ def test_a_variant_comes_back_only_when_all_were_heard(monkeypatch):
     lib = {"whoosh": ["long.mp3", "a.mp3", "b.mp3"]}
     out = sfx.sounds([{"t": t, "sons": ["whoosh"], "pourquoi": "x"} for t in (0.48, 5.0, 9.0, 13.0)], lib)
     assert [o["file"] for o in out] == ["a.mp3", "long.mp3", "b.mp3", "long.mp3"]   # all heard once, then again
+
+
+def test_no_ding_on_a_plain_last_sentence():
+    moments = sfx.plan([seg(0, 0.0), seg(1, 4.0), seg(2, 8.0)], [], [], 12.0)
+    assert not any("ding" in m["sons"] for m in moments)
