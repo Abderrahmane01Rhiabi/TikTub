@@ -245,7 +245,9 @@ def test_a_render_with_every_effect_keeps_picture_and_voice_together(tmp_path):
     v = checks.verify(str(out), str(voice), passages)
     assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15
     assert all(o is not None and abs(o) <= 0.12 for o in v["measures"]["offsets"])
-    assert r["segments"][0]["impact"] > 0.5 and (tmp_path / "w" / "whoosh.wav").exists()
+    assert r["segments"][0]["impact"] > 0.5
+    sons = [e["son"] for e in r["recette"]["effets_sonores"]]
+    assert any(x.startswith("shutter_") for x in sons)              # the freeze frame has its sound effect
 
 
 # ------------------------------------------- voice library & channel settings

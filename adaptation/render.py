@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from adaptation import sfx
 from adaptation.langs import FONTS_DIR, font_path, lang as lang_of
 
 W, H, FPS = 1080, 1920, 30
@@ -691,22 +692,6 @@ def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
     return c if c.get("audio_ok") else donor
 
 
-WHOOSH_PEAK = 0.32                  # seconds into whoosh.wav where it is loudest
-
-
-def whoosh_wav(path: str) -> str:
-    """A whoosh made from filtered noise (no sound file to ship): it swells
-    to the cut, then falls away quickly."""
-    if not os.path.exists(path):
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-                        "anoisesrc=d=0.55:c=pink:a=0.9:r=44100", "-af",
-                        "highpass=f=250,lowpass=f=4200,bandreject=f=60:width_type=h:w=40,"
-                        f"afade=t=in:st=0:d={WHOOSH_PEAK}:curve=exp,"
-                        f"afade=t=out:st={WHOOSH_PEAK}:d=0.22:curve=exp,aecho=0.6:0.4:35:0.25",
-                        "-ac", "2", path], check=True)
-    return path
-
-
 def _window(s: Dict) -> Tuple[float, float]:
     """The source seconds a segment needs: (start, length), with a margin."""
     pcs = s.get("pieces") or [{"kind": "play", "a": s["ws"], "b": s["ws"] + s["dur"]}]
@@ -856,11 +841,12 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
 
     # crash sounds: only where a real shock is heard (see impact_sound)
     donor = next((c for c in clips.values() if c.get("audio_ok") and c.get("shock")), None)
-    fx = []
+    fx, own_crash = [], set()
     for s in segs:
         sound = impact_sound(clips[s["clip"]], donor)
         if not sound:
             continue
+        own_crash.add(s["k"])
         a = max(sound["start"], sound["impact"] - 0.35)
         b = min(sound["end"], sound["impact"] + 0.9)
         delay = int(max(0.0, s["impact_out"] - (sound["impact"] - a)) * 1000)
@@ -869,17 +855,16 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
                  f"afade=t=out:st={max(0.0, b - a - 0.3):.3f}:d=0.3,"
                  f"aformat=sample_rates=44100:channel_layouts=stereo,adelay={delay}:all=1[fx{s['k']}]")
         fx.append(f"[fx{s['k']}]")
-    cuts = [s for s in segs if (s.get("fx") or {}).get("transition") and s["k"] > 0]
-    if cuts:                            # a whoosh peaking on each transition's cut
-        wi = add_input("-i", whoosh_wav(os.path.join(work_dir, "whoosh.wav")))
-        g.append(f"[{wi}:a]aformat=sample_rates=44100:channel_layouts=stereo,asplit={len(cuts)}"
-                 + "".join(f"[wh{j}]" for j in range(len(cuts))))
-        for j, s in enumerate(cuts):
-            g.append(f"[wh{j}]adelay={int(max(0.0, s['out'] - WHOOSH_PEAK) * 1000)}:all=1,volume=1.4[wd{j}]")
-            fx.append(f"[wd{j}]")
     if fx:
         g.append("".join(fx) + f"amix=inputs={len(fx)}:normalize=0,volume={SFX_GAIN}[fx]")
         mix.append("[fx]")
+    # the sound effects that follow the picture (arrows, freeze, slow motion, figures, the main transition)
+    effets = sfx.sounds(sfx.plan(segs, list(annotations or []), numbers, total, own_crash))
+    for j, e in enumerate(effets):
+        ei = add_input("-i", e["file"])
+        g.append(f"[{ei}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={e['gain']},"
+                 f"adelay={int(e['start'] * 1000)}:all=1[sx{j}]")
+        mix.append(f"[sx{j}]")
     music_info: Dict = {}
     if music and music[0] and os.path.exists(music[0]):
         mi = add_input("-ss", f"{music[1]:.3f}", "-i", music[0])
@@ -937,7 +922,9 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     recipe = {"style": style or "classique", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
               "musique_niveau": "constant sous la voix, monte à la fin" if music and music[0] else None,
               "musique_gain": music_info.get("gain"), "silence_avant_choc": music_info.get("silence_avant_choc"),
-              "tempo_musique": bpm, "plans": []}
+              "tempo_musique": bpm,
+              "effets_sonores": [{"son": os.path.basename(e["file"]), "a_s": round(e["start"], 2), "pourquoi": e["pourquoi"]}
+                                 for e in effets], "plans": []}
     for s in segs:
         fx = dict(s.get("fx") or {})
         if isinstance(fx.get("zoom"), dict):
