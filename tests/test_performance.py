@@ -333,3 +333,10 @@ def test_a_video_card_gathers_results_curve_recipe_and_other_version(client, pro
     assert [v["video_id"] for v in d["versions"]] == ["ar"]
     assert client.get("/api/fiche?youtube_id=Yar").json()["video_id"] == "ar"            # from a YouTube card
     assert client.get("/api/fiche?youtube_id=NOPE").status_code == 404
+
+
+def test_the_worst_shot_is_looked_for_after_the_hook():
+    shots = [{"k": 0, "debut": 0, "fin": 2}, {"k": 1, "debut": 2, "fin": 10}, {"k": 2, "debut": 10, "fin": 20}]
+    steep_hook = [[r / 100, 2.0 - (r / 100) * 5 if r <= 10 else 1.5 - (r / 100) * (0.2 if r < 75 else 1), 0.5] for r in range(1, 101)]
+    out = performance.curve_by_shot(steep_hook, shots, 20)
+    assert out["plans"][0]["perte_par_s"] > out["plans"][2]["perte_par_s"] and out["pire"] == 2
