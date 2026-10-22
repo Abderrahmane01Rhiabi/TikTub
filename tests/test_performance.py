@@ -190,3 +190,126 @@ def test_recipe_overrides_the_models_decor_and_format(client, project, monkeypat
 
     from generative.script_generator import _build_prompt
     assert 'Indique "D"' in _build_prompt({}, ["ex"], ["t"], ["A"], {"format": "D"})
+
+
+def adaptation_recipe(duree, hook, plans, mode="script", fleches=0, ralenti=False, sfx=None, voice="v1"):
+    details = {"mode": mode, "plans": [{"debut": i, "duree": 1, "fleche": {"type": "fleche"} if i < fleches else None,
+                                        "effets_appliques": {"ralenti": ralenti and i == 1}} for i in range(plans)]}
+    if sfx is not None:
+        details["effets_sonores"] = sfx
+    return {"type": "adaptation", "accroche": {"texte": "Q ?", "duree_s": hook},
+            "structure": {"duree_s": duree, "plans": plans, "plan_moyen_s": round(duree / plans, 2)},
+            "voix": {"id": voice}, "style": {"visuel": "neon"}, "details": details}
+
+
+def test_the_recipe_of_each_video_is_compared_too():
+    items = [make("s1", 400, recette=adaptation_recipe(25, 2.5, 10, fleches=2, ralenti=True, sfx=[{"son": "pop"}])),
+             make("s2", 300, recette=adaptation_recipe(28, 2.8, 9, fleches=2, ralenti=True, sfx=[])),
+             make("l1", 100, recette=adaptation_recipe(44, 4.6, 6, mode="sources")),
+             make("l2", 120, recette=adaptation_recipe(42, 4.2, 6, mode="sources"))]
+    insights = {i["dimension"]: i for i in run(items)["insights"]}
+    assert insights["duration"]["best"]["value"] == "20 à 30 s" and insights["duration"]["worst"]["value"] == "40 s et plus"
+    assert insights["hook"]["best"]["value"] == "2 à 3 s"
+    assert insights["mode"]["best"]["value"] == "Script d'abord"
+    assert insights["arrows"]["best"]["value"] == "2 flèches ou cercles et plus"
+    assert insights["slowmo"]["best"]["value"] == "avec ralenti"
+    assert "sfx" not in insights                          # one recipe with, one without, two that never said
+
+
+def test_a_rebuilt_recipe_gets_its_length_from_the_retention():
+    rec = {"type": "import", "structure": {"duree_s": None, "plans": 1}, "accroche": {}}
+    v, h = make("i1", 50, recette=rec, retention_7d={"average_view_duration": 9.0, "average_view_percentage": 60.0})
+    assert performance.video_row(v, h)["attrs"]["duration"] == "moins de 20 s"            # 9 s watched = 60 % of 15 s
+    assert performance.recipe_attrs(None) == {}
+
+
+CURVE = [[i / 100, 1.5 - i / 100, 0.6] for i in range(1, 101)]           # loses 1 point per 1 % of the video
+
+
+def test_each_shot_gets_its_audience_and_the_worst_one_is_named():
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec["details"]["plans"] = [{"debut": 0, "duree": 2, "texte": "Q ?"}, {"debut": 2, "duree": 8, "texte": "A"},
+                               {"debut": 10, "duree": 2, "texte": "B"}, {"debut": 12, "duree": 8, "texte": "C"}]
+    shots = performance.shots_of(rec)
+    assert [(s["debut"], s["fin"]) for s in shots] == [(0, 2), (2, 10), (10, 12), (12, 20)]
+    curve = [[r, w if r < 0.5 or r > 0.6 else w - (r - 0.5) * 3, x] for r, w, x in CURVE]   # a cliff in shot 3
+    out = performance.curve_by_shot(curve, shots, 20)
+    assert out["pire"] == 2 and out["plans"][2]["perte_par_s"] > out["plans"][1]["perte_par_s"]   # as much lost, 4× faster
+    assert out["plans"][0]["debut_pct"] == 149.0
+    assert out["apres_accroche"] == round(out["plans"][0]["fin_pct"] / 149.0 * 100, 1)     # kept of those who started
+    assert performance.shots_of({"type": "import", "structure": {"duree_s": 15}})[0]["fin"] == 15
+    assert performance.curve_by_shot([], shots, 20)["plans"] == []
+
+
+def test_the_curve_is_asked_once_a_day_and_an_expired_connection_is_said(client, project, monkeypatch):
+    import youtube_uploader
+    project.add_video("pub", youtube_id="Y1", status="uploaded", youtube_published_at="2026-09-01T10:00:00",
+                      recette=adaptation_recipe(20, 2.0, 4))
+    asked = []
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: asked.append((yid, start)) or CURVE)
+    d = client.get("/api/videos/pub/retention").json()
+    assert asked == [("Y1", "2026-09-01")] and len(d["points"]) == 100 and len(d["plans"]) == 4 and d["error"] is None
+    client.get("/api/videos/pub/retention")
+    assert len(asked) == 1                                 # kept a day on the video
+    def expired(*a):
+        raise RuntimeError("('invalid_grant: Token has been expired or revoked.', {})")
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", expired)
+    d = client.get("/api/videos/pub/retention?refresh=true").json()
+    assert "reconnecte-la" in d["error"] and len(d["points"]) == 100      # the old curve stays shown
+    assert client.get("/api/videos/draft/retention").status_code == 404
+
+
+def version(vid, channel, views, url="https://youtube.com/shorts/REF", ret=None, curve=None, kind="adaptation", lang="fr"):
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec.update(type=kind, langue=lang)
+    rec["details"]["plans"] = [{"debut": 0, "duree": 2}, {"debut": 2, "duree": 18}]
+    v, h = make(vid, views, url=url, recette=rec, **({"retention_7d": {"average_view_percentage": ret}} if ret else {}),
+                **({"retention_curve": {"points": curve}} if curve else {}))
+    v["channel"] = channel
+    return v, h
+
+
+def run_versions(items):
+    return performance.versions([v for v, _ in items], {v["video_id"]: h for v, h in items})
+
+
+def test_versions_of_one_short_are_compared_on_what_keeps_people():
+    items = [version("fr", "chanFR", 2000, ret=62.0), version("ar", "chanAR", 300, ret=48.0, lang="ar"),
+             version("frx", "chanFR", 1000, url="other1"),
+             version("arx", "chanAR", 100, url="other2"),
+             version("imp1", "chanFR", 50, url="tiktok1", kind="import"), version("imp2", "chanAR", 50, url="tiktok1", kind="import")]
+    g = run_versions(items)
+    assert len(g) == 1 and [v["video_id"] for v in g[0]["versions"]] == ["ar", "fr"]       # imports reposted: not versions
+    assert g[0]["gagnant"] == "fr" and g[0]["critere"] == "rétention 1re semaine" and g[0]["ecart"] == 14.0
+    by = {v["video_id"]: v for v in g[0]["versions"]}
+    assert by["ar"]["score"] > 1 and by["fr"]["score"] > 1           # each against its OWN channel's usual
+
+
+def test_without_the_week_the_hook_decides_and_close_is_a_tie():
+    keeps = lambda after: [[r / 100, 1.2 if r <= 5 else after, 0.5] for r in range(1, 101)]    # who leaves during the hook
+    g = run_versions([version("fr", "chanFR", 500, curve=keeps(0.9)), version("ar", "chanAR", 500, curve=keeps(0.6))])
+    assert g[0]["gagnant"] == "fr" and g[0]["critere"] == "ce que garde l'accroche"
+    g = run_versions([version("fr", "chanFR", 500, ret=50.0), version("ar", "chanAR", 500, ret=48.5)])
+    assert g[0]["gagnant"] is None and g[0]["ecart"] == 1.5
+
+
+def test_the_versions_endpoint_asks_each_version_its_curve(client, project, monkeypatch):
+    import youtube_uploader
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec["type"] = "adaptation"
+    for vid, ch in (("fr", "chanA"), ("ar", "chanB"), ("solo", "chanA")):
+        project.add_video(vid, channel=ch, youtube_id="Y" + vid, status="uploaded", youtube_published_at="2026-09-01T10:00:00",
+                          url="https://youtube.com/shorts/REF" if vid != "solo" else "https://youtube.com/shorts/OTHER", recette=rec)
+    asked = []
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: asked.append(yid) or CURVE)
+    g = client.get("/api/versions").json()
+    assert sorted(asked) == ["Yar", "Yfr"] and len(g) == 1 and all(v["apres_accroche"] for v in g[0]["versions"])
+
+
+def test_a_scheduled_video_is_not_asked_its_curve(client, project, monkeypatch):
+    import youtube_uploader
+    project.add_video("later", youtube_id="Ylater", status="uploaded", scheduled_publish_time="2099-01-01T18:00:00")
+    asked = []
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda *a: asked.append(a) or CURVE)
+    d = client.get("/api/videos/later/retention").json()
+    assert asked == [] and d["error"].startswith("Pas encore publiée")         # YouTube answered 412

@@ -168,3 +168,10 @@ def test_gemini_credits_run_out_is_said_plainly(monkeypatch):
     g = GeminiAIGenerator(api_key="x")
     with pytest.raises(script.ScriptError, match="Crédits Gemini épuisés"):
         script.revise({"passages": [{"clip": "P1", "texte": "A."}]}, _clips(), "x", gemini=g)
+
+
+def test_an_excerpt_of_the_model_always_credits_its_creator():
+    metas = [{"handle": "@Klimt-YT"}, {"handle": "@source_b"}]
+    clips = {"M1": {"id": "M1", "source": 0, "usable": True, "extrait": True, "marks": ["Credits: @jeffthegutterguy"]},
+             "P2": {"id": "P2", "source": 1, "usable": True, "marks": []}}
+    assert ap.guess_credits(metas, clips) == "@jeffthegutterguy · @Klimt-YT · @source_b"

@@ -316,6 +316,7 @@
   .tiny{font-size:11px;color:var(--dim);}
   .chcard-head .meta{font-size:11.5px;color:var(--muted);margin:3px 0 0 18px;}
   .grid-3{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;align-items:start;}
+  .grid-2{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px;align-items:start;}
   .btn svg{flex:none;}
   .btn.danger{color:var(--danger);}
   .btn.ghost{background:none;color:var(--muted);padding-left:8px;padding-right:8px;}
@@ -502,6 +503,12 @@
   .score.down{color:var(--dim);}
   #remakeDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(480px,calc(100vw - 32px));}
   #remakeDialog::backdrop{background:rgba(0,0,0,.55);}
+  #curveDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(760px,calc(100vw - 32px));max-height:calc(100vh - 32px);}
+  #curveDialog::backdrop{background:rgba(0,0,0,.55);}
+  .curve svg.curve-chart{width:100%;height:auto;display:block}
+  .curve .shot-row{display:grid;grid-template-columns:28px 92px 1fr 70px;gap:8px;align-items:center;padding:5px 0;border-top:1px solid var(--border);font-size:12.5px}
+  .curve .shot-row.worst{color:var(--danger)}
+  .curve .shot-row .t{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* ---------- Montage auto ---------- */
   .mode-seg{align-self:stretch;}
   .mode-seg .seg-opt{flex:1;}
@@ -695,10 +702,12 @@
       <div class="seg" id="dashViewSeg">
         <button class="seg-opt" data-v="videos">Vidéos</button>
         <button class="seg-opt" data-v="perf">Ce qui marche</button>
+        <button class="seg-opt" data-v="versions" title="Le même Short en une version par chaîne : quel angle, quelle accroche gardent le mieux">Versions FR / AR</button>
       </div>
     </div>
     <div id="channelOverview"></div>
     <div class="stack" id="perfView" style="display:none"></div>
+    <div class="stack" id="versionsView" style="display:none"></div>
     <div class="stack" id="videosView">
     <div class="toolbar">
       <div class="seg" id="dashFilterSeg">
@@ -713,6 +722,7 @@
     <div id="dashGrid" class="vgrid" style="grid-template-columns:repeat(auto-fill,minmax(250px,1fr))"></div>
     </div>
     <dialog id="remakeDialog"></dialog>
+    <dialog id="curveDialog"></dialog>
     <div class="navbar">
       <button class="btn secondary" id="dashBackBtn">← Accueil</button>
       <span></span><span></span>
@@ -5217,6 +5227,9 @@ function applyDashView(){
   document.querySelectorAll('#dashViewSeg .seg-opt').forEach(b => b.classList.toggle('active', b.dataset.v === dashView));
   document.getElementById('videosView').style.display = dashView === 'videos' ? '' : 'none';
   document.getElementById('perfView').style.display = dashView === 'perf' ? '' : 'none';
+  document.getElementById('versionsView').style.display = dashView === 'versions' ? '' : 'none';
+  document.getElementById('channelOverview').style.display = dashView === 'versions' ? 'none' : '';
+  if (dashView === 'versions'){ safeLoad(loadVersions, 'versionsView'); return; }   // every channel at once
   if (!dashboardChannel) return;
   if (dashView === 'perf'){
     loadChannelOverview(dashboardChannel);
@@ -5299,6 +5312,146 @@ async function loadPerformance(channelName){
   box.innerHTML = head + insights + ranking;
   box.querySelectorAll('[data-remake]').forEach(btn => btn.addEventListener('click', () =>
     openRemakeDialog(channelName, d.videos.find(v => v.video_id === btn.dataset.remake))));
+  box.querySelectorAll('[data-curve]').forEach(btn => btn.addEventListener('click', () => openCurveDialog(btn.dataset.curve)));
+}
+
+// The same Short in one version per channel: an A/B test of the angle and the hook (same pictures)
+async function loadVersions(){
+  const box = document.getElementById('versionsView');
+  box.innerHTML = spinnerHtml('Comparaison des versions…');
+  const groups = await api('/api/versions');
+  if (!groups.length){
+    box.innerHTML = emptyState('Pas encore de Short en plusieurs versions',
+      'Crée une Adaptation avec « Une version différente par chaîne » : chaque chaîne aura son angle et son accroche, sur les mêmes images.', 'chart');
+    return;
+  }
+  const chName = c => (channels.find(x => x.name === c) || {}).display_name || c;
+  const age = iso => iso ? Math.max(0, Math.floor((Date.now() - new Date(iso)) / 86400000)) : null;
+  box.innerHTML = `
+    <article class="chcard"><div class="facts">
+      <div class="fact">${icon('chart')}<span>Mêmes images, angle et accroche différents : la version qui <b style="color:var(--text)">garde le plus longtemps</b> l'emporte (rétention de la 1re semaine, sinon la part de ceux qui ont commencé que l'accroche garde). Les vues sont comparées à l'habituel de <b style="color:var(--text)">chaque chaîne</b> : un public français et un public arabe ne sont pas de la même taille.</span></div>
+    </div></article>
+    ${groups.map((g, gi) => `
+    <article class="chcard">
+      <div class="chcard-head">
+        <div class="who"><div class="name">${esc(g.versions[0].titre || 'Short')}</div>
+          <div class="meta" style="margin-left:0"><a href="${esc(g.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
+          ${g.gagnant ? ` · <b style="color:var(--ok)">${esc(chName(g.versions.find(v => v.video_id === g.gagnant).channel))} garde mieux</b> (+${g.ecart} points, ${esc(g.critere)})`
+            : g.critere ? ` · égalité (${esc(g.critere)}, ${g.ecart} point${g.ecart > 1 ? 's' : ''} d'écart)` : ' · pas encore mesuré'}</div></div>
+        <button class="btn ghost small" data-cmp="${gi}">${icon('chart', 13)} Comparer les courbes</button>
+      </div>
+      <div class="chcard-body"><div class="grid-2">${g.versions.map(v => `
+        <div class="recap" style="${v.video_id === g.gagnant ? 'border-color:var(--ok)' : ''}">
+          <div class="line"><span class="k"><span class="dot" style="background:${channelColor(v.channel)}"></span>${esc(chName(v.channel))}</span>
+            <span class="v">${v.youtube_url ? `<a href="${esc(v.youtube_url)}" target="_blank" rel="noopener">voir ↗</a>` : ''}</span></div>
+          ${v.angle ? `<div class="line"><span class="k">Angle</span><span class="v">${esc(v.angle)}</span></div>` : ''}
+          <div class="line"><span class="k">Accroche</span><span class="v" ${v.langue === 'ar' ? 'dir="rtl"' : ''}>« ${esc(v.accroche || '')} »${v.accroche_s ? ` · ${v.accroche_s} s` : ''}</span></div>
+          <div class="line"><span class="k">Durée</span><span class="v">${v.duree_s ? Math.round(v.duree_s) + ' s' : '—'}${v.plans ? ` · ${v.plans} plans` : ''}</span></div>
+          <div class="line"><span class="k">Vues</span><span class="v">${v.published && new Date(v.published) > Date.now()
+            ? `programmée le ${new Date(v.published).toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' })}`
+            : v.views_7d != null ? `${v.views_7d.toLocaleString('fr-FR')} à 7 j ${scoreBadge(v.score)}`
+            : v.views_latest != null ? `${v.views_latest.toLocaleString('fr-FR')} en ${age(v.published)} j (7 j pas encore atteints)` : '—'}</span></div>
+          <div class="line"><span class="k">Rétention 1re semaine</span><span class="v">${v.retention_7d != null ? fmtPct(v.retention_7d) : 'mesurée à 9 jours'}</span></div>
+          <div class="line"><span class="k">Gardés par l'accroche</span><span class="v" title="Part de ceux qui ont commencé la vidéo encore là à la fin de l'accroche">${v.apres_accroche != null ? Math.round(v.apres_accroche) + ' %' : '—'}</span></div>
+        </div>`).join('')}</div></div>
+    </article>`).join('')}`;
+  box.querySelectorAll('[data-cmp]').forEach(b => b.onclick = () => openCompareDialog(groups[+b.dataset.cmp]));
+}
+
+async function openCompareDialog(g){
+  const dlg = document.getElementById('curveDialog');
+  dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body">${spinnerHtml('Courbes de rétention…')}</div></div>`;
+  if (!dlg.open) dlg.showModal();
+  const curves = await Promise.all(g.versions.map(v => api(`/api/videos/${v.video_id}/retention`).catch(e => ({ error: e.message, points: [] }))));
+  const chName = c => (channels.find(x => x.name === c) || {}).display_name || c;
+  const W = 700, H = 240, pad = 30;
+  const tint = ['var(--accent)', '#f59e0b', '#4ade80', '#f472b6'];   // two channels can share a colour (both grey)
+  const maxY = Math.max(1.2, ...curves.flatMap(c => (c.points || []).map(p => p[1])));
+  const X = r => pad + r * (W - pad - 8), Y = w => H - 22 - (w / maxY) * (H - 40);
+  const paths = curves.map((c, i) => (c.points || []).length ? `<path d="${c.points.map((p, j) => `${j ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ')}"
+      fill="none" stroke="${tint[i % tint.length]}" stroke-width="2.2"/>` : '').join('');
+  dlg.innerHTML = `
+    <div class="chcard curve" style="border:none">
+      <div class="chcard-head">
+        <div class="who"><div class="name">${icon('chart', 15)} Quelle version garde le mieux</div><div class="meta" style="margin-left:0">${esc(g.versions[0].titre || '')}</div></div>
+        <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
+      </div>
+      <div class="chcard-body">
+        ${curves.filter(c => c.error).map(c => `<div class="warnbox">${esc(c.error)}</div>`).join('')}
+        <svg class="curve-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbes de rétention des versions">
+          <line x1="${pad}" y1="${Y(1)}" x2="${W - 8}" y2="${Y(1)}" stroke="var(--muted)" stroke-width=".6" opacity=".6"/>
+          <text x="${pad - 4}" y="${Y(1) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">100</text>
+          <text x="${pad - 4}" y="${Y(0) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">0</text>
+          <text x="${pad}" y="${H - 6}" font-size="10" fill="var(--muted)">début</text>
+          <text x="${W - 8}" y="${H - 6}" font-size="10" text-anchor="end" fill="var(--muted)">fin</text>
+          ${paths}
+        </svg>
+        <div style="display:flex;gap:6px 18px;flex-wrap:wrap">${g.versions.map((v, i) => `<span class="tiny"><span class="dot" style="background:${tint[i % tint.length]}"></span>${esc(chName(v.channel))}${curves[i].apres_accroche != null ? ` · l'accroche garde ${Math.round(curves[i].apres_accroche)} %` : ''}</span>`).join('')}</div>
+        <div class="tiny">Les deux vidéos n'ont pas forcément la même durée : l'axe va du début à la fin de chacune. Au-dessus de 100, des gens revoient le passage.</div>
+      </div>
+    </div>`;
+  dlg.querySelector('[data-act="close"]').onclick = () => dlg.close();
+  hydrateIcons(dlg);
+}
+
+// Where viewers leave, shot by shot: YouTube's retention curve over the recipe's shots
+async function openCurveDialog(videoId, refresh){
+  const dlg = document.getElementById('curveDialog');
+  dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body">${spinnerHtml('Courbe de rétention…')}</div></div>`;
+  if (!dlg.open) dlg.showModal();
+  let d;
+  try { d = await api(`/api/videos/${videoId}/retention${refresh ? '?refresh=true' : ''}`); }
+  catch (e){ dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body"><div class="warnbox">${esc(e.message)}</div><button class="btn ghost small" data-act="close">Fermer</button></div></div>`;
+             dlg.querySelector('[data-act="close"]').onclick = () => dlg.close(); return; }
+  const rec = d.recette || {}, st = rec.structure || {}, mus = rec.musique || {};
+  const facts = [
+    rec.type && ['Type', {adaptation: 'Adaptation', generation: 'Génération', montage: 'Montage auto', import: 'Import'}[rec.type] || rec.type],
+    d.duration && ['Durée', `${Math.round(d.duration)} s` + (st.plans > 1 ? ` · ${st.plans} plans` : '')],
+    (rec.accroche || {}).texte && ['Accroche', `« ${rec.accroche.texte} »` + (rec.accroche.duree_s ? ` (${rec.accroche.duree_s} s)` : '')],
+    mus.fichier && ['Musique', mus.fichier],
+    (rec.style || {}).visuel && ['Style', rec.style.visuel],
+    ((rec.details || {}).effets_sonores || []).length && ['Effets sonores', rec.details.effets_sonores.map(e => e.son.replace(/\.mp3$/, '')).join(', ')],
+  ].filter(Boolean);
+  const W = 700, H = 220, pad = 30, pts = d.points || [];
+  const maxY = Math.max(1.2, ...pts.map(p => p[1]));
+  const X = r => pad + r * (W - pad - 8), Y = w => H - 22 - (w / maxY) * (H - 40);
+  const worst = (d.plans || []).find(p => p.k === d.pire);
+  const shots = d.duration ? (d.plans || []).map(p => {
+    const x0 = X(p.debut / d.duration), x1 = X(Math.min(1, p.fin / d.duration));
+    return `${p.k === d.pire ? `<rect x="${x0}" y="10" width="${Math.max(1, x1 - x0)}" height="${H - 32}" fill="var(--danger)" opacity=".12"/>` : ''}
+      <line x1="${x0}" y1="10" x2="${x0}" y2="${H - 22}" stroke="var(--border)" stroke-dasharray="3 3"/>
+      <text x="${(x0 + x1) / 2}" y="${H - 6}" font-size="11" text-anchor="middle" fill="var(--muted)">${p.k + 1}</text>`;
+  }).join('') : '';
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
+  const svg = pts.length ? `<svg class="curve-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de rétention">
+      ${shots}
+      <line x1="${pad}" y1="${Y(1)}" x2="${W - 8}" y2="${Y(1)}" stroke="var(--muted)" stroke-width=".6" opacity=".6"/>
+      <text x="${pad - 4}" y="${Y(1) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">100</text>
+      <text x="${pad - 4}" y="${Y(0) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">0</text>
+      <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
+    </svg>` : '';
+  dlg.innerHTML = `
+    <div class="chcard curve" style="border:none">
+      <div class="chcard-head">
+        <div class="who"><div class="name">${icon('chart', 15)} Où ils décrochent</div><div class="meta" style="margin-left:0">${esc(d.title || '')}</div></div>
+        <button class="btn ghost small" data-act="refresh" title="Redemander la courbe à YouTube">${icon('refresh', 13)}</button>
+        <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
+      </div>
+      <div class="chcard-body">
+        ${d.error ? `<div class="warnbox">${esc(d.error)}</div>` : ''}
+        ${svg || (d.error ? '' : '<div class="tiny">Pas encore de courbe.</div>')}
+        ${pts.length ? `<div class="tiny">Part des spectateurs encore là à chaque instant (100 = tous ceux qui ont lancé la vidéo ; au-dessus, des gens revoient le passage).${(d.plans || []).length > 1 ? ' Les numéros sont les plans.' : ''}${d.fetched_at ? ` Courbe du ${esc(d.fetched_at.replace('T', ' ').slice(0, 16))}.` : ''}</div>` : ''}
+        ${worst ? `<div class="warnbox" style="border-color:var(--danger)">Le plan ${worst.k + 1} perd le plus de monde : ${worst.perte} points en ${(worst.fin - worst.debut).toFixed(1)} s${worst.texte ? ` — « ${esc(worst.texte)} »` : ''}.</div>` : ''}
+        ${d.apres_accroche != null ? `<div class="tiny">L'accroche garde ${Math.round(d.apres_accroche)} % de ceux qui ont commencé la vidéo.</div>` : ''}
+        ${(d.plans || []).length > 1 ? `<div>${d.plans.map(p => `
+          <div class="shot-row ${p.k === d.pire ? 'worst' : ''}"><b>${p.k + 1}</b><span>${p.debut.toFixed(1)}–${p.fin.toFixed(1)} s</span>
+            <span class="t" title="${esc(p.texte || '')}">${esc(p.texte || p.bandeau || '')}</span><span>${Math.round(p.debut_pct)} → ${Math.round(p.fin_pct)}</span></div>`).join('')}</div>` : ''}
+        ${facts.length ? `<div class="recap">${facts.map(([k, v]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span></div>`).join('')}</div>` : ''}
+      </div>
+    </div>`;
+  dlg.querySelector('[data-act="close"]').onclick = () => dlg.close();
+  dlg.querySelector('[data-act="refresh"]').onclick = () => openCurveDialog(videoId, true);
+  hydrateIcons(dlg);
 }
 
 function fmtPct(x){ return `${Math.round(x)} %`; }
@@ -5342,7 +5495,10 @@ function rankRowHtml(v, i){
       <div class="chips">${chips.map(c => `<span title="${esc(c)}">${esc(c)}</span>`).join('')}</div>
     </div>
     <div class="views"><b>${v.views_7d.toLocaleString('fr-FR')}</b>vues à 7 j ${scoreBadge(v.score)}${v.retention_7d != null ? `<span class="ret" title="Part moyenne de la vidéo regardée la 1re semaine">${fmtPct(v.retention_7d)} regardé</span>` : ''}</div>
-    ${v.remakeable ? `<button class="btn secondary small" data-remake="${esc(v.video_id)}">${icon('sparkle', 13)} Refaire ce style</button>` : '<span></span>'}
+    <div class="stack" style="gap:4px">
+      ${v.youtube_url ? `<button class="btn ghost small" data-curve="${esc(v.video_id)}" title="La courbe de rétention de YouTube, plan par plan">${icon('chart', 13)} Où ils décrochent</button>` : ''}
+      ${v.remakeable ? `<button class="btn secondary small" data-remake="${esc(v.video_id)}">${icon('sparkle', 13)} Refaire ce style</button>` : ''}
+    </div>
   </div>`;
 }
 

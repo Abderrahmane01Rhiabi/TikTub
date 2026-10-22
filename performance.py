@@ -42,7 +42,70 @@ DIMENSIONS = [
     ("hour_slot", "Heure de publication"),
     ("method", "Méthode de planning"),
     ("content_type", "Type de contenu"),
+    # from the recipe every video now keeps (recette.py): how it was made
+    ("video_type", "Type de vidéo"),
+    ("mode", "Mode d'Adaptation"),
+    ("duration", "Durée de la vidéo"),
+    ("hook", "Durée de l'accroche"),
+    ("pace", "Rythme des plans"),
+    ("voice", "Voix"),
+    ("visual_style", "Style visuel"),
+    ("arrows", "Flèches et cercles"),
+    ("slowmo", "Ralenti"),
+    ("sfx", "Effets sonores"),
 ]
+
+TYPE_LABELS = {"adaptation": "Adaptation", "generation": "Génération", "montage": "Montage auto", "import": "Import"}
+
+
+def _bucket(x: Optional[float], edges: List[float], labels: List[str]) -> Optional[str]:
+    """The range a number falls in: labels has one more item than edges."""
+    if x is None:
+        return None
+    for edge, lab in zip(edges, labels):
+        if x < edge:
+            return lab
+    return labels[-1]
+
+
+def recipe_attrs(rec: Optional[Dict]) -> Dict[str, Optional[str]]:
+    """What a video's recipe says, as groups to compare (None: not known)."""
+    if not rec:
+        return {}
+    st, d = rec.get("structure") or {}, rec.get("details") or {}
+    plans = [p for p in d.get("plans") or [] if isinstance(p, dict)]
+    out = {"video_type": TYPE_LABELS.get(rec.get("type")),
+           "duration": _bucket(st.get("duree_s"), [20, 30, 40], ["moins de 20 s", "20 à 30 s", "30 à 40 s", "40 s et plus"]),
+           "hook": _bucket((rec.get("accroche") or {}).get("duree_s"), [2, 3, 4],
+                           ["moins de 2 s", "2 à 3 s", "3 à 4 s", "4 s et plus"]),
+           "pace": _bucket(st.get("plan_moyen_s"), [2, 3, 5], ["plans de moins de 2 s", "plans de 2 à 3 s",
+                                                               "plans de 3 à 5 s", "plans de 5 s et plus"])
+           if (st.get("plans") or 0) > 1 else None,
+           "voice": (rec.get("voix") or {}).get("id") if isinstance(rec.get("voix"), dict) else None,
+           "visual_style": (rec.get("style") or {}).get("visuel") or (rec.get("style") or {}).get("recette")}
+    if rec.get("type") == "adaptation":
+        n = sum(1 for p in plans if p.get("fleche"))
+        out.update(mode="Script d'abord" if d.get("mode") == "script" else "Sources d'abord",
+                   arrows="sans flèche" if not n else "1 flèche ou cercle" if n == 1 else "2 flèches ou cercles et plus",
+                   slowmo="avec ralenti" if any((p.get("effets_appliques") or {}).get("ralenti") for p in plans)
+                   else "sans ralenti")
+        if "effets_sonores" in d:          # recipes made before the sound effects existed say nothing
+            out["sfx"] = "avec effets sonores" if d["effets_sonores"] else "sans effets sonores"
+    return out
+
+
+_VOICE_NAMES: Dict[str, str] = {}
+
+
+def _voice_name(voice_id: str) -> str:
+    if voice_id not in _VOICE_NAMES:
+        try:
+            import db
+            v = db.get_voice(voice_id) or {}
+        except Exception:
+            v = {}
+        _VOICE_NAMES[voice_id] = v.get("name") or voice_id
+    return _VOICE_NAMES[voice_id]
 
 
 def _basename(path: Optional[str]) -> Optional[str]:
@@ -65,6 +128,12 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
     views, likes = snap.get("view_count") or 0, snap.get("like_count")
     latest = history[-1] if history else snap
     retention = video.get("retention_7d") or {}
+    rec = video.get("recette") or {}
+    made = recipe_attrs(rec)
+    if not made.get("duration") and retention.get("average_view_duration") and retention.get("average_view_percentage"):
+        # a rebuilt recipe lost the length (file deleted after upload): watched time / share watched
+        made["duration"] = _bucket(retention["average_view_duration"] * 100 / retention["average_view_percentage"],
+                                   [20, 30, 40], ["moins de 20 s", "20 à 30 s", "30 à 40 s", "40 s et plus"])
     return {
         "video_id": video["video_id"],
         "title": ai.get("optimized_title") or video.get("original_title") or video.get("title") or video["video_id"],
@@ -82,12 +151,13 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
         "attrs": {
             "script_format": video.get("script_format") or None,
             "background": _basename(video.get("bg_video_path")),
-            "music": _basename(video.get("bg_music_path")),
+            "music": _basename(video.get("bg_music_path")) or (rec.get("musique") or {}).get("fichier"),
             "caption_style": video.get("caption_style") or ("karaoke" if video.get("source") == "generated" else None),
             "weekday": WEEKDAYS[published.weekday()] if published else None,
             "hour_slot": _hour_slot(published.hour) if published else None,
             "method": (video.get("publish_decision") or {}).get("method"),
             "content_type": ai.get("content_type"),
+            **made,
         },
         # What "Refaire ce style" would reuse — generated videos only
         "remakeable": video.get("source") == "generated" and bool(video.get("script_text")),
@@ -97,6 +167,8 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
 def label(dimension: str, value: str) -> str:
     if dimension == "script_format":
         return f"{value} · {FORMAT_LABELS.get(value, value)}"
+    if dimension == "voice":
+        return _voice_name(value)
     return value
 
 
@@ -151,6 +223,120 @@ def analyze(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Dict
     return {"analyzed": len(rows), "too_recent": too_recent, "median_views_7d": base,
             "median_retention_7d": _median_or_none(r["retention_7d"] for r in rows),
             "videos": rows, "insights": insights}
+
+
+# ------------------------------------------------------------------ where viewers leave, shot by shot
+
+def shots_of(rec: Optional[Dict]) -> List[Dict]:
+    """The video's shots from its recipe: [{k, debut, fin, texte, bandeau}] (one
+    shot for a video without a plan list: an import, a generated video)."""
+    rec = rec or {}
+    plans = [p for p in (rec.get("details") or {}).get("plans") or [] if isinstance(p, dict)]
+    if plans and all(p.get("debut") is not None and p.get("duree") for p in plans):
+        return [{"k": i, "debut": round(p["debut"], 2), "fin": round(p["debut"] + p["duree"], 2),
+                 "texte": p.get("texte"), "bandeau": p.get("bandeau")} for i, p in enumerate(plans)]
+    dur = (rec.get("structure") or {}).get("duree_s")
+    return [{"k": 0, "debut": 0.0, "fin": dur, "texte": (rec.get("accroche") or {}).get("texte"), "bandeau": None}] if dur else []
+
+
+def _watch_at(points: List[List[float]], ratio: float) -> Optional[float]:
+    """The audience watch ratio at a share of the video (linear between YouTube's points)."""
+    if not points:
+        return None
+    pts = sorted(points)
+    if ratio <= pts[0][0]:
+        return pts[0][1]
+    for (r0, w0, *_), (r1, w1, *_) in zip(pts, pts[1:]):
+        if r0 <= ratio <= r1:
+            return w0 + (w1 - w0) * (ratio - r0) / ((r1 - r0) or 1)
+    return pts[-1][1]
+
+
+def curve_by_shot(points: List[List[float]], shots: List[Dict], duration: Optional[float]) -> Dict:
+    """Each shot's audience at its start and its end (in % of the viewers who
+    started the video, above 100 % where people watch again) and what it
+    loses; the shot that loses the most, the hook's keep."""
+    if not points or not shots or not duration:
+        return {"plans": [], "pire": None, "apres_accroche": None}
+    out = []
+    for s in shots:
+        a = _watch_at(points, min(1.0, s["debut"] / duration))
+        b = _watch_at(points, min(1.0, s["fin"] / duration))
+        out.append({**s, "debut_pct": round(a * 100, 1), "fin_pct": round(b * 100, 1), "perte": round((a - b) * 100, 1),
+                    "perte_par_s": round((a - b) * 100 / max(0.1, s["fin"] - s["debut"]), 1)})
+    worst = max(out, key=lambda x: x["perte_par_s"]) if len(out) > 1 else None
+    # what the hook keeps of those who started: a Short loops, so the curve starts well above 100 %
+    # (205 % at the start, 192 % after the hook = 93 % kept) — raw levels can't be compared between videos
+    first = out[0]
+    kept = round(first["fin_pct"] / first["debut_pct"] * 100, 1) if len(out) > 1 and first["debut_pct"] > 0 else None
+    return {"plans": out, "pire": worst["k"] if worst and worst["perte"] > 0 else None, "apres_accroche": kept}
+
+
+# ------------------------------------------------------------------ versions of one Short, side by side
+
+TIE_POINTS = 3.0          # retention closer than this (points of % watched): no winner
+
+
+def versions(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> List[Dict]:
+    """The Shorts made in several versions (one per channel, same model Short,
+    its own angle and hook): a free A/B test of the writing, since the
+    pictures are the same. Views are scored against each version's OWN channel
+    (a French and an Arabic audience differ); the winner is the version that
+    keeps people longer (first-week retention), else the one after the hook."""
+    rows_by_channel: Dict[str, List[Dict]] = {}
+    for v in videos:
+        if v.get("youtube_id"):
+            row = video_row(v, history_by_video.get(v["video_id"], []))
+            if row:
+                rows_by_channel.setdefault(v.get("channel"), []).append(row)
+    medians = {ch: median(r["views_7d"] for r in rows) for ch, rows in rows_by_channel.items() if rows}
+    rows = {r["video_id"]: r for rs in rows_by_channel.values() for r in rs}
+    groups: Dict[str, List[Dict]] = {}
+    for v in videos:
+        # Adaptations only: an import posted on two channels is the same video, not two versions
+        if v.get("youtube_id") and v.get("url") and (v.get("recette") or {}).get("type") == "adaptation":
+            groups.setdefault(v["url"], []).append(v)
+    out = []
+    for url, vs in groups.items():
+        if len({v.get("channel") for v in vs}) < 2:
+            continue
+        items = []
+        for v in vs:
+            rec, r = v.get("recette") or {}, rows.get(v["video_id"])
+            d = rec.get("details") or {}
+            curve = curve_by_shot((v.get("retention_curve") or {}).get("points") or [], shots_of(rec),
+                                  (rec.get("structure") or {}).get("duree_s"))
+            base = medians.get(v.get("channel"))
+            items.append({
+                "video_id": v["video_id"], "channel": v.get("channel"), "langue": rec.get("langue") or d.get("langue"),
+                "titre": (v.get("ai_data") or {}).get("optimized_title") or d.get("titre") or v.get("title"),
+                "youtube_url": v.get("youtube_url"), "angle": d.get("angle"),
+                "accroche": (rec.get("accroche") or {}).get("texte"), "accroche_s": (rec.get("accroche") or {}).get("duree_s"),
+                "duree_s": (rec.get("structure") or {}).get("duree_s"), "plans": (rec.get("structure") or {}).get("plans"),
+                "published": (r or {}).get("published") or (published_moment(v).isoformat() if published_moment(v) else None),
+                "views_7d": (r or {}).get("views_7d"),
+                "views_latest": ((history_by_video.get(v["video_id"]) or [{}])[-1]).get("view_count"),
+                "score": round((r["views_7d"] + SCORE_SMOOTHING) / (base + SCORE_SMOOTHING), 2) if r and base is not None else None,
+                "retention_7d": (r or {}).get("retention_7d"),
+                "apres_accroche": curve.get("apres_accroche")})
+        items.sort(key=lambda x: (x["channel"] or ""))
+        out.append({"reference_url": url, "versions": items, **_winner(items),
+                    "published": max((x["published"] or "") for x in items)})
+    out.sort(key=lambda g: g["published"], reverse=True)
+    return out
+
+
+def _winner(items: List[Dict]) -> Dict:
+    """Who keeps people longer, and on what it is decided (None: too close / not measured yet)."""
+    for key, why in (("retention_7d", "rétention 1re semaine"), ("apres_accroche", "ce que garde l'accroche")):
+        measured = [x for x in items if x.get(key) is not None]
+        if len(measured) >= 2:
+            measured.sort(key=lambda x: x[key], reverse=True)
+            gap = round(measured[0][key] - measured[1][key], 1)
+            if gap < TIE_POINTS:
+                return {"gagnant": None, "critere": why, "ecart": gap}
+            return {"gagnant": measured[0]["video_id"], "critere": why, "ecart": gap}
+    return {"gagnant": None, "critere": None, "ecart": None}
 
 
 # What "Refaire ce style" carries over to new scripts: only these choices
