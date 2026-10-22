@@ -50,3 +50,10 @@ def test_the_recipe_keeps_the_sound_effects_used():
     t = {"language": "fr", "channel": "c", "script": {"passages": []}}
     rec = ap._recipe(p, t, {"plans": [], "effets_sonores": [{"son": "pop_pop.mp3", "a_s": 3.2, "pourquoi": "chiffre"}]})
     assert rec["effets_sonores"][0]["son"] == "pop_pop.mp3"
+
+
+def test_a_variant_comes_back_only_when_all_were_heard(monkeypatch):
+    monkeypatch.setattr(sfx, "peak_of", lambda f: {"long.mp3": 0.63}.get(f, 0.05))
+    lib = {"whoosh": ["long.mp3", "a.mp3", "b.mp3"]}
+    out = sfx.sounds([{"t": t, "sons": ["whoosh"], "pourquoi": "x"} for t in (0.48, 5.0, 9.0, 13.0)], lib)
+    assert [o["file"] for o in out] == ["a.mp3", "long.mp3", "b.mp3", "long.mp3"]   # all heard once, then again

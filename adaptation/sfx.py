@@ -97,18 +97,17 @@ def sounds(moments: List[Dict], lib: Optional[Dict[str, List[str]]] = None) -> L
     """Each moment's files, variants in turn: [{"kind", "file", "start", "gain", "pourquoi"}],
     start = when the file begins (its loudest instant on the moment)."""
     lib = library() if lib is None else lib
-    used: Dict[str, int] = {}
+    used: List[str] = []
     out = []
     for m in moments:
         for kind in m["sons"]:
             files = lib.get(kind) or []
             if not files:
                 continue
-            turn = used.get(kind, 0)
-            order = [files[(turn + i) % len(files)] for i in range(len(files))]
+            order = sorted(files, key=used.count)           # the least used first: each variant in turn
             # a variant whose loudest instant fits before the event (a circle at 0.48 s got a whoosh peaking at 0.63 s)
             f = next((x for x in order if peak_of(x) <= m["t"]), order[0])
-            used[kind] = turn + 1
+            used.append(f)
             out.append({"kind": kind, "file": f, "start": round(max(0.0, m["t"] - peak_of(f)), 3),
                         "gain": GAIN.get(kind, 0.25), "pourquoi": m["pourquoi"]})
     return out
