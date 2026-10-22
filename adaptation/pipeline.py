@@ -1738,6 +1738,7 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
                     "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique"),
                     "niveau": rendered.get("musique_niveau"), "gain": rendered.get("musique_gain"),
                     "silence_avant_choc_s": rendered.get("silence_avant_choc")},
+        "effets_sonores": rendered.get("effets_sonores") or [],
         "structure": {"duree_s": total, "plans": len(segs), "accroche_s": segs[0]["duree"] if segs else None,
                       "plan_moyen_s": round(total / len(segs), 2) if segs else None,
                       "coupes_sur_le_temps": sum(1 for x in segs if x.get("coupe_sur_le_temps")),

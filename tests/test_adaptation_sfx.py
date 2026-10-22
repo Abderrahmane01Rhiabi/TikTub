@@ -39,3 +39,11 @@ def test_the_library_is_the_folder_of_the_app():
     assert {"whoosh", "pop", "shutter", "riser", "impact", "ding"} <= set(lib)
     assert len(lib["whoosh"]) >= 3
     assert 1.5 < sfx.peak_of(lib["riser"][0]) < 2.0       # a riser is loudest at its end
+
+
+def test_the_recipe_keeps_the_sound_effects_used():
+    from adaptation import pipeline as ap
+    p = {"project_id": "x", "clips": {}}
+    t = {"language": "fr", "channel": "c", "script": {"passages": []}}
+    rec = ap._recipe(p, t, {"plans": [], "effets_sonores": [{"son": "pop_pop.mp3", "a_s": 3.2, "pourquoi": "chiffre"}]})
+    assert rec["effets_sonores"][0]["son"] == "pop_pop.mp3"
