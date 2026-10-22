@@ -2313,6 +2313,68 @@ def adaptation_versions():
     return performance.versions(videos, {v["video_id"]: bp.url_manager.get_stats_history(v["video_id"]) for v in videos})
 
 
+@app.get("/api/fiche")
+def video_fiche(video_id: Optional[str] = None, youtube_id: Optional[str] = None, refresh: bool = False):
+    """Everything known about one published video on one page: its results
+    (7-day views against the channel's usual, likes, retention, where viewers
+    leave), its recipe shot by shot, its other versions, its links."""
+    import db as _db
+    import performance
+    bp = get_batch_processor()
+    video = _db.get_video(video_id) if video_id else None
+    if not video and youtube_id:
+        video = next((v for v in bp.url_manager.list_videos() if v.get("youtube_id") == youtube_id), None)
+    if not video:
+        raise HTTPException(status_code=404, detail="Cette vidéo n'a pas été faite avec TikTub : pas de fiche.")
+    vid, ch = video["video_id"], video.get("channel")
+    history = bp.url_manager.get_stats_history(vid)
+    snap7 = next((h for h in history if h.get("checkpoint") == "7d"), None)
+    latest = history[-1] if history else {}
+    mine = [v for v in bp.url_manager.list_videos(channel=ch) if v.get("youtube_id")]
+    analysis = performance.analyze(mine, {v["video_id"]: bp.url_manager.get_stats_history(v["video_id"]) for v in mine})
+    row = next((r for r in analysis["videos"] if r["video_id"] == vid), None)
+    cache, error = _retention_curve(video, refresh) if video.get("youtube_id") else ({}, "Pas encore sur YouTube.")
+    rec = video.get("recette") or {}
+    duration = (rec.get("structure") or {}).get("duree_s")
+    ret = video.get("retention_7d") or {}
+    if not duration and ret.get("average_view_duration") and ret.get("average_view_percentage"):
+        duration = round(ret["average_view_duration"] * 100 / ret["average_view_percentage"], 1)
+    points = cache.get("points") or []
+    by_shot = performance.curve_by_shot(points, performance.shots_of(rec), duration)
+    detail = {i: p for i, p in enumerate((rec.get("details") or {}).get("plans") or []) if isinstance(p, dict)}
+    plans = [{**s, **{k: detail.get(s["k"], {}).get(k) for k in ("mots_cles", "fleche", "effets_appliques", "source", "image")}}
+             for s in by_shot["plans"]] if by_shot["plans"] else [
+        {"k": i, "debut": p.get("debut"), "fin": round((p.get("debut") or 0) + (p.get("duree") or 0), 2), **p}
+        for i, p in detail.items()]
+    others = [{"video_id": v["video_id"], "channel": v.get("channel"),
+               "titre": (v.get("ai_data") or {}).get("optimized_title") or v.get("title")}
+              for v in bp.url_manager.list_videos()
+              if v["video_id"] != vid and video.get("url") and v.get("url") == video.get("url")
+              and (v.get("recette") or {}).get("type") == "adaptation" and rec.get("type") == "adaptation"]
+    ai = video.get("ai_data") or {}
+    from stats_tracker import published_moment
+    published = published_moment(video)
+    return {
+        "video_id": vid, "channel": ch, "status": video.get("status"),
+        "titre": ai.get("optimized_title") or video.get("title") or video.get("original_title"),
+        "description": ai.get("description"), "tags": ai.get("tags") or [],
+        "youtube_url": video.get("youtube_url"), "modele_url": video.get("url") if rec.get("type") == "adaptation" else None,
+        "source_url": video.get("url") if rec.get("type") != "adaptation" else None,
+        "thumbnail_url": latest.get("thumbnail_url") or video_media_url({"video_path": video.get("thumbnail_path")}),
+        "publiee": published.isoformat() if published else None,
+        "a_venir": bool(published and published > datetime.now()),
+        "resultats": {"vues_7j": (snap7 or {}).get("view_count"), "vues": latest.get("view_count"),
+                      "likes": latest.get("like_count"), "commentaires": latest.get("comment_count"),
+                      "score": (row or {}).get("score"), "mediane_chaine": analysis.get("median_views_7d"),
+                      "retention_7j": ret.get("average_view_percentage"), "temps_moyen_s": ret.get("average_view_duration"),
+                      "accroche_garde": by_shot["apres_accroche"]},
+        "courbe": {"points": points, "fetched_at": cache.get("fetched_at"), "error": error, "pire": by_shot["pire"]},
+        "duree": duration, "plans": plans, "recette": rec, "versions": others,
+        "voix_nom": performance._voice_name((rec.get("voix") or {}).get("id")) if isinstance(rec.get("voix"), dict)
+        and (rec.get("voix") or {}).get("id") else None,
+    }
+
+
 @app.get("/api/videos/{video_id}/retention")
 def get_video_retention(video_id: str, refresh: bool = False):
     """Where viewers leave this video, shot by shot: YouTube's audience
