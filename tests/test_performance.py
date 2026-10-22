@@ -235,7 +235,8 @@ def test_each_shot_gets_its_audience_and_the_worst_one_is_named():
     curve = [[r, w if r < 0.5 or r > 0.6 else w - (r - 0.5) * 3, x] for r, w, x in CURVE]   # a cliff in shot 3
     out = performance.curve_by_shot(curve, shots, 20)
     assert out["pire"] == 2 and out["plans"][2]["perte_par_s"] > out["plans"][1]["perte_par_s"]   # as much lost, 4× faster
-    assert out["apres_accroche"] == out["plans"][0]["fin_pct"] and out["plans"][0]["debut_pct"] == 149.0
+    assert out["plans"][0]["debut_pct"] == 149.0
+    assert out["apres_accroche"] == round(out["plans"][0]["fin_pct"] / 149.0 * 100, 1)     # kept of those who started
     assert performance.shots_of({"type": "import", "structure": {"duree_s": 15}})[0]["fin"] == 15
     assert performance.curve_by_shot([], shots, 20)["plans"] == []
 
@@ -287,7 +288,7 @@ def test_versions_of_one_short_are_compared_on_what_keeps_people():
 def test_without_the_week_the_hook_decides_and_close_is_a_tie():
     keeps = lambda after: [[r / 100, 1.2 if r <= 5 else after, 0.5] for r in range(1, 101)]    # who leaves during the hook
     g = run_versions([version("fr", "chanFR", 500, curve=keeps(0.9)), version("ar", "chanAR", 500, curve=keeps(0.6))])
-    assert g[0]["gagnant"] == "fr" and g[0]["critere"] == "après l'accroche"
+    assert g[0]["gagnant"] == "fr" and g[0]["critere"] == "ce que garde l'accroche"
     g = run_versions([version("fr", "chanFR", 500, ret=50.0), version("ar", "chanAR", 500, ret=48.5)])
     assert g[0]["gagnant"] is None and g[0]["ecart"] == 1.5
 
@@ -303,3 +304,12 @@ def test_the_versions_endpoint_asks_each_version_its_curve(client, project, monk
     monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: asked.append(yid) or CURVE)
     g = client.get("/api/versions").json()
     assert sorted(asked) == ["Yar", "Yfr"] and len(g) == 1 and all(v["apres_accroche"] for v in g[0]["versions"])
+
+
+def test_a_scheduled_video_is_not_asked_its_curve(client, project, monkeypatch):
+    import youtube_uploader
+    project.add_video("later", youtube_id="Ylater", status="uploaded", scheduled_publish_time="2099-01-01T18:00:00")
+    asked = []
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda *a: asked.append(a) or CURVE)
+    d = client.get("/api/videos/later/retention").json()
+    assert asked == [] and d["error"].startswith("Pas encore publiée")         # YouTube answered 412

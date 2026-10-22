@@ -2274,8 +2274,10 @@ def _retention_curve(video: dict, refresh: bool = False):
         fresh = cache.get("points") and datetime.fromisoformat(cache["fetched_at"]) > datetime.now() - timedelta(days=1)
     except (KeyError, ValueError, TypeError):
         fresh = False
+    published = published_moment(video)
+    if published and published > datetime.now():       # scheduled, not out yet: YouTube has nothing (412)
+        return cache, f"Pas encore publiée : prévue le {published.strftime('%d/%m à %Hh%M')}."
     if refresh or not fresh:
-        published = published_moment(video)
         start = (published or datetime.now() - timedelta(days=28)).strftime("%Y-%m-%d")
         try:
             points = youtube_uploader.get_retention_curve(video.get("channel"), video["youtube_id"], start)
