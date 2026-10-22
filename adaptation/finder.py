@@ -29,6 +29,10 @@ from adaptation.sources import ytdlp_opts
 PER_QUERY = 5
 PER_SCENE = 6
 MAX_DURATION = 20 * 60          # longer videos are compilations/livestreams: rarely the original
+# A check looks at one picture every 2 s, not every second: the biggest Gemini cost (43 % of a project).
+# Measured on 16 videos already judged: 95 % of the good ones found (90 % at 1/s, re-run), no more bad
+# ones accepted, 24 % cheaper; the moment found is less precise, the re-timing after the download fixes it.
+CHECK_FPS = 0.5
 
 
 class FinderError(RuntimeError):
@@ -171,7 +175,10 @@ def _sort_one(i: int, s: Dict, g, prompt: str) -> Optional[List[int]]:
     text = f"Scene {i}: {s['scene']}\n" + "\n".join(
         f"  {k}. {c['title']} | {c.get('channel') or ''} | {c.get('duration')}" for k, c in enumerate(s["candidats"]))
     try:
-        r = g._generate_content([{"text": prompt.format(scenes=text)}], max_tokens=1500, timeout=60, temperature=0.1)
+        # no thinking: keeping or dropping a title is simple (it thought 20× more than it wrote; measured
+        # on 34 scenes: same sort — 87 % agreement, 90 % between two runs as before — for 83 % less)
+        r = g._generate_content([{"text": prompt.format(scenes=text)}], max_tokens=1500, timeout=60, temperature=0.1,
+                                thinking=0)
     except Exception:
         return None
     keep = r.get("garder") if isinstance(r, dict) else None
@@ -679,7 +686,7 @@ def _watch(url: str, g, prompt: str) -> Dict:
     """Gemini watches a YouTube link directly; anything else (VK, Rutube,
     TikTok…) is downloaded small and sent as a file."""
     if _video_id(url):
-        answer = g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": 1}},
+        answer = g._generate_content([{"file_data": {"file_uri": url}, "video_metadata": {"fps": CHECK_FPS}},
                                       {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1)
         if not (isinstance(answer, dict) and "403" in str(answer.get("error", ""))):
             return {"answer": answer, "duration": None, "title": _youtube_title(url)}
