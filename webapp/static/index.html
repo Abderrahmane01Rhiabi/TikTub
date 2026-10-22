@@ -5436,7 +5436,7 @@ async function openFicheDialog(id, opts = {}){
     rec.type && ['Type', ({adaptation: 'Adaptation', generation: 'Génération', montage: 'Montage auto', import: 'Import'})[rec.type] + (det.mode ? ` · ${det.mode === 'script' ? "Script d'abord" : "Sources d'abord"}` : '')],
     det.angle && ['Angle', det.angle],
     d.duree && ['Durée', `${Math.round(d.duree)} s` + (st.plans > 1 ? ` · ${st.plans} plans · ${st.plan_moyen_s} s par plan` : '')],
-    (rec.accroche || {}).texte && ['Accroche', `« ${rec.accroche.texte} »` + (rec.accroche.duree_s ? ` · ${rec.accroche.duree_s} s` : '')],
+    (rec.accroche || {}).texte && ['Accroche', rec.accroche.texte, rec.accroche.duree_s ? `${rec.accroche.duree_s} s` : ''],
     mus.fichier && ['Musique', mus.fichier + (mus.debut_s != null ? ` · à partir de ${mus.debut_s} s` : '') + (mus.gain != null ? ` · niveau ${mus.gain}` : '')],
     (rec.voix || {}).id && ['Voix', d.voix_nom || rec.voix.id],
     (rec.style || {}).visuel && ['Style', rec.style.visuel],
@@ -5474,9 +5474,9 @@ async function openFicheDialog(id, opts = {}){
         ${(d.plans || []).length > 1 ? `<div><div class="tiny" style="margin-bottom:4px">Plan par plan${d.courbe.points.length ? ' (spectateurs au début → à la fin du plan)' : ''}</div>${d.plans.map(p => `
           <div class="shot-row ${p.k === d.courbe.pire ? 'worst' : ''}" style="grid-template-columns:28px 92px 1fr 70px"><b>${p.k + 1}</b>
             <span>${p.debut != null ? `${Number(p.debut).toFixed(1)}–${Number(p.fin).toFixed(1)} s` : ''}</span>
-            <span class="t" title="${esc((p.bandeau || '') + ' — ' + (p.texte || ''))}">${p.bandeau ? `<b>${esc(p.bandeau)}</b> · ` : ''}${esc(p.texte || '')}${fx(p) ? ` <span class="tiny">· ${esc(fx(p))}</span>` : ''}</span>
+            <span class="t" title="${esc((p.bandeau || '') + ' — ' + (p.texte || ''))}"><bdi>${p.bandeau ? `<b>${esc(p.bandeau)}</b> · ` : ''}${esc(p.texte || '')}</bdi>${fx(p) ? ` <span class="tiny">· ${esc(fx(p))}</span>` : ''}</span>
             <span>${p.debut_pct != null ? `${Math.round(p.debut_pct)} → ${Math.round(p.fin_pct)}` : ''}</span></div>`).join('')}</div>` : ''}
-        ${recipe.length ? `<div class="recap">${recipe.map(([k, v]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span></div>`).join('')}</div>` : ''}
+        ${recipe.length ? `<div class="recap">${recipe.map(([k, v, extra]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v"><bdi>${esc(String(v))}</bdi>${extra ? ` · ${esc(extra)}` : ''}</span></div>`).join('')}</div>` : ''}
         ${d.description ? `<details><summary class="tiny" style="cursor:pointer">Description et tags</summary><div class="tiny" style="white-space:pre-wrap;margin-top:6px">${esc(d.description)}</div>
           ${(d.tags || []).length ? `<div class="dvtags" style="margin-top:6px">${d.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}</details>` : ''}
       </div>
