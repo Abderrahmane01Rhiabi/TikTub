@@ -32,6 +32,9 @@ def test_variants_in_turn_and_the_loudest_instant_on_the_event(monkeypatch):
                       {"t": 9.0, "sons": ["riser", "impact"], "pourquoi": "c"}], lib)
     assert [o["file"] for o in out] == ["w1.mp3", "w2.mp3", "riser.mp3"]   # no impact file: left out
     assert out[0]["start"] == 0.95 and out[2]["start"] == 8.5
+    monkeypatch.setattr(sfx, "peak_of", lambda f: {"long.mp3": 0.63}.get(f, 0.05))
+    early = sfx.sounds([{"t": 0.48, "sons": ["whoosh"], "pourquoi": "cercle"}], {"whoosh": ["long.mp3", "short.mp3"]})
+    assert early[0]["file"] == "short.mp3" and early[0]["start"] == 0.43            # on time at the very start
 
 
 def test_the_library_is_the_folder_of_the_app():
