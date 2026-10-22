@@ -45,6 +45,7 @@ CONFIG_PATH = DATA_ROOT / "config.yaml"
 async def lifespan(app):
     # each is best-effort: none of them may ever keep the app from starting
     _recover_interrupted_jobs()
+    _start_pot_server()
     _daily_backup_on_startup()
     _start_stats_tracker()
     yield
@@ -160,6 +161,16 @@ def _recover_interrupted_jobs():
         adaptation_pipeline.recover_interrupted()
     except Exception as e:
         print(f"⚠️ Recovery of interrupted adaptations skipped: {e}")
+
+
+def _start_pot_server():
+    """The PO token service that lets YouTube serve videos it refused (bgutil)."""
+    try:
+        from adaptation import sources
+        if sources.start_pot_server():
+            print("🔑 Jetons YouTube (bgutil) : prêts")
+    except Exception as e:
+        print(f"⚠️ bgutil skipped: {e}")
 
 
 def _daily_backup_on_startup():
@@ -1300,7 +1311,11 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
 
     def run():
         try:
-            report = lambda phase, f: progress.update(key, f, phase=phase)
+            seen = {"f": 0.0}            # never backwards: sources handled at once each report their own share
+
+            def report(phase, f):
+                seen["f"] = max(seen["f"], f)
+                progress.update(key, seen["f"], phase=phase)
             if step in ("voicing", "scripting") and only:
                 runner(pid, report, only=only)
             else:
@@ -1358,6 +1373,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     if full:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
+        base["reference"]["plans"] = [{k: x.get(k) for k in ("debut", "fin", "visuel")}
+                                      for x in ref.get("plans") or [] if isinstance(x, dict)]
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
                                                   "why_not", "low_res", "audio_ok", "marks", "extrait", "scene", "forced", "note", "absent", "action", "w", "h", "texte_efface")},
                           "thumb_url": f"/api/adaptations/{p['project_id']}/clips/{c['id']}/thumb"}
@@ -1486,6 +1503,18 @@ def update_adaptation_sources(pid: str, req: AdaptationSources):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.set_sources, pid, req.usable, req.credits))
+
+
+class AdaptationCredits(BaseModel):
+    credits: str
+
+
+@app.patch("/api/adaptations/{pid}/credits")
+def update_adaptation_credits(pid: str, req: AdaptationCredits):
+    """The credits line, corrected by hand until the final render."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.set_credits, pid, req.credits))
 
 
 class AdaptationAddSources(BaseModel):
@@ -1677,12 +1706,16 @@ def back_to_adaptation_images(pid: str):
     return _serialize_adaptation(_adaptation_call(ap.back_to_images, pid))
 
 
+class AdaptationExcerpt(BaseModel):
+    ref: Optional[int] = None
+
+
 @app.post("/api/adaptations/{pid}/plans/{plan}/excerpt")
-def excerpt_for_adaptation_plan(pid: str, plan: int):
-    """Last resort: a few seconds of the reference Short for a plan nobody filmed."""
+def excerpt_for_adaptation_plan(pid: str, plan: int, req: Optional[AdaptationExcerpt] = None):
+    """Last resort: a few seconds of the reference Short for a plan nobody filmed (ref: which of its shots)."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
-    return _serialize_adaptation(_adaptation_call(ap.use_excerpt_for_plan, pid, plan))
+    return _serialize_adaptation(_adaptation_call(ap.use_excerpt_for_plan, pid, plan, (req.ref if req else None)))
 
 
 @app.post("/api/adaptations/{pid}/scenes/{scene}/excerpt")
@@ -1707,6 +1740,14 @@ def keep_adaptation_passage(pid: str, channel: str, k: int):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.keep_passage, pid, channel, k))
+
+
+@app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/clip")
+def use_adaptation_clip_proposal(pid: str, channel: str, k: int):
+    """Take the other clip the check found for this sentence (the sentence stays)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.use_clip_proposal, pid, channel, k))
 
 
 @app.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/proposal")

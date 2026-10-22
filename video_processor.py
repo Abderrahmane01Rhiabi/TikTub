@@ -359,7 +359,7 @@ def processed_output_paths(title: str, bg_mode: str, output_name: str = None):
             os.path.join(CONFIG['temp_folder'], f"{stem}-temp-audio.m4a"))
 
 
-def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None, frame_mode=None, rounded_corners=False, output_name=None, progress_cb=None):
+def process_video_with_background_options(video_path: str, title: str, bg_mode='random', specific_bg=None, frame_mode=None, rounded_corners=False, output_name=None, progress_cb=None, notes=None):
     """frame_mode ('letterbox' | 'full_border' | 'fill' | None): how the video
     sits inside the 9:16 canvas relative to the background border, chosen
     per-video by the user in the 'Cadrage' wizard step (see
@@ -424,17 +424,21 @@ def process_video_with_background_options(video_path: str, title: str, bg_mode='
             mask_clip = ImageClip(mask_array, ismask=True, duration=video.duration)
             video_resized = video_resized.set_mask(mask_clip)
 
-        # Create background
+        # Create background (what is really used goes into notes: the video's recipe)
+        notes = notes if notes is not None else {}
+        notes['fond'] = 'noir'
         if force_black_bg:
             background = ColorClip(size=(target_w, target_h), color=(0, 0, 0), duration=video.duration)
         elif bg_mode == 'random':
             bg_path = get_background_image('random')
             if bg_path:
+                notes['fond'] = bg_path
                 background = ImageClip(bg_path, duration=video.duration).resize((target_w, target_h))
             else:
                 background = ColorClip(size=(target_w, target_h), color=(0, 0, 0), duration=video.duration)
 
         elif bg_mode == 'blur':
+            notes['fond'] = 'flou de la vidéo'
             background = video.resize((target_w, target_h))
             try:
                 from moviepy.video.fx import blur
@@ -444,15 +448,18 @@ def process_video_with_background_options(video_path: str, title: str, bg_mode='
 
         elif bg_mode == 'solid':
             color = random.choice(BACKGROUND_CONFIG['solid_colors'])
+            notes['fond'] = f'couleur {tuple(color)}'
             background = ColorClip(size=(target_w, target_h), color=color, duration=video.duration)
 
         elif bg_mode == 'gradient':
             gradient = random.choice(BACKGROUND_CONFIG['gradients'])
+            notes['fond'] = f'dégradé {tuple(gradient[0])}'
             background = ColorClip(size=(target_w, target_h), color=gradient[0], duration=video.duration)
 
         elif bg_mode == 'specific':
             bg_path = get_background_image('specific', specific_bg)
             if bg_path:
+                notes['fond'] = bg_path
                 background = ImageClip(bg_path, duration=video.duration).resize((target_w, target_h))
             else:
                 background = ColorClip(size=(target_w, target_h), color=(0, 0, 0), duration=video.duration)

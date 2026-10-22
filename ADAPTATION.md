@@ -87,6 +87,8 @@ Pour chaque plan, tu peux aussi :
 
 #### Script d'abord : télécharger et monter
 
+Plusieurs vidéos sources sont traitées **en même temps** (3 en « Script d'abord », 2 en « Sources d'abord ») : mesuré, le téléchargement des images passe de 513 s à 291 s.
+
 Des plans sans vidéo (ou seulement « partielle ») ? **🔎 Chercher plus** cherche leur **action** et non plus leur sujet : compilations (fails, best of, caught on camera), vidéos GoPro, vlogs, reportages… des vidéos qui parlent d'autre chose mais où l'action se passe — on n'en prend que les 3 secondes utiles. L'IA regarde les 4 meilleures nouvelles vidéos par plan (2 à 5 min) ; seuls les plans sans bonne vidéo changent. Une image impossible à filmer (animation, schéma) est refusée dès le storyboard.
 
 Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 minutes) :
@@ -109,7 +111,7 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
   - **l'instant le plus fort** de chaque action (vu en mouvement) place la flèche, le ralenti, l'arrêt sur image — et l'**accroche démarre juste avant lui** ;
   - **cadrage sur le sujet** : une image recadrée reste centrée sur la personne ou l'objet de la phrase (les flèches suivent) ;
   - **lumière** : un clip trop sombre est éclairci ;
-  - **musique** : un niveau constant sous la voix (pas de « pompage » entre les phrases), puis elle monte doucement (+6 dB) pendant la petite fin (0,9 s) après le dernier mot.
+  - **musique** : un niveau constant sous la voix (pas de « pompage » entre les phrases), puis elle monte doucement (+6 dB) pendant la petite fin (0,9 s) après le dernier mot. Chaque morceau est **mesuré** et ramené à la même puissance (-26 LUFS, environ 10 dB sous la voix) : un morceau très chargé ne couvre plus la voix, un morceau calme ne disparaît plus. **Silence avant le choc** : une fois par vidéo, la musique se tait une demi-seconde juste avant le premier vrai choc après l'accroche.
   - **coupes sur le rythme** : chaque changement de plan tombe sur un temps fort de la musique quand il y en a un tout près (la pause entre deux phrases bouge de 0,08 à 0,40 s ; une musique sans rythme net ne change rien) ;
   - **couleurs** : un clip à la teinte marquée (sépia, orangé) est ramené vers le neutre, comme les autres ;
   - **netteté** : un clip en basse résolution, agrandi, est débruité puis rendu plus net ;

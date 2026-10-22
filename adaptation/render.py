@@ -26,6 +26,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+from adaptation import sfx
 from adaptation.langs import FONTS_DIR, font_path, lang as lang_of
 
 W, H, FPS = 1080, 1920, 30
@@ -268,18 +269,31 @@ def credit_png(handles: str, path: str, lang: Dict) -> str:
         col = (170, 176, 188, 255)
         label = lang["credit_label"]
         kw = {"direction": "rtl", "language": "ar"} if lang["rtl"] else {}
-        for size in range(30, 15, -2):          # four handles once ran off both edges: smaller until it fits
-            font = ImageFont.truetype(font_path(lang["credit_font"]), size)
-            lw, hw = d.textlength(label, font=font, **kw), d.textlength(handles, font=font)
-            if lw + 12 + hw <= W - 60:
-                break
+        names = handles.split(" · ")
+        # one line, smaller until it fits (four handles once ran off both edges); too small to read
+        # (six sources once): the names on two lines
+        for lines in ([handles], [" · ".join(names[:(len(names) + 1) // 2]), " · ".join(names[(len(names) + 1) // 2:])]):
+            for size in range(30, 25 if len(lines) == 1 and len(names) > 1 else 15, -2):   # 22 px was hard to read
+                font = ImageFont.truetype(font_path(lang["credit_font"]), size)
+                lw = d.textlength(label, font=font, **kw)
+                hw = max(d.textlength(x, font=font) for x in lines)
+                if lw + 12 + hw <= W - 60:
+                    break
+            else:
+                continue
+            break
         x0 = (W - (lw + 12 + hw)) / 2
-        if lang["rtl"]:      # Arabic label on the right
-            d.text((x0, 45), handles, font=font, fill=col, anchor="lm")
+        ys = [45] if len(lines) == 1 else [25, 65]
+        for y, text in zip(ys, lines):
+            tw = d.textlength(text, font=font)
+            if lang["rtl"]:      # Arabic label on the right
+                d.text((x0 + hw - tw, y), text, font=font, fill=col, anchor="lm")
+            else:
+                d.text((x0 + lw + 12, y), text, font=font, fill=col, anchor="lm")
+        if lang["rtl"]:
             d.text((x0 + hw + 12, 45), label, font=font, fill=col, anchor="lm", **kw)
         else:
             d.text((x0, 45), label, font=font, fill=col, anchor="lm")
-            d.text((x0 + lw + 12, 45), handles, font=font, fill=col, anchor="lm")
     img.save(path)
     return path
 
@@ -637,6 +651,32 @@ def _filter_path(p: str) -> str:
     return os.path.abspath(p).replace("\\", "/").replace(":", r"\:").replace("'", r"\'")
 
 
+MUSIC_LUFS = -26.0       # the music bed's loudness under a -16 LUFS voice (the level the person approved)
+HUSH_S = 0.5             # the music stops this long before the strongest crash
+
+
+def music_gain(path: str, start: float, length: float) -> float:
+    """The volume that brings this track's part to MUSIC_LUFS (measured: from
+    -9.9 LUFS to -18.2 between two tracks of the same channel; one fixed
+    volume made one cover the voice and the other vanish)."""
+    r = subprocess.run(["ffmpeg", "-hide_banner", "-ss", f"{start:.2f}", "-t", f"{max(5.0, length):.2f}", "-i", path,
+                        "-af", "ebur128", "-f", "null", "-"], capture_output=True, text=True)
+    found = re.findall(r"^\s+I:\s+(-?[\d.]+) LUFS", r.stderr, re.M)
+    if not found:
+        return MUSIC_GAIN
+    return round(min(1.0, max(0.05, 10 ** ((MUSIC_LUFS - float(found[-1])) / 20))), 4)   # never amplified
+
+
+def hush_at(segs: List[Dict], clips: Dict[str, Dict]) -> Optional[float]:
+    """When the music stops for a breath: just before the first real crash
+    heard after the hook (a trailer's trick, once per video), else None."""
+    for s in segs[1:-1]:
+        c = clips[s["clip"]]
+        if c.get("shock") and s["impact_out"] - s["out"] > HUSH_S + 0.2:
+            return round(s["impact_out"], 3)
+    return None
+
+
 def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
     """Whose sound plays at a clip's strong moment. Made for crash Shorts: on
     a salt-lake Short, the "loudest moment" of a reel's music (a boom) was
@@ -650,22 +690,6 @@ def impact_sound(c: Dict, donor: Optional[Dict]) -> Optional[Dict]:
     if not shock:
         return None
     return c if c.get("audio_ok") else donor
-
-
-WHOOSH_PEAK = 0.32                  # seconds into whoosh.wav where it is loudest
-
-
-def whoosh_wav(path: str) -> str:
-    """A whoosh made from filtered noise (no sound file to ship): it swells
-    to the cut, then falls away quickly."""
-    if not os.path.exists(path):
-        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-                        "anoisesrc=d=0.55:c=pink:a=0.9:r=44100", "-af",
-                        "highpass=f=250,lowpass=f=4200,bandreject=f=60:width_type=h:w=40,"
-                        f"afade=t=in:st=0:d={WHOOSH_PEAK}:curve=exp,"
-                        f"afade=t=out:st={WHOOSH_PEAK}:d=0.22:curve=exp,aecho=0.6:0.4:35:0.25",
-                        "-ac", "2", path], check=True)
-    return path
 
 
 def _window(s: Dict) -> Tuple[float, float]:
@@ -817,11 +841,12 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
 
     # crash sounds: only where a real shock is heard (see impact_sound)
     donor = next((c for c in clips.values() if c.get("audio_ok") and c.get("shock")), None)
-    fx = []
+    fx, own_crash = [], set()
     for s in segs:
         sound = impact_sound(clips[s["clip"]], donor)
         if not sound:
             continue
+        own_crash.add(s["k"])
         a = max(sound["start"], sound["impact"] - 0.35)
         b = min(sound["end"], sound["impact"] + 0.9)
         delay = int(max(0.0, s["impact_out"] - (sound["impact"] - a)) * 1000)
@@ -830,24 +855,30 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
                  f"afade=t=out:st={max(0.0, b - a - 0.3):.3f}:d=0.3,"
                  f"aformat=sample_rates=44100:channel_layouts=stereo,adelay={delay}:all=1[fx{s['k']}]")
         fx.append(f"[fx{s['k']}]")
-    cuts = [s for s in segs if (s.get("fx") or {}).get("transition") and s["k"] > 0]
-    if cuts:                            # a whoosh peaking on each transition's cut
-        wi = add_input("-i", whoosh_wav(os.path.join(work_dir, "whoosh.wav")))
-        g.append(f"[{wi}:a]aformat=sample_rates=44100:channel_layouts=stereo,asplit={len(cuts)}"
-                 + "".join(f"[wh{j}]" for j in range(len(cuts))))
-        for j, s in enumerate(cuts):
-            g.append(f"[wh{j}]adelay={int(max(0.0, s['out'] - WHOOSH_PEAK) * 1000)}:all=1,volume=1.4[wd{j}]")
-            fx.append(f"[wd{j}]")
     if fx:
         g.append("".join(fx) + f"amix=inputs={len(fx)}:normalize=0,volume={SFX_GAIN}[fx]")
         mix.append("[fx]")
+    # the sound effects that follow the picture (arrows, freeze, slow motion, figures, the main transition)
+    effets = sfx.sounds(sfx.plan(segs, list(annotations or []), numbers, total, own_crash))
+    for j, e in enumerate(effets):
+        ei = add_input("-i", e["file"])
+        g.append(f"[{ei}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={e['gain']},"
+                 f"adelay={int(e['start'] * 1000)}:all=1[sx{j}]")
+        mix.append(f"[sx{j}]")
+    music_info: Dict = {}
     if music and music[0] and os.path.exists(music[0]):
         mi = add_input("-ss", f"{music[1]:.3f}", "-i", music[0])
         # one steady level under the voice (ducking between sentences 0.2 s apart made it pump: tiring),
         # then, once the last word is said, the music comes up for the outro
         said = segs[-1]["out"] + (segs[-1]["vb"] - segs[-1]["va"])
-        level = (f"if(lt(t,{said:.3f}),{MUSIC_GAIN},"
-                 f"{MUSIC_GAIN}+{MUSIC_OUTRO - MUSIC_GAIN:.3f}*min(1,(t-{said:.3f})/{OUTRO_RISE}))")
+        gain = music_gain(music[0], music[1], total)          # every track as loud under the voice
+        up = gain * MUSIC_OUTRO / MUSIC_GAIN
+        level = f"if(lt(t,{said:.3f}),{gain:.4f},{gain:.4f}+{up - gain:.4f}*min(1,(t-{said:.3f})/{OUTRO_RISE}))"
+        hush = hush_at(segs, clips)
+        if hush is not None:            # the music holds its breath half a second before the strongest crash
+            a0 = hush - HUSH_S
+            level = (f"({level})*(1-clip((t-{a0:.3f})/0.08,0,1)*clip(({hush:.3f}-t)/0.04,0,1))")
+        music_info.update(gain=round(gain, 3), silence_avant_choc=hush)
         g.append(f"[{mi}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{total:.3f},"
                  f"afade=t=in:d=0.4,volume='{level}':eval=frame,"
                  f"afade=t=out:st={max(0.0, total - 0.15):.3f}:d=0.15[mus]")
@@ -890,7 +921,10 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     on_beat = lambda s: bool(beats and s["k"] > 0 and min(abs(s["out"] - b) for b in beats) < 0.02)
     recipe = {"style": style or "classique", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
               "musique_niveau": "constant sous la voix, monte à la fin" if music and music[0] else None,
-              "tempo_musique": bpm, "plans": []}
+              "musique_gain": music_info.get("gain"), "silence_avant_choc": music_info.get("silence_avant_choc"),
+              "tempo_musique": bpm,
+              "effets_sonores": [{"son": os.path.basename(e["file"]), "a_s": round(e["start"], 2), "pourquoi": e["pourquoi"]}
+                                 for e in effets], "plans": []}
     for s in segs:
         fx = dict(s.get("fx") or {})
         if isinstance(fx.get("zoom"), dict):

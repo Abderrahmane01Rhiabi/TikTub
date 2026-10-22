@@ -29,7 +29,7 @@ from adaptation.script import LANG_RULES, ScriptError
 ROLES = ("accroche", "promesse", "montee", "reponse")
 HOOK_MAX_S = 4.0          # longer, the first sentence loses the scroller (it is asked 2-3 s; 3.6 s was still a good hook)
 PLAN_MAX_S = 7.0          # longer, a matching clip is hard to find
-TOTAL_S = (20.0, 45.0)
+TOTAL_S = (20.0, 38.0)    # of voice (estimated): 45 let a 41 s Arabic Short through, the aim is 25-35 s
 
 WRITE_PROMPT = """Tu ecris un YouTube Short explicatif (voix off sur des images) AVANT d'avoir les images.
 Il reprend la RECETTE d'un Short viral :
@@ -221,7 +221,8 @@ def _public(bundle: Dict) -> Dict:
 
 def normalise(r, codes: List[str]) -> Dict:
     if not isinstance(r, dict) or "error" in r or not isinstance(r.get("plans"), list):
-        raise ScriptError(f"Storyboard inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise ScriptError(plain_error(r) or f"Storyboard inutilisable : {str(r)[:200]}")
     plans = []
     for p in r["plans"]:
         if not isinstance(p, dict):
@@ -319,8 +320,10 @@ Le plan {num} ({role}) n'a pas de video : personne n'a filme "{image}".
 Voici des images DEJA TROUVEES et verifiees, disponibles :
 {options}
 Choisis l'option qui sert le mieux l'histoire a cet endroit, et REECRIS seulement le plan {num} pour qu'il colle a cette
-image : meme role dans l'histoire, l'enchainement avec les plans voisins reste naturel, phrases completes, au plus
-6 secondes de voix, dans chaque langue ({langues}). Ne change aucun autre plan.
+image : le spectateur entend la phrase EN REGARDANT l'image, elle dit donc ce qu'on y VOIT (ou le commente) et ne
+parle d'aucune action absente de l'image (pas d'oeufs sur un thon qui nage seul). Garde le role dans l'histoire et ce
+que le plan apprend quand l'image le permet ; l'enchainement avec les plans voisins reste naturel, phrases completes,
+dans chaque langue ({langues}), AU PLUS : {longueurs}. Ne change aucun autre plan.{encore}
 JSON uniquement : {{"choix": numero de l'option, "image": "ce qu'on voit dans l'option choisie",
   "textes": {{{exemple}}}}}"""
 
@@ -332,18 +335,29 @@ def adapt_to(bundle: Dict, k: int, options: List[Dict], codes: List[str], gemini
     exemple = ", ".join(f'"{c}": {{"bandeau": "", "texte": "", "mots_cles": [""]}}' for c in codes)
     listing = "\n".join(f"{n}. {o['vu']}" for n, o in enumerate(options, 1))
     plan = bundle["plans"][k]
-    r = (gemini or _gemini())._generate_content([{"text": ADAPT_PROMPT.format(
-        bundle=json.dumps(_public(bundle), ensure_ascii=False, indent=1), num=k + 1, role=plan["role"],
-        image=plan["image"], options=listing, langues=", ".join(codes), exemple=exemple)}],
-        max_tokens=4000, timeout=120, temperature=0.5)
-    try:
-        choice = int(r.get("choix")) - 1
-    except (TypeError, ValueError, AttributeError):
-        raise ScriptError(f"Réponse inutilisable : {str(r)[:160]}")
-    if not 0 <= choice < len(options):
-        raise ScriptError("L'IA a choisi une image qui n'existe pas.")
-    fixed = normalise({"plans": [{**plan, "image": r.get("image") or options[choice]["vu"], "textes": r.get("textes")}],
-                       "meta": {}}, codes)
-    if not fixed["plans"]:
-        raise ScriptError("L'IA n'a pas réécrit le plan.")
+    limit = HOOK_MAX_S if k == 0 else PLAN_MAX_S      # measured: an adapted hook of 4.6 s blocked the download
+    longueurs = ", ".join(f"{int(limit * lang_of(c)['chars_per_second']) - 2} caracteres en {c}" for c in codes)
+    encore = ""
+    for _attempt in range(2):
+        r = (gemini or _gemini())._generate_content([{"text": ADAPT_PROMPT.format(
+            bundle=json.dumps(_public(bundle), ensure_ascii=False, indent=1), num=k + 1, role=plan["role"],
+            image=plan["image"], options=listing, langues=", ".join(codes), exemple=exemple, longueurs=longueurs,
+            encore=encore)}], max_tokens=4000, timeout=120, temperature=0.5)
+        try:
+            choice = int(r.get("choix")) - 1
+        except (TypeError, ValueError, AttributeError):
+            from gemini_ai_generator import plain_error
+            raise ScriptError(plain_error(r) or f"Réponse inutilisable : {str(r)[:160]}")
+        if not 0 <= choice < len(options):
+            raise ScriptError("L'IA a choisi une image qui n'existe pas.")
+        # the old plan's arrow pointed at what its image showed (measured: "the white cloud" kept over a tuna swimming)
+        fixed = normalise({"plans": [{**plan, "image": r.get("image") or options[choice]["vu"], "textes": r.get("textes"),
+                                      "annotation": None}],
+                           "meta": {}}, codes)
+        if not fixed["plans"]:
+            raise ScriptError("L'IA n'a pas réécrit le plan.")
+        long = [c for c in codes if seconds(fixed["plans"][0]["textes"][c]["texte"], c) > limit]
+        if not long:
+            break
+        encore = f"\nTa premiere reponse etait trop longue en {', '.join(long)} : respecte ces longueurs."
     return choice, fixed["plans"][0]

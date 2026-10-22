@@ -2788,7 +2788,8 @@ function adVerifOf(sug, url){
 
 function adVerifHtml(v, scene, long){
   if (v.copie) return `<span class="pill bad">copie du Short modèle</span><span>Un repost du Short que tu adaptes : ne pas l'utiliser (droits d'auteur).</span>`;
-  const remix = (v.film ? `<span class="pill bad">film / série / TV : droits d'auteur, jamais choisi automatiquement</span>` : '')
+  const remix = (v.telechargeable === false ? `<span class="pill bad">bloquée d'ici : impossible à télécharger (pays, vidéo retirée)</span>` : '')
+    + (v.film ? `<span class="pill bad">film / série / TV : droits d'auteur, jamais choisi automatiquement</span>` : '')
     + (v.remontage ? `<span class="pill bad">remontage d'un autre créateur : jamais choisi automatiquement</span>` : '');
   const per = v.par_scene || {};
   const useful = Object.entries(per).filter(([, e]) => e.niveau !== 'rien').map(([i]) => +i);
@@ -2887,7 +2888,7 @@ function renderAdFinder(box, p){
   const made = new Set((p.clips || []).filter(c => c.extrait).map(c => c.scene));
   (sug.perso || []).forEach(c => {           // your verified links that serve stay ticked, even after a reload
     const v = (sug.verifs || {})[c.url];
-    if (v && v.par_scene && v.verdict !== 'non' && !v.copie && !adUnpicked.has(c.url) && !have.has(adKey(c.url))) adPicked.add(c.url);
+    if (v && v.par_scene && v.verdict !== 'non' && !v.copie && v.telechargeable !== false && !adUnpicked.has(c.url) && !have.has(adKey(c.url))) adPicked.add(c.url);
   });
   const links = ls => `<div class="ad-links">${ls.map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join('')}</div>`;
   const chips = qs => qs.map(q => `<span class="chipbtn" title="Copier" data-copy="${esc(q)}">${esc(q)}</span>`).join('');
@@ -3004,7 +3005,7 @@ function renderAdFinder(box, p){
     try {
       const np = await api(`/api/adaptations/${p.project_id}/suggestions/own`, { method:'POST', body: JSON.stringify({ urls: list }) });
       const vs = (np.suggestions || {}).verifs || {};
-      list.forEach(u => { const v = vs[u]; if (v && v.par_scene && v.verdict !== 'non') adPicked.add(u); });   // the useful ones, ticked
+      list.forEach(u => { const v = vs[u]; if (v && v.par_scene && v.verdict !== 'non' && v.telechargeable !== false) adPicked.add(u); });   // the useful ones, ticked
       adProject = np; renderAdFinder(box, np);
       const kept = list.filter(u => adPicked.has(u)).length;
       toast(`${list.length} lien(s) vérifié(s), ${kept} utile(s) coché(s)`, 'success');
@@ -3088,7 +3089,7 @@ function adFxHtml(e){
       ${box('sc-fx-freeze', e.arret, '⏸ Arrêt sur image', 'L’image se fige un instant sur le moment fort (avec la flèche ou le cercle s’il y en a)')}
       ${box('sc-fx-trans', e.transition, '💨 Transition', 'Coup de zoom et « whoosh » : une nouvelle partie de l’histoire commence')}
       <input class="f sc-fx-zoom" value="${esc(e.zoom || '')}" placeholder="🔍 Zoom sur… (ex. les pieds de la femme)" style="flex:1;min-width:160px;font-size:12px">
-      <input class="f sc-fx-num" value="${esc(e.chiffre || '')}" maxlength="16" placeholder="🔢 Chiffre en grand (ex. 2 m)" title="Un chiffre fort qui apparaît en grand au moment fort du plan" style="width:170px;font-size:12px"></div>`;
+      <input class="f sc-fx-num" value="${esc(e.chiffre || '')}" maxlength="16" placeholder="🔢 Chiffre (ex. 2 m)" title="Un chiffre fort qui apparaît en grand au moment fort du plan" style="width:150px;font-size:12px"></div>`;
 }
 
 function adFxOf(row){
@@ -3251,15 +3252,17 @@ function renderAdImages(body, p){
             ${pick.remontage ? `<span class="pill bad">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
             ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
-            <button class="btn ghost small ad-unpick">Aucune vidéo pour ce plan</button></div>`
+            <button class="btn ghost small ad-unpick" title="Ce plan n'aura plus de vidéo choisie : tu pourras en prendre une autre">Enlever ce choix</button></div>`
           : `<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan. Choisis-en une ci-dessous, donne ton lien, ou :</div>
              <div class="ad-row"><button class="btn secondary small ad-adapt" data-icon="sparkle" title="L'IA réécrit la phrase (toutes les langues) autour d'une image déjà trouvée">Adapter la phrase à une image trouvée</button>
                <button class="btn ghost small ad-skip">Retirer ce plan</button></div>`}
         <div class="ad-row"><input class="f ad-plan-link" placeholder="Ton lien pour ce plan (TikTok, YouTube, VK…)" style="flex:1;min-width:220px">
           <button class="btn secondary small ad-plan-check" title="L'IA vérifie ce lien pour ce plan (15 s à 2 min)">Vérifier pour ce plan</button>
           ${pick ? '<button class="btn ghost small ad-skip">Retirer ce plan</button>' : ''}
-          ${k > 0 && pl.role !== 'accroche' && (pl.plans_modele || []).length && !(pick && pick.extrait)
-            ? `<button class="btn ghost small ad-excerpt" title="3 secondes maximum, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>
+          ${k > 0 && pl.role !== 'accroche' && ((p.reference || {}).plans || []).length && !(pick && pick.extrait)
+            ? `<select class="f ad-excerpt-ref" style="width:auto;max-width:260px;font-size:12px" title="Le moment du Short modèle à prendre">
+                ${p.reference.plans.map((r, i) => `<option value="${i + 1}" ${(pl.plans_modele || [])[0] === i + 1 ? 'selected' : ''}>Modèle ${i + 1} (${adDuration(r.debut) || '0:00'}–${adDuration(r.fin) || '0:00'}) — ${esc((r.visuel || '').slice(0, 50))}</option>`).join('')}</select>
+              <button class="btn ghost small ad-excerpt" title="3 secondes maximum du moment choisi, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>
         ${frames.length ? adFramesHtml(p, frames) : ''}
         <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches || [])}</div>
         ${links(sc.liens || [])}
@@ -3304,7 +3307,9 @@ function renderAdImages(body, p){
     const unskip = card.querySelector('.ad-unskip');
     if (unskip) unskip.onclick = () => post(`plans/${k}/skip`, null, '', { skip: false });
     const excerpt = card.querySelector('.ad-excerpt');
-    if (excerpt){ excerpt.dataset.label = excerpt.textContent.trim(); excerpt.onclick = () => post(`plans/${k}/excerpt`, excerpt, 'repérage dans le Short…'); }
+    if (excerpt){ excerpt.dataset.label = excerpt.textContent.trim();
+      excerpt.onclick = () => post(`plans/${k}/excerpt`, excerpt, 'repérage dans le Short…',
+                                   { ref: +((card.querySelector('.ad-excerpt-ref') || {}).value || 0) || null }); }
     const adapt = card.querySelector('.ad-adapt');
     if (adapt){ adapt.dataset.label = adapt.textContent.trim(); adapt.onclick = () => post(`plans/${k}/adapt`, adapt, 'l\'IA réécrit…'); }
     const chkLink = card.querySelector('.ad-plan-check');
@@ -3328,12 +3333,14 @@ function renderAdImages(body, p){
 }
 
 // Does the clip show what its sentence says? (checked after the download; stale once the sentence or the clip changes)
-function adAccordHtml(t, ps, i){
+function adAccordHtml(t, ps, i, p){
   const a = (t.accords || [])[i];
   if (!a || a.texte !== ps.texte || a.clip !== ps.clip) return '';
   if (a.note === 'bon') return `<div class="tiny" style="color:#6fd08c">✅ La phrase va avec son image</div>`;
   const red = a.note === 'non' && !a.garde;
   return `<div class="tiny" style="color:${red ? '#ff7b7b' : '#f5c56d'}">${a.note === 'non' ? (a.garde ? '❌ gardé quand même' : '❌ Ne va pas avec l\'image') : '🟡 Lien faible avec l\'image'}${a.pourquoi ? ' : ' + esc(a.pourquoi) : ''}</div>
+    ${a.autre_clip ? `<div class="ad-row"><span class="tiny">Le clip <b>${esc(a.autre_clip)}</b> montre ta phrase : ${esc(((p || {}).clips || []).find(c => c.id === a.autre_clip)?.desc || '').slice(0, 90)}</span>
+      <button class="btn ghost small ad-acc" data-act="clip" title="Ta phrase reste ; le clip change">Prendre ce clip</button></div>` : ''}
     ${a.proposition ? `<div class="ad-row"><span class="tiny">Proposé : « ${esc(a.proposition)} »</span>
       <button class="btn ghost small ad-acc" data-act="proposal">Prendre cette phrase</button></div>` : ''}
     ${red ? `<button class="btn ghost small ad-acc" data-act="keep" title="Regarde le clip avec ▶ : tu as le dernier mot">Garder quand même</button>` : ''}`;
@@ -3341,7 +3348,9 @@ function adAccordHtml(t, ps, i){
 
 function renderAdScripts(body, p){
   const allApproved = p.targets.every(t => t.approved);
-  body.innerHTML = p.targets.map(t => {
+  body.innerHTML = `<article class="chcard"><div class="chcard-body">
+      <label class="f">Crédits affichés en haut de la vidéo et dans la description <span class="tiny">(les comptes dont les images sont utilisées)</span></label>
+      <input class="f" id="adScriptCredits" value="${esc(p.credits || '')}"></div></article>` + p.targets.map(t => {
     const sc = t.script || { passages: [] };
     const dir = t.rtl ? 'dir="rtl"' : '';
     return `
@@ -3372,7 +3381,7 @@ function renderAdScripts(body, p){
             return left.length ? `<div class="tiny" style="opacity:.8">${left.map(c => `${esc(c.id)} : texte resté après nettoyage, effacé aussi (« ${esc(c.texte_efface.join(' », « '))} ») — vérifie avec ▶`).join(' · ')}</div>` : ''; })()}
         ${(() => { const low = [...new Set(sc.passages.map(ps => ps.clip))].map(cid => p.clips.find(c => c.id === cid))
               .filter(c => c && c.low_res);
-            return low.length ? `<div class="tiny" style="color:#f5c56d">${low.map(c => `${esc(c.id)} : basse résolution (${c.w}×${c.h}), floue à l'écran${sc.passages[0] && sc.passages[0].clip === c.id ? ' — c\'est l\'accroche : cherche mieux si tu peux' : ''}`).join(' · ')}</div>` : ''; })()}
+            return low.length ? `<div class="tiny" style="color:#f5c56d">Basse résolution (floue à l'écran) : ${low.map(c => `${esc(c.id)} (${c.w}×${c.h})${sc.passages[0] && sc.passages[0].clip === c.id ? ' <b>— c\'est l\'accroche : cherche mieux si tu peux</b>' : ''}`).join(', ')}</div>` : ''; })()}
         <label class="f">Titre</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
         <div>${sc.passages.map((ps, i) => `
           <div class="ad-passage" data-i="${i}">
@@ -3385,7 +3394,7 @@ function renderAdScripts(body, p){
               ${adAnnHtml(ps.annotation)}
               ${adFxHtml(ps.effets)}
               ${ps.effets && ps.effets.zoom && ps.annotation ? `<div class="tiny" style="color:#f5c56d">Zoom ignoré : ce plan a une flèche ou un cercle (elle serait mal placée sur l'image zoomée). Choisis l'un ou l'autre.</div>` : ''}
-              ${adAccordHtml(t, ps, i)}
+              ${adAccordHtml(t, ps, i, p)}
             </div>
           </div>`).join('')}</div>
         <label class="f">Description</label><textarea class="f sc-desc" ${dir}>${esc(sc.description || '')}</textarea>
@@ -3403,6 +3412,10 @@ function renderAdScripts(body, p){
       <button class="btn primary" id="adVoices" ${allApproved ? '' : 'disabled'} data-icon="mic">Générer les voix et les aperçus →</button></div>`;
   hydrateIcons(body);
   adBindPlay(body);
+  document.getElementById('adScriptCredits').onchange = async e => {
+    try { adProject = await api(`/api/adaptations/${p.project_id}/credits`, { method:'PATCH', body: JSON.stringify({ credits: e.target.value }) });
+          toast('Crédits enregistrés', 'success'); } catch (err){ log(err.message, 'error'); }
+  };
   body.querySelectorAll('.ad-target-card').forEach(card => {
     const ch = card.dataset.channel;
     const collect = () => ({
@@ -3413,23 +3426,27 @@ function renderAdScripts(body, p){
         texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row), effets: adFxOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = null; renderAdScripts(body, np); adProject = np; };
+    // a save is judged again (20 s or more): no voices started before it is written
+    const busy = () => { const go = document.getElementById('adVoices'); if (go) go.disabled = true; };
     card.querySelectorAll('.sc-clip').forEach(sel => sel.onchange = () =>
       { const holder = sel.closest('.ad-passage').querySelector('.ad-play');
         holder.outerHTML = adPlayHtml(p.project_id, sel.value); adBindPlay(sel.closest('.ad-passage')); });
     card.querySelector('.sc-save').onclick = async () => {
+      busy();
       try { refresh(await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) })));
             toast('Script enregistré', 'success'); } catch (e){ log(e.message, 'error'); }
     };
     card.querySelector('.sc-revise').onclick = async ev => {
       const req = card.querySelector('.sc-ask').value.trim();
       if (!req) return;
-      const btn = ev.currentTarget; btn.disabled = true; btn.innerHTML = spin('…');
+      const btn = ev.currentTarget; btn.disabled = true; btn.innerHTML = spin('…'); busy();
       try {
         await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
         refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/revise`, { method:'POST', body: JSON.stringify({ request: req }) }));
       } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.textContent = 'Envoyer'; }
     };
     card.querySelector('.sc-approve').onclick = async () => {
+      busy();
       try {
         await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
         refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/approve`, { method:'POST' }));

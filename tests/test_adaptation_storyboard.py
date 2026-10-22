@@ -255,7 +255,7 @@ def test_searching_needs_every_script_approved_then_picks_a_moment_per_plan(proj
         return {"scenes": [{**w, "candidats": [{"url": "A", "title": "Compil"}]} for w in wanted], "comptes": [], "verifs": {}}
     monkeypatch.setattr(finder, "suggest", suggest)
 
-    def verify_best(sug, ref, n, report=None):
+    def verify_best(sug, ref, n, report=None, **kw):
         seen["n"], seen["plans"] = n, ref["plans"]
         sug["verifs"] = {"A": {"verdict": "oui", "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 2, "fin": 6}]}}}}
         return sug
@@ -292,7 +292,7 @@ def test_api_images_and_picks(client, project, fakes, monkeypatch):
     pid = _approved_project(project, fakes)
     monkeypatch.setattr(finder, "plan_queries", lambda found: {})
     monkeypatch.setattr(finder, "suggest", lambda *a, **k: {"scenes": [], "comptes": [], "verifs": {}})
-    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None, **kw: sug)
     import time
     assert client.post(f"/api/adaptations/{pid}/images").status_code == 200
     for _ in range(50):
@@ -328,7 +328,7 @@ def _images_project(project, fakes, monkeypatch, picks=None):
     v = {"verdict": "oui", "title": "Compil", "duration": 600, "par_scene": {
         str(k): {"niveau": "exacte", "moments": [{"debut": 100 + 30 * k, "fin": 104 + 30 * k, "ce_qu_on_voit": f"moment {k}"}]}
         for k in range(5)}}
-    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug.update(
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None, **kw: sug.update(
         verifs={"https://www.youtube.com/watch?v=aaaaaaaaaaa": v}) or sug)
     ap.run_images(pid)
     return pid
@@ -361,6 +361,8 @@ def test_a_plan_without_video_is_adapted_to_an_image_found(project, fakes, monke
 
     def adapt_to(bundle, k, options, codes):
         seen["options"], seen["k"] = options, k
+        if not options:
+            raise ap.script.ScriptError("Aucune image trouvée à proposer")
         new = {**bundle["plans"][k], "image": "moment 4 vu autrement",
                "textes": {"fr": {"bandeau": "X : Y 😐", "texte": "Une phrase adaptée et complète.", "mots_cles": []},
                           "ar": {"bandeau": "س", "texte": "جملة جديدة كاملة.", "mots_cles": []}}}
@@ -372,6 +374,14 @@ def test_a_plan_without_video_is_adapted_to_an_image_found(project, fakes, monke
     assert p["storyboard"]["plans"][5]["image"] == "moment 4 vu autrement" and p["storyboard"]["plans"][5]["adapte"]
     assert p["picks"][5]["niveau"] == "adaptée" and p["picks"][5]["moment"] == {"debut": 220.0, "fin": 224.0}
     assert p["targets"][0]["script"]["passages"][5]["texte"] == "Une phrase adaptée et complète."
+    ap.choose_pick(pid, 5, None)
+    p = ap.load(pid)
+    for v in p["suggestions"]["verifs"].values():
+        v["film"] = True                                      # a film (rights): never offered, like auto_pick
+    ap.save(p)
+    with pytest.raises(ap.PipelineError, match="Aucune image"):
+        ap.adapt_plan(pid, 5)
+    assert seen["options"] == []
 
 
 def test_fetch_downloads_only_the_moments_and_gives_each_plan_its_clip(project, fakes, monkeypatch):
@@ -453,7 +463,7 @@ def test_each_sentence_is_compared_with_what_its_clip_really_shows():
         def _generate_content(self, parts, **kw):
             G.prompt = parts[0]["text"]
             return {"passages": [{"note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
-                                  "proposition": "Ce liquide cache un secret."}, {"note": "bon", "proposition": "x"},
+                                  "proposition": "Ce liquide cache un secret.", "bandeau": "LIQUIDE : SECRET 🧪"}, {"note": "bon", "proposition": "x"},
                                  {"note": "bizarre"}]}
     clips = {"P1": {"start": 0, "end": 4, "desc": "un homme frappe un bac"}, "P2": {"start": 0, "end": 3, "desc": "une roue"},
              "P3": {"start": 0, "end": 3, "desc": "?"}}
@@ -462,7 +472,8 @@ def test_each_sentence_is_compared_with_what_its_clip_really_shows():
     assert "un homme frappe un bac" in G.prompt and "ACCROCHE" in G.prompt
     assert [a["note"] for a in out] == ["non", "bon", "bon"] and out[1]["proposition"] == ""   # unknown note: never blocks
     assert out[0] == {"clip": "P1", "texte": "Phrase 1.", "note": "non", "pourquoi": "on entend dos d'âne, on voit un labo",
-                      "proposition": "Ce liquide cache un secret."}
+                      "proposition": "Ce liquide cache un secret.", "autre_clip": None,
+                      "bandeau": "LIQUIDE : SECRET 🧪"}
     probs = ap._fetched_problems(sc, clips, "fr", out)
     assert any("Passage 1 : la phrase ne correspond pas" in x for x in probs)
     sc["passages"][0]["texte"] = "Une autre phrase."                       # the sentence changed: the verdict is stale
@@ -483,7 +494,8 @@ def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(
     monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
     monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: [
         {"clip": x["clip"], "texte": x["texte"], "note": "non" if k < 2 else "bon", "pourquoi": "autre chose",
-         "proposition": "Une phrase pour cette image." if k < 2 else ""} for k, x in enumerate(sc["passages"])])
+         "proposition": "Une phrase pour cette image." if k < 2 else "", "bandeau": "IMAGE : ENFIN 🎯" if k < 2 else ""}
+        for k, x in enumerate(sc["passages"])])
     ap.start_fetch(pid)
     ap.run_fetch(pid)
     t = ap.load(pid)["targets"][0]
@@ -491,6 +503,7 @@ def test_a_sentence_that_does_not_match_its_clip_blocks_until_rewritten_or_kept(
     p = ap.use_proposal(pid, t["channel"], 0)
     t = p["targets"][0]
     assert t["script"]["passages"][0]["texte"] == "Une phrase pour cette image."
+    assert t["script"]["passages"][0]["bandeau"] == "IMAGE : ENFIN 🎯"                # the banner goes with it
     assert p["storyboard"]["plans"][0]["textes"][t["language"]]["texte"] == "Une phrase pour cette image."
     t = ap.keep_passage(pid, t["channel"], 1)["targets"][0]
     assert not any("ne correspond pas" in x for x in t["problems"])
@@ -932,6 +945,8 @@ def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatc
     monkeypatch.setattr(sources, "detect_cuts", lambda *a, **k: [(0, 3), (3, 9)])
     monkeypatch.setattr(sources, "still", lambda *a, **k: "s.jpg")
     monkeypatch.setattr(sources, "find_boxes", lambda stills: [([0, 0, 1000, 1000], [], ["@createur_du_short"])])
+    left = []
+    monkeypatch.setattr(sources, "leftover_text", lambda clips, work, finder=None: left.extend(clips) or {})
     monkeypatch.setattr(sources, "source_meta", lambda path: {"handle": "@createur_du_short"})
     monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
         "id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920, "usable": True,
@@ -951,6 +966,7 @@ def test_sources_first_excerpt_becomes_a_clean_credited_clip(project, monkeypatc
     with pytest.raises(ap.PipelineError, match="déjà son extrait"):
         ap.add_excerpt_source(pid, 1)
     assert "extrait du Short modèle" in c["desc"] and "@createur_du_short" in p["credits"]
+    assert left == ["M1"]                                   # its leftover text looked at (as in Script d'abord)
     assert p["source_urls"] == ["https://youtube.com/shorts/ref"] and len(p["sources"]) == 1
     sc = {"passages": [{"clip": "M1", "texte": "Court.", "bandeau": "", "mots_cles": []}]}
     from adaptation import script
@@ -1098,7 +1114,7 @@ def test_the_versions_of_a_group_share_the_searches_that_are_the_same(project, f
     monkeypatch.setattr(finder, "plan_queries", lambda found: {i: {"recherches": ["tram crash"], "pays": "", "langue": "",
                                                                     "locales": []} for i in range(len(found))})
     monkeypatch.setattr(finder, "sort_out", lambda found, gemini=None, prompt=None: None)
-    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None: sug)
+    monkeypatch.setattr(finder, "verify_best", lambda sug, ref, n, report=None, **kw: sug)
 
     def youtube(q, n=5):
         calls["youtube"].append(q)
@@ -1127,3 +1143,123 @@ def test_the_versions_of_a_group_share_the_searches_that_are_the_same(project, f
     assert second["status"] == "images_review" and second["suggestions"]["images"]["frames"][0]["file"] == "f00.jpg"
     assert Path(ap.project_dir(members[1]["project_id"]), "finder", "f00.jpg").exists()     # copied for its page
     assert "search_cache" in ap.load(lead["project_id"])
+
+
+def test_any_plan_can_take_the_reference_moment_the_person_chooses(project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["storyboard"]["plans"][3]["plans_modele"] = []                        # an image the storyboard invented
+    ap.save(p)
+    asked = []
+    monkeypatch.setattr(ap, "excerpt_window", lambda p, refs: asked.append(refs) or (5.0, 8.0))
+    with pytest.raises(ap.PipelineError):
+        ap.use_excerpt_for_plan(pid, 3)                                     # nothing to go on: the person chooses
+    p = ap.use_excerpt_for_plan(pid, 3, ref=2)
+    assert asked == [[1]] and p["picks"][3]["extrait"] and p["picks"][3]["moment"] == {"debut": 5.0, "fin": 8.0}
+    with pytest.raises(ap.PipelineError):
+        ap.use_excerpt_for_plan(pid, 0, ref=1)                              # never the hook
+
+
+def test_api_excerpt_with_a_chosen_moment(client, project, fakes, monkeypatch):
+    pid = _images_project(project, fakes, monkeypatch)
+    monkeypatch.setattr(ap, "excerpt_window", lambda p, refs: (refs[0] + 1.0, refs[0] + 3.0))
+    r = client.post(f"/api/adaptations/{pid}/plans/3/excerpt", json={"ref": 2})
+    assert r.status_code == 200 and r.json()["picks"][3]["moment"] == {"debut": 2.0, "fin": 4.0}
+    assert "plans" in r.json()["reference"]                                  # the list the page offers
+    assert client.post(f"/api/adaptations/{pid}/plans/4/excerpt").status_code == 200   # no body: the storyboard's
+
+
+def test_six_credited_handles_go_on_two_readable_lines(tmp_path):
+    from PIL import Image
+    from adaptation import render, langs
+    six = "@mffltd6342 · @MrClaixa · @TokyoSeaLifePark · @hopehouse8084 · @MatthiasBojar · @Klimt-YT"
+    for code in ("fr", "ar"):
+        img = Image.open(render.credit_png(six, str(tmp_path / f"{code}.png"), langs.lang(code)))
+        box = img.getbbox()
+        assert box[0] > 0 and box[2] < render.W
+        rows = [y for y in range(img.size[1]) if any(img.getpixel((x, y))[3] for x in range(0, render.W, 3))]
+        assert rows[-1] - rows[0] > 45                                         # two lines, not one tiny line
+
+
+def test_a_plan_adapted_to_another_picture_loses_the_arrow_of_the_old_one():
+    class G:
+        def _generate_content(self, parts, **kw):
+            G.prompt = parts[0]["text"]
+            return {"choix": 1, "image": "un thon qui nage", "textes": {
+                "fr": {"bandeau": "A : B", "texte": "Un thon file sans jamais freiner.", "mots_cles": []},
+                "ar": {"bandeau": "أ", "texte": "سمكة تونة تسبح بلا توقف.", "mots_cles": []}}}
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    b["plans"][2]["annotation"] = {"type": "fleche", "cible": "le nuage blanc"}
+    _, new = sb.adapt_to(b, 2, [{"vu": "un thon qui nage"}], ["fr", "ar"], gemini=G())
+    assert new["annotation"] is None and "VOIT" in G.prompt
+
+
+def test_a_storyboard_of_about_40_seconds_is_too_long():
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    n = len(b["plans"])
+    for p in b["plans"]:                                  # 40 s of Arabic voice in all (measured: 40.2 s estimated, 41.1 s real)
+        p["textes"]["ar"]["texte"] = "ب" * int(40 * 12 / n - 1) + "."
+    assert any("Durée totale" in x for x in sb.problems(b, "ar"))
+    for p in b["plans"]:
+        p["textes"]["ar"]["texte"] = "ب" * int(30 * 12 / n - 1) + "."
+    assert not any("Durée totale" in x for x in sb.problems(b, "ar"))
+
+
+def test_search_more_first_checks_what_another_version_of_the_short_found_useful(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    p["picks"][2] = None
+    ap.save(p)
+    seen = lambda lvl, **kw: {"par_scene": {"4": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}, **kw}
+    other = {"project_id": "other", "suggestions": {"verifs": {
+        "https://www.youtube.com/watch?v=handinwater": seen("exacte"),
+        "https://www.youtube.com/watch?v=bbcfilm0000": seen("exacte", film=True),
+        "https://www.youtube.com/watch?v=offtopic000": seen("rien")}}}
+    monkeypatch.setattr(ap, "group_of", lambda q: [other])
+    monkeypatch.setattr(finder, "action_queries", lambda found: {})
+    checked = []
+    monkeypatch.setattr(finder, "check", lambda url, scenes, plans, **kw: checked.append(url) or {
+        "verdict": "oui", "duration": 60, "title": "x",
+        "par_scene": {"2": {"niveau": "exacte" if url.endswith("handinwater") else "rien",
+                            "moments": [{"debut": 3, "fin": 8}]}}})
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    assert checked[0].endswith("handinwater") and not any("bbcfilm" in u or "offtopic" in u for u in checked)
+    assert ap.load(pid)["picks"][2]["url"].endswith("handinwater")
+
+
+def test_search_more_frees_the_moment_a_plan_lets_go_for_the_next_plans(project, fakes, monkeypatch):
+    from adaptation import finder
+    pid = _images_project(project, fakes, monkeypatch)
+    p = ap.load(pid)
+    old = {"url": "https://www.youtube.com/watch?v=backedup000", "titre": "u", "niveau": "partielle",
+           "moment": {"debut": 129.0, "fin": 135.0}, "raison": "", "auto": True}
+    p["picks"][3], p["picks"][5] = old, None
+    ap.save(p)
+    new3 = {**old, "url": "https://www.youtube.com/watch?v=byhand00000", "niveau": "exacte"}
+    new5 = {**old, "niveau": "equivalente", "moment": {"debut": 129.0, "fin": 147.0}}   # plan 4's old moment
+    monkeypatch.setattr(ap, "group_of", lambda q: [])
+    monkeypatch.setattr(finder, "action_queries", lambda found: {})
+    monkeypatch.setattr(finder, "auto_pick", lambda sug, plans: [None, None, None, new3, None, new5])
+    ap.start_more_images(pid)
+    ap.run_images(pid)
+    picks = ap.load(pid)["picks"]
+    assert picks[3]["url"].endswith("byhand00000") and picks[5]["moment"]["debut"] == 129.0
+
+
+def test_an_adapted_hook_keeps_to_the_hook_length():
+    prompts = []
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            prompts.append(parts[0]["text"])
+            fr = "Le souffleur est-il vraiment l'outil idéal pour vider une gouttière ?" if len(prompts) == 1 \
+                else "Le souffleur suffit-il vraiment ?"
+            return {"choix": 1, "image": "un souffleur", "textes": {
+                "fr": {"bandeau": "A : B", "texte": fr, "mots_cles": []},
+                "ar": {"bandeau": "أ", "texte": "هل يكفي المنفاخ؟", "mots_cles": []}}}
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr", "ar"])
+    _, new = sb.adapt_to(b, 0, [{"vu": "un souffleur"}], ["fr", "ar"], gemini=G())
+    assert "58 caracteres en fr" in prompts[0] and "trop longue en fr" in prompts[1]
+    assert new["textes"]["fr"]["texte"] == "Le souffleur suffit-il vraiment ?"

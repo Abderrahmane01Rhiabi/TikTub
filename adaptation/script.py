@@ -68,9 +68,14 @@ JSON uniquement :
 
 REVISE_PROMPT = """Voici le script d'un Short (JSON) :
 {script}
-Clips (lettre: duree utilisable en secondes) : {durees}
+Les clips (ce qu'on y voit, duree utilisable) :
+{clips}
 Corrige-le selon cette demande, sans rien changer d'autre, et renvoie le JSON complet au meme format :
-{demande}"""
+{demande}
+La demande decrit le probleme avec les mots de la personne : ne les recopie pas dans le script. Ecris pour le
+spectateur, au ton du reste du script, des phrases naturelles et completes, pas plus longues que celles qu'elles
+remplacent (mauvais exemple, qui recopie la demande : "Comme ce thon qui nage autour d'une ligne de peche, …").
+Le bandeau d'une phrase changee doit aller avec elle (meme format) et ses mots_cles etre des mots de la phrase."""
 
 
 CRITIQUE_PROMPT = """Tu es un relecteur exigeant de scripts de YouTube Shorts, langue : {langue}.
@@ -165,15 +170,17 @@ def critique(script: Dict, lang_code: str, clips: Dict[str, Dict], gemini=None) 
 
 
 def revise(script: Dict, clips: Dict[str, Dict], request: str, gemini=None) -> Dict:
-    durees = {cid: round(c["end"] - c["start"], 1) for cid, c in clips.items()}
-    r = (gemini or _gemini())._generate_content(
+    r = (gemini or _gemini())._generate_content(       # what each clip shows: "fit the picture" needs it
         [{"text": REVISE_PROMPT.format(script=json.dumps(script, ensure_ascii=False, indent=1),
-                                       durees=json.dumps(durees), demande=request)}],
-        max_tokens=16000, timeout=180, temperature=0.4)
+                                       clips=clip_listing(clips), demande=request)}],
+        max_tokens=16000, timeout=180, temperature=0.4, thinking=1024)    # measured: 56 s -> 10 s, as good
     return normalise(r, clips)
 
 
 def normalise(r, clips: Dict[str, Dict]) -> Dict:
+    from gemini_ai_generator import plain_error
+    if plain_error(r):                  # said plainly ("Script inutilisable : {'error': 'API error: 402'}")
+        raise ScriptError(plain_error(r))
     if not isinstance(r, dict) or "error" in r or not isinstance(r.get("passages"), list):
         raise ScriptError(f"Script inutilisable : {str(r)[:200]}")
     passages = []
@@ -224,7 +231,7 @@ def problems(script: Dict, clips: Dict[str, Dict], lang_code: str) -> List[str]:
             out.append(f"Passage {k} : phrase trop longue pour son clip ({len(p['texte'])} caractères, "
                        f"le clip {p['clip']} en laisse environ {int(room)}).")
     total = sum(len(p["texte"]) for p in ps) / lang["chars_per_second"]
-    if total > 45:
+    if total > 38:                      # 45 let a 41 s Arabic Short through
         out.append(f"Script trop long : environ {total:.0f} s de lecture (viser 27-33 s).")
     return out
 
@@ -245,13 +252,21 @@ Note chaque passage :
 - "moyen" : lien indirect, le spectateur comprend mais l'image n'illustre pas vraiment la phrase.
 - "non" : l'image montre autre chose ; le spectateur entend X et voit Y.
 Le passage 1 est l'ACCROCHE (les 2 premieres secondes) : sois strict, le sujet de la video doit se voir ; s'il ne se
-voit pas, c'est "non".
-Pour "moyen" et "non", propose une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP tout en gardant
-le role du passage dans l'histoire (accroche, explication, chute), complete, sans "…", au plus le nombre de
-caracteres indique pour son clip. Pour "bon", "proposition" est vide.
-
+voit pas, c'est "non". Elle doit aussi se comprendre en une seconde sur un telephone : le sujet grand, net et eclaire.
+Une image sombre, floue, ou le sujet n'est qu'une petite forme au loin, c'est "non" meme si c'est le bon sujet ; pour
+elle, "autre_clip" est le clip le plus frappant qui montre le sujet.
+Pour "moyen" et "non" :
+- "autre_clip" : si un des AUTRES CLIPS ci-dessous montre ce que dit la phrase, son identifiant (le meilleur) ;
+  null sinon. C'est la meilleure solution : la phrase et l'histoire restent intactes.
+- "proposition" : une phrase de remplacement en {langue} qui decrit CE QUE MONTRE LE CLIP en gardant ce que le
+  passage APPREND au spectateur et son role (accroche = la question du sujet, chute = la reponse), complete, sans
+  "…", au plus le nombre de caracteres indique ; laisse-la vide si c'est impossible sans changer l'histoire.
+- "bandeau" : avec une proposition, le bandeau qui va avec elle, au format du bandeau actuel ("TITRE : SOUS-TITRE"
+  et un emoji), qui ne contredit pas la nouvelle phrase ; vide sinon.
+Pour "bon", "autre_clip" est null, "proposition" et "bandeau" vides.
+{autres}
 JSON uniquement : {{"passages": [{{"note": "bon|moyen|non", "pourquoi": "en francais, 1 phrase courte : on entend
-.../on voit ...", "proposition": "..."}}]}} dans l'ordre des passages."""
+.../on voit ...", "autre_clip": null, "proposition": "...", "bandeau": "..."}}]}} dans l'ordre des passages."""
 
 
 def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
@@ -267,7 +282,7 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
         c = clips.get(p["clip"]) or {}
         room = int((c.get("end", 0) - c.get("start", 0)) * lang["chars_per_second"]) or len(p["texte"])
         seen = f" | action verifiee en regardant la video en mouvement : {c['action']}" if c.get("action") else ""
-        lines.append(f"{k}. phrase : \"{p['texte']}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}{seen}")
+        lines.append(f"{k}. phrase : \"{p['texte']}\" | bandeau : \"{p.get('bandeau') or ''}\" | clip ({room} caracteres au plus) : {c.get('desc') or '?'}{seen}")
     import base64
     pics = []
     for k in range(len(ps)):
@@ -278,20 +293,30 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
                      for f in files]
     images = ("Trois images fixes de chaque clip suivent. Une image fixe peut etre ambigue (un saut fige au moment ou un "
               "bus passe) : l'\"action verifiee\", vue en mouvement, fait foi sur ce qui se passe.\n" if pics else "")
-    parts = [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines), images=images)}] + pics
+    used = {p["clip"] for p in ps}
+    spare = {cid: c for cid, c in clips.items() if cid not in used and c.get("usable", True)}
+    autres = ("AUTRES CLIPS disponibles (identifiant : ce qu'il montre, duree) :\n" + "\n".join(
+        f"- {cid} : {(c.get('action') or c.get('desc') or '?')[:160]} ({c['end'] - c['start']:.1f}s)"
+        for cid, c in list(spare.items())[:30])) if spare else "Aucun autre clip disponible : \"autre_clip\" est null."
+    parts = [{"text": MATCH_PROMPT.format(langue=lang["label"], passages="\n".join(lines), images=images,
+                                          autres=autres)}] + pics
     for _attempt in range(2):           # an answer once came back cut in the middle (long, with pictures)
         r = (gemini or _gemini())._generate_content(parts, max_tokens=32000, timeout=180, temperature=0.2)
         items = r.get("passages") if isinstance(r, dict) else r
         if isinstance(items, list):
             break
     if not isinstance(items, list):
-        raise ScriptError(f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise ScriptError(plain_error(r) or f"Contrôle phrase/image inutilisable : {str(r)[:200]}")
     out = []
     for p, x in zip(ps, items + [{}] * len(ps)):
         x = x if isinstance(x, dict) else {}
         note = str(x.get("note", "")).strip().lower()
         note = note if note in ("bon", "moyen", "non") else "bon"
         prop = " ".join(str(x.get("proposition") or "").split()) if note != "bon" else ""
+        other = str(x.get("autre_clip") or "").strip().upper()
         out.append({"clip": p["clip"], "texte": p["texte"], "note": note,
-                    "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop})
+                    "pourquoi": str(x.get("pourquoi") or "").strip()[:200], "proposition": prop,
+                    "bandeau": " ".join(str(x.get("bandeau") or "").split())[:80] if prop else "",
+                    "autre_clip": other if note != "bon" and other in spare else None})
     return out

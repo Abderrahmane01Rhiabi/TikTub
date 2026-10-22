@@ -19,6 +19,15 @@ import requests
 from PIL import Image
 import numpy as np
 
+CREDITS_OUT = "Crédits Gemini épuisés"
+
+
+def plain_error(r) -> str:
+    """A Gemini answer that is an error said plainly ("Crédits Gemini épuisés…"), else ""."""
+    e = str(r.get("error", "")) if isinstance(r, dict) else ""
+    return e if e.startswith(CREDITS_OUT) else ""
+
+
 class GeminiAIGenerator:
     def __init__(self, api_key: str = None):
         """Initialize Gemini with API key"""
@@ -220,7 +229,8 @@ Respond with JSON:
                 })
         return self._generate_content(parts, max_tokens, temperature=temperature)
 
-    def _generate_content(self, parts: List[Dict], max_tokens: int = 1000, timeout: int = 30, temperature: float = 0.7) -> Dict:
+    def _generate_content(self, parts: List[Dict], max_tokens: int = 1000, timeout: int = 30, temperature: float = 0.7,
+                          thinking: Optional[int] = None) -> Dict:
         """Shared generateContent call/response-parsing path for both the
         inline-image prompts (call_gemini_api) and the native file_data
         (whole video, image+audio together) prompts used by analyze_video_native."""
@@ -233,6 +243,8 @@ Respond with JSON:
                     "response_mime_type": "application/json"
                 }
             }
+            if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
+                payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking}
 
             response = requests.post(
                 self.base_url,
@@ -271,6 +283,9 @@ Respond with JSON:
             else:
                 print(f"❌ Gemini API error: {response.status_code} - {response.text[:300]}")
                 self._api_error_count += 1
+                if response.status_code == 402 or "credits are depleted" in response.text:
+                    return {"error": f"{CREDITS_OUT} : recharge-les sur AI Studio (https://ai.studio/projects), "
+                                     "puis relance l'étape."}
                 return {"error": f"API error: {response.status_code}"}
 
         except Exception as e:

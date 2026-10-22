@@ -363,7 +363,7 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     for i, pl in enumerate(sb_plans):
         options = []
         for url, v in verifs.items():
-            if url in dead or v.get("film") or v.get("remontage"):
+            if url in dead or v.get("film") or v.get("remontage") or v.get("telechargeable") is False:
                 continue                    # a film, or someone else's re-edit: only by hand (rights)
             e = (v.get("par_scene") or {}).get(str(i))
             if not e or e.get("niveau") not in RANK:
@@ -536,10 +536,14 @@ def all_candidates(sug: Dict) -> List[Dict]:
 
 
 def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, workers: int = 3,
-                report: Optional[Callable[[str, float], None]] = None) -> Dict:
+                report: Optional[Callable[[str, float], None]] = None, words_share: float = 0.5) -> Dict:
     """Gemini watches the n most promising candidates, in parallel (a YouTube
     link takes ~15 s, a VK/Rutube file ~2 min). Results land in sug["verifs"];
-    a failure is noted, never fatal."""
+    a failure is noted, never fatal. words_share: the part of the budget for
+    each scene's best found by words (1.0 in Script d'abord: the pictures
+    searched are the model's shots, not the storyboard's plans — measured, the
+    tuna Short: plans 7 to 11 never had their "tuna spawning" result checked,
+    the budget went to marlin fishing found by picture)."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     checker = checker or check
     report = report or (lambda phase, f: None)
@@ -555,7 +559,7 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
         todo.append(account[0])
         picked.add(account[0]["url"])
     # each scene: its best found by words, then its best found by a picture — half the budget each
-    for kind, cap in ((by_text, (n + 1) // 2), (lambda c: not by_text(c), n)):
+    for kind, cap in ((by_text, -(-n * words_share // 1)), (lambda c: not by_text(c), n)):
         for s in sug.get("scenes") or []:
             top = next((c for c in best(s.get("candidats") or []) if kind(c) and c["url"] not in picked), None)
             if top and len(todo) < cap:
@@ -695,6 +699,8 @@ def _watch(url: str, g, prompt: str) -> Dict:
             raise FinderError(sources.explain(url, str(e)))
         if not os.path.exists(path):
             raise FinderError(f"Vidéo trop longue ou introuvable : {url}")
+        if not sources.has_picture(path):     # a web page or a photo post: Gemini refused it (400, text/html)
+            raise FinderError(f"Ce lien ne donne pas de vidéo (page web ou photos) : {url}")
         up = g._upload_video_file(path)
         if not up:
             raise FinderError("Envoi de la vidéo à Gemini impossible.")
@@ -769,7 +775,12 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         par_plan = {k: {**e, "niveau": "rien", "moments": []} for k, e in par_plan.items()}
     moments = [m for e in par_plan.values() for m in e["moments"]]
     best = min((LEVELS.index(e["niveau"]) for e in par_plan.values()), default=3)
+    reach = None
+    if best <= 1 and not copy:          # a useful video: can it be downloaded from here? (a YouTube link is watched
+        from adaptation import sources  # by Gemini from Google's side; another site's file was just downloaded)
+        reach = sources.reachable(url) if _video_id(url) else True
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
             "copie": copy, "remontage": r.get("remontage") is True, "film": r.get("film") is True,
+            "telechargeable": reach,
             "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
             "title": seen.get("title") or ""}

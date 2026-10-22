@@ -37,14 +37,68 @@ MIN_CLIP = 1.0                            # shorter: unticked as "trop court"
 COOKIES_FILE = "youtube_cookies.txt"      # a cookies.txt export, when YouTube asks to "confirm you're not a bot"
 
 
-def ytdlp_opts(**extra) -> Dict:
+POT_HOME = os.path.expanduser("~/bgutil-ytdlp-pot-provider/server")   # the PO token service (bgutil), when installed
+POT_PORT = 4416
+
+
+def start_pot_server() -> bool:
+    """YouTube's "This video is not available" was not a country block: only
+    the web player was refused (measured 2026-10-21 on three tuna videos).
+    With a PO token from the bgutil service, yt-dlp gets them up to 4K without
+    cookies. Started once with the app when installed; the plugin falls back to
+    running its script on each call when it is not."""
+    import socket
+    with socket.socket() as s:
+        s.settimeout(0.5)
+        if s.connect_ex(("127.0.0.1", POT_PORT)) == 0:
+            return True
+    main = os.path.join(POT_HOME, "build", "main.js")
+    if not os.path.exists(main):
+        return False
+    import shutil as _sh
+    node = _sh.which("node")
+    if not node:
+        return False
+    subprocess.Popen([node, main], cwd=POT_HOME, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                     start_new_session=True)
+    return True
+
+
+def _youtube(url: str) -> bool:
+    return "youtube.com" in url or "youtu.be" in url
+
+
+def _unavailable(msg: str) -> bool:
+    msg = msg.lower()
+    return any(k in msg for k in ("not available", "unavailable", "private video", "removed", "blocked",
+                                  "not made this video available", "copyright"))
+
+
+def reachable(url: str) -> Optional[bool]:
+    """Can this video be downloaded from here? Gemini watches YouTube from
+    Google's side: a video it judged exact was refused here ('This video is not
+    available'). False only for that kind of refusal, with and without the
+    cookies; None when YouTube just asks to prove we're not a bot (it comes and goes)."""
+    import yt_dlp
+    last = ""
+    for cookies in ((False, True) if _youtube(url) else (True,)):
+        try:
+            with yt_dlp.YoutubeDL(ytdlp_opts(cookies=cookies, skip_download=True)) as ydl:
+                ydl.extract_info(url, download=False, process=False)
+            return True
+        except Exception as e:
+            last = str(e)
+    return False if _unavailable(last) else None
+
+
+def ytdlp_opts(cookies: bool = True, **extra) -> Dict:
     """What every yt-dlp call shares: quiet, the cookies file when there is
-    one, node as JavaScript runtime (recent YouTube needs one)."""
+    one (and wanted), node as JavaScript runtime (recent YouTube needs one)."""
     import shutil as _sh
     opts = {"quiet": True, "no_warnings": True, "noprogress": True}
-    cookies = os.getenv("YTDLP_COOKIES") or COOKIES_FILE
-    if os.path.exists(cookies):
-        opts["cookiefile"] = cookies
+    path = os.getenv("YTDLP_COOKIES") or COOKIES_FILE
+    if cookies and os.path.exists(path):
+        opts["cookiefile"] = path
     if _sh.which("node") and not _sh.which("deno"):
         opts["js_runtimes"] = {"node": {}}
     return {**opts, **extra}
@@ -74,22 +128,54 @@ def _refused(err: str) -> bool:
             or "http error 403" in low)          # YouTube's 403 on a video it served a minute before: passing
 
 
-def _fetch(url: str, opts: Dict) -> Dict:
-    """One yt-dlp run; YouTube's "not a bot" refusals come and go (measured: a
-    Short refused, then fetched a minute later), so a refusal is tried once more."""
+LOW_HEIGHT = 720                        # a YouTube download under this is tried once more
+
+
+def _fetch(url: str, opts: Dict, again_if_low: bool = True) -> Dict:
+    """One download. YouTube: without the cookies first (with them, the
+    logged-in account was refused three videos the PO token gets), then with
+    them; a picture under 720p once more (measured: 360p, then 1080p a moment
+    later, the token not ready). Other refusals come and go: tried again."""
+    first = _fetch_once(url, opts)
+    if not again_if_low or not _youtube(url) or (first["info"].get("height") or LOW_HEIGHT) >= LOW_HEIGHT:
+        return first
+    import glob
+    keep = {p: os.path.getsize(p) for p in glob.glob(os.path.splitext(first["path"])[0] + ".*")}
+    stash = {p: p + ".low" for p in keep}
+    for p, q in stash.items():
+        os.replace(p, q)
+    try:
+        second = _fetch_once(url, opts)
+    except SourceError:
+        second = None
+    if second and (second["info"].get("height") or 0) > (first["info"].get("height") or 0):
+        for q in stash.values():
+            os.remove(q)
+        return second
+    for p, q in stash.items():               # no better: the first one back
+        os.replace(q, p)
+    return first
+
+
+def _fetch_once(url: str, opts: Dict) -> Dict:
     import time
     import yt_dlp
+    plain = {k: v for k, v in opts.items() if k != "cookiefile"}
+    tries = [plain, opts] if _youtube(url) and "cookiefile" in opts else [opts]
     waits = (10, 25)                    # measured: a 403 still there after 8 s was gone a few minutes later
-    for attempt in range(len(waits) + 1):
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                return {"info": info, "path": _final_path(ydl, info)}
-        except Exception as e:
-            if attempt < len(waits) and _refused(str(e)):
-                time.sleep(waits[attempt])
-                continue
-            raise SourceError(explain(url, str(e)))
+    for n, o in enumerate(tries):
+        for attempt in range(len(waits) + 1):
+            try:
+                with yt_dlp.YoutubeDL(o) as ydl:
+                    info = ydl.extract_info(url, download=True)
+                    return {"info": info, "path": _final_path(ydl, info)}
+            except Exception as e:
+                if n + 1 < len(tries) and (_unavailable(str(e)) or _refused(str(e))):
+                    break                       # the next way (with the cookies) at once
+                if attempt < len(waits) and _refused(str(e)):
+                    time.sleep(waits[attempt])
+                    continue
+                raise SourceError(explain(url, str(e)))
 
 
 def _handle(info: Dict) -> Optional[str]:
@@ -174,7 +260,7 @@ def _download_parts(url: str, dest_dir: str, name: str, sections: List[List[floa
     pattern = os.path.join(dest_dir, f"{name}_part%(section_start)08.2f.%(ext)s")
     opts = ytdlp_opts(outtmpl=pattern, format=VIDEO_FORMAT, merge_output_format="mp4", noplaylist=True, force_keyframes_at_cuts=True,
                       download_ranges=download_range_func(None, [tuple(sec) for sec in sections]))
-    got = _fetch(url, opts)
+    got = _fetch(url, opts, again_if_low=False)          # several files: not set aside and fetched again
     parts = sorted(p for p in glob.glob(os.path.join(dest_dir, f"{name}_part*"))
                    if not p.endswith((".json", ".txt", ".part")))
     if not parts:
@@ -430,7 +516,8 @@ def describe(path: str, segments: List[Tuple[float, float]], file=None) -> List[
                             max_tokens=16000, timeout=180, temperature=0.2)
     items = r if isinstance(r, list) else (r.get("passages") if isinstance(r, dict) else None)
     if not isinstance(items, list):
-        raise SourceError(f"Description de la source inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise SourceError(plain_error(r) or f"Description de la source inutilisable : {str(r)[:200]}")
     return (items + [{}] * len(segments))[:len(segments)]
 
 
@@ -479,7 +566,10 @@ def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[st
     os.makedirs(work_dir, exist_ok=True)
     shots, owners = [], []
     for cid, c in clips.items():
-        for j, f in enumerate((0.3, 0.7)):
+        # something already painted may be an overlay that moves (measured: a red arrow erased where it was,
+        # then drawn lower right a second later): such a clip is looked at all along
+        at = (0.05, 0.3, 0.5, 0.7, 0.95) if c.get("delogo") else (0.3, 0.7)
+        for j, f in enumerate(at):
             out = os.path.join(work_dir, f"left_{cid}_{j}.jpg")
             still(c["src"], c["start"] + (c["end"] - c["start"]) * f, c.get("crop"), out, c.get("delogo"), (c["w"], c["h"]))
             if os.path.exists(out):
@@ -499,11 +589,101 @@ def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[st
             bw, bh = int((x1 - x0) * c["w"] / 1000) + 12, int((y1 - y0) * c["h"] / 1000) + 12
             if bw <= 8 or bh <= 8 or bw * bh > 0.25 * c["w"] * c["h"]:
                 continue                        # too big to paint without ruining the clip
-            c["delogo"] = list(c.get("delogo") or []) + [(max(0, x), max(0, y), bw, bh)]
+            box = (max(0, x), max(0, y), bw, bh)
+            if any(_overlap(box, old) > 0.5 * bw * bh for old in c.get("delogo") or []):
+                continue                        # our own painting, seen as "a blurred overlay": not painted twice
+            c["delogo"] = list(c.get("delogo") or []) + [box]
             erased.setdefault(cid, []).append(quoi or "texte")
     for cid, what in erased.items():
         clips[cid]["texte_efface"] = list(dict.fromkeys(what))[:4]
+    erase_drawn_marks(clips, work_dir)
     return erased
+
+
+DRAWN = re.compile(r"fl[eè]che|arrow|cercle|circle|entour", re.I)
+
+
+def erase_drawn_marks(clips: Dict[str, Dict], work_dir: str) -> List[str]:
+    """A red arrow or circle drawn by the Short's maker moves with what it
+    points at: a painted box stays where it was seen (measured: the arrow,
+    erased at 4.9 s, showed again lower right at 6.2 s as a red smear; the AI
+    places such a box too roughly to follow it). Its pure red is rare in real
+    footage: on the clips where a drawn mark was seen, every frame has those
+    pixels rebuilt from their surroundings (OpenCV inpainting) in a copy the
+    clip then uses. Returns the clips cleaned this way. Best effort."""
+    done = []
+    for cid, c in clips.items():
+        seen = (c.get("marks") or []) + (c.get("texte_efface") or [])
+        if c.get("marques_effacees") or not any(DRAWN.search(str(m)) for m in seen):
+            continue
+        out = os.path.join(work_dir, f"marks_{cid}.mp4")
+        try:
+            if _inpaint_red(c["src"], c["end"] + 0.5, out, mark_hues(seen)):
+                c.update(src=out, src_brut=c["src"], marques_effacees=True)
+                done.append(cid)
+        except Exception:
+            pass
+    return done
+
+
+HUES = {"rouge": [(0, 10), (170, 180)], "red": [(0, 10), (170, 180)], "orange": [(8, 20)],
+        "jaune": [(18, 35)], "yellow": [(18, 35)], "vert": [(40, 85)], "green": [(40, 85)]}
+
+
+def mark_hues(seen: List[str]) -> List[Tuple[int, int]]:
+    """The OpenCV hue ranges of the colours the AI named for the drawn marks
+    (measured: a "yellow arrow" stayed, the cleaning knew only red); red when none is named."""
+    text = " ".join(str(m) for m in seen).lower()      # whole words: "Credits" holds "red"
+    hues = [r for word, rs in HUES.items() if re.search(rf"\b{word}\b", text) for r in rs]
+    return list(dict.fromkeys(hues)) or HUES["rouge"]
+
+
+def red_mask(frame, hues: Optional[List[Tuple[int, int]]] = None):
+    """The pixels of a drawn mark (saturated, bright, of its colour), widened a little."""
+    import cv2
+    import numpy as np
+    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
+    m = None
+    for lo, hi in hues or HUES["rouge"]:
+        part = cv2.inRange(hsv, (lo, 140, 110), (hi, 255, 255))
+        m = part if m is None else m | part
+    return cv2.dilate(m, np.ones((15, 15), np.uint8))    # its dark outline too (a ghost was left at 9)
+
+
+def _inpaint_red(src: str, until: float, out: str, hues: Optional[List[Tuple[int, int]]] = None) -> bool:
+    """A copy of src from 0 to `until` (same timeline, same sound) with the red marks rebuilt."""
+    import cv2
+    cap = cv2.VideoCapture(src)
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    if not w or not h:
+        return False
+    enc = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{w}x{h}",
+                            "-r", f"{fps}", "-i", "-", "-i", src, "-map", "0:v", "-map", "1:a?", "-t", f"{until:.2f}",
+                            "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p",
+                            "-c:a", "aac", out], stdin=subprocess.PIPE)
+    n, changed = 0, 0
+    while n < until * fps:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        m = red_mask(frame, hues)
+        if m.any():
+            frame = cv2.inpaint(frame, m, 7, cv2.INPAINT_TELEA)
+            changed += 1
+        enc.stdin.write(frame.tobytes())
+        n += 1
+    cap.release()
+    enc.stdin.close()
+    enc.wait()
+    return enc.returncode == 0 and changed > 0 and os.path.exists(out)
+
+
+def _overlap(a, b) -> float:
+    """The area two (x, y, w, h) boxes share."""
+    w = min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0])
+    h = min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1])
+    return max(0, w) * max(0, h)
 
 
 def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int, List[Tuple[int, int, int, int]]]:

@@ -80,6 +80,12 @@ class Project:
             json.dump({"schedule_method": method, "schedule": entries}, f)
 
 
+@pytest.fixture(autouse=True)  # no test asks YouTube whether a video can be downloaded from here
+def _no_reachability_probe(monkeypatch):
+    from adaptation import sources
+    monkeypatch.setattr(sources, "reachable", lambda url: True)
+
+
 @pytest.fixture(autouse=True)  # every test runs in a throwaway dir, never the real project
 def project(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)

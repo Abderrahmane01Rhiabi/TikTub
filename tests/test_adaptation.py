@@ -245,7 +245,9 @@ def test_a_render_with_every_effect_keeps_picture_and_voice_together(tmp_path):
     v = checks.verify(str(out), str(voice), passages)
     assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15
     assert all(o is not None and abs(o) <= 0.12 for o in v["measures"]["offsets"])
-    assert r["segments"][0]["impact"] > 0.5 and (tmp_path / "w" / "whoosh.wav").exists()
+    assert r["segments"][0]["impact"] > 0.5
+    sons = [e["son"] for e in r["recette"]["effets_sonores"]]
+    assert any(x.startswith("shutter_") for x in sons)              # the freeze frame has its sound effect
 
 
 # ------------------------------------------- voice library & channel settings
@@ -399,6 +401,7 @@ def test_finder_check_accepts_a_video_without_a_known_duration(monkeypatch, tmp_
         def prepare_filename(self, info): return seen["opts"]["outtmpl"].replace("%(ext)s", "mp4")
     monkeypatch.setattr(yt_dlp, "YoutubeDL", DL)
     monkeypatch.setattr(sources, "probe", lambda p: {"w": 576, "h": 1024, "duration": 22.1})
+    monkeypatch.setattr(sources, "has_picture", lambda p: True)          # the fake file stands for a real video
 
     class G:
         def _upload_video_file(self, path): return {"name": "f", "uri": "u", "mime_type": "video/mp4"}
@@ -507,6 +510,10 @@ def test_verify_best_gives_every_scene_a_check_before_the_high_scores():
     seen.clear()
     finder.verify_best(many, {}, n=4, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"}, workers=1)
     assert seen[0] == "acc"                                  # the credited account first
+    seen.clear()
+    finder.verify_best({"scenes": [{"candidats": [c(f"t{k}", 2), c(f"i{k}", 1, "image")]} for k in range(7)]}, {},
+                       n=8, words_share=1.0, workers=1, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"})
+    assert seen == [f"t{k}" for k in range(7)] + ["i0"]      # Script d'abord: every plan's words before any picture
 
 
 # ---------------------------------------------------------------- image search / frames

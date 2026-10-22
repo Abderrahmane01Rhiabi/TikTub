@@ -64,5 +64,6 @@ def analyse(url: str, gemini=None) -> Dict:
             finally:
                 g._delete_file(up["name"])
     if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or not r.get("plans"):
-        raise ReferenceError(f"Analyse du Short modèle inutilisable : {str(r)[:200]}")
+        from gemini_ai_generator import plain_error
+        raise ReferenceError(plain_error(r) or f"Analyse du Short modèle inutilisable : {str(r)[:200]}")
     return r

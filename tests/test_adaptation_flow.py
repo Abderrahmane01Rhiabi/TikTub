@@ -36,6 +36,7 @@ def fakes(monkeypatch):
 
     def verify_best(sug, ref, **kw):
         calls["verified"] += 1
+        calls["budget"] = kw.get("n")
         return sug
     monkeypatch.setattr(finder, "verify_best", verify_best)
     monkeypatch.setattr(finder, "suggest", lambda ref, url="", work_dir=None, report=None: {
@@ -212,6 +213,7 @@ def test_without_sources_the_app_says_what_to_download_then_analyses_the_picks(p
     assert p["status"] == "sources_search" and p["clips"] == {}
     assert p["suggestions"]["scenes"][0]["scene"] == "un tram qui percute une voiture"
     assert fakes["verified"] == 1                             # nothing given: the best candidates are checked
+    assert fakes["budget"] == 8                               # one scene: 8 at least; six scenes would get 12
     with pytest.raises(ap.PipelineError):                    # nothing picked
         ap.add_sources(pid, ["  "])
 
