@@ -264,7 +264,10 @@ def curve_by_shot(points: List[List[float]], shots: List[Dict], duration: Option
         b = _watch_at(points, min(1.0, s["fin"] / duration))
         out.append({**s, "debut_pct": round(a * 100, 1), "fin_pct": round(b * 100, 1), "perte": round((a - b) * 100, 1),
                     "perte_par_s": round((a - b) * 100 / max(0.1, s["fin"] - s["debut"]), 1)})
-    worst = max(out, key=lambda x: x["perte_par_s"]) if len(out) > 1 else None
+    # the worst shot AFTER the hook: people swipe a Short away in its first seconds whatever follows (the hook
+    # always came out worst); what the hook keeps is said apart ("apres_accroche")
+    body = out[1:] if len(out) > 2 else out
+    worst = max(body, key=lambda x: x["perte_par_s"]) if len(out) > 1 else None
     # what the hook keeps of those who started: a Short loops, so the curve starts well above 100 %
     # (205 % at the start, 192 % after the hook = 93 % kept) — raw levels can't be compared between videos
     first = out[0]

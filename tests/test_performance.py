@@ -313,3 +313,30 @@ def test_a_scheduled_video_is_not_asked_its_curve(client, project, monkeypatch):
     monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda *a: asked.append(a) or CURVE)
     d = client.get("/api/videos/later/retention").json()
     assert asked == [] and d["error"].startswith("Pas encore publiée")         # YouTube answered 412
+
+
+def test_a_video_card_gathers_results_curve_recipe_and_other_version(client, project, monkeypatch):
+    import youtube_uploader
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec["details"]["plans"] = [{"debut": 0, "duree": 2, "texte": "Q ?", "bandeau": "A : B", "fleche": {"type": "cercle"}},
+                               {"debut": 2, "duree": 18, "texte": "R.", "effets_appliques": {"ralenti": True}}]
+    for vid, ch in (("fr", "chanA"), ("ar", "chanB")):
+        project.add_video(vid, channel=ch, youtube_id="Y" + vid, status="uploaded", youtube_published_at="2026-09-01T10:00:00",
+                          url="https://youtube.com/shorts/REF", recette=rec, ai_data={"optimized_title": "Titre " + vid,
+                                                                                     "description": "Desc", "tags": ["t"]})
+    db.insert_stats_snapshot("fr", "7d", {"view_count": 300, "like_count": 9})
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: CURVE)
+    d = client.get("/api/fiche?video_id=fr").json()
+    assert d["titre"] == "Titre fr" and d["resultats"]["vues_7j"] == 300 and d["modele_url"].endswith("REF")
+    assert len(d["courbe"]["points"]) == 100 and len(d["plans"]) == 2 and d["plans"][0]["fleche"]["type"] == "cercle"
+    assert d["plans"][1]["effets_appliques"]["ralenti"] and d["resultats"]["accroche_garde"] is not None
+    assert [v["video_id"] for v in d["versions"]] == ["ar"]
+    assert client.get("/api/fiche?youtube_id=Yar").json()["video_id"] == "ar"            # from a YouTube card
+    assert client.get("/api/fiche?youtube_id=NOPE").status_code == 404
+
+
+def test_the_worst_shot_is_looked_for_after_the_hook():
+    shots = [{"k": 0, "debut": 0, "fin": 2}, {"k": 1, "debut": 2, "fin": 10}, {"k": 2, "debut": 10, "fin": 20}]
+    steep_hook = [[r / 100, 2.0 - (r / 100) * 5 if r <= 10 else 1.5 - (r / 100) * (0.2 if r < 75 else 1), 0.5] for r in range(1, 101)]
+    out = performance.curve_by_shot(steep_hook, shots, 20)
+    assert out["plans"][0]["perte_par_s"] > out["plans"][2]["perte_par_s"] and out["pire"] == 2

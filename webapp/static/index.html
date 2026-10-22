@@ -4561,6 +4561,7 @@ function renderDashGrid(){
       <div class="dvedit" style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
         <button class="btn secondary small dv-toggle" data-target="${toggleTarget}">${toggleLabel}</button>
         ${dashAnalyticsAvailable ? `<button class="btn ghost small dv-analytics-toggle">Stats détaillées</button>` : ''}
+        <button class="btn ghost small dv-fiche" title="Résultats, courbe plan par plan et recette (vidéos faites avec TikTub)">${icon('chart', 12)} Fiche</button>
         ${v.youtube_url ? `<a class="btn ghost small" style="margin-left:auto;text-decoration:none" href="${v.youtube_url}" target="_blank" rel="noopener">${icon('link', 12)} YouTube</a>` : ''}
       </div>
       ${dashAnalyticsAvailable ? `<div class="dv-analytics-panel" style="display:none"></div>` : ''}
@@ -4569,6 +4570,7 @@ function renderDashGrid(){
 
   grid.querySelectorAll('.dvcard').forEach(card => {
     const yid = card.dataset.yid;
+    card.querySelector('.dv-fiche').addEventListener('click', () => openFicheDialog(yid, { youtube: true }));
     card.querySelector('.dv-toggle').addEventListener('click', async (e) => {
       const btn = e.target;
       const privacy_status = btn.dataset.target;
@@ -5312,7 +5314,7 @@ async function loadPerformance(channelName){
   box.innerHTML = head + insights + ranking;
   box.querySelectorAll('[data-remake]').forEach(btn => btn.addEventListener('click', () =>
     openRemakeDialog(channelName, d.videos.find(v => v.video_id === btn.dataset.remake))));
-  box.querySelectorAll('[data-curve]').forEach(btn => btn.addEventListener('click', () => openCurveDialog(btn.dataset.curve)));
+  box.querySelectorAll('[data-curve]').forEach(btn => btn.addEventListener('click', () => openFicheDialog(btn.dataset.curve)));
 }
 
 // The same Short in one version per channel: an A/B test of the angle and the hook (same pictures)
@@ -5394,63 +5396,94 @@ async function openCompareDialog(g){
   hydrateIcons(dlg);
 }
 
-// Where viewers leave, shot by shot: YouTube's retention curve over the recipe's shots
-async function openCurveDialog(videoId, refresh){
-  const dlg = document.getElementById('curveDialog');
-  dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body">${spinnerHtml('Courbe de rétention…')}</div></div>`;
-  if (!dlg.open) dlg.showModal();
-  let d;
-  try { d = await api(`/api/videos/${videoId}/retention${refresh ? '?refresh=true' : ''}`); }
-  catch (e){ dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body"><div class="warnbox">${esc(e.message)}</div><button class="btn ghost small" data-act="close">Fermer</button></div></div>`;
-             dlg.querySelector('[data-act="close"]').onclick = () => dlg.close(); return; }
-  const rec = d.recette || {}, st = rec.structure || {}, mus = rec.musique || {};
-  const facts = [
-    rec.type && ['Type', {adaptation: 'Adaptation', generation: 'Génération', montage: 'Montage auto', import: 'Import'}[rec.type] || rec.type],
-    d.duration && ['Durée', `${Math.round(d.duration)} s` + (st.plans > 1 ? ` · ${st.plans} plans` : '')],
-    (rec.accroche || {}).texte && ['Accroche', `« ${rec.accroche.texte} »` + (rec.accroche.duree_s ? ` (${rec.accroche.duree_s} s)` : '')],
-    mus.fichier && ['Musique', mus.fichier],
-    (rec.style || {}).visuel && ['Style', rec.style.visuel],
-    ((rec.details || {}).effets_sonores || []).length && ['Effets sonores', rec.details.effets_sonores.map(e => e.son.replace(/\.mp3$/, '')).join(', ')],
-  ].filter(Boolean);
-  const W = 700, H = 220, pad = 30, pts = d.points || [];
-  const maxY = Math.max(1.2, ...pts.map(p => p[1]));
+// A video's card: its results, where viewers leave (YouTube's curve over its shots), its recipe, its links
+function ficheCurveSvg(points, plans, duration, pire){
+  const W = 700, H = 220, pad = 30;
+  if (!(points || []).length) return '';
+  const maxY = Math.max(1.2, ...points.map(p => p[1]));
   const X = r => pad + r * (W - pad - 8), Y = w => H - 22 - (w / maxY) * (H - 40);
-  const worst = (d.plans || []).find(p => p.k === d.pire);
-  const shots = d.duration ? (d.plans || []).map(p => {
-    const x0 = X(p.debut / d.duration), x1 = X(Math.min(1, p.fin / d.duration));
-    return `${p.k === d.pire ? `<rect x="${x0}" y="10" width="${Math.max(1, x1 - x0)}" height="${H - 32}" fill="var(--danger)" opacity=".12"/>` : ''}
+  const shots = duration ? (plans || []).filter(p => p.debut != null && p.fin != null).map(p => {
+    const x0 = X(p.debut / duration), x1 = X(Math.min(1, p.fin / duration));
+    return `${p.k === pire ? `<rect x="${x0}" y="10" width="${Math.max(1, x1 - x0)}" height="${H - 32}" fill="var(--danger)" opacity=".12"/>` : ''}
       <line x1="${x0}" y1="10" x2="${x0}" y2="${H - 22}" stroke="var(--border)" stroke-dasharray="3 3"/>
       <text x="${(x0 + x1) / 2}" y="${H - 6}" font-size="11" text-anchor="middle" fill="var(--muted)">${p.k + 1}</text>`;
   }).join('') : '';
-  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
-  const svg = pts.length ? `<svg class="curve-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de rétention">
-      ${shots}
-      <line x1="${pad}" y1="${Y(1)}" x2="${W - 8}" y2="${Y(1)}" stroke="var(--muted)" stroke-width=".6" opacity=".6"/>
-      <text x="${pad - 4}" y="${Y(1) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">100</text>
-      <text x="${pad - 4}" y="${Y(0) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">0</text>
-      <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2.2"/>
-    </svg>` : '';
+  const line = points.map((p, i) => `${i ? 'L' : 'M'}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join(' ');
+  return `<svg class="curve-chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Courbe de rétention">${shots}
+    <line x1="${pad}" y1="${Y(1)}" x2="${W - 8}" y2="${Y(1)}" stroke="var(--muted)" stroke-width=".6" opacity=".6"/>
+    <text x="${pad - 4}" y="${Y(1) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">100</text>
+    <text x="${pad - 4}" y="${Y(0) + 4}" font-size="10" text-anchor="end" fill="var(--muted)">0</text>
+    <path d="${line}" fill="none" stroke="var(--accent)" stroke-width="2.2"/></svg>`;
+}
+
+async function openFicheDialog(id, opts = {}){
+  const dlg = document.getElementById('curveDialog');
+  dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body">${spinnerHtml('Fiche de la vidéo…')}</div></div>`;
+  if (!dlg.open) dlg.showModal();
+  const q = opts.youtube ? `youtube_id=${encodeURIComponent(id)}` : `video_id=${encodeURIComponent(id)}`;
+  let d;
+  try { d = await api(`/api/fiche?${q}${opts.refresh ? '&refresh=true' : ''}`); }
+  catch (e){ dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body"><div class="warnbox">${esc(e.message)}</div><button class="btn ghost small" data-act="close">Fermer</button></div></div>`;
+             dlg.querySelector('[data-act="close"]').onclick = () => dlg.close(); return; }
+  const rec = d.recette || {}, st = rec.structure || {}, det = rec.details || {}, mus = rec.musique || {}, r = d.resultats || {};
+  const chName = c => (channels.find(x => x.name === c) || {}).display_name || c;
+  const n = x => x == null ? '—' : Number(x).toLocaleString('fr-FR');
+  const worst = (d.plans || []).find(p => p.k === d.courbe.pire);
+  const fx = p => [p.fleche && (p.fleche.type === 'cercle' ? '◯ cercle' : '➜ flèche'),
+                   ...Object.entries(p.effets_appliques || {}).filter(([k, v]) => v && k !== 'chiffre').map(([k]) => k),
+                   (p.effets_appliques || {}).chiffre && `chiffre « ${p.effets_appliques.chiffre} »`].filter(Boolean).join(', ');
+  const recipe = [
+    rec.type && ['Type', ({adaptation: 'Adaptation', generation: 'Génération', montage: 'Montage auto', import: 'Import'})[rec.type] + (det.mode ? ` · ${det.mode === 'script' ? "Script d'abord" : "Sources d'abord"}` : '')],
+    det.angle && ['Angle', det.angle],
+    d.duree && ['Durée', `${Math.round(d.duree)} s` + (st.plans > 1 ? ` · ${st.plans} plans · ${st.plan_moyen_s} s par plan` : '')],
+    (rec.accroche || {}).texte && ['Accroche', rec.accroche.texte, rec.accroche.duree_s ? `${rec.accroche.duree_s} s` : ''],
+    mus.fichier && ['Musique', mus.fichier + (mus.debut_s != null ? ` · à partir de ${mus.debut_s} s` : '') + (mus.gain != null ? ` · niveau ${mus.gain}` : '')],
+    (rec.voix || {}).id && ['Voix', d.voix_nom || rec.voix.id],
+    (rec.style || {}).visuel && ['Style', rec.style.visuel],
+    (det.effets_sonores || []).length && ['Effets sonores', det.effets_sonores.map(e => `${e.son.replace(/\.mp3$/, '')} (${e.pourquoi})`).join(', ')],
+  ].filter(Boolean);
   dlg.innerHTML = `
     <div class="chcard curve" style="border:none">
       <div class="chcard-head">
-        <div class="who"><div class="name">${icon('chart', 15)} Où ils décrochent</div><div class="meta" style="margin-left:0">${esc(d.title || '')}</div></div>
-        <button class="btn ghost small" data-act="refresh" title="Redemander la courbe à YouTube">${icon('refresh', 13)}</button>
+        <div class="who"><div class="name">${icon('film', 15)} Fiche vidéo</div>
+          <div class="meta" style="margin-left:0"><span class="dot" style="background:${channelColor(d.channel)}"></span>${esc(chName(d.channel))}${d.publiee ? ` · ${d.a_venir ? 'programmée le' : 'publiée le'} ${new Date(d.publiee).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}` : ''}</div></div>
+        <button class="btn ghost small" data-act="refresh" title="Redemander les chiffres à YouTube">${icon('refresh', 13)}</button>
         <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
       </div>
       <div class="chcard-body">
-        ${d.error ? `<div class="warnbox">${esc(d.error)}</div>` : ''}
-        ${svg || (d.error ? '' : '<div class="tiny">Pas encore de courbe.</div>')}
-        ${pts.length ? `<div class="tiny">Part des spectateurs encore là à chaque instant (100 = tous ceux qui ont lancé la vidéo ; au-dessus, des gens revoient le passage).${(d.plans || []).length > 1 ? ' Les numéros sont les plans.' : ''}${d.fetched_at ? ` Courbe du ${esc(d.fetched_at.replace('T', ' ').slice(0, 16))}.` : ''}</div>` : ''}
+        <div style="display:flex;gap:12px;align-items:flex-start">
+          ${d.thumbnail_url ? `<img src="${esc(d.thumbnail_url)}" alt="" style="width:96px;border-radius:8px;flex:none">` : ''}
+          <div class="stack" style="gap:4px;min-width:0"><b>${esc(d.titre || '')}</b>
+            <div class="row" style="display:flex;gap:10px;flex-wrap:wrap">
+              ${d.youtube_url ? `<a href="${esc(d.youtube_url)}" target="_blank" rel="noopener">YouTube ↗</a>` : ''}
+              ${d.modele_url ? `<a href="${esc(d.modele_url)}" target="_blank" rel="noopener">Short modèle ↗</a>` : ''}
+              ${d.source_url ? `<a href="${esc(d.source_url)}" target="_blank" rel="noopener">Source ↗</a>` : ''}
+              ${(d.versions || []).map(v => `<a href="#" data-other="${esc(v.video_id)}">Version ${esc(chName(v.channel))} →</a>`).join('')}
+            </div></div>
+        </div>
+        <div class="recap">
+          <div class="line"><span class="k">Vues à 7 jours</span><span class="v">${r.vues_7j != null ? `${n(r.vues_7j)} ${scoreBadge(r.score)}` : d.a_venir ? 'pas encore publiée' : '7 jours pas encore atteints'}</span></div>
+          <div class="line"><span class="k">Vues aujourd'hui</span><span class="v">${n(r.vues)} · ${n(r.likes)} likes · ${n(r.commentaires)} commentaires</span></div>
+          ${r.mediane_chaine != null ? `<div class="line"><span class="k">Habituel de la chaîne</span><span class="v">${n(Math.round(r.mediane_chaine))} vues à 7 jours</span></div>` : ''}
+          <div class="line"><span class="k">Rétention 1re semaine</span><span class="v">${r.retention_7j != null ? `${Math.round(r.retention_7j)} % regardé` + (r.temps_moyen_s ? ` (${Math.round(r.temps_moyen_s)} s en moyenne)` : '') : 'mesurée 9 jours après la publication'}</span></div>
+          ${r.accroche_garde != null ? `<div class="line"><span class="k">L'accroche garde</span><span class="v">${Math.round(r.accroche_garde)} % de ceux qui commencent</span></div>` : ''}
+        </div>
+        ${d.courbe.error ? `<div class="warnbox">${esc(d.courbe.error)}</div>` : ''}
+        ${ficheCurveSvg(d.courbe.points, d.plans, d.duree, d.courbe.pire)}
         ${worst ? `<div class="warnbox" style="border-color:var(--danger)">Le plan ${worst.k + 1} perd le plus de monde : ${worst.perte} points en ${(worst.fin - worst.debut).toFixed(1)} s${worst.texte ? ` — « ${esc(worst.texte)} »` : ''}.</div>` : ''}
-        ${d.apres_accroche != null ? `<div class="tiny">L'accroche garde ${Math.round(d.apres_accroche)} % de ceux qui ont commencé la vidéo.</div>` : ''}
-        ${(d.plans || []).length > 1 ? `<div>${d.plans.map(p => `
-          <div class="shot-row ${p.k === d.pire ? 'worst' : ''}"><b>${p.k + 1}</b><span>${p.debut.toFixed(1)}–${p.fin.toFixed(1)} s</span>
-            <span class="t" title="${esc(p.texte || '')}">${esc(p.texte || p.bandeau || '')}</span><span>${Math.round(p.debut_pct)} → ${Math.round(p.fin_pct)}</span></div>`).join('')}</div>` : ''}
-        ${facts.length ? `<div class="recap">${facts.map(([k, v]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(String(v))}</span></div>`).join('')}</div>` : ''}
+        ${(d.plans || []).length > 1 ? `<div><div class="tiny" style="margin-bottom:4px">Plan par plan${d.courbe.points.length ? ' (spectateurs au début → à la fin du plan)' : ''}</div>${d.plans.map(p => `
+          <div class="shot-row ${p.k === d.courbe.pire ? 'worst' : ''}" style="grid-template-columns:28px 92px 1fr 70px"><b>${p.k + 1}</b>
+            <span>${p.debut != null ? `${Number(p.debut).toFixed(1)}–${Number(p.fin).toFixed(1)} s` : ''}</span>
+            <span class="t" title="${esc((p.bandeau || '') + ' — ' + (p.texte || ''))}"><bdi>${p.bandeau ? `<b>${esc(p.bandeau)}</b> · ` : ''}${esc(p.texte || '')}</bdi>${fx(p) ? ` <span class="tiny">· ${esc(fx(p))}</span>` : ''}</span>
+            <span>${p.debut_pct != null ? `${Math.round(p.debut_pct)} → ${Math.round(p.fin_pct)}` : ''}</span></div>`).join('')}</div>` : ''}
+        ${recipe.length ? `<div class="recap">${recipe.map(([k, v, extra]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v"><bdi>${esc(String(v))}</bdi>${extra ? ` · ${esc(extra)}` : ''}</span></div>`).join('')}</div>` : ''}
+        ${d.description ? `<details><summary class="tiny" style="cursor:pointer">Description et tags</summary><div class="tiny" style="white-space:pre-wrap;margin-top:6px">${esc(d.description)}</div>
+          ${(d.tags || []).length ? `<div class="dvtags" style="margin-top:6px">${d.tags.map(t => `<span>${esc(t)}</span>`).join('')}</div>` : ''}</details>` : ''}
       </div>
     </div>`;
   dlg.querySelector('[data-act="close"]').onclick = () => dlg.close();
-  dlg.querySelector('[data-act="refresh"]').onclick = () => openCurveDialog(videoId, true);
+  dlg.querySelector('[data-act="refresh"]').onclick = () => openFicheDialog(id, { ...opts, refresh: true });
+  dlg.querySelectorAll('[data-other]').forEach(a => a.onclick = ev => { ev.preventDefault(); openFicheDialog(a.dataset.other); });
   hydrateIcons(dlg);
 }
 
@@ -5496,7 +5529,7 @@ function rankRowHtml(v, i){
     </div>
     <div class="views"><b>${v.views_7d.toLocaleString('fr-FR')}</b>vues à 7 j ${scoreBadge(v.score)}${v.retention_7d != null ? `<span class="ret" title="Part moyenne de la vidéo regardée la 1re semaine">${fmtPct(v.retention_7d)} regardé</span>` : ''}</div>
     <div class="stack" style="gap:4px">
-      ${v.youtube_url ? `<button class="btn ghost small" data-curve="${esc(v.video_id)}" title="La courbe de rétention de YouTube, plan par plan">${icon('chart', 13)} Où ils décrochent</button>` : ''}
+      ${v.youtube_url ? `<button class="btn ghost small" data-curve="${esc(v.video_id)}" title="Ses résultats, où les gens décrochent plan par plan, sa recette">${icon('chart', 13)} Fiche vidéo</button>` : ''}
       ${v.remakeable ? `<button class="btn secondary small" data-remake="${esc(v.video_id)}">${icon('sparkle', 13)} Refaire ce style</button>` : ''}
     </div>
   </div>`;
