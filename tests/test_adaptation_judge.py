@@ -196,3 +196,16 @@ def test_each_gemini_call_notes_what_it_cost_and_which_step_asked(monkeypatch, t
     script.revise({"passages": [{"clip": "P1", "texte": "A."}]}, _clips(), "x", gemini=gg.GeminiAIGenerator(api_key="k"))
     line = _json.loads(open(tmp_path / "u.jsonl").read().splitlines()[0])
     assert line["step"] == "script.revise" and line["thoughts"] == 300 and line["by_kind"] == {"TEXT": 200, "IMAGE": 1000}
+
+
+def test_a_check_looks_at_one_picture_every_two_seconds_and_sorting_does_not_think():
+    seen = {}
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            seen.setdefault("calls", []).append((parts, kw))
+            return {"garder": {"0": [0]}} if "Scene" in str(parts) else {"plans": []}
+    finder._watch("https://www.youtube.com/watch?v=aaaaaaaaaaa", G(), "prompt")
+    assert seen["calls"][0][0][0]["video_metadata"] == {"fps": 0.5}
+    finder._sort_one(0, {"scene": "x", "candidats": [{"title": "t"}]}, G(), finder.SORT_PROMPT)
+    assert seen["calls"][1][1]["thinking"] == 0
