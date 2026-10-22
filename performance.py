@@ -161,6 +161,8 @@ def video_row(video: Dict, history: List[Dict]) -> Optional[Dict]:
         },
         # What "Refaire ce style" would reuse — generated videos only
         "remakeable": video.get("source") == "generated" and bool(video.get("script_text")),
+        # ...and for an Adaptation: its voice, music and look on another model Short
+        "remake_adaptation": (video.get("recette") or {}).get("type") == "adaptation",
     }
 
 

@@ -1425,6 +1425,50 @@ def create_adaptation(req: AdaptationCreate):
     return _serialize_adaptation(p)
 
 
+def _remake_source(video_id: str):
+    """The published Adaptation to copy the style of, and its versions on other channels."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Vidéo introuvable.")
+    others = [v for v in get_batch_processor().url_manager.list_videos()
+              if v["video_id"] != video_id and video.get("url") and v.get("url") == video.get("url")
+              and v.get("channel") != video.get("channel") and (v.get("recette") or {}).get("type") == "adaptation"]
+    return video, others
+
+
+@app.get("/api/videos/{video_id}/remake_style")
+def remake_style(video_id: str):
+    """What "Refaire ce style" would reuse, said before anything is made."""
+    from adaptation import pipeline as ap
+    import performance
+    video, others = _remake_source(video_id)
+    st = _adaptation_call(ap.style_to_remake, video, others)
+    for ch, s in st["par_chaine"].items():
+        s["voix_nom"] = performance._voice_name(s["voice_id"]) if s.get("voice_id") else None
+        s["chaine_nom"] = (channel_manager.get_channel_profile(ch) or {}).get("display_name") or ch
+    return st
+
+
+class AdaptationRemake(BaseModel):
+    video_id: str
+    reference_url: str
+
+
+@app.post("/api/adaptations/remake")
+def remake_adaptation(req: AdaptationRemake):
+    """A new Adaptation of another model Short, made the way a video that worked was."""
+    from adaptation import pipeline as ap
+    video, others = _remake_source(req.video_id)
+    st = _adaptation_call(ap.style_to_remake, video, others)
+    targets = [{"channel": ch, "profile": channel_manager.get_channel_profile(ch),
+                "music_dir": channel_manager.get_assets_dirs(ch)["music"]} for ch in st["channels"]]
+    p = _adaptation_call(ap.create, req.reference_url, [], targets, st["mode"], st["versions"],
+                         st["par_chaine"], req.video_id)
+    _start_adaptation_step(p["project_id"], "analysing")
+    return _serialize_adaptation(p)
+
+
 @app.get("/api/adaptations")
 def list_adaptations():
     import db as _db

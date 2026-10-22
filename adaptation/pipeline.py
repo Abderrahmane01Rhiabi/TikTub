@@ -83,7 +83,7 @@ def _new_pid() -> str:
 
 
 def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
-           versions: bool = False) -> Dict:
+           versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
     mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
     versions (script mode, several channels): one project per channel, a group — the reference
@@ -103,13 +103,23 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         if not s["voice_id"]:
             raise PipelineError(f"La chaîne {c['channel']} n'a pas de voix : choisis-en une dans Réglages → Voix.")
         music = os.path.join(c["music_dir"], s["music_file"]) if s["music_file"] else None
-        targets.append({"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
-                        "music_path": music if music and os.path.exists(music) else None,
-                        "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
-                        "validated": False, "video_id": None})
+        t = {"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
+             "music_path": music if music and os.path.exists(music) else None,
+             "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
+             "validated": False, "video_id": None}
+        own = (style_of or {}).get(c["channel"])
+        if own:                         # "Refaire ce style": the winning video's voice, music and look
+            if own.get("voice_id"):
+                t["voice_id"] = own["voice_id"]
+            track = os.path.join(c["music_dir"], own["music_file"]) if own.get("music_file") else None
+            if track and os.path.exists(track):
+                t.update(music_path=track, music_start=own.get("music_start") or 0.0, music_chosen=True)
+            if own.get("style"):
+                t.update(style=own["style"], style_kept=True)
+        targets.append(t)
     base = {"status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
             "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
-            "credits": "", "credits_auto": "", "error": None, "failed_step": None}
+            "credits": "", "credits_auto": "", "error": None, "failed_step": None, "remake_of": remake_of}
     if mode == "sources" and versions and len(targets) > 1:
         base["versions"] = True         # one project, the same clips, an angle per channel at the script step
     if mode == "script" and versions and len(targets) > 1:
@@ -119,6 +129,24 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
             save({**base, "project_id": pid, "targets": [t], "group": leader, "await_leader": k > 0})
         return load(leader)
     return save({**base, "project_id": _new_pid(), "targets": targets})
+
+
+def style_to_remake(video: Dict, versions: List[Dict]) -> Dict:
+    """What "Refaire ce style" carries over from a published Adaptation (and its
+    versions on other channels): the mode, the channels, and per channel the
+    voice, the music with its start, the look. Not the subject, the script nor
+    the angle: those come from the new model Short."""
+    rec = video.get("recette") or {}
+    if rec.get("type") != "adaptation":
+        raise PipelineError("« Refaire ce style » se fait depuis une vidéo Adaptation.")
+    d = rec.get("details") or {}
+    per = {}
+    for v in [video] + versions:
+        r = v.get("recette") or {}
+        m = r.get("musique") or {}
+        per[v.get("channel")] = {"voice_id": (r.get("voix") or {}).get("id"), "music_file": m.get("fichier"),
+                                 "music_start": m.get("debut_s"), "style": (r.get("style") or {}).get("visuel")}
+    return {"mode": d.get("mode") or "sources", "versions": len(per) > 1, "channels": list(per), "par_chaine": per}
 
 
 def group_of(p: Dict) -> List[Dict]:
@@ -1735,6 +1763,7 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
     total = round(sum(x.get("duree", 0) for x in segs), 2)
     return {
         "projet": p["project_id"], "mode": p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
+        "inspire_de": p.get("remake_of"),
         "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
         "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
                     "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique"),
@@ -1765,7 +1794,10 @@ def _source_url(p: Dict, c: Dict) -> Optional[str]:
 
 def _style_of(t: Dict) -> str:
     """The channel's look as set now in Réglages → Voix (a change applies to the
-    projects under way), else the one it had when the project was made."""
+    projects under way), else the one it had when the project was made.
+    A remake keeps the look of the video it copies."""
+    if t.get("style_kept") and t.get("style"):
+        return t["style"]
     try:
         from channel_manager import ChannelManager
         return settings.channel_settings(ChannelManager().get_channel_profile(t["channel"]))["style"]

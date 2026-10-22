@@ -5315,6 +5315,7 @@ async function loadPerformance(channelName){
   box.querySelectorAll('[data-remake]').forEach(btn => btn.addEventListener('click', () =>
     openRemakeDialog(channelName, d.videos.find(v => v.video_id === btn.dataset.remake))));
   box.querySelectorAll('[data-curve]').forEach(btn => btn.addEventListener('click', () => openFicheDialog(btn.dataset.curve)));
+  box.querySelectorAll('[data-remake-ad]').forEach(btn => btn.addEventListener('click', () => openAdaptRemakeDialog(btn.dataset.remakeAd)));
 }
 
 // The same Short in one version per channel: an A/B test of the angle and the hook (same pictures)
@@ -5447,6 +5448,7 @@ async function openFicheDialog(id, opts = {}){
       <div class="chcard-head">
         <div class="who"><div class="name">${icon('film', 15)} Fiche vidéo</div>
           <div class="meta" style="margin-left:0"><span class="dot" style="background:${channelColor(d.channel)}"></span>${esc(chName(d.channel))}${d.publiee ? ` · ${d.a_venir ? 'programmée le' : 'publiée le'} ${new Date(d.publiee).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}` : ''}</div></div>
+        ${rec.type === 'adaptation' ? `<button class="btn secondary small" data-act="remake" title="Un autre Short modèle, fait comme celle-ci">${icon('sparkle', 13)} Refaire ce style</button>` : ''}
         <button class="btn ghost small" data-act="refresh" title="Redemander les chiffres à YouTube">${icon('refresh', 13)}</button>
         <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
       </div>
@@ -5483,6 +5485,8 @@ async function openFicheDialog(id, opts = {}){
     </div>`;
   dlg.querySelector('[data-act="close"]').onclick = () => dlg.close();
   dlg.querySelector('[data-act="refresh"]').onclick = () => openFicheDialog(id, { ...opts, refresh: true });
+  const remake = dlg.querySelector('[data-act="remake"]');
+  if (remake) remake.onclick = () => { dlg.close(); openAdaptRemakeDialog(d.video_id); };
   dlg.querySelectorAll('[data-other]').forEach(a => a.onclick = ev => { ev.preventDefault(); openFicheDialog(a.dataset.other); });
   hydrateIcons(dlg);
 }
@@ -5531,6 +5535,7 @@ function rankRowHtml(v, i){
     <div class="stack" style="gap:4px">
       ${v.youtube_url ? `<button class="btn ghost small" data-curve="${esc(v.video_id)}" title="Ses résultats, où les gens décrochent plan par plan, sa recette">${icon('chart', 13)} Fiche vidéo</button>` : ''}
       ${v.remakeable ? `<button class="btn secondary small" data-remake="${esc(v.video_id)}">${icon('sparkle', 13)} Refaire ce style</button>` : ''}
+      ${v.remake_adaptation ? `<button class="btn secondary small" data-remake-ad="${esc(v.video_id)}" title="Un autre Short modèle, fait comme celle-ci">${icon('sparkle', 13)} Refaire ce style</button>` : ''}
     </div>
   </div>`;
 }
@@ -5579,6 +5584,61 @@ function openRemakeDialog(channelName, v, suggestion){
     } catch (e){ go.disabled = false; dlg.querySelector('[data-role="err"]').textContent = e.message; }
   });
   dlg.showModal();
+}
+
+// "Refaire ce style" for an Adaptation: another model Short, made with the same
+// channels, mode, voices, music and look (subject, script, angle: from the new Short)
+async function openAdaptRemakeDialog(videoId){
+  const dlg = document.getElementById('remakeDialog');
+  dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body">${spinnerHtml('Ce qui sera repris…')}</div></div>`;
+  if (!dlg.open) dlg.showModal();
+  let st;
+  try { st = await api(`/api/videos/${encodeURIComponent(videoId)}/remake_style`); }
+  catch (e){ dlg.innerHTML = `<div class="chcard" style="border:none"><div class="chcard-body"><div class="warnbox">${esc(e.message)}</div><button class="btn ghost small" data-act="close">Fermer</button></div></div>`;
+             dlg.querySelector('[data-act="close"]').onclick = () => dlg.close(); return; }
+  const per = Object.values(st.par_chaine);
+  const lines = [
+    ['Mode', st.mode === 'script' ? "Script d'abord" : "Sources d'abord"],
+    ['Chaînes', per.map(s => s.chaine_nom).join(' + ') + (st.versions ? ' (une version par chaîne)' : '')],
+    ...per.flatMap(s => [
+      [`Voix · ${s.chaine_nom}`, s.voix_nom || 'celle de la chaîne'],
+      [`Musique · ${s.chaine_nom}`, s.music_file ? `${s.music_file}${s.music_start != null ? ` · à partir de ${s.music_start} s` : ''}` : "choisie par l'IA"],
+      [`Style · ${s.chaine_nom}`, s.style || 'celui de la chaîne'],
+    ]),
+  ];
+  dlg.innerHTML = `
+    <div class="chcard" style="border:none">
+      <div class="chcard-head">
+        <div class="who"><div class="name">${icon('sparkle', 15)} Refaire ce style</div><div class="meta" style="margin-left:0">Un autre Short modèle, fait comme celle-ci</div></div>
+        <button class="btn ghost small" data-act="close">${icon('x', 14)}</button>
+      </div>
+      <div class="chcard-body">
+        <div class="muted">Repris de cette vidéo :</div>
+        <div class="recap">${lines.map(([k, v]) => `<div class="line"><span class="k">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join('')}</div>
+        <div class="tiny">Le sujet, le script et l'angle viennent du nouveau Short. Les effets suivent les règles habituelles.</div>
+        <div><label class="f">Lien du nouveau Short modèle</label><input class="f" type="url" data-role="url" placeholder="https://www.youtube.com/shorts/…"></div>
+        <span class="tiny" data-role="err" style="color:var(--danger)"></span>
+      </div>
+      <div class="chcard-foot">
+        <button class="btn ghost small" data-act="close">Annuler</button>
+        <button class="btn primary small push" data-act="go">Lancer l'adaptation →</button>
+      </div>
+    </div>`;
+  dlg.querySelectorAll('[data-act="close"]').forEach(b => b.onclick = () => dlg.close());
+  const go = dlg.querySelector('[data-act="go"]'), err = dlg.querySelector('[data-role="err"]');
+  go.onclick = async () => {
+    const url = dlg.querySelector('[data-role="url"]').value.trim();
+    if (!/^https?:\/\//.test(url)) { err.textContent = 'Colle le lien du Short modèle.'; return; }
+    go.disabled = true; err.textContent = '';
+    try {
+      const p = await api('/api/adaptations/remake', { method: 'POST', body: JSON.stringify({ video_id: videoId, reference_url: url }) });
+      dlg.close();
+      log("Adaptation lancée dans le style de la vidéo qui a marché", 'success');
+      adCurrent = p.project_id; adProject = null;
+      openSpace('adaptation');
+    } catch (e){ go.disabled = false; err.textContent = e.message; }
+  };
+  hydrateIcons(dlg);
 }
 
 
