@@ -175,3 +175,24 @@ def test_an_excerpt_of_the_model_always_credits_its_creator():
     clips = {"M1": {"id": "M1", "source": 0, "usable": True, "extrait": True, "marks": ["Credits: @jeffthegutterguy"]},
              "P2": {"id": "P2", "source": 1, "usable": True, "marks": []}}
     assert ap.guess_credits(metas, clips) == "@jeffthegutterguy · @Klimt-YT · @source_b"
+
+
+def test_each_gemini_call_notes_what_it_cost_and_which_step_asked(monkeypatch, tmp_path):
+    import json as _json
+    import requests
+    import gemini_ai_generator as gg
+
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": '{"passages": [{"clip": "P1", "texte": "B."}]}'}]}}],
+                    "usageMetadata": {"promptTokenCount": 1200, "candidatesTokenCount": 40, "thoughtsTokenCount": 300,
+                                      "totalTokenCount": 1540,
+                                      "promptTokensDetails": [{"modality": "TEXT", "tokenCount": 200},
+                                                              {"modality": "IMAGE", "tokenCount": 1000}]}}
+    monkeypatch.setattr(requests, "post", lambda *a, **k: R())
+    monkeypatch.setattr(gg, "USAGE_LOG", str(tmp_path / "u.jsonl"))
+    script.revise({"passages": [{"clip": "P1", "texte": "A."}]}, _clips(), "x", gemini=gg.GeminiAIGenerator(api_key="k"))
+    line = _json.loads(open(tmp_path / "u.jsonl").read().splitlines()[0])
+    assert line["step"] == "script.revise" and line["thoughts"] == 300 and line["by_kind"] == {"TEXT": 200, "IMAGE": 1000}

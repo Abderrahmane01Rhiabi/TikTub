@@ -10,6 +10,7 @@ ai_tags_generator.py can cascade between the two interchangeably.
 import os
 import json
 import random
+import time
 import cv2
 import tempfile
 from typing import Dict, List, Optional
@@ -20,6 +21,36 @@ from PIL import Image
 import numpy as np
 
 CREDITS_OUT = "Crédits Gemini épuisés"
+USAGE_LOG = os.path.join("temp", "usage", "gemini.jsonl")   # one line per call: what it cost, and which step asked
+_USAGE_LOCK = __import__("threading").Lock()
+
+
+def _asking_step() -> str:
+    """The app's function that made this call (module.function), found up the stack."""
+    import inspect
+    for f in inspect.stack()[2:]:
+        mod = os.path.splitext(os.path.basename(f.filename))[0]
+        if mod != "gemini_ai_generator" and "site-packages" not in f.filename and "threading" not in f.filename:
+            return f"{mod}.{f.function}"
+    return "?"
+
+
+def log_usage(model: str, status: int, data: Optional[Dict], seconds: float) -> None:
+    """What one call cost, as Google counts it (usageMetadata): the tokens sent by
+    kind (text / image / video / audio), the thinking, the answer. Best effort."""
+    try:
+        u = (data or {}).get("usageMetadata") or {}
+        line = {"at": datetime.now().isoformat(timespec="seconds"), "model": model, "step": _asking_step(),
+                "status": status, "s": round(seconds, 1),
+                "prompt": u.get("promptTokenCount", 0), "output": u.get("candidatesTokenCount", 0),
+                "thoughts": u.get("thoughtsTokenCount", 0), "total": u.get("totalTokenCount", 0),
+                "by_kind": {d.get("modality", "?"): d.get("tokenCount", 0) for d in u.get("promptTokensDetails") or []}}
+        with _USAGE_LOCK:
+            os.makedirs(os.path.dirname(USAGE_LOG), exist_ok=True)
+            with open(USAGE_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(line) + "\n")
+    except Exception:
+        pass
 
 
 def plain_error(r) -> str:
@@ -246,12 +277,18 @@ Respond with JSON:
             if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
                 payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking}
 
+            t0 = time.time()
             response = requests.post(
                 self.base_url,
                 params={"key": self.api_key},
                 json=payload,
                 timeout=timeout
             )
+            try:
+                body = response.json()
+            except Exception:           # an error page, a test double: logged without figures
+                body = None
+            log_usage(self.model_name, response.status_code, body, time.time() - t0)
 
             if response.status_code == 200:
                 data = response.json()
