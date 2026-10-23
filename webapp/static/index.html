@@ -682,6 +682,7 @@
     </div>
     <div class="statbar" id="homeKpis"></div>
     <div id="homeHealth"></div>
+    <div id="homeCost"></div>
     <div id="homeSuggest"></div>
     <div class="home-grid" id="homeChannels"></div>
   </section>
@@ -1405,6 +1406,26 @@ async function loadHome(){
   wireHomeCards(grid, data.channels);
   loadHomeSuggestion().catch(() => {});  // a bonus: never blocks or breaks the home screen
   loadHomeHealth().catch(() => {});
+  loadHomeCost().catch(() => {});
+}
+
+// What the AI (Gemini) cost this month, per step — and the same calls at January 2027 prices (Flash doubles)
+async function loadHomeCost(){
+  const box = document.getElementById('homeCost');
+  const r = await api('/api/usage/ai');
+  if (!r.appels){ box.innerHTML = ''; return; }
+  const usd = x => `${Number(x).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} $`;
+  const month = new Date(r.mois + '-01').toLocaleDateString('fr-FR', { month: 'long' });
+  box.innerHTML = `<details class="tiny" style="margin:2px 0 8px">
+    <summary style="cursor:pointer">💶 IA en ${esc(month)} : <b>${usd(r.total)}</b> · ${r.appels} appels${r.echecs ? ` (${r.echecs} en échec)` : ''}
+      ${r.au_prix_de_janvier > r.total ? ` · aux prix de janvier 2027 : ${usd(r.au_prix_de_janvier)}` : ''}</summary>
+    <div style="margin-top:6px;display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:3px 14px;max-width:760px">
+      <b>Étape</b><b>Modèle</b><b>Appels</b><b>Coût</b>
+      ${r.par_etape.map(s => `<span title="${esc(s.etape)}">${esc(s.quoi || s.etape)}</span>
+        <span>${esc(s.modele_actuel.replace('gemini-', '').replace('-latest', ''))}</span><span>${s.appels}</span><span>${usd(s.cout)}</span>`).join('')}
+    </div>
+    <div style="margin-top:6px">Le modèle de chaque étape se change dans <code>ai_models.py</code> (ou <code>database/ai_models.json</code>).</div>
+  </details>`;
 }
 
 // ---------- Downloads health: three small test downloads a day (YouTube, YouTube via bgutil, TikTok) ----------

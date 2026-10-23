@@ -67,7 +67,7 @@ class GeminiAIGenerator:
             raise ValueError("❌ Gemini API key required! Set GEMINI_API_KEY environment variable or pass api_key parameter")
 
         self.model_name = "gemini-flash-latest"  # rolling alias — avoids hardcoding a version that gets deprecated
-        self.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent"
+        self.base_url = self.url_for(self.model_name)
 
         # Tracks degraded/failed calls so a silent fallback to generic
         # content isn't mistaken for a genuine success by the caller.
@@ -260,6 +260,10 @@ Respond with JSON:
                 })
         return self._generate_content(parts, max_tokens, temperature=temperature)
 
+    @staticmethod
+    def url_for(model: str) -> str:
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
     def _generate_content(self, parts: List[Dict], max_tokens: int = 1000, timeout: int = 30, temperature: float = 0.7,
                           thinking: Optional[int] = None) -> Dict:
         """Shared generateContent call/response-parsing path for both the
@@ -277,9 +281,15 @@ Respond with JSON:
             if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
                 payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking}
 
+            # the model of the step asking (ai_models.STEPS — one table for the whole app), else this generator's
+            try:
+                import ai_models
+                model = ai_models.model_for(_asking_step(), self.model_name)
+            except Exception:
+                model = self.model_name
             t0 = time.time()
             response = requests.post(
-                self.base_url,
+                self.url_for(model),
                 params={"key": self.api_key},
                 json=payload,
                 timeout=timeout
@@ -288,7 +298,7 @@ Respond with JSON:
                 body = response.json()
             except Exception:           # an error page, a test double: logged without figures
                 body = None
-            log_usage(self.model_name, response.status_code, body, time.time() - t0)
+            log_usage(model, response.status_code, body, time.time() - t0)
 
             if response.status_code == 200:
                 data = response.json()

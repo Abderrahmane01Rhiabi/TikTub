@@ -99,13 +99,10 @@ class ScriptError(RuntimeError):
     pass
 
 
-def _gemini(pro: bool = False):
+def _gemini():
+    """The model is the step's: ai_models.STEPS (the re-reads on Pro: the Arabic endings slipped past Flash twice)."""
     from gemini_ai_generator import GeminiAIGenerator
-    g = GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
-    if pro:     # the stronger model, for the critical re-read (the Arabic endings slipped past flash twice)
-        g.model_name = "gemini-pro-latest"
-        g.base_url = f"https://generativelanguage.googleapis.com/v1beta/models/{g.model_name}:generateContent"
-    return g
+    return GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 def clip_listing(clips: Dict[str, Dict]) -> str:
@@ -153,7 +150,7 @@ def critique(script: Dict, lang_code: str, clips: Dict[str, Dict], gemini=None) 
     failure, the script unchanged with an empty list."""
     lang = lang_of(lang_code)
     try:
-        r = (gemini or _gemini(pro=True))._generate_content(
+        r = (gemini or _gemini())._generate_content(
             [{"text": CRITIQUE_PROMPT.format(langue=lang["label"], script=json.dumps(script, ensure_ascii=False, indent=1),
                                              regles=LANG_RULES.get(lang["code"], LANG_RULES["fr"]),
                                              budgets=budgets(script, clips, lang_code))}],
