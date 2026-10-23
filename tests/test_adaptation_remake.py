@@ -54,7 +54,8 @@ def test_a_deleted_track_falls_back_to_the_channels_choice(project):
 
 def test_remake_endpoint_makes_one_version_per_channel(client, project, monkeypatch):
     import webapp.main as m
-    monkeypatch.setattr(m, "_start_adaptation_step", lambda pid, step: None)
+    import webapp.adaptation_routes as routes
+    monkeypatch.setattr(routes, "_start_adaptation_step", lambda pid, step: None)
     channel(project), channel(project, "chanB", "ar", "v_ar")
     db.upsert_video("v1", published("v1", "chanA", "v_fr", None, None, "dynamique"))
     db.upsert_video("v2", published("v2", "chanB", "v_ar", None, None, "classique"))
