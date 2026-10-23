@@ -100,3 +100,11 @@ def test_a_link_that_gives_no_video_is_not_sent_to_gemini(monkeypatch, tmp_path)
     with pytest.raises(finder.FinderError, match="ne donne pas de vidéo"):
         finder._watch("https://www.tiktok.com/@a/video/1", G(), "prompt")
     assert sent == []
+
+
+def test_a_centred_word_caption_is_erased_as_a_band_across():
+    from adaptation.sources import caption_band
+    w, h = 480, 710
+    assert caption_band((169, 547, 136, 52), w, h) == (38, 537, 403, 72)     # "FIRE" -> room for "BURNING"
+    assert caption_band((378, 5, 67, 35), w, h) == (378, 5, 67, 35)         # a logo in a corner: as is
+    assert caption_band((10, 400, 90, 40), w, h) == (10, 400, 90, 40)       # off centre: as is
