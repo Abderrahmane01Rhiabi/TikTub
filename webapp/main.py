@@ -50,6 +50,7 @@ async def lifespan(app):
     _start_pot_server()
     _daily_backup_on_startup()
     _start_stats_tracker()
+    _download_health_loop()
     yield
 
 
@@ -185,6 +186,77 @@ def _daily_backup_on_startup():
         except Exception as e:
             print(f"⚠️ Sauvegarde automatique impossible : {e}")
     threading.Thread(target=run, daemon=True).start()
+
+
+DOWNLOAD_HEALTH_RUNNING = threading.Lock()
+
+
+def _download_health_loop():
+    """Once a day, three small test downloads: a break shows on the home page,
+    not in the middle of a project. Checked every hour, run when due."""
+    def run():
+        import time
+        import download_health
+        time.sleep(90)                  # the app first: recovery, bgutil, backup
+        while True:
+            try:
+                if download_health.is_due() and DOWNLOAD_HEALTH_RUNNING.acquire(blocking=False):
+                    try:
+                        st = download_health.check_and_record("auto")["dernier"]
+                        print(f"🩺 Téléchargements : {st['ok']}/{st['total']}")
+                    finally:
+                        DOWNLOAD_HEALTH_RUNNING.release()
+            except Exception as e:
+                print(f"⚠️ Contrôle des téléchargements impossible : {e}")
+            time.sleep(3600)
+    threading.Thread(target=run, daemon=True).start()
+
+
+def _busy_downloading() -> Optional[str]:
+    """What is downloading right now (an update of yt-dlp must not pull files from under it)."""
+    import db as _db
+    busy = [p["project_id"] for p in _db.list_adaptations() if p.get("status") in ("analysing", "searching", "fetching")]
+    vids = get_batch_processor().url_manager.list_videos(status="downloading")
+    if busy or vids:
+        return (f"{len(busy)} adaptation(s)" if busy else "") + (" et " if busy and vids else "") + \
+               (f"{len(vids)} import(s)" if vids else "") + " en cours"
+    return None
+
+
+@app.get("/api/health/downloads")
+def download_health_state():
+    import download_health
+    st = download_health.load()
+    return {**st, "en_cours": DOWNLOAD_HEALTH_RUNNING.locked(), "versions": download_health.versions()}
+
+
+@app.post("/api/health/downloads/check")
+async def download_health_check():
+    """Run the three test downloads now (about 30 s)."""
+    import download_health
+    if not DOWNLOAD_HEALTH_RUNNING.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Un contrôle est déjà en cours.")
+    try:
+        await asyncio.to_thread(download_health.check_and_record, "à la demande")
+    finally:
+        DOWNLOAD_HEALTH_RUNNING.release()
+    return download_health_state()
+
+
+@app.post("/api/health/downloads/update")
+async def download_health_update():
+    """Newest yt-dlp + yt-dlp-ejs, kept only if the tests pass as well as before (1 to 3 min)."""
+    import download_health
+    busy = _busy_downloading()
+    if busy:
+        raise HTTPException(status_code=409, detail=f"Attends la fin : {busy}.")
+    if not DOWNLOAD_HEALTH_RUNNING.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="Un contrôle est déjà en cours.")
+    try:
+        out = await asyncio.to_thread(download_health.update)
+    finally:
+        DOWNLOAD_HEALTH_RUNNING.release()
+    return {**download_health_state(), "mise_a_jour": out}
 
 
 @app.get("/api/storage")

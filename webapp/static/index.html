@@ -681,6 +681,7 @@
       <div class="actions"><button class="btn secondary small" id="homeRefreshBtn" data-icon="refresh">Actualiser</button></div>
     </div>
     <div class="statbar" id="homeKpis"></div>
+    <div id="homeHealth"></div>
     <div id="homeSuggest"></div>
     <div class="home-grid" id="homeChannels"></div>
   </section>
@@ -1403,6 +1404,50 @@ async function loadHome(){
   grid.innerHTML = data.channels.map(c => channelHomeCard(c)).join('');
   wireHomeCards(grid, data.channels);
   loadHomeSuggestion().catch(() => {});  // a bonus: never blocks or breaks the home screen
+  loadHomeHealth().catch(() => {});
+}
+
+// ---------- Downloads health: three small test downloads a day (YouTube, YouTube via bgutil, TikTok) ----------
+function agoText(iso){
+  const m = Math.round((Date.now() - new Date(iso)) / 60000);
+  return m < 60 ? `il y a ${Math.max(1, m)} min` : m < 48 * 60 ? `il y a ${Math.round(m / 60)} h` : `il y a ${Math.round(m / 1440)} jours`;
+}
+
+async function loadHomeHealth(note){
+  const box = document.getElementById('homeHealth');
+  const st = await api('/api/health/downloads');
+  const d = st.dernier, v = st.versions || {};
+  const vers = `yt-dlp ${esc(v['yt-dlp'] || '?')} · bgutil ${esc(v['bgutil-ytdlp-pot-provider'] || '?')}`;
+  const buttons = `<button class="btn ghost small" data-act="check" ${st.en_cours ? 'disabled' : ''}>${st.en_cours ? spin('contrôle en cours…') : 'Vérifier maintenant'}</button>
+    <button class="btn ghost small" data-act="update" ${st.en_cours ? 'disabled' : ''} title="Installe la dernière version de yt-dlp, refait le contrôle et remet l'ancienne toute seule si la nouvelle marche moins bien (1 à 3 min)">Mettre à jour yt-dlp</button>`;
+  const allOk = d && d.total && d.ok === d.total;
+  box.innerHTML = !d
+    ? `<div class="tiny" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0">🩺 Téléchargements : pas encore vérifiés. ${buttons}</div>`
+    : allOk
+    ? `<div class="tiny" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:6px 0" title="${esc(d.resultats.map(r => `${r.label} : ${r.secondes} s, ${r.hauteur}p`).join(' · '))}">
+         ✅ Téléchargements OK (${d.ok}/${d.total}) · vérifiés ${agoText(d.le)} · ${vers} ${buttons}</div>`
+    : `<div class="warnbox" style="border-color:var(--danger)">
+         <b>❌ Téléchargements : ${d.ok}/${d.total} test(s) passent</b>${st.casse_depuis ? ` — cassé depuis ${agoText(st.casse_depuis).replace('il y a ', '')}` : ''} · vérifiés ${agoText(d.le)}
+         ${(d.resultats || []).filter(r => !r.ok).map(r => `<div class="tiny">• ${esc(r.label)} : ${esc(r.erreur || '')}</div>`).join('')}
+         ${d.erreur ? `<div class="tiny">• ${esc(d.erreur)}</div>` : ''}
+         ${d.bgutil_actif === false ? '<div class="tiny">• Le service bgutil (jetons YouTube) est arrêté : redémarre le serveur.</div>' : ''}
+         <div class="tiny" style="margin-top:4px">Souvent, YouTube ou TikTok a changé : <b>Mettre à jour yt-dlp</b> suffit. En attendant, « Déposer un fichier » marche toujours. ${vers}</div>
+         <div style="display:flex;gap:8px;margin-top:6px">${buttons}</div></div>`;
+  if (note) box.insertAdjacentHTML('beforeend', `<div class="tiny" style="margin:4px 0">${esc(note)}</div>`);
+  const run = async (path, label) => {
+    box.querySelectorAll('button').forEach(b => b.disabled = true);
+    box.querySelector(`[data-act="${path === 'check' ? 'check' : 'update'}"]`).innerHTML = spin(label);
+    try {
+      const r = await api(`/api/health/downloads/${path}`, { method: 'POST' });
+      const m = r.mise_a_jour;
+      if (m) toast(m.message, m.annule ? 'error' : 'success');
+      await loadHomeHealth(m ? m.message : null);
+    } catch (e){ log(e.message, 'error'); await loadHomeHealth(); }
+  };
+  box.querySelector('[data-act="check"]').onclick = () => run('check', 'contrôle (30 s)…');
+  box.querySelector('[data-act="update"]').onclick = () => {
+    if (confirm("Installer la dernière version de yt-dlp ? Elle est testée tout de suite, et l'ancienne revient toute seule si la nouvelle marche moins bien.")) run('update', 'mise à jour (1 à 3 min)…');
+  };
 }
 
 // ---------- "Idée de la semaine" (winning style worth relaunching) ----------
