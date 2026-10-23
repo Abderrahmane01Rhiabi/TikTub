@@ -2984,12 +2984,14 @@ STATIC_DIR = Path(__file__).parent / "static"
 
 
 def frontend_build() -> str:
-    """Identifies the current page version (index.html's last modification).
-    Sent with every API response (X-TikTub-Build) and baked into the page
-    when served, so a tab still running an older page — server restarted
-    with new code, page not reloaded — notices and asks for a reload
-    instead of failing on a changed API answer."""
-    return str(int((STATIC_DIR / "index.html").stat().st_mtime))
+    """Identifies the current page version (the last change to index.html,
+    app.css or a js/ file). Sent with every API response (X-TikTub-Build)
+    and baked into the page when served — also as ?v= on its css and js, so
+    the browser never mixes old and new files — so a tab still running an
+    older page (server restarted with new code, page not reloaded) notices
+    and asks for a reload instead of failing on a changed API answer."""
+    files = [STATIC_DIR / "index.html", STATIC_DIR / "app.css", *(STATIC_DIR / "js").glob("*.js")]
+    return str(int(max(f.stat().st_mtime for f in files if f.exists())))
 
 
 @app.get("/")
