@@ -2012,8 +2012,8 @@ def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     sc = t["script"]
     label = langs.lang(t["language"])["credit_label"]
     desc = sc.get("description") or ""
-    if p.get("credits"):
-        desc = f"{desc}\n\n{label} {p['credits']}".strip()
+    if p.get("credits"):                # "抖音" said "Douyin", as on the picture
+        desc = f"{desc}\n\n{label} {p['credits'].replace('抖音', 'Douyin')}".strip()
     vid = f"{t['channel']}_{p['project_id']}"
     now = datetime.now().isoformat()
     ai = {"optimized_title": sc["titre"], "title": sc["titre"], "description_suggestions": [desc],
