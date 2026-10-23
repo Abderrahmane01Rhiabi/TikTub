@@ -131,3 +131,6 @@ assets/broll/
 # Adaptation: ElevenLabs voice previews (downloaded, regenerable)
 assets/voices/
 archive/
+
+# sound effects added in Réglages → Effets sonores (backed up by the app)
+sfx_perso/

@@ -22,12 +22,16 @@ def test_backup_contains_the_irreplaceable_parts_and_no_secrets(project):
     make_channel(project)
     project.add_video("v1", status="uploaded")
     project.write_schedule([])
+    os.makedirs("sfx_perso")
+    for n in ("pop_mine.mp3", "reglages.json"):
+        open(os.path.join("sfx_perso", n), "w").write("x")
 
     info = backup.create_backup("manuelle")
 
     names = zipfile.ZipFile(os.path.join(backup.BACKUP_DIR, info["name"])).namelist()
     assert "database/tiktub.db" in names and "upload_schedule.json" in names
     assert "channels/chanA/profile.json" in names
+    assert {"sfx_perso/pop_mine.mp3", "sfx_perso/reglages.json"} <= set(names)     # sounds added in Réglages
     assert not any(n.endswith(("token.json", "credentials.json")) for n in names)
     assert info["reason"] == "manuelle"
 

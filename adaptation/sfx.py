@@ -19,15 +19,28 @@ on its event, variants taken in turn (the same whoosh three times sounds cheap).
 Measured before (2026-10-22): a noise "whoosh" made by the app, about 26 dB
 under the voice and on every transition — hardly heard, or heard as a hiss.
 
-The sounds are files in assets/sfx/<type>_<name>.mp3 (CC0, see LICENCES.md);
-a type with no file is simply left out.
+The sounds are files in assets/sfx/<type>_<name>.mp3 (CC0, see LICENCES.md),
+plus the ones added in Réglages → Effets sonores (sfx_perso/ in the data folder);
+a sound can be turned off there; a type with no file is simply left out.
 """
 
+import json
 import os
+import re
 import subprocess
+import tempfile
 from typing import Dict, List, Optional, Set
 
 FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "sfx")
+USER_FOLDER = "sfx_perso"        # in the data folder (the app's working directory)
+# the types a rule plays, and when — a sound of another type is never played
+RULES = {"whoosh": "une flèche ou un cercle apparaît ; la transition principale",
+         "shutter": "arrêt sur image",
+         "riser": "la montée juste avant le ralenti sur le moment fort",
+         "impact": "le coup sur le moment fort au ralenti",
+         "pop": "un chiffre apparaît"}
+MAX_LEN = 4.0                    # seconds kept of an added sound
+EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac")
 MAX = 4                  # moments with a sound effect, a video
 GAP = 3.0                # seconds between two of them
 TURN = 0.4               # the main transition: the one nearest this share of the video
@@ -35,15 +48,140 @@ GAIN = {"whoosh": 0.32, "pop": 0.28, "click": 0.25, "shutter": 0.30, "riser": 0.
 _PEAKS: Dict[str, float] = {}
 
 
-def library(folder: str = FOLDER) -> Dict[str, List[str]]:
-    """{type: [files]} from the folder's <type>_<name>.mp3 files."""
-    out: Dict[str, List[str]] = {}
+def _files(folder: str) -> List[str]:
     if not os.path.isdir(folder):
-        return out
-    for name in sorted(os.listdir(folder)):
-        if name.endswith((".mp3", ".wav")) and "_" in name:
-            out.setdefault(name.split("_", 1)[0], []).append(os.path.join(folder, name))
+        return []
+    return [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if n.endswith((".mp3", ".wav")) and "_" in n]
+
+
+def library(folder: Optional[str] = None) -> Dict[str, List[str]]:
+    """{type: [files]} from the <type>_<name>.mp3 files: the app's and the added
+    ones, without those turned off (or only `folder`'s, as they are)."""
+    off = set() if folder else set(_state()["off"])
+    out: Dict[str, List[str]] = {}
+    for path in _files(folder) if folder else _files(FOLDER) + _files(USER_FOLDER):
+        name = os.path.basename(path)
+        if name not in off:
+            out.setdefault(name.split("_", 1)[0], []).append(path)
     return out
+
+
+# ------------------------------------------------------------------ Réglages → Effets sonores
+
+def _state() -> Dict:
+    try:
+        with open(os.path.join(USER_FOLDER, "reglages.json"), encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError):
+        st = {}
+    return {"off": st.get("off") or [], "infos": st.get("infos") or {}}
+
+
+def _save_state(st: Dict) -> None:
+    os.makedirs(USER_FOLDER, exist_ok=True)
+    with open(os.path.join(USER_FOLDER, "reglages.json"), "w", encoding="utf-8") as f:
+        json.dump(st, f, ensure_ascii=False, indent=1)
+
+
+def _duration(path: str) -> Optional[float]:
+    try:
+        out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                             capture_output=True, text=True, timeout=20).stdout.strip()
+        return round(float(out), 2)
+    except (ValueError, OSError, subprocess.SubprocessError):
+        return None
+
+
+def _app_pages() -> Dict[str, str]:
+    """The freesound page of each of the app's sounds, from LICENCES.md
+    ("whoosh_whip_1.mp3 … whoosh_whip_5.mp3" covers the five)."""
+    pages: Dict[str, str] = {}
+    try:
+        with open(os.path.join(FOLDER, "LICENCES.md"), encoding="utf-8") as f:
+            rows = [l.split("|") for l in f if l.startswith("|")]
+    except OSError:
+        return pages
+    for cells in rows:
+        if len(cells) < 6 or not cells[-2].strip().startswith("http"):
+            continue
+        names = re.findall(r"[\w-]+\.mp3", cells[1])
+        span = [re.search(r"^(.*?)(\d+)\.mp3$", x) for x in names]
+        if len(names) == 2 and "…" in cells[1] and all(span):
+            names = [f"{span[0].group(1)}{k}.mp3" for k in range(int(span[0].group(2)), int(span[1].group(2)) + 1)]
+        for n in names:
+            pages[n] = cells[-2].strip()
+    return pages
+
+
+def catalog() -> List[Dict]:
+    """Every sound, for Réglages: its type, when the montage plays it (or that
+    it never does), whether it is on, added by hand, and where it comes from."""
+    st, out, pages = _state(), [], _app_pages()
+    for path, perso in [(x, False) for x in _files(FOLDER)] + [(x, True) for x in _files(USER_FOLDER)]:
+        name = os.path.basename(path)
+        kind = name.split("_", 1)[0]
+        info = st["infos"].get(name) or ({} if perso else {"source": pages.get(name, ""), "licence": "CC0"})
+        out.append({"name": name, "type": kind, "perso": perso, "actif": name not in st["off"],
+                    "regle": RULES.get(kind), "duree": _duration(path),
+                    "source": info.get("source") or "", "licence": info.get("licence") or ""})
+    return out
+
+
+def path_of(name: str) -> str:
+    for path in _files(FOLDER) + _files(USER_FOLDER):
+        if os.path.basename(path) == name:
+            return path
+    raise ValueError("Son introuvable.")
+
+
+def set_active(name: str, on: bool) -> None:
+    path_of(name)
+    st = _state()
+    st["off"] = [x for x in st["off"] if x != name] + ([] if on else [name])
+    _save_state(st)
+
+
+def add(src: str, kind: str, label: str, source: str = "", licence: str = "") -> str:
+    """Adds a sound of a type a rule plays, made like the app's own: the silence
+    at its start cut (its loudest instant is what lands on the event), at most
+    MAX_LEN seconds, its peak at -1 dBFS, in mp3. Returns its file name."""
+    if kind not in RULES:
+        raise ValueError("Ce type de son n'est joué par aucune règle du montage.")
+    slug = re.sub(r"[^a-z0-9]+", "_", (label or "son").lower()).strip("_")[:40] or "son"
+    taken = {os.path.basename(x) for x in _files(FOLDER) + _files(USER_FOLDER)}
+    name, n = f"{kind}_{slug}.mp3", 2
+    while name in taken:
+        name, n = f"{kind}_{slug}_{n}.mp3", n + 1
+    os.makedirs(USER_FOLDER, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        cut = os.path.join(tmp, "cut.wav")
+        r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-vn", "-ac", "2", "-ar", "44100",
+                            "-af", "silenceremove=start_periods=1:start_threshold=-50dB", "-t", str(MAX_LEN), cut],
+                           capture_output=True, text=True)
+        if r.returncode or not _duration(cut):
+            raise ValueError("Ce fichier ne se lit pas comme un son.")
+        peak = subprocess.run(["ffmpeg", "-v", "info", "-i", cut, "-af", "volumedetect", "-f", "null", "-"],
+                              capture_output=True, text=True).stderr
+        m = re.search(r"max_volume:\s*(-?[\d.]+) dB", peak)
+        gain = -1.0 - float(m.group(1)) if m else 0.0
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", cut, "-af", f"volume={gain:.2f}dB",
+                        "-codec:a", "libmp3lame", "-q:a", "2", os.path.join(USER_FOLDER, name)], check=True)
+    st = _state()
+    st["infos"][name] = {"source": source.strip(), "licence": licence.strip()}
+    _save_state(st)
+    return name
+
+
+def remove(name: str) -> None:
+    """Deletes an added sound (the app's own can only be turned off)."""
+    path = path_of(name)
+    if os.path.dirname(os.path.abspath(path)) != os.path.abspath(USER_FOLDER):
+        raise ValueError("Les sons de l'app ne se suppriment pas : désactive-le.")
+    os.remove(path)
+    st = _state()
+    st["infos"].pop(name, None)
+    st["off"] = [x for x in st["off"] if x != name]
+    _save_state(st)
 
 
 def peak_of(path: str) -> float:
