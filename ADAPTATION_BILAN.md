@@ -48,6 +48,17 @@ Le code est dans `adaptation/` :
 | `render.py`, `effects.py`, `annotate.py`, `sfx.py` | le montage |
 | `checks.py` | le contrôle final |
 
+Hors du dossier `adaptation/` :
+
+| Fichier | Rôle |
+|---|---|
+| `webapp/adaptation_routes.py` | les routes du serveur pour l'Adaptation |
+| `webapp/static/js/adaptation.js` | l'écran Adaptation (le reste de l'interface : un fichier par espace dans `webapp/static/js/`, le style dans `webapp/static/app.css`) |
+| `ai_models.py` | quel modèle d'IA pour chaque étape, et le coût du mois |
+| `download_health.py` | le contrôle quotidien des téléchargements, la mise à jour de yt-dlp |
+
+`pipeline.py` reste **un seul fichier**, rangé en sections numérotées (création, 1. analyse, Script d'abord, extrait, 2. scripts, 3. voix, 4. rendu final). Le découper obligerait à changer la façon dont ses étapes s'appellent entre elles : le risque est plus grand que le gain.
+
 ---
 
 ## Ce qu'on a construit, et pourquoi
