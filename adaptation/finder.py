@@ -24,7 +24,7 @@ import json
 import os
 import re
 from typing import Callable, Dict, List, Optional
-from urllib.parse import quote_plus
+from urllib.parse import quote, quote_plus
 
 from adaptation.sources import ytdlp_opts
 
@@ -69,10 +69,18 @@ def credit_links(credits: List[str]) -> List[Dict]:
 
 
 def search_links(query: str) -> List[Dict]:
+    """Searches to open by hand. Written in Chinese: Douyin and Xiaohongshu too —
+    a Chinese trend lives there, not on TikTok (the cactus Short, 2026-10-23); the
+    app can't read them (captcha), the person can, and drops the saved video."""
     q = quote_plus(query)
-    return [{"label": "YouTube", "url": f"https://www.youtube.com/results?search_query={q}"},
-            {"label": "TikTok", "url": f"https://www.tiktok.com/search?q={q}"},
-            {"label": "Google vidéos", "url": f"https://www.google.com/search?tbm=vid&q={q}"}]
+    links = [{"label": "YouTube", "url": f"https://www.youtube.com/results?search_query={q}"},
+             {"label": "TikTok", "url": f"https://www.tiktok.com/search?q={q}"},
+             {"label": "Google vidéos", "url": f"https://www.google.com/search?tbm=vid&q={q}"}]
+    if re.search(r"[\u4e00-\u9fff]", query or ""):
+        links += [{"label": "Douyin", "url": f"https://www.douyin.com/search/{quote(query)}"},
+                  {"label": "Xiaohongshu", "url": f"https://www.xiaohongshu.com/search_result?keyword={q}"},
+                  {"label": "Bilibili", "url": f"https://search.bilibili.com/all?keyword={q}"}]
+    return links
 
 
 # --------------------------------------------------------------- scenes
@@ -838,6 +846,20 @@ def _youtube_title(url: str) -> str:
         return ""
 
 
+def _send_file(g, path: str, prompt: str) -> Dict:
+    """A video file sent to Gemini and judged: {"answer"}."""
+    up = g._upload_video_file(path)
+    if not up:
+        raise FinderError("Envoi de la vidéo à Gemini impossible.")
+    try:
+        if not g._wait_for_file_active(up["name"], timeout=240):
+            raise FinderError("Gemini n'a pas fini de lire la vidéo à temps.")
+        return {"answer": g._generate_content([{"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}},
+                                               {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1)}
+    finally:
+        g._delete_file(up["name"])
+
+
 def _watch(url: str, g, prompt: str) -> Dict:
     """Gemini watches a YouTube link directly; anything else (VK, Rutube,
     TikTok…) is downloaded small and sent as a file."""
@@ -850,6 +872,12 @@ def _watch(url: str, g, prompt: str) -> Dict:
     import tempfile
     import yt_dlp
     from adaptation import sources
+    if sources.local_path(url):         # a file dropped by hand: sent as it is
+        path = sources.local_path(url)
+        if not os.path.exists(path):
+            raise FinderError("Le fichier déposé n'est plus là : dépose-le à nouveau.")
+        return {**_send_file(g, path, prompt), "duration": sources.probe(path)["duration"],
+                "title": sources.local_info(url).get("title") or os.path.basename(path)}
     with tempfile.TemporaryDirectory() as tmp:
         opts = ytdlp_opts(outtmpl=os.path.join(tmp, "c.%(ext)s"), format="best[height<=480]/worst/best",
                           noplaylist=True,          # "<=?": Instagram gives no duration, it must not be refused for that
@@ -864,16 +892,7 @@ def _watch(url: str, g, prompt: str) -> Dict:
             raise FinderError(f"Vidéo trop longue ou introuvable : {url}")
         if not sources.has_picture(path):     # a web page or a photo post: Gemini refused it (400, text/html)
             raise FinderError(f"Ce lien ne donne pas de vidéo (page web ou photos) : {url}")
-        up = g._upload_video_file(path)
-        if not up:
-            raise FinderError("Envoi de la vidéo à Gemini impossible.")
-        try:
-            if not g._wait_for_file_active(up["name"], timeout=240):
-                raise FinderError("Gemini n'a pas fini de lire la vidéo à temps.")
-            answer = g._generate_content([{"file_data": {"mime_type": up["mime_type"], "file_uri": up["uri"]}},
-                                          {"text": prompt}], max_tokens=8000, timeout=240, temperature=0.1)
-        finally:
-            g._delete_file(up["name"])
+        answer = _send_file(g, path, prompt)["answer"]
         return {"answer": answer, "duration": info.get("duration") or sources.probe(path)["duration"],
                 "title": " · ".join(x for x in (info.get("title"), info.get("uploader")) if x)}
 

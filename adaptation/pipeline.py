@@ -789,7 +789,7 @@ def check_plan_link(pid: str, plan: int, url: str, checker=None) -> Dict:
     if not 0 <= plan < len(sug["scenes"]):
         raise PipelineError("Plan inconnu.")
     url = (url or "").strip()
-    if not url.startswith("http"):
+    if not url.startswith(("http", sources.LOCAL)):
         raise PipelineError("Colle un lien (https://…).")
     known = {finder.same_video(c["url"]): c["url"] for c in finder.all_candidates(sug)}
     url = known.get(finder.same_video(url), url)
@@ -809,7 +809,20 @@ def check_plan_link(pid: str, plan: int, url: str, checker=None) -> Dict:
         cands.insert(0, {"url": url, "id": vid or url, "title": r.get("title") or url, "origines": ["perso"],
                          "platform": platform(url), "duration": r.get("duration"),
                          "thumb": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else ""})
+    others = sorted(int(i) for i, e in (r.get("par_scene") or {}).items()
+                    if e.get("niveau") in finder.RANK and int(i) != plan and int(i) < len(sug["scenes"]))
+    mine = next(c for c in cands if c["url"] == url)
+    for i in others:                    # offered on the other plans it shows, too
+        cs = sug["scenes"][i].setdefault("candidats", [])
+        if not any(c["url"] == url for c in cs):
+            cs.insert(0, mine)
     m = _best_moment(r, plan)
+    p.pop("fetch_note", None)
+    if not m:                           # said, not left to guess (a file dropped on the wrong plan said nothing)
+        what = "Ta vidéo" if url.startswith(sources.LOCAL) else "Ton lien"
+        p["fetch_note"] = (f"{what} ne montre pas le plan {plan + 1}"
+                           + (f" ; elle sert au(x) plan(s) {', '.join(str(i + 1) for i in others)} : prends-la dans leurs « Autres vidéos »."
+                              if others else ", ni aucun autre plan."))
     if m:
         e = (r.get("par_scene") or {}).get(str(plan)) or {}
         p["picks"][plan] = {"url": url, "titre": r.get("title") or url, "niveau": m["niveau"],
@@ -817,6 +830,39 @@ def check_plan_link(pid: str, plan: int, url: str, checker=None) -> Dict:
                             **{k: True for k in ("remontage", "film") if r.get(k)},
                             **({"credit": e["credit"]} if r.get("remontage") and e.get("credit") else {})}
     return save(p)
+
+
+def file_for_plan(pid: str, plan: int, src: str, filename: str, credit: str = "", checker=None) -> Dict:
+    """A video saved by hand (Douyin's app, a private post…) dropped on a plan:
+    kept in the project, judged like a link; if it fits, the plan's pick,
+    credited to whom the person names."""
+    p = load(pid)
+    _expect(p, "images_review")
+    if not 0 <= plan < len((p.get("suggestions") or {}).get("scenes") or []):
+        raise PipelineError("Plan inconnu.")
+    try:
+        url = sources.save_local(src, os.path.join(project_dir(pid), "fichiers"), filename, credit)
+    except sources.SourceError as e:
+        raise PipelineError(str(e))
+    p = check_plan_link(pid, plan, url, checker)
+    pick = p["picks"][plan]
+    if pick and pick["url"] == url:
+        pick["titre"] = f"📁 {filename}"
+        if credit.strip():
+            pick["credit"] = credit.strip()
+        p = save(p)
+    return p
+
+
+def file_as_source(pid: str, src: str, filename: str, credit: str = "") -> Dict:
+    """Sources d'abord: a video saved by hand, added as one more source."""
+    p = load(pid)
+    _expect(p, "sources_search", "sources_review")
+    try:
+        url = sources.save_local(src, os.path.join(project_dir(pid), "fichiers"), filename, credit)
+    except sources.SourceError as e:
+        raise PipelineError(str(e))
+    return add_sources(pid, [url])
 
 
 def adapt_plan(pid: str, plan: int) -> Dict:

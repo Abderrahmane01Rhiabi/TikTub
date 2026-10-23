@@ -2432,6 +2432,25 @@ async function fetchBroll(){
 document.getElementById('brollFetchBtn').addEventListener('click', fetchBroll);
 document.getElementById('brollTheme').addEventListener('keydown', e => { if (e.key === 'Enter') fetchBroll(); });
 
+// A video saved by hand from a site the app can't read (Douyin's app, Xiaohongshu, a private post), dropped
+// on a plan or as a source: sent with whom to credit; the answer is the project.
+async function adDropFile(input, btn, path, credit, done){
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  form.append('credit', credit || '');
+  btn.disabled = true; btn.innerHTML = spin(path.startsWith('plans') ? "l'IA regarde ta vidéo…" : 'envoi…');
+  try {
+    const res = await fetch(`/api/adaptations/${adCurrent}/${path}`, { method: 'POST', body: form });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Envoi impossible');
+    toast(`« ${file.name} » déposé`, 'success');
+    done(d);
+  } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.textContent = btn.dataset.label; }
+  finally { input.value = ''; }
+}
+
 // What the useful re-edits credit (their description, the names on their pictures): the way to the
 // original footage. A TikTok / Instagram account can't be listed from here: its profile is to open by hand.
 function adOriginalsHtml(sug, cand, box = 'ad-clips'){
@@ -2949,7 +2968,7 @@ function adCandHtml(c, scene, sug, have, pickMode){
     : AD_ORIGIN[o] || o);
   const platformName = c.platform && c.platform !== 'YouTube' ? c.platform : '';
   return `<div class="ad-clip ad-cand ${picked ? 'picked' : ''}" data-url="${esc(c.url)}">
-    <a href="${esc(c.url)}" target="_blank" rel="noopener">${c.thumb ? `<img src="${esc(c.thumb)}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'ad-noimg', textContent: '${esc(platformName || 'vidéo')}'}))">`
+    <a href="${esc(adAt(c.url, 0))}" target="_blank" rel="noopener">${c.thumb ? `<img src="${esc(c.thumb)}" loading="lazy" alt="" referrerpolicy="no-referrer" onerror="this.replaceWith(Object.assign(document.createElement('div'), {className: 'ad-noimg', textContent: '${esc(platformName || 'vidéo')}'}))">`
       : `<div class="ad-noimg">${esc(platformName || 'vidéo')}</div>`}</a>
     <div class="meta">${pickMode ? (pickMode.chosen ? `<span class="pill ok">${icon('check', 11)} choisie</span>` : adMomentButtons(v, scene))
       : `<label><input type="checkbox" class="ad-pick" ${picked ? 'checked' : ''} ${already ? 'disabled' : ''}> ${already ? 'déjà ajoutée' : 'prendre'}</label>`}
@@ -3079,7 +3098,10 @@ function renderAdFinder(box, p){
       <div class="chcard-body"><div class="ad-clips">${adSortCands(sug.perso, -1, sug).map(c => adCandHtml(c, -1, sug, have)).join('')}</div></div></article>` : ''}
     <article class="chcard"><div class="chcard-body">
       <label class="f">Tes propres liens (TikTok, YouTube, Instagram, VK…), un par ligne</label>
-      <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea></div>
+      <textarea class="f ad-own" rows="3" placeholder="https://www.tiktok.com/@…/video/…"></textarea>
+      <div class="ad-row" style="margin-top:8px"><input class="f ad-file-credit" placeholder="Crédit de ta vidéo, ex. 微蓝 (Douyin 69627156)" style="flex:1;min-width:220px">
+        <input type="file" class="ad-file-input" accept=".mp4,.mov,.m4v,.webm,.mkv,video/*" hidden>
+        <button class="btn secondary small ad-file" title="Une vidéo enregistrée à la main (appli Douyin, Xiaohongshu, Instagram…) : ajoutée aux sources, analysée avec les autres">📁 Déposer un fichier comme source</button></div></div>
       <div class="chcard-foot"><span class="tiny ad-count"></span>
         <button class="btn secondary ad-own-check" data-icon="sparkle" title="L'IA regarde chaque lien et le compare aux plans du modèle (1 à 2 min)">Vérifier mes liens avec l'IA</button>
         ${p.status === 'sources_search' && (p.wanting || []).length ? `<button class="btn secondary ad-more" title="Cherche l'ACTION des scènes sans bonne vidéo dans des compilations, vidéos GoPro, vlogs… même si la vidéo parle d'autre chose ; l'IA regarde les nouvelles vidéos (2 à 5 min)">🔎 Chercher plus pour ${p.wanting.length} scène(s)</button>` : ''}
@@ -3135,6 +3157,11 @@ function renderAdFinder(box, p){
       adProject = np; renderAdFinder(box, np);
     } catch (e){ log(e.message, 'error'); b.checked = !b.checked; b.disabled = false; }
   });
+  const fileBtn = box.querySelector('.ad-file'), fileIn = box.querySelector('.ad-file-input');
+  fileBtn.dataset.label = fileBtn.textContent.trim();
+  fileBtn.onclick = () => fileIn.click();
+  fileIn.onchange = () => adDropFile(fileIn, fileBtn, 'sources/file', box.querySelector('.ad-file-credit').value,
+                                     () => { adProject = null; loadAdProject(); });
   box.querySelector('.ad-own-check').onclick = async ev => {
     const list = own.value.split('\n').map(x => x.trim()).filter(Boolean);
     if (!list.length){ toast('Colle d\'abord un ou plusieurs liens', 'error'); return; }
@@ -3350,6 +3377,8 @@ const AD_PICK = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images �
 
 function adAt(url, sec){
   const t = Math.max(0, Math.floor(sec || 0));
+  if ((url || '').startsWith('fichier:'))         // a file dropped by hand: played by the app, at that second
+    return `/api/adaptations/${adCurrent}/fichiers/${encodeURIComponent(url.split('/').pop())}#t=${t}`;
   return /youtube\.com|youtu\.be/.test(url) ? `${url}${url.includes('?') ? '&' : '?'}t=${t}s` : url;
 }
 
@@ -3394,6 +3423,7 @@ function renderAdImages(body, p){
             ${pick.remontage ? `<span class="pill warn" title="Seule son image est prise : ta voix, ton script, ton montage">image d'un remontage · crédit : ${esc(pick.credit || 'le compte du remontage')}</span>` : ''}
             ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
+            ${pick.credit && !pick.remontage ? `<span class="tiny">· crédit : ${esc(pick.credit)}</span>` : ''}
             <button class="btn ghost small ad-unpick" title="Ce plan n'aura plus de vidéo choisie : tu pourras en prendre une autre">Enlever ce choix</button></div>`
           : `<div class="warnbox">Aucune vidéo vérifiée ne montre ce plan. Choisis-en une ci-dessous, donne ton lien, ou :</div>
              <div class="ad-row"><button class="btn secondary small ad-adapt" data-icon="sparkle" title="L'IA réécrit la phrase (toutes les langues) autour d'une image déjà trouvée">Adapter la phrase à une image trouvée</button>
@@ -3405,6 +3435,9 @@ function renderAdImages(body, p){
             ? `<select class="f ad-excerpt-ref" style="width:auto;max-width:260px;font-size:12px" title="Le moment du Short modèle à prendre">
                 ${p.reference.plans.map((r, i) => `<option value="${i + 1}" ${(pl.plans_modele || [])[0] === i + 1 ? 'selected' : ''}>Modèle ${i + 1} (${adDuration(r.debut) || '0:00'}–${adDuration(r.fin) || '0:00'}) — ${esc((r.visuel || '').slice(0, 50))}</option>`).join('')}</select>
               <button class="btn ghost small ad-excerpt" title="3 secondes maximum du moment choisi, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>
+        <div class="ad-row"><input class="f ad-file-credit" placeholder="Crédit de ta vidéo, ex. 微蓝 (Douyin 69627156)" style="flex:1;min-width:220px">
+          <input type="file" class="ad-file-input" accept=".mp4,.mov,.m4v,.webm,.mkv,video/*" hidden>
+          <button class="btn secondary small ad-file" title="Une vidéo enregistrée à la main (appli Douyin, Xiaohongshu, Instagram…) : l'IA la vérifie pour ce plan (15 s à 2 min)">📁 Déposer un fichier pour ce plan</button></div>
         ${frames.length ? adFramesHtml(p, frames) : ''}
         <div class="ad-links"><span class="tiny">Recherches :</span>${chips(sc.recherches || [])}</div>
         ${links(sc.liens || [])}
@@ -3460,6 +3493,11 @@ function renderAdImages(body, p){
       if (!url){ toast('Colle d\'abord un lien', 'error'); return; }
       post(`plans/${k}/link`, chkLink, 'l\'IA regarde…', { url });
     }; }
+    const fileBtn = card.querySelector('.ad-file'), fileIn = card.querySelector('.ad-file-input');
+    if (fileBtn){ fileBtn.dataset.label = fileBtn.textContent.trim();
+      fileBtn.onclick = () => fileIn.click();
+      fileIn.onchange = () => adDropFile(fileIn, fileBtn, `plans/${k}/file`, card.querySelector('.ad-file-credit').value,
+                                         np => { adProject = np; renderAdImages(body, np); }); }
     const un = card.querySelector('.ad-unpick');
     if (un) un.onclick = () => choose(k, { url: null });
     card.querySelectorAll('.ad-choose').forEach(b => b.onclick = () =>
