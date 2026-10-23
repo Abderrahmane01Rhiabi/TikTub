@@ -746,7 +746,8 @@ def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin
                        "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
                        "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage")),
                        "film": bool(v.get("film")),
-                       "defauts": e.get("defauts") or ""}
+                       "defauts": e.get("defauts") or "",
+                       **({"credit": e["credit"]} if v.get("remontage") and e.get("credit") else {})}
     p["picks"] = picks
     return save(p)
 
@@ -810,8 +811,11 @@ def check_plan_link(pid: str, plan: int, url: str, checker=None) -> Dict:
                          "thumb": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else ""})
     m = _best_moment(r, plan)
     if m:
+        e = (r.get("par_scene") or {}).get(str(plan)) or {}
         p["picks"][plan] = {"url": url, "titre": r.get("title") or url, "niveau": m["niveau"],
-                            "moment": {"debut": m["debut"], "fin": m["fin"]}, "raison": m["raison"], "auto": False}
+                            "moment": {"debut": m["debut"], "fin": m["fin"]}, "raison": m["raison"], "auto": False,
+                            **{k: True for k in ("remontage", "film") if r.get(k)},
+                            **({"credit": e["credit"]} if r.get("remontage") and e.get("credit") else {})}
     return save(p)
 
 
