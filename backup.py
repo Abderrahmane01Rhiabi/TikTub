@@ -7,7 +7,8 @@ the upload schedule, and each channel's settings and border image.
 Not included on purpose: channels/*/credentials.json and token.json (OAuth
 secrets — no reason to multiply copies of them on disk; a channel is just
 reconnected if needed), and the large media folders (videos, music,
-backgrounds) which aren't the irreplaceable part.
+backgrounds) which aren't the irreplaceable part. The sound effects added in
+Réglages are kept (a few KB each, and their settings).
 
 The database is copied with SQLite's online backup API, which takes a
 consistent snapshot even while the app keeps writing — a plain file copy
@@ -41,6 +42,7 @@ def _extra_paths() -> List[str]:
             p = os.path.join(channel_dir, name)
             if os.path.exists(p):
                 paths.append(os.path.normpath(p))
+    paths += sorted(os.path.normpath(p) for p in glob.glob("sfx_perso/*") if os.path.isfile(p))
     return paths
 
 

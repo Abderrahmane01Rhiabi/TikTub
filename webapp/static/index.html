@@ -657,6 +657,7 @@
     <button class="step" data-i="11" data-space="settings">Montage</button>
     <button class="step" data-i="12" data-space="settings">Drones</button>
     <button class="step" data-i="13" data-space="settings">Voix</button>
+    <button class="step" data-i="14" data-space="settings">Effets sonores</button>
     <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
     <button class="step" data-i="9" data-space="settings">Stockage</button>
     <button class="step" data-i="2" data-space="import">1 · URLs</button>
@@ -770,7 +771,7 @@
     <div class="grid-3" id="connectGrid"></div>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 7</span>
+      <span class="progress-text">Réglages · 1 sur 8</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -786,7 +787,7 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 7</span>
+      <span class="progress-text">Réglages · 2 sur 8</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -804,7 +805,7 @@
     <div class="stack" id="backupList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 6 sur 7</span>
+      <span class="progress-text">Réglages · 7 sur 8</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -820,7 +821,7 @@
     <div class="stack" id="storageView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 7 sur 7</span>
+      <span class="progress-text">Réglages · 8 sur 8</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -905,7 +906,7 @@
     <div class="grid-3" id="montageSettingsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 7</span>
+      <span class="progress-text">Réglages · 3 sur 8</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -929,7 +930,7 @@
     <div id="brollGrid" class="broll-grid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 4 sur 7</span>
+      <span class="progress-text">Réglages · 4 sur 8</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -953,7 +954,35 @@
     <div class="grid-3" id="adChannelGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 5 sur 7</span>
+      <span class="progress-text">Réglages · 5 sur 8</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 14 : the sound effects the montage plays (Réglages) -->
+  <section class="screen" data-idx="14">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Effets sonores</h1>
+        <p class="sub">Les sons que le montage d'une Adaptation pose sur ce que fait l'image. Pas d'IA : des règles. Chaque règle joue un type de son, en prenant ses variantes à tour de rôle.</p>
+      </div>
+    </div>
+    <article class="chcard">
+      <div class="chcard-head"><div class="who"><div class="name">Ajouter un son</div>
+        <div class="meta" style="margin-left:0">Choisis le type : il dit à quel moment le montage le jouera. Le silence du début est coupé, le volume mis au niveau des autres, 4 s au plus. Vérifie qu'il est libre de droits (CC0 ou équivalent).</div></div></div>
+      <div class="chcard-body" style="flex-direction:row;flex-wrap:wrap;align-items:flex-end">
+        <div><label class="f">Type</label><select class="f" id="sfxKind"></select></div>
+        <div style="flex:1 1 200px"><label class="f">Source (lien)</label><input class="f" id="sfxSource" placeholder="https://freesound.org/…"></div>
+        <div><label class="f">Licence</label><input class="f" id="sfxLicence" value="CC0" style="width:110px"></div>
+        <input type="file" id="sfxFile" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac,audio/*" hidden>
+        <button class="btn primary small" id="sfxAddBtn" data-icon="upload">Choisir le fichier…</button>
+      </div>
+      <div class="chcard-foot"><span class="note" id="sfxRuleNote"></span></div>
+    </article>
+    <div class="stack" id="sfxList"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 6 sur 8</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -1138,7 +1167,7 @@ const stepBtns = document.querySelectorAll('#stepnav .step');
 // Spaces: two sources of videos (Import, Génération) feeding ONE publishing
 // pipeline (Publication), plus Accueil / Dashboard / one-time Réglages.
 // Numbered screens (data-idx) belong to the space whose range contains them.
-const STEP_SPACES = { settings: [0, 1, 11, 12, 13, 8, 9], import: [2, 3, 4, 10], publication: [5, 6, 7] };
+const STEP_SPACES = { settings: [0, 1, 11, 12, 13, 14, 8, 9], import: [2, 3, 4, 10], publication: [5, 6, 7] };
 const lastStep = { settings: 0, import: 2, publication: 5 };
 function spaceOfStep(i){
   return Object.keys(STEP_SPACES).find(k => STEP_SPACES[k].includes(i));
@@ -1216,6 +1245,7 @@ const SCREEN_LOADERS = {
   11: [() => loadMontageSettings(), 'montageSettingsGrid'],
   12: [() => loadBrollLibrary(), 'brollGrid'],
   13: [() => loadVoiceSettings(), 'voiceLibrary'],
+  14: [() => loadSfxSettings(), 'sfxList'],
 };
 function onEnterScreen(i){
   const loader = SCREEN_LOADERS[i];
@@ -2401,6 +2431,86 @@ async function fetchBroll(){
 }
 document.getElementById('brollFetchBtn').addEventListener('click', fetchBroll);
 document.getElementById('brollTheme').addEventListener('keydown', e => { if (e.key === 'Enter') fetchBroll(); });
+
+// ---------- Réglages → Effets sonores : the sounds the montage plays, by rule ----------
+
+const SFX_NAMES = { whoosh: 'Whoosh', shutter: 'Déclic (shutter)', riser: 'Montée (riser)', impact: 'Impact', pop: 'Pop' };
+let sfxAudio = null, sfxData = null;
+
+async function loadSfxSettings(){
+  sfxData = await api('/api/sfx');
+  const d = sfxData, box = document.getElementById('sfxList');
+  const sel = document.getElementById('sfxKind'), kept = sel.value;
+  sel.innerHTML = Object.keys(d.regles).map(k => `<option value="${k}">${esc(SFX_NAMES[k] || k)}</option>`).join('');
+  if (kept) sel.value = kept;
+  sfxRuleNote();
+  const kinds = [...Object.keys(d.regles), ...[...new Set(d.sons.map(x => x.type))].filter(k => !d.regles[k])];
+  box.innerHTML = `<div class="tiny">Au plus ${d.max} sons par vidéo, à ${d.ecart_s} s d'écart au moins ; le moment le plus fort de chaque son tombe sur l'évènement.</div>` +
+    kinds.map(k => {
+      const list = d.sons.filter(x => x.type === k), on = list.filter(x => x.actif).length;
+      return `
+      <article class="chcard">
+        <div class="chcard-head"><div class="who"><div class="name">${esc(SFX_NAMES[k] || k)} <span class="tiny">(${on} actif${on > 1 ? 's' : ''} sur ${list.length})</span></div>
+          <div class="meta" style="margin-left:0">${d.regles[k] ? `Joué quand : ${esc(d.regles[k])}` : 'Pas utilisé par le montage : aucune règle ne joue ce type.'}</div></div>
+          ${d.regles[k] && list.length && !on ? '<span class="pill warn">Aucun son actif : ce moment restera muet</span>' : ''}</div>
+        <div class="chcard-body">${list.map(x => `
+          <div class="sfxrow" data-name="${esc(x.name)}" style="display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap;${x.actif ? '' : 'opacity:.55'}">
+            <button class="btn ghost small" data-act="play" title="Écouter" style="flex:none">▶</button>
+            <span class="vname" style="flex:1 1 200px;white-space:normal"><b>${esc(x.name.replace(/^[^_]+_/, '').replace(/\.(mp3|wav)$/, ''))}</b>
+              <span class="tiny"> · ${x.duree != null ? `${x.duree} s` : ''}${x.perso ? ' · ajouté par toi' : ''}${x.licence ? ` · ${esc(x.licence)}` : ''}</span>
+              ${x.source ? ` <a class="tiny" href="${esc(x.source)}" target="_blank" rel="noopener">source ↗</a>` : ''}</span>
+            ${d.regles[k] ? `<label class="tiny" style="display:flex;gap:6px;align-items:center;cursor:pointer;flex:none"><input type="checkbox" data-act="on" ${x.actif ? 'checked' : ''}> Utilisé</label>` : ''}
+            ${x.perso ? `<button class="btn ghost small" data-act="del" title="Supprimer" style="flex:none">✕</button>` : ''}
+          </div>`).join('') || '<span class="tiny">Aucun son de ce type pour l\'instant.</span>'}</div>
+      </article>`;
+    }).join('');
+  box.querySelectorAll('.sfxrow').forEach(row => {
+    const name = row.dataset.name;
+    row.querySelector('[data-act="play"]').onclick = () => {
+      if (sfxAudio) sfxAudio.pause();
+      sfxAudio = new Audio(`/api/sfx/${encodeURIComponent(name)}/audio`);
+      sfxAudio.play().catch(e => log(e.message, 'error'));
+    };
+    const on = row.querySelector('[data-act="on"]');
+    if (on) on.onchange = async () => {
+      try { await api(`/api/sfx/${encodeURIComponent(name)}`, { method:'PATCH', body: JSON.stringify({ actif: on.checked }) }); loadSfxSettings(); }
+      catch (e){ on.checked = !on.checked; log(e.message, 'error'); }
+    };
+    const del = row.querySelector('[data-act="del"]');
+    if (del) del.onclick = async () => {
+      if (!confirm('Supprimer ce son ?')) return;
+      try { await api(`/api/sfx/${encodeURIComponent(name)}`, { method:'DELETE' }); loadSfxSettings(); }
+      catch (e){ log(e.message, 'error'); }
+    };
+  });
+}
+
+function sfxRuleNote(){
+  const k = document.getElementById('sfxKind').value;
+  document.getElementById('sfxRuleNote').textContent = sfxData && k ? `Un son « ${SFX_NAMES[k] || k} » sera joué quand : ${sfxData.regles[k]}.` : '';
+}
+document.getElementById('sfxKind').addEventListener('change', sfxRuleNote);
+document.getElementById('sfxAddBtn').addEventListener('click', () => document.getElementById('sfxFile').click());
+document.getElementById('sfxFile').addEventListener('change', async ev => {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const btn = document.getElementById('sfxAddBtn');
+  const form = new FormData();
+  form.append('file', file);
+  form.append('kind', document.getElementById('sfxKind').value);
+  form.append('source', document.getElementById('sfxSource').value);
+  form.append('licence', document.getElementById('sfxLicence').value);
+  btn.disabled = true; btn.innerHTML = spin('Préparation…');
+  try {
+    const res = await fetch('/api/sfx', { method:'POST', body: form });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Envoi impossible');
+    toast(`« ${d.name} » ajouté`, 'success');
+    document.getElementById('sfxSource').value = '';
+    await loadSfxSettings();
+  } catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Choisir le fichier…'; ev.target.value = ''; }
+});
 
 // ---------- Réglages → Voix : the voice library + each channel's language / voice / music ----------
 

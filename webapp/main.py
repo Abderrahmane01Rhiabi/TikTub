@@ -11,7 +11,9 @@ Then open http://127.0.0.1:8000/
 
 import os
 import sys
+import asyncio
 import shutil
+import tempfile
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -32,7 +34,7 @@ os.chdir(DATA_ROOT)
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -1114,6 +1116,59 @@ def _serialize_broll(clip: dict, counts: Optional[dict] = None) -> dict:
     return {**{k: clip.get(k) for k in ("id", "query", "tags", "duration", "w", "h", "page")},
             "uses": used["total"], "uses_by_channel": used["channels"],
             "thumb_url": f"/api/broll/{clip['id']}/thumb", "video_url": f"/api/broll/{clip['id']}/video"}
+
+
+# ---------- Réglages → Effets sonores ----------
+
+def _sfx_call(fn, *args):
+    try:
+        return fn(*args)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/sfx")
+def list_sfx():
+    """The sound effects the montage can play, and the rules that play them."""
+    from adaptation import sfx
+    return {"sons": sfx.catalog(), "regles": sfx.RULES, "max": sfx.MAX, "ecart_s": sfx.GAP}
+
+
+@app.get("/api/sfx/{name}/audio")
+def sfx_audio(name: str):
+    from adaptation import sfx
+    return FileResponse(_sfx_call(sfx.path_of, name))
+
+
+@app.post("/api/sfx")
+async def add_sfx(file: UploadFile = File(...), kind: str = Form(...), source: str = Form(""), licence: str = Form("")):
+    from adaptation import sfx
+    if Path(file.filename or "").suffix.lower() not in sfx.EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Formats acceptés : mp3, wav, ogg, m4a, flac, aac.")
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / ("in" + Path(file.filename).suffix.lower())
+        with open(src, "wb") as out:
+            shutil.copyfileobj(file.file, out)
+        name = await asyncio.to_thread(_sfx_call, sfx.add, str(src), kind, Path(file.filename).stem, source, licence)
+    return {"name": name, **list_sfx()}
+
+
+class SfxActive(BaseModel):
+    actif: bool
+
+
+@app.patch("/api/sfx/{name}")
+def toggle_sfx(name: str, req: SfxActive):
+    from adaptation import sfx
+    _sfx_call(sfx.set_active, name, req.actif)
+    return list_sfx()
+
+
+@app.delete("/api/sfx/{name}")
+def delete_sfx(name: str):
+    from adaptation import sfx
+    _sfx_call(sfx.remove, name)
+    return list_sfx()
 
 
 @app.get("/api/broll")

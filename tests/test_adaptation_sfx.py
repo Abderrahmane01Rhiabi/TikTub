@@ -62,3 +62,87 @@ def test_a_variant_comes_back_only_when_all_were_heard(monkeypatch):
 def test_no_ding_on_a_plain_last_sentence():
     moments = sfx.plan([seg(0, 0.0), seg(1, 4.0), seg(2, 8.0)], [], [], 12.0)
     assert not any("ding" in m["sons"] for m in moments)
+
+
+# ------------------------------------------------------------------ Réglages → Effets sonores
+
+import re
+import subprocess
+
+import pytest
+
+
+def tone(path, silence=0.6, length=0.4, volume=0.1):
+    """A quiet beep after some silence."""
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=frequency=800:duration={length}",
+                    "-af", f"adelay={int(silence * 1000)}:all=1,volume={volume}", str(path)], check=True)
+    return str(path)
+
+
+def max_db(path):
+    err = subprocess.run(["ffmpeg", "-i", path, "-af", "volumedetect", "-f", "null", "-"], capture_output=True, text=True).stderr
+    return float(re.search(r"max_volume:\s*(-?[\d.]+) dB", err).group(1))
+
+
+@pytest.fixture
+def mine(tmp_path, monkeypatch):
+    monkeypatch.setattr(sfx, "USER_FOLDER", str(tmp_path / "sfx_perso"))
+    return tmp_path
+
+
+def test_an_added_sound_is_made_like_the_apps_own_and_played_by_its_rule(mine):
+    name = sfx.add(tone(mine / "beep.wav"), "pop", "Mon Beep!", "https://freesound.org/x", "CC0")
+    assert name == "pop_mon_beep.mp3"
+    path = sfx.path_of(name)
+    assert sfx.peak_of(path) < 0.15                         # the silence before it is cut
+    assert -1.6 < max_db(path) < -0.4                       # as loud as the others
+    assert path in sfx.library()["pop"]
+    row = next(x for x in sfx.catalog() if x["name"] == name)
+    assert row["perso"] and row["actif"] and row["regle"] == sfx.RULES["pop"] and row["source"].endswith("/x")
+    assert sfx.add(tone(mine / "b2.wav"), "pop", "Mon Beep!") == "pop_mon_beep_2.mp3"   # never overwrites
+
+
+def test_only_a_type_with_a_rule_can_be_added(mine):
+    with pytest.raises(ValueError):
+        sfx.add(tone(mine / "beep.wav"), "rire", "haha")
+    (mine / "junk.mp3").write_bytes(b"not a sound")
+    with pytest.raises(ValueError):
+        sfx.add(str(mine / "junk.mp3"), "pop", "junk")
+
+
+def test_a_sound_turned_off_is_never_played_and_the_apps_own_are_not_deleted(mine):
+    whooshes = sfx.library()["whoosh"]
+    first = whooshes[0].rsplit("/", 1)[-1]
+    sfx.set_active(first, False)
+    assert len(sfx.library()["whoosh"]) == len(whooshes) - 1
+    assert not next(x for x in sfx.catalog() if x["name"] == first)["actif"]
+    sfx.set_active(first, True)
+    assert len(sfx.library()["whoosh"]) == len(whooshes)
+    with pytest.raises(ValueError):
+        sfx.remove(first)
+    name = sfx.add(tone(mine / "beep.wav"), "impact", "boum")
+    sfx.remove(name)
+    assert name not in {x["name"] for x in sfx.catalog()}
+
+
+def test_the_settings_screen_api(client, mine):
+    d = client.get("/api/sfx").json()
+    assert set(d["regles"]) == {"whoosh", "shutter", "riser", "impact", "pop"}
+    assert any(x["type"] == "ding" and x["regle"] is None for x in d["sons"])      # said unused
+    with open(tone(mine / "beep.wav"), "rb") as f:
+        r = client.post("/api/sfx", files={"file": ("Clap.wav", f, "audio/wav")}, data={"kind": "shutter", "licence": "CC0"})
+    assert r.status_code == 200, r.text
+    assert r.json()["name"] == "shutter_clap.mp3"
+    assert client.get("/api/sfx/shutter_clap.mp3/audio").status_code == 200
+    assert client.patch("/api/sfx/shutter_clap.mp3", json={"actif": False}).status_code == 200
+    assert "shutter_clap.mp3" not in [p.rsplit("/", 1)[-1] for p in sfx.library()["shutter"]]
+    assert client.get("/api/sfx/../../.env/audio").status_code in (400, 404)
+    assert client.delete("/api/sfx/shutter_clap.mp3").status_code == 200
+    with open(mine / "beep.wav", "rb") as f:
+        assert client.post("/api/sfx", files={"file": ("x.txt", f)}, data={"kind": "pop"}).status_code == 400
+
+
+def test_each_sound_of_the_app_links_to_its_page():
+    rows = {x["name"]: x["source"] for x in sfx.catalog() if not x["perso"]}
+    assert all(v.startswith("https://freesound.org/people/") for v in rows.values()), rows
+    assert rows["whoosh_whip_4.mp3"] == rows["whoosh_whip_1.mp3"]          # "… whip_1 … whip_5": one page
