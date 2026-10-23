@@ -16,6 +16,8 @@ queries and the clues seen on screen). From there:
     and judges them plan by plan: exact, equivalent, partial or nothing,
     with the moments — a long compilation is then downloaded only around
     those moments
+  - a useful re-edit by another creator is never used as such, but what it
+    credits (its description, the names on its pictures) leads to the original
 """
 
 import json
@@ -137,10 +139,12 @@ def search_youtube(query: str, n: int = PER_QUERY) -> List[Dict]:
 
 
 def search_channel(handle: str, query: str, n: int = 8) -> List[Dict]:
-    """A credited account's own YouTube videos on the subject (none if it has no channel)."""
+    """A credited account's own YouTube videos on the subject (none if it has no channel).
+    handle: "name" (its @handle) or "channel/UC…" (a channel link)."""
     import yt_dlp
     opts = ytdlp_opts(extract_flat=True, playlistend=n)
-    url = f"https://www.youtube.com/@{handle}/search?query={quote_plus(query)}"
+    path = handle if handle.startswith("channel/") else "@" + handle
+    url = f"https://www.youtube.com/{path}/search?query={quote_plus(query)}"
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
             info = ydl.extract_info(url, download=False) or {}
@@ -401,7 +405,7 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
 
 
 ORIGINS = {"youtube": "recherche YouTube", "langue": "recherche en langue locale", "image": "trouvée par image",
-           "compte": "compte crédité", "action": "recherche par action"}
+           "compte": "compte crédité", "action": "recherche par action", "cite": "cité par un remontage"}
 
 
 def _add(cands: List[Dict], c: Dict, origin: str, by_url: Dict[str, Dict]):
@@ -535,7 +539,7 @@ def all_candidates(sug: Dict) -> List[Dict]:
     seen, out = set(), []
     for c in [c for s in sug.get("scenes") or [] for c in s.get("candidats") or []] + \
              [v for a in sug.get("comptes") or [] for v in a.get("videos") or []] + list(sug.get("image_videos") or []) + \
-             list(sug.get("perso") or []):
+             list(sug.get("perso") or []) + list((sug.get("originaux") or {}).get("videos") or []):
         if c["url"] not in seen:
             seen.add(c["url"])
             out.append(c)
@@ -588,6 +592,136 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
     return sug
 
 
+# --------------------------------------------------------------- from a re-edit to its original
+
+# Measured 2026-10-23 on the 31 useful re-edits the app had found: about 1 in 6 names its source in its
+# description (an Insider video -> @thegutterguyz on TikTok, a stunt compilation -> an Instagram account);
+# the others say "Credit: Respective Owner" or link only to their own channels. A TikTok or Instagram
+# account's videos cannot be listed from here (yt-dlp refused both): their profile is given to open by hand.
+# A video link counts only when the text credits it, or when it is on another site than the re-edit
+# (Insider's gutters video listed three more of its own episodes: three checks for nothing).
+PROFILE = re.compile(r"(?:https?://)?(?:www\.)?(tiktok\.com/@|instagram\.com/|youtube\.com/@|youtube\.com/(?:c|user)/"
+                     r"|youtube\.com/channel/)([\w.\-]{2,})", re.I)
+CREDITING = re.compile(r"(?i)credit|cr[ée]dit|original|source|\bvia\b|filmed|video by|vid[ée]o de|footage|\bcr\b|🎥|📹|📸")
+NOT_ACCOUNTS = {"p", "reel", "reels", "explore", "stories", "watch", "shorts", "channel", "playlist", "results"}
+
+
+def cited_in(text: str, own: str = "", skip: Optional[set] = None, site: str = "") -> Dict[str, List]:
+    """What a re-edit credits: video links and accounts ({"name", "where"}),
+    not itself, not its own channel, not the model (skip: canonical urls).
+    site: the re-edit's platform ("YouTube"…)."""
+    from adaptation import imagesearch
+    norm = lambda x: re.sub(r"[^a-z0-9]", "", x.lower())
+    mine = norm(own)
+    videos, accounts, seen = [], [], set()
+    lines = (text or "").splitlines()
+    for k, line in enumerate(lines):
+        for raw in re.findall(r"https?://\S+", line):
+            u = imagesearch.canonical(raw.rstrip(").,;!\"'»"))
+            credited = CREDITING.search(line) or (k and CREDITING.search(lines[k - 1]))
+            if u and u not in (skip or set()) and u not in videos and (credited or imagesearch.platform(u) != site):
+                videos.append(u)
+    found = [(m.group(2).rstrip("."), m.group(1).lower()) for m in PROFILE.finditer(text or "")]
+    found += [(h.rstrip("."), "") for h in re.findall(r"(?<![\w/.])@([\w.\-]{3,})", text or "")]
+    for h, where in found:
+        h = re.sub(r"\.(com|net|org)$", "", h)             # "@peopleareawesome.com": the account is the name
+        key = norm(h)
+        if not key or h.lower() in NOT_ACCOUNTS or key in seen or (mine and (key in mine or mine in key)):
+            continue
+        seen.add(key)
+        if "channel/" in where:         # a channel link: no handle, its id is searched
+            accounts.append({"name": "chaîne YouTube " + h, "where": "youtube", "chaine": "channel/" + h,
+                             "url": "https://www.youtube.com/channel/" + h})
+            continue
+        accounts.append({"name": "@" + h, "where": "tiktok" if "tiktok" in where else "instagram" if "instagram" in where
+                         else "youtube" if "youtube" in where else ""})
+    return {"videos": videos, "comptes": accounts}
+
+
+def _about(url: str) -> Dict:
+    """A video's title, description and channel (no download)."""
+    import yt_dlp
+    with yt_dlp.YoutubeDL(ytdlp_opts(skip_download=True, quiet=True, no_warnings=True)) as ydl:
+        info = ydl.extract_info(url, download=False) or {}
+    return {"text": f"{info.get('title') or ''}\n{info.get('description') or ''}",
+            "own": info.get("channel") or info.get("uploader") or ""}
+
+
+def follow_remontages(sug: Dict, ref: Dict, reference_url: str = "", n: int = 3, checker: Callable = None,
+                      about: Callable = None, search_in: Callable = None,
+                      report: Optional[Callable[[str, float], None]] = None) -> Dict:
+    """The useful re-edits (somebody else's montage over the footage we want):
+    what they credit becomes candidates — a video link as is, a YouTube
+    account searched on the subject — and the n best are checked by Gemini.
+    TikTok / Instagram accounts are kept as profiles to open by hand.
+    Results in sug["originaux"] = {"comptes": [...], "videos": [...]}."""
+    from adaptation import imagesearch
+    about, search_in = about or _about, search_in or search_channel
+    report = report or (lambda phase, f: None)
+    verifs = sug.get("verifs") or {}
+    rank = {"oui": 0, "probable": 1, "partielle": 2}
+    edits = sorted(((u, v) for u, v in verifs.items() if v.get("remontage") and v.get("verdict") in rank),
+                   key=lambda x: rank[x[1]["verdict"]])[:6]
+    if not edits:
+        return sug
+    skip = {imagesearch.canonical(reference_url) or reference_url} | set(verifs)
+    keyword = str(ref.get("recherche_courte") or "").strip() or \
+        next((s["recherches"][0] for s in sug.get("scenes") or [] if s.get("recherches")), "")
+    out = sug.setdefault("originaux", {"comptes": [], "videos": []})
+    have = {c["url"] for c in all_candidates(sug)}
+    named = {a["name"].lower() for a in out["comptes"]}
+    for k, (u, v) in enumerate(edits):
+        report(f"crédits des remontages : {k + 1}/{len(edits)}", 0.3 * (k + 1) / len(edits))
+        try:
+            info = about(u)
+        except Exception:
+            info = {"text": "", "own": ""}
+        text = info["text"] + "\n" + " ".join(v.get("credits_vus") or [])
+        cited = cited_in(text, info.get("own") or "", skip | {u}, imagesearch.platform(u))
+        via = {"via": u, "via_titre": v.get("title") or u}
+        for url in cited["videos"]:
+            if url not in have:
+                have.add(url)
+                out["videos"].append({"url": url, "id": _video_id(url) or url, "title": url, "channel": "",
+                                      "duration": None, "views": None, "origines": ["cite"], "score": 6, **via})
+        for a in cited["comptes"]:
+            if a["name"].lower() in named:
+                continue
+            named.add(a["name"].lower())
+            h = a.get("chaine") or a["name"][1:]
+            vids = [] if a["where"] in ("tiktok", "instagram") or not keyword else search_in(h, keyword)
+            entry = {**({"name": a["name"], "links": [{"label": "YouTube", "url": a["url"]}]} if a.get("chaine")
+                        else credit_links([a["name"]])[0]), **via, "videos": []}
+            for x in vids[:3]:
+                if x["url"] not in have:
+                    have.add(x["url"])
+                    c = {**x, "origines": ["cite"], "score": 5, **via}
+                    entry["videos"].append(c)
+                    out["videos"].append(c)
+            out["comptes"].append(entry)
+    todo = [c for c in out["videos"] if c["url"] not in verifs][:n]
+    if todo:
+        checker = checker or check
+        model = model_of(ref)
+        for k, c in enumerate(todo):
+            report(f"vérification des originaux cités : {k + 1}/{len(todo)}", 0.3 + 0.7 * (k + 1) / len(todo))
+            try:
+                verifs[c["url"]] = checker(c["url"], sug.get("scenes") or [], ref.get("plans") or [],
+                                           **({"model": model} if model else {}))
+            except Exception as e:
+                sug.setdefault("verif_errors", {})[c["url"]] = str(e)[:200]
+    for c in reversed(out["videos"]):   # a checked original: offered first on the scenes it shows (a direct link first)
+        v = verifs.get(c["url"]) or {}
+        if v.get("title") and c["title"] == c["url"]:
+            c["title"] = v["title"]
+        for i, e in (v.get("par_scene") or {}).items():
+            scenes_ = sug.get("scenes") or []
+            if e.get("niveau") in RANK and int(i) < len(scenes_) and \
+                    c["url"] not in {x["url"] for x in scenes_[int(i)].get("candidats") or []}:
+                scenes_[int(i)].setdefault("candidats", []).insert(0, c)
+    return sug
+
+
 # --------------------------------------------------------------- the Gemini check
 
 CHECK_PROMPT = """On refait un Short viral avec d'autres images. Voici ses plans (ce qu'on voit dans chacun) :
@@ -610,10 +744,12 @@ Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en
 PRECIS : du debut a la fin de l'action elle-meme, pas de la sequence autour.
 {modele}"remontage" = true si cette video est elle-meme un montage d'un autre createur PAR-DESSUS les images de quelqu'un
 d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee), false si ce sont des images d'origine.
+"credits_vus" : si "remontage" = true, les noms de compte qui CREDITENT les images d'origine et se voient a l'ecran
+(filigrane TikTok "@nom", "via @nom", "🎥 @nom"…), recopies exactement ; PAS le logo ou le nom de cette chaine-ci ; [] sinon.
 "film" = true si ce sont des images d'un FILM, d'une serie, d'un clip musical ou d'une emission TV (production
 professionnelle avec des droits), false pour des videos de particuliers, de sportifs ou de createurs.
 JSON uniquement :
-{{"copie_du_modele": true/false, "remontage": true/false, "film": true/false,
+{{"copie_du_modele": true/false, "remontage": true/false, "credits_vus": ["@..."], "film": true/false,
   "plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
              "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais",
              "defauts": "ce qui SE VOIT a ces moments et rend l'image inutilisable meme nettoyee : presentateur, interview,
@@ -788,6 +924,8 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         reach = sources.reachable(url) if _video_id(url) else True
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
             "copie": copy, "remontage": r.get("remontage") is True, "film": r.get("film") is True,
+            "credits_vus": [str(x)[:60] for x in (r.get("credits_vus") or []) if x][:6]
+            if r.get("remontage") is True and isinstance(r.get("credits_vus"), list) else [],
             "telechargeable": reach,
             "qualite": str(r.get("qualite") or ""), "raison": str(r.get("resume") or ""), "duration": seen["duration"],
             "title": seen.get("title") or ""}

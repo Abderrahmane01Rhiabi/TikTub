@@ -278,7 +278,9 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             if alone:                   # two per scene: each one's best by words AND by picture (measured: 8 for
                 n = min(14, max(8, 2 * len(p["suggestions"].get("scenes") or [])))   # 6 scenes left scene 5's
                 finder.verify_best(p["suggestions"], p["reference"], n=n,          # eight obvious videos unchecked)
-                                   report=lambda ph, f: report(ph, 0.7 + 0.28 * f))
+                                   report=lambda ph, f: report(ph, 0.7 + 0.22 * f))
+                finder.follow_remontages(p["suggestions"], p["reference"], p["reference_url"],
+                                         report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
                 save(p)
         if not p["source_urls"] and not p.get("pending_excerpts"):
             p.update(status="sources_search", error=None, failed_step=None)
@@ -645,6 +647,9 @@ def _more_images(p: Dict, report: Report):
                 verifs[url] = r
             else:
                 errors[url] = err
+    before = set(verifs)
+    finder.follow_remontages(sug, {**(p.get("reference") or {}), "plans": ref_plans or []}, p.get("reference_url") or "")
+    order += [u for u in verifs if u not in before]    # the originals a re-edit led to count among the new ones
     if not script_first:                # the person ticks the videos: the useful ones are shown, nothing is picked
         helped = sorted({int(i) + 1 for u in order if u in verifs
                          for i, e in (verifs[u].get("par_scene") or {}).items()
@@ -710,7 +715,9 @@ def run_images(pid: str, report: Optional[Report] = None):
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(plans)), words_share=1.0,
-                           report=lambda ph, f: report(ph, 0.62 + 0.36 * f))
+                           report=lambda ph, f: report(ph, 0.62 + 0.3 * f))
+        finder.follow_remontages(sug, {**p["reference"], "plans": []}, p["reference_url"],
+                                 report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
         p = load(pid)
         p.update(suggestions=sug, picks=finder.auto_pick(sug, plans), status="images_review", error=None,
                  failed_step=None)

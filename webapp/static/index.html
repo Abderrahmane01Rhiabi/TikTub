@@ -2432,6 +2432,22 @@ async function fetchBroll(){
 document.getElementById('brollFetchBtn').addEventListener('click', fetchBroll);
 document.getElementById('brollTheme').addEventListener('keydown', e => { if (e.key === 'Enter') fetchBroll(); });
 
+// What the useful re-edits credit (their description, the names on their pictures): the way to the
+// original footage. A TikTok / Instagram account can't be listed from here: its profile is to open by hand.
+function adOriginalsHtml(sug, cand){
+  const o = sug.originaux || {};
+  if (!(o.comptes || []).length && !(o.videos || []).length) return '';
+  const linksOf = ls => (ls || []).map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join(' ');
+  const loose = (o.videos || []).filter(v => !(o.comptes || []).some(a => (a.videos || []).some(x => x.url === v.url)));
+  return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('link', 14)} Originaux cités par des remontages</div>
+      <div class="meta" style="margin-left:0">Des vidéos d'autres créateurs montrent les bonnes scènes : voici qui elles créditent. Les vidéos trouvées ont été vérifiées par l'IA ; un compte TikTok ou Instagram s'ouvre à la main, copie ensuite le lien de la bonne vidéo.</div></div></div>
+    <div class="chcard-body">
+      ${(o.comptes || []).map(a => `<div class="ad-row"><b>${esc(a.name)}</b> <span class="tiny">cité par « ${esc((a.via_titre || '').slice(0, 60))} »</span> ${linksOf(a.links)}</div>
+        ${(a.videos || []).length ? `<div class="ad-clips">${a.videos.map(cand).join('')}</div>` : ''}`).join('')}
+      ${loose.length ? `<div class="tiny">Liens de vidéos donnés dans leur description :</div><div class="ad-clips">${loose.map(cand).join('')}</div>` : ''}
+    </div></article>`;
+}
+
 // ---------- Réglages → Effets sonores : the sounds the montage plays, by rule ----------
 
 const SFX_NAMES = { whoosh: 'Whoosh', shutter: 'Déclic (shutter)', riser: 'Montée (riser)', impact: 'Impact', pop: 'Pop' };
@@ -2899,7 +2915,7 @@ const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images 
 const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'],
   partielle: ['warn', 'partielle : à regarder'], non: ['bad', 'rien d\'utile'] };
 const AD_RANK = { exacte: 0, equivalente: 1, partielle: 2, rien: 4 };
-const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien', action: 'par action' };
+const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien', action: 'par action', cite: 'cité par un remontage' };
 
 function adVerifOf(sug, url){
   const v = (sug.verifs || {})[url];
@@ -3033,6 +3049,7 @@ function renderAdFinder(box, p){
       <div class="chcard-body">${sug.comptes.map(c => `<div class="ad-row"><b>${esc(c.name)}</b>${links(c.links)}</div>
         ${(c.videos || []).length ? `<div class="tiny">Ses vidéos YouTube sur le sujet :</div>
           <div class="ad-clips">${adSortCands(c.videos, -1, sug).map(v => adCandHtml(v, -1, sug, have)).join('')}</div>` : ''}`).join('')}</div></article>` : ''}
+    ${adOriginalsHtml(sug, c => adCandHtml(c, -1, sug, have))}
     <article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${icon('eye', 14)} Vidéos à chercher · ${sug.scenes.length}</div>
         <div class="meta" style="margin-left:0">Pour chaque scène : les images du Short, quoi chercher, et les vidéos trouvées (YouTube, langue locale, par image), les vérifiées en premier.</div></div></div>
       <div class="chcard-body">${sug.scenes.map((sc, si) => `
@@ -3350,7 +3367,11 @@ function renderAdImages(body, p){
       <div class="tiny">Pour chaque plan, l'app a cherché l'image voulue (YouTube, langue du pays, recherche par image, compte crédité), fait vérifier les meilleures vidéos par l'IA
         et choisi <b>le meilleur moment</b>. Tu peux en choisir un autre avec <b>« Choisir »</b>, donner <b>ton lien</b> pour un plan,
         <b>adapter la phrase</b> d'un plan sans vidéo à une image trouvée, ou <b>retirer</b> un plan. Quand chaque plan a sa vidéo : <b>Télécharger les images choisies</b>.</div>
-    </div></article>` +
+    </div></article>` + adOriginalsHtml(sug, c => {
+      const v = (sug.verifs || {})[c.url];
+      return `<div class="ad-row"><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc((c.title || c.url).slice(0, 70))} ↗</a>
+        <span class="tiny">${v ? `vérifiée : ${esc(v.verdict)}${v.remontage ? ' (encore un remontage)' : ''} — utilisable dans « Choisir » des plans` : 'pas encore vérifiée'}</span></div>`;
+    }) +
   sb.plans.map((pl, k) => {
     const sc = (sug.scenes || [])[k] || { candidats: [], recherches: [] };
     const pick = picks[k];
