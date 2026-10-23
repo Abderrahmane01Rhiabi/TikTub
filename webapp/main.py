@@ -259,6 +259,13 @@ async def download_health_update():
     return {**download_health_state(), "mise_a_jour": out}
 
 
+@app.get("/api/usage/ai")
+def ai_usage(month: Optional[str] = None):
+    """What the AI cost this month, per step, and the same calls at January 2027 prices."""
+    import ai_models
+    return ai_models.month_report(month)
+
+
 @app.get("/api/storage")
 def storage_overview():
     import storage

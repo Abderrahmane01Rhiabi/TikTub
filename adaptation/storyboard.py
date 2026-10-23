@@ -100,9 +100,9 @@ Corrige-le selon cette demande, sans rien changer d'autre, et renvoie le JSON co
 {demande}"""
 
 
-def _gemini(pro: bool = False):
+def _gemini():
     from adaptation.script import _gemini as g
-    return g(pro)
+    return g()
 
 
 def _plans_listing(reference: Dict) -> str:
@@ -193,7 +193,7 @@ def critique(bundle: Dict, codes: List[str], gemini=None) -> Dict:
     on failure (or if it broke the structure) the bundle comes back unchanged."""
     regles = " ; ".join(f"{c} : {LANG_RULES.get(c, LANG_RULES['fr'])}" for c in codes)
     try:
-        r = (gemini or _gemini(pro=True))._generate_content(
+        r = (gemini or _gemini())._generate_content(
             [{"text": CRITIQUE_PROMPT.format(bundle=json.dumps(_public(bundle), ensure_ascii=False, indent=1),
                                              regles=regles)}], max_tokens=24000, timeout=240, temperature=0.3)
         fixed = normalise(r, codes)
