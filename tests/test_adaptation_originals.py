@@ -76,3 +76,13 @@ def test_its_own_other_videos_are_not_credits_but_the_originals_channel_is():
                            "https://www.tiktok.com/@someone/video/7400000000000000000"]    # "filmed by", line before
     ch = next(a for a in c["comptes"] if a.get("chaine"))
     assert ch["chaine"] == "channel/UCJzHdz_mAprDUEEJnB0GLuA" and ch["where"] == "youtube"
+
+
+def test_a_douyin_watermark_without_at_is_kept_with_search_links():
+    sug = {"scenes": [], "verifs": {"https://www.youtube.com/watch?v=WILDHEART01": verif(
+        "oui", credits=["微蓝 (抖音 69627156)", "米合勒 (抖音 Maicy161105)"])}}
+    finder.follow_remontages(sug, {}, about=lambda u: {"text": "Why burn a cactus", "own": "Wild Heart"},
+                             checker=lambda *a, **k: 1 / 0)
+    a = {x["name"]: x for x in sug["originaux"]["comptes"]}
+    assert set(a) == {"微蓝 (抖音 69627156)", "米合勒 (抖音 Maicy161105)"}
+    assert a["微蓝 (抖音 69627156)"]["links"][0]["url"].endswith("/search/69627156")

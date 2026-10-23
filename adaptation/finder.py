@@ -679,6 +679,15 @@ def follow_remontages(sug: Dict, ref: Dict, reference_url: str = "", n: int = 3,
         text = info["text"] + "\n" + " ".join(v.get("credits_vus") or [])
         cited = cited_in(text, info.get("own") or "", skip | {u}, imagesearch.platform(u))
         via = {"via": u, "via_titre": v.get("title") or u}
+        for x in v.get("credits_vus") or []:   # a watermark with no @ (Douyin: "微蓝 (抖音 69627156)"): searched by hand
+            if "@" not in x and x.lower() not in named:
+                named.add(x.lower())
+                q = re.sub(r"[()]", " ", x)
+                ident = (re.findall(r"[\w.\-]{5,}", x) or [x])[-1]
+                out["comptes"].append({"name": x, "links": [
+                    {"label": "Douyin", "url": "https://www.douyin.com/search/" + quote_plus(ident)},
+                    {"label": "TikTok", "url": "https://www.tiktok.com/search?q=" + quote_plus(ident)},
+                    {"label": "Google", "url": "https://www.google.com/search?q=" + quote_plus(q)}], **via, "videos": []})
         for url in cited["videos"]:
             if url not in have:
                 have.add(url)
@@ -745,8 +754,10 @@ Pour "exacte", "equivalente" et "partielle", donne les moments ou on le voit (en
 PRECIS : du debut a la fin de l'action elle-meme, pas de la sequence autour.
 {modele}"remontage" = true si cette video est elle-meme un montage d'un autre createur PAR-DESSUS les images de quelqu'un
 d'autre (voix off, textes incrustes, Short explicatif ou compilation commentee), false si ce sont des images d'origine.
-"credits_vus" : si "remontage" = true, les noms de compte qui CREDITENT les images d'origine et se voient a l'ecran
-(filigrane TikTok "@nom", "via @nom", "🎥 @nom"…), recopies exactement ; PAS le logo ou le nom de cette chaine-ci ; [] sinon.
+"credits_vus" : si "remontage" = true, les comptes qui CREDITENT les images d'origine et se voient a l'ecran
+(filigrane TikTok "@nom", filigrane Douyin "nom" + "抖音号 12345", "via @nom", "🎥 @nom"…), recopies exactement,
+un par compte sous la forme "nom (plateforme identifiant)" quand on les voit, ex. "微蓝 (抖音 69627156)", "@nom (TikTok)" ;
+PAS le logo ou le nom de cette chaine-ci ; [] sinon.
 "film" = true si ce sont des images d'un FILM, d'une serie, d'un clip musical ou d'une emission TV (production
 professionnelle avec des droits), false pour des videos de particuliers, de sportifs ou de createurs.
 JSON uniquement :
