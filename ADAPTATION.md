@@ -2,6 +2,8 @@
 
 L'Adaptation refait un **Short viral « explicatif »** (une voix off qui explique des images) pour **tes chaînes**, dans **leur langue**, avec **ta voix ElevenLabs**.
 
+Ce qu'on a construit et pourquoi, en bref : [ADAPTATION_BILAN.md](ADAPTATION_BILAN.md).
+
 L'app ne copie jamais la vidéo d'origine :
 - elle reprend sa **recette** : la question, le déroulé, les bandeaux, le rythme ;
 - elle repart des **vidéos sources** des clips ;
@@ -79,10 +81,11 @@ Tu vois, plan par plan, **la vidéo choisie et son moment** (« voir ce moment �
 
 Deux protections :
 - une **copie du Short modèle** (un repost, même dans une autre langue) est marquée en rouge et **jamais choisie** : ce serait reprendre son montage ;
-- un **remontage d'un autre créateur** (son Short explicatif avec voix off sur les mêmes images) est signalé en jaune et choisi **seulement s'il n'y a rien d'autre**.
+- un **remontage d'un autre créateur** (son Short explicatif avec voix off sur les mêmes images) est signalé en jaune et choisi **seulement s'il n'y a pas d'original** : on n'en prend que l'image (ta voix, ton script, ton montage, ses textes effacés), **créditée à l'original** quand un filigrane le nomme (« 微蓝 (Douyin 69627156) »). Ce qu'il crédite (sa description, ses filigranes) sert aussi à **remonter jusqu'à l'original** : la carte **« Originaux cités par des remontages »** les montre.
 
 Pour chaque plan, tu peux aussi :
 - coller **ton lien** et cliquer **Vérifier pour ce plan** : s'il convient, il devient le choix du plan ;
+- **📁 Déposer un fichier pour ce plan** : une vidéo enregistrée à la main (appli Douyin, Xiaohongshu, Instagram…), avec **le crédit** à afficher. L'IA la vérifie comme un lien ; si elle montre un autre plan, l'app te le dit et la propose sur ce plan ;
 - pour un plan **sans vidéo** : **Adapter la phrase à une image trouvée** (l'IA réécrit la phrase, dans toutes les langues, autour d'une image déjà trouvée et vérifiée), ou **Retirer ce plan** (la vidéo se fait sans lui, il en faut au moins 3).
 
 #### Script d'abord : télécharger et monter
@@ -122,7 +125,7 @@ Quand chaque plan a sa vidéo, **Télécharger les images choisies** (2 à 5 min
   - **musique selon le ton** : si la chaîne a plusieurs morceaux, l'IA choisit celui qui colle au Short et sa partie la plus forte (avec un seul morceau, rien ne change) ;
   - **miniature** : l'image de couverture est prise à l'instant le plus fort de l'accroche et envoyée avec la vidéo (si YouTube l'accepte pour la chaîne).
   En plus, l'app **mesure** la taille du sujet de chaque phrase dans son image : s'il prend moins d'un quart du cadre (une personne filmée de loin), le zoom sur lui est ajouté tout seul (3 zooms au plus par vidéo, jamais sous une flèche).
-  Tu peux les changer sous chaque phrase (cases et « Zoom sur… »). Un clip trop court pour sa phrase est **ralenti en entier** (jamais plus de 2×) au lieu de finir sur une image figée. La recherche juge chaque vidéo sur l'image voulue **et sur la phrase dite** ; un **film, une série, une émission TV** ou le **remontage d'un autre créateur** est marqué en rouge et n'est jamais choisi automatiquement (droits). Pour la recherche, le cadrage et la vitesse ne comptent plus : un atterrissage filmé de loin à vitesse normale est « équivalent » à un « plan serré au ralenti ». L'aperçu montre les ralentis de façon simple (rapide) ; le rendu final les calcule en qualité (environ 30 s de plus par ralenti).
+  Tu peux les changer sous chaque phrase (cases et « Zoom sur… »). Un clip trop court pour sa phrase est **ralenti en entier** (jamais plus de 2×) au lieu de finir sur une image figée. La recherche juge chaque vidéo sur l'image voulue **et sur la phrase dite** ; un **film, une série, une émission TV** est marqué en rouge et n'est jamais choisi automatiquement (droits) ; le **remontage d'un autre créateur**, seulement s'il n'y a pas d'original (voir plus haut). Pour la recherche, le cadrage et la vitesse ne comptent plus : un atterrissage filmé de loin à vitesse normale est « équivalent » à un « plan serré au ralenti ». L'aperçu montre les ralentis de façon simple (rapide) ; le rendu final les calcule en qualité (environ 30 s de plus par ralenti).
 
 Tu arrives à l'écran **Script** habituel : chaque phrase a déjà son clip (une phrase trop longue pour un clip resté court est **raccourcie automatiquement**, elle seule) ; clique **▶** sur une miniature pour voir le clip en grand. Si un clip est refusé, change-le dans la liste, clique **← Revenir aux images** pour choisir un autre moment, ou, après l'avoir regardé (▶), **Utiliser quand même** : tu as le dernier mot. Ensuite : voix, aperçu, rendu, comme d'habitude. En « Script d'abord », l'effet de secousse et les bruitages ne s'appliquent qu'aux vrais chocs.
 
@@ -154,7 +157,7 @@ Puis l'IA **vérifie automatiquement les 8 meilleures vidéos** (la vidéo du co
 
 Elle donne **les moments** (« à 2:24 ») et signale si la vidéo est « utile aussi pour les scènes 3, 5 ». Pour une longue compilation vérifiée, l'app ne télécharge que **les passages utiles**, en une seule demande.
 
-**Tes propres liens** (TikTok, Instagram, VK… trouvés par exemple avec Google Lens) : colle-les, puis **Vérifier mes liens avec l'IA** (1 à 2 minutes). Ils sont jugés comme les vidéos proposées, apparaissent dans **« Tes liens vérifiés »**, et **ceux qui servent sont cochés tout seuls** : seuls leurs passages utiles seront téléchargés. Tu peux aussi les télécharger sans les vérifier.
+**Tes propres liens** (TikTok, Instagram, VK… trouvés par exemple avec Google Lens) : colle-les, puis **Vérifier mes liens avec l'IA** (1 à 2 minutes). Une vidéo qu'aucun lien ne donne (enregistrée depuis l'appli Douyin, un post privé) : **📁 Déposer un fichier comme source**, avec son crédit. Ils sont jugés comme les vidéos proposées, apparaissent dans **« Tes liens vérifiés »**, et **ceux qui servent sont cochés tout seuls** : seuls leurs passages utiles seront téléchargés. Tu peux aussi les télécharger sans les vérifier.
 
 Une scène marquée **« Publicité dans le modèle »** (la démonstration d'un produit de marque) n'est pas cherchée, et ton script ne reprend ni la marque ni l'argument de vente.
 
@@ -164,7 +167,7 @@ Coche les vidéos qui conviennent (tes coches sont gardées même si tu recharge
 
 Plus tard, à l'étape Sources, **« Il manque des images ? »** permet d'ajouter d'autres vidéos. Seules les nouvelles sont analysées, et tes corrections de crédits sont gardées. Une vidéo qui ne se télécharge pas est **ignorée avec un avertissement**, et **Réessayer** la retente.
 
-**Si YouTube bloque le téléchargement** (« confirme que tu n'es pas un robot ») : l'app réessaie toute seule une fois. Sinon, ça passe souvent après une heure. La vraie solution : un fichier de cookies YouTube, `youtube_cookies.txt`, à la racine de TikTub :
+**Si YouTube bloque le téléchargement** : l'app essaie d'abord **sans cookies**, avec des jetons « PO token » (le service **bgutil**, lancé tout seul par l'app sur le port 4416 ; installation dans `requirements.txt`) : la plupart des vidéos « bloquées » passent ainsi, en HD. Une recherche écrite en chinois propose aussi des liens **Douyin, Xiaohongshu et Bilibili** à ouvrir dans ton navigateur (l'app ne peut pas les lire : CAPTCHA). En dernier recours, un fichier de cookies YouTube, `youtube_cookies.txt`, à la racine de TikTub :
 1. utilise un **compte Google secondaire** (jamais celui de tes chaînes) ;
 2. dans une **fenêtre privée**, connecte-toi à YouTube, va sur `youtube.com/robots.txt`, exporte avec l'extension « Get cookies.txt LOCALLY » ;
 3. **ferme la fenêtre privée sans te déconnecter** ; renomme le fichier `youtube_cookies.txt` et place-le à la racine de TikTub ;
@@ -209,6 +212,7 @@ Les vidéos finales passent à nouveau le contrôle, puis arrivent dans **Public
 
 ## Bon à savoir
 
+- **Effets sonores** : whoosh sur une flèche, un cercle ou la transition principale, déclic sur un arrêt sur image, montée puis impact sur un ralenti, pop sur un chiffre — par des règles, 4 au plus par vidéo. Liste, écoute, ajout et désactivation : **Réglages → Effets sonores**.
 - **Le format de la vidéo** : un cadre arrondi sur fond noir, un **bandeau différent pour chaque clip**, de gros **sous-titres** avec un mot-clé coloré (jaune, rose, vert, une couleur par phrase), un petit zoom et un tremblement à chaque choc, la musique de fond et, **seulement quand un vrai choc s'entend** (collision, coup de marteau, explosion), son **vrai bruit**. Si le son de ce clip contient une voix, on emprunte le bruit d'un autre clip de choc. Une vidéo sans choc (paysages, récolte…) n'a aucun bruitage ajouté.
 - **L'arabe** s'écrit de droite à gauche, en arabe standard (fusha), avec la police Tajawal.
 - **Durées** : l'analyse prend 3 à 6 minutes selon le nombre de sources, les scripts 1 à 2 minutes, chaque aperçu environ 1 minute. Tu peux changer d'écran pendant ce temps.

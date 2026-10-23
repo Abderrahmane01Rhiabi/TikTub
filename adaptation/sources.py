@@ -74,11 +74,84 @@ def _unavailable(msg: str) -> bool:
                                   "not made this video available", "copyright"))
 
 
+# --------------------------------------------------------------- a file dropped by hand
+
+# A video saved from a site the app can't read (Douyin's app, Xiaohongshu, a private post…) is dropped
+# on a plan or as a source: it stands where a link would, as "fichier:<its path in the data folder>".
+LOCAL = "fichier:"
+VIDEO_EXTENSIONS = (".mp4", ".mov", ".m4v", ".webm", ".mkv")
+
+
+def local_path(url: str) -> Optional[str]:
+    return url[len(LOCAL):] if (url or "").startswith(LOCAL) else None
+
+
+def save_local(src: str, folder: str, filename: str, credit: str = "") -> str:
+    """Keeps a dropped video in the project (re-encoded in H.264 + AAC: a
+    phone's HEVC or a webm then plays everywhere the app cuts it), with its
+    name and who to credit. Returns its "fichier:" key."""
+    if not has_picture(src):
+        raise SourceError("Ce fichier ne se lit pas comme une vidéo (pas d'image) : vérifie qu'il n'est pas abîmé.")
+    os.makedirs(folder, exist_ok=True)
+    stem = re.sub(r"[^\w-]+", "_", os.path.splitext(os.path.basename(filename))[0]).strip("_")[:40] or "video"
+    out, n = os.path.join(folder, stem + ".mp4"), 2
+    while os.path.exists(out):
+        out, n = os.path.join(folder, f"{stem}_{n}.mp4"), n + 1
+    r = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", src, "-map", "0:v:0", "-map", "0:a:0?", "-c:v", "libx264",
+                        "-preset", "veryfast", "-crf", "16", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+                        "-movflags", "+faststart", out], capture_output=True, text=True)
+    if r.returncode or not has_picture(out):
+        raise SourceError("Ce fichier ne se lit pas comme une vidéo : vérifie qu'il n'est pas abîmé.")
+    with open(out + ".info.json", "w", encoding="utf-8") as f:
+        json.dump({"title": os.path.basename(filename), "credit": (credit or "").strip()}, f, ensure_ascii=False)
+    return LOCAL + out
+
+
+def local_info(url: str) -> Dict:
+    path = local_path(url) or ""
+    try:
+        with open(path + ".info.json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {"title": os.path.basename(path), "credit": ""}
+
+
+def _cut_local(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]]) -> str:
+    """A dropped file "downloaded": the wanted spans cut and joined (or all of it)."""
+    src = local_path(url)
+    if not src or not os.path.exists(src):
+        raise SourceError("Le fichier déposé n'est plus là : dépose-le à nouveau.")
+    os.makedirs(dest_dir, exist_ok=True)
+    out = os.path.join(dest_dir, name + ".mp4")
+    spans = sections or [[0.0, None]]
+    inputs, parts = [], []
+    for k, (a, b) in enumerate(spans):
+        inputs += ["-ss", f"{max(0.0, float(a)):.3f}"] + (["-to", f"{float(b):.3f}"] if b is not None else []) + ["-i", src]
+        parts.append(f"[{k}:v:0]setpts=PTS-STARTPTS,fps=30,format=yuv420p[v{k}]")
+    has_audio = "audio" in subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries",
+                                            "stream=codec_type", "-of", "csv=p=0", src], capture_output=True, text=True).stdout
+    if has_audio:
+        parts += [f"[{k}:a:0]asetpts=PTS-STARTPTS[a{k}]" for k in range(len(spans))]
+        joined = "".join(f"[v{k}][a{k}]" for k in range(len(spans))) + f"concat=n={len(spans)}:v=1:a=1[v][a]"
+    else:
+        joined = "".join(f"[v{k}]" for k in range(len(spans))) + f"concat=n={len(spans)}:v=1:a=0[v]"
+    cmd = ["ffmpeg", "-v", "error", "-y"] + inputs + ["-filter_complex", ";".join(parts + [joined]), "-map", "[v]"] + \
+          (["-map", "[a]", "-c:a", "aac"] if has_audio else []) + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "16", out]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode or not has_picture(out):
+        raise SourceError(f"Découpe du fichier déposé impossible : {r.stderr.strip()[-200:]}")
+    info = local_info(url)
+    _write_meta(out, url, {"title": info.get("title")}, handle=info.get("credit") or None)
+    return out
+
+
 def reachable(url: str) -> Optional[bool]:
     """Can this video be downloaded from here? Gemini watches YouTube from
     Google's side: a video it judged exact was refused here ('This video is not
     available'). False only for that kind of refusal, with and without the
     cookies; None when YouTube just asks to prove we're not a bot (it comes and goes)."""
+    if local_path(url):
+        return True
     import yt_dlp
     last = ""
     for cookies in ((False, True) if _youtube(url) else (True,)):
@@ -221,6 +294,8 @@ def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[fl
     """sections: only these [start, end] spans of a long video (joined, in order).
     A file without picture is never returned: sections fall back to the whole
     video, then a plain "best" format is tried."""
+    if local_path(url):                 # a file dropped by hand: cut, nothing to download
+        return _cut_local(url, dest_dir, name, sections)
     path = _download(url, dest_dir, name, sections)
     if has_picture(path):
         return path

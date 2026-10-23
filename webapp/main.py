@@ -1782,6 +1782,52 @@ def check_adaptation_plan_link(pid: str, plan: int, req: AdaptationLink):
     return _serialize_adaptation(_adaptation_call(ap.check_plan_link, pid, plan, req.url))
 
 
+async def _dropped(file: UploadFile, tmp: str) -> str:
+    from adaptation import sources
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in sources.VIDEO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Format non pris en charge ({ext or 'sans extension'}) — dépose un fichier .mp4, .mov, .m4v, .webm ou .mkv.")
+    src = os.path.join(tmp, "in" + ext)
+    with open(src, "wb") as out:
+        shutil.copyfileobj(file.file, out)
+    return src
+
+
+@app.get("/api/adaptations/{pid}/fichiers/{name}")
+def adaptation_dropped_file(pid: str, name: str):
+    """A video dropped by hand, to watch it in the browser."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    folder = Path(ap.project_dir(pid)) / "fichiers"
+    path = folder / Path(name).name
+    if path.suffix != ".mp4" or not path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier introuvable.")
+    return FileResponse(path, media_type="video/mp4")
+
+
+@app.post("/api/adaptations/{pid}/plans/{plan}/file")
+async def file_for_adaptation_plan(pid: str, plan: int, file: UploadFile = File(...), credit: str = Form("")):
+    """"Déposer un fichier pour ce plan": a video saved by hand, judged by Gemini (15 s to 2 min)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    with tempfile.TemporaryDirectory() as tmp:
+        src = await _dropped(file, tmp)
+        p = await asyncio.to_thread(_adaptation_call, ap.file_for_plan, pid, plan, src, Path(file.filename).name, credit)
+    return _serialize_adaptation(p)
+
+
+@app.post("/api/adaptations/{pid}/sources/file")
+async def file_as_adaptation_source(pid: str, file: UploadFile = File(...), credit: str = Form("")):
+    """Sources d'abord: a video saved by hand, analysed with the other sources."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    with tempfile.TemporaryDirectory() as tmp:
+        src = await _dropped(file, tmp)
+        p = await asyncio.to_thread(_adaptation_call, ap.file_as_source, pid, src, Path(file.filename).name, credit)
+    _start_adaptation_step(pid, "analysing")
+    return _serialize_adaptation(p)
+
+
 @app.post("/api/adaptations/{pid}/plans/{plan}/adapt")
 def adapt_adaptation_plan(pid: str, plan: int):
     """A plan with no video: rewritten around an image already found."""
