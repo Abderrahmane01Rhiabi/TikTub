@@ -342,6 +342,10 @@ def wanted_from_storyboard(sb_plans: List[Dict], queries: Dict[int, Dict]) -> Li
 
 
 RANK = {"exacte": 0, "equivalente": 1, "partielle": 2}
+# Somebody else's re-edit: its picture only (our voice, script and edit; its sound and texts go), credited to
+# the original when a watermark names it. Taken when no original shows the plan as well: an exact moment
+# of a re-edit comes after an exact or equivalent original, before a partial one (user's call, 2026-10-23).
+REMONTAGE_PENALTY = 1.5
 
 # What makes a moment unusable whatever the cleaning does: only what is seen and can't be removed. Not
 # burnt-in text or a logo (cropped or painted), not the sound (replaced by the narration), not "a compilation",
@@ -374,8 +378,8 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     for i, pl in enumerate(sb_plans):
         options = []
         for url, v in verifs.items():
-            if url in dead or v.get("film") or v.get("remontage") or v.get("telechargeable") is False:
-                continue                    # a film, or someone else's re-edit: only by hand (rights)
+            if url in dead or v.get("film") or v.get("copie") or v.get("telechargeable") is False:
+                continue                    # a film (rights), the model itself: never
             e = (v.get("par_scene") or {}).get(str(i))
             if not e or e.get("niveau") not in RANK:
                 continue
@@ -390,7 +394,8 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
                 # a presenter / split screen at that moment: only when nothing better; a poor picture
                 # (a 320x240 hook, filmed sideways, once) after the clean ones of the same level
                 penalty = (6 if real_faults(e.get("defauts")) else 0) + \
-                          (2 if str(v.get("qualite") or "").lower().startswith("mauvaise") else 0)
+                          (2 if str(v.get("qualite") or "").lower().startswith("mauvaise") else 0) + \
+                          (REMONTAGE_PENALTY if v.get("remontage") else 0)
                 options.append((RANK[e["niveau"]] + penalty, -(b - a), url, a, b, e))
         if not options:
             picks.append(None)
@@ -398,9 +403,11 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
         _, _, url, a, b, e = min(options, key=lambda o: o[:2])
         used.add((url, round(a)))
         c = cands.get(url) or {}
+        remake = bool(verifs[url].get("remontage"))
         picks.append({"url": url, "titre": c.get("title") or verifs[url].get("title") or url, "niveau": e["niveau"],
                       "moment": {"debut": a, "fin": b}, "raison": e.get("raison") or "", "auto": True,
-                      "remontage": False, "film": False, "defauts": real_faults(e.get("defauts"))})
+                      "remontage": remake, "film": False, "defauts": real_faults(e.get("defauts")),
+                      **({"credit": e["credit"]} if remake and e.get("credit") else {})})
     return picks
 
 
@@ -764,6 +771,7 @@ JSON uniquement :
 {{"copie_du_modele": true/false, "remontage": true/false, "credits_vus": ["@..."], "film": true/false,
   "plans": [{{"plan": numero, "niveau": "exacte | equivalente | partielle | rien",
              "moments": [{{"debut": s, "fin": s, "ce_qu_on_voit": "..."}}], "raison": "une phrase en francais",
+             "credit_vu": "si c'est un remontage : le compte d'origine credite a l'ecran PENDANT ces moments (filigrane, ex. '微蓝 (抖音 69627156)', '@nom (TikTok)'), sinon vide",
              "defauts": "ce qui SE VOIT a ces moments et rend l'image inutilisable meme nettoyee : presentateur, interview,
                          ecran partage, ecran de fin, publicite, image fixe, image floue ou noire ; vide si l'image est propre
                          (un logo, un texte incruste ou le son ne sont PAS des defauts : ils sont effaces ou remplaces)"}}],
@@ -915,13 +923,16 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         level = level if level in LEVELS else "rien"
         ms = [m for m in (e.get("moments") or []) if isinstance(m, dict)][:5] if level != "rien" else []
         u = units[n]
+        credit = str(e.get("credit_vu") or "").strip()[:60] if level != "rien" else ""
         par_plan[str(u["plan"])] = {"niveau": level, "moments": ms, "raison": str(e.get("raison") or ""),
-                                    "scene": u["scene"], "defauts": real_faults(str(e.get("defauts") or ""))}
+                                    "scene": u["scene"], "defauts": real_faults(str(e.get("defauts") or "")),
+                                    **({"credit": credit} if credit else {})}
         have = par_scene.get(str(u["scene"]))
         if not have or LEVELS.index(level) < LEVELS.index(have["niveau"]):
             par_scene[str(u["scene"])] = {"niveau": level, "moments": list(ms) + (have or {}).get("moments", []),
                                           "raison": str(e.get("raison") or ""),
-                                          "defauts": real_faults(str(e.get("defauts") or ""))}
+                                          "defauts": real_faults(str(e.get("defauts") or "")),
+                                          **({"credit": credit} if credit else {})}
         else:
             have["moments"] += ms
     copy = bool(model) and r.get("copie_du_modele") is True

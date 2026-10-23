@@ -2926,7 +2926,7 @@ function adVerifHtml(v, scene, long){
   if (v.copie) return `<span class="pill bad">copie du Short modèle</span><span>Un repost du Short que tu adaptes : ne pas l'utiliser (droits d'auteur).</span>`;
   const remix = (v.telechargeable === false ? `<span class="pill bad">bloquée d'ici : impossible à télécharger (pays, vidéo retirée)</span>` : '')
     + (v.film ? `<span class="pill bad">film / série / TV : droits d'auteur, jamais choisi automatiquement</span>` : '')
-    + (v.remontage ? `<span class="pill bad">remontage d'un autre créateur : jamais choisi automatiquement</span>` : '');
+    + (v.remontage ? `<span class="pill warn" title="Seule son image est prise (ta voix, ton script, ton montage), créditée à l'original quand un filigrane le nomme">remontage d'un autre créateur : pris s'il n'y a pas d'original</span>` : '');
   const per = v.par_scene || {};
   const useful = Object.entries(per).filter(([, e]) => e.niveau !== 'rien').map(([i]) => +i);
   const here = scene >= 0 ? (per[scene] || { niveau: 'rien', moments: [], raison: '' }) : null;
@@ -3391,7 +3391,7 @@ function renderAdImages(body, p){
         ${pick ? `<div class="ad-chosen">${icon('check', 13)} <b>${esc(pick.titre)}</b> — de ${adDuration(pick.moment.debut) || '0:00'} à ${adDuration(pick.moment.fin) || '0:00'}
             <a href="${esc(adAt(pick.url, pick.moment.debut))}" target="_blank" rel="noopener">voir ce moment ↗</a>
             ${pick.film ? `<span class="pill bad">film / série / TV : droits d'auteur, à remplacer</span>` : ''}
-            ${pick.remontage ? `<span class="pill bad">remontage d'un autre créateur : à remplacer si tu trouves l'original</span>` : ''}
+            ${pick.remontage ? `<span class="pill warn" title="Seule son image est prise : ta voix, ton script, ton montage">image d'un remontage · crédit : ${esc(pick.credit || 'le compte du remontage')}</span>` : ''}
             ${pick.defauts ? `<span class="pill bad">à l'image : ${esc(pick.defauts)} — choisis un autre moment</span>` : ''}
             ${pick.raison ? `<span class="tiny">${esc(pick.raison)}</span>` : ''}
             <button class="btn ghost small ad-unpick" title="Ce plan n'aura plus de vidéo choisie : tu pourras en prendre une autre">Enlever ce choix</button></div>`

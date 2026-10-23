@@ -212,6 +212,8 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
                      if (hit := re.search(r"(?i:logo)\s+(?:(?i:de)\s+)?([A-Z0-9][\w]+)", m))
                      and hit.group(1).lower() not in {"tiktok", "instagram", "youtube", "facebook", "de", "la", "du"}]
              for c in used}
+    for c in used:                      # a re-edit's clip: the original its watermark named ("微蓝 (抖音 69627156)")
+        add(c.get("credit"))
     for c in used:
         for name in marks[id(c)]:
             add(name)
@@ -221,7 +223,7 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
     for c in used:                      # a clip with no name on it: its source's account (one clip's watermark
         # once took the place of every source's account); an excerpt of the model Short: its creator, always
         # (the names written on it are those IT credits — measured: @Klimt-YT dropped for "Credits: @jeffthegutterguy")
-        if c.get("extrait") or (not marks[id(c)] and not logos[id(c)]):
+        if c.get("extrait") or (not marks[id(c)] and not logos[id(c)] and not c.get("credit")):
             i = c.get("source")
             add((metas[i] if isinstance(i, int) and i < len(metas) else {}).get("handle"))
     return " · ".join(out[:6])
@@ -1042,6 +1044,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
                          why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta,
                          note=finder.warnings_of(d.get("pourquoi_pas") or ""))
+                if (picks[k] or {}).get("credit"):       # a re-edit's clip: credited to the original it shows
+                    c["credit"] = picks[k]["credit"]
                 if k in absent:                 # the wanted action is nowhere in what was downloaded
                     c["absent"] = absent[k]
                 if seen_moving.get(k):          # what the re-timing saw, in motion: the judge trusts it over stills
