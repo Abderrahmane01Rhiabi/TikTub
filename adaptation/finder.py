@@ -690,7 +690,8 @@ def follow_remontages(sug: Dict, ref: Dict, reference_url: str = "", n: int = 3,
             named.add(a["name"].lower())
             h = a.get("chaine") or a["name"][1:]
             vids = [] if a["where"] in ("tiktok", "instagram") or not keyword else search_in(h, keyword)
-            entry = {**({"name": a["name"], "links": [{"label": "YouTube", "url": a["url"]}]} if a.get("chaine")
+            named_as = next((x.get("channel") for x in vids if x.get("channel") and not x["channel"].startswith("@")), None)
+            entry = {**({"name": named_as or a["name"], "links": [{"label": "YouTube", "url": a["url"]}]} if a.get("chaine")
                         else credit_links([a["name"]])[0]), **via, "videos": []}
             for x in vids[:3]:
                 if x["url"] not in have:

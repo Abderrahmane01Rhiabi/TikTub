@@ -2434,7 +2434,7 @@ document.getElementById('brollTheme').addEventListener('keydown', e => { if (e.k
 
 // What the useful re-edits credit (their description, the names on their pictures): the way to the
 // original footage. A TikTok / Instagram account can't be listed from here: its profile is to open by hand.
-function adOriginalsHtml(sug, cand){
+function adOriginalsHtml(sug, cand, box = 'ad-clips'){
   const o = sug.originaux || {};
   if (!(o.comptes || []).length && !(o.videos || []).length) return '';
   const linksOf = ls => (ls || []).map(l => `<a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.label)} ↗</a>`).join(' ');
@@ -2443,8 +2443,8 @@ function adOriginalsHtml(sug, cand){
       <div class="meta" style="margin-left:0">Des vidéos d'autres créateurs montrent les bonnes scènes : voici qui elles créditent. Les vidéos trouvées ont été vérifiées par l'IA ; un compte TikTok ou Instagram s'ouvre à la main, copie ensuite le lien de la bonne vidéo.</div></div></div>
     <div class="chcard-body">
       ${(o.comptes || []).map(a => `<div class="ad-row"><b>${esc(a.name)}</b> <span class="tiny">cité par « ${esc((a.via_titre || '').slice(0, 60))} »</span> ${linksOf(a.links)}</div>
-        ${(a.videos || []).length ? `<div class="ad-clips">${a.videos.map(cand).join('')}</div>` : ''}`).join('')}
-      ${loose.length ? `<div class="tiny">Liens de vidéos donnés dans leur description :</div><div class="ad-clips">${loose.map(cand).join('')}</div>` : ''}
+        ${(a.videos || []).length ? `<div class="${box}">${a.videos.map(cand).join('')}</div>` : ''}`).join('')}
+      ${loose.length ? `<div class="tiny">Liens de vidéos donnés comme source dans leur description :</div><div class="${box}">${loose.map(cand).join('')}</div>` : ''}
     </div></article>`;
 }
 
@@ -3369,9 +3369,10 @@ function renderAdImages(body, p){
         <b>adapter la phrase</b> d'un plan sans vidéo à une image trouvée, ou <b>retirer</b> un plan. Quand chaque plan a sa vidéo : <b>Télécharger les images choisies</b>.</div>
     </div></article>` + adOriginalsHtml(sug, c => {
       const v = (sug.verifs || {})[c.url];
+      const useful = v && ['oui', 'probable', 'partielle'].includes(v.verdict);
       return `<div class="ad-row"><a href="${esc(c.url)}" target="_blank" rel="noopener">${esc((c.title || c.url).slice(0, 70))} ↗</a>
-        <span class="tiny">${v ? `vérifiée : ${esc(v.verdict)}${v.remontage ? ' (encore un remontage)' : ''} — utilisable dans « Choisir » des plans` : 'pas encore vérifiée'}</span></div>`;
-    }) +
+        <span class="tiny">${!v ? 'pas encore vérifiée' : useful ? `${v.verdict === 'oui' ? '✅ exacte' : v.verdict === 'probable' ? '🟢 équivalente' : '🟡 partielle'}${v.remontage ? ' (encore un remontage)' : ''} — proposée dans « Autres vidéos » des plans concernés` : "❌ rien d'utile pour ces plans"}</span></div>`;
+    }, 'stack') +
   sb.plans.map((pl, k) => {
     const sc = (sug.scenes || [])[k] || { candidats: [], recherches: [] };
     const pick = picks[k];
