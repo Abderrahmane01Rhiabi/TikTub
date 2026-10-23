@@ -305,14 +305,24 @@ def test_api_images_and_picks(client, project, fakes, monkeypatch):
     assert r.status_code == 200 and r.json()["picks"][2]["moment"] == {"debut": 4.0, "fin": 8.0}
 
 
-def test_auto_pick_never_takes_a_film_or_someone_elses_re_edit():
+def test_auto_pick_never_takes_a_film_and_a_re_edit_only_without_an_original():
     from adaptation import finder
-    v = lambda lvl, remix, film=False: {"verdict": "oui", "remontage": remix, "film": film,
-                                        "par_scene": {"0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}]}}}
+    v = lambda lvl, remix, film=False, credit=None: {"verdict": "oui", "remontage": remix, "film": film, "par_scene": {
+        "0": {"niveau": lvl, "moments": [{"debut": 1, "fin": 5}], **({"credit": credit} if credit else {})}}}
     sug = {"verifs": {"remix": v("exacte", True), "orig": v("equivalente", False)}}
-    assert finder.auto_pick(sug, [{}])[0]["url"] == "orig"
-    sug = {"verifs": {"remix": v("exacte", True), "movie": v("exacte", False, film=True)}}
-    assert finder.auto_pick(sug, [{}]) == [None]                              # rights: only chosen by hand
+    assert finder.auto_pick(sug, [{}])[0]["url"] == "orig"                  # an original first
+    sug = {"verifs": {"remix": v("exacte", True, credit="微蓝 (抖音 69627156)"), "orig": v("partielle", False)}}
+    pick = finder.auto_pick(sug, [{}])[0]                                     # ...but an exact re-edit beats a partial one
+    assert pick["url"] == "remix" and pick["remontage"] and pick["credit"] == "微蓝 (抖音 69627156)"
+    sug = {"verifs": {"movie": v("exacte", False, film=True)}}
+    assert finder.auto_pick(sug, [{}]) == [None]                              # a film: rights, never
+
+
+def test_a_re_edits_clip_is_credited_to_the_original_its_watermark_names():
+    clips = {"P1": {"usable": True, "source": 0, "credit": "微蓝 (抖音 69627156)", "marks": []},
+             "P2": {"usable": True, "source": 1, "marks": ["logo TikTok @orig_cam"]}}
+    metas = [{"handle": "@WildHeart"}, {"handle": "@reposter"}]
+    assert ap.guess_credits(metas, clips) == "微蓝 (抖音 69627156) · @orig_cam"
 
 
 # ---------------------------------------------------------------- steps 4-5: your link, adapt, set aside, fetch

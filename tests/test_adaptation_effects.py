@@ -313,3 +313,12 @@ def test_the_colour_of_a_drawn_mark_is_the_one_the_ai_named():
     from adaptation import sources
     assert sources.mark_hues(["Credits: @jeffthegutterguy", "yellow arrow", "flèche jaune"]) == [(18, 35)]   # not "red"
     assert sources.mark_hues(["flèche rouge"]) == [(0, 10), (170, 180)] == sources.mark_hues(["arrow"])
+
+
+def test_a_shaky_shot_is_cleaned_before_it_is_steadied(monkeypatch, tmp_path):
+    """Steadying moves the picture, burnt-in text with it: the marks are erased first."""
+    from adaptation import render
+    seen = []
+    monkeypatch.setattr(render.subprocess, "run", lambda cmd, **kw: seen.append(cmd[cmd.index("-vf") + 1]))
+    render.stabilised("in.mp4", 2.0, 3.0, str(tmp_path / "s.mp4"), "crop=480:710:0:94,delogo=x=38:y=537:w=403:h=72")
+    assert all(vf.startswith("crop=480:710:0:94,delogo=") and "vidstab" in vf for vf in seen) and len(seen) == 2

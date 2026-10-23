@@ -261,9 +261,50 @@ def banner_png(text: str, path: str, lang: Dict, style: Optional[Dict] = None) -
     return path
 
 
+# A Douyin creator's name is Chinese ("微蓝"): the credit font has no such glyphs (it drew empty boxes).
+CJK = re.compile(r"[\u2e80-\u9fff\uac00-\ud7af\uf900-\ufaff\u3000-\u303f\uff00-\uffef]+")
+CJK_FONTS = ("/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc", "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+             "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc", "/mnt/c/Windows/Fonts/msyh.ttc",
+             "C:/Windows/Fonts/msyh.ttc", "/System/Library/Fonts/PingFang.ttc")
+
+
+def _cjk_font(size: int):
+    path = next((f for f in CJK_FONTS if os.path.exists(f)), None)
+    return ImageFont.truetype(path, size) if path else None
+
+
+def _runs(text: str, font, size: int) -> List[Tuple[str, object]]:
+    """The text cut into runs, each with a font that has its glyphs."""
+    cjk = _cjk_font(size) if CJK.search(text) else None
+    if not cjk:
+        return [(CJK.sub("", text) if CJK.search(text) else text, font)]
+    out, i = [], 0
+    for m in CJK.finditer(text):
+        if m.start() > i:
+            out.append((text[i:m.start()], font))
+        out.append((m.group(0), cjk))
+        i = m.end()
+    if i < len(text):
+        out.append((text[i:], font))
+    return out
+
+
+def _mixed_length(d, text: str, font, size: int) -> float:
+    return sum(d.textlength(t, font=f) for t, f in _runs(text, font, size))
+
+
+def _mixed_text(d, xy, text: str, font, size: int, fill) -> None:
+    x, y = xy
+    for t, f in _runs(text, font, size):
+        d.text((x, y), t, font=f, fill=fill, anchor="lm")
+        x += d.textlength(t, font=f)
+
+
 def credit_png(handles: str, path: str, lang: Dict) -> str:
-    """'Images : @a · @b' — the Latin handles always stay left-to-right."""
+    """'Images : @a · @b' — the Latin handles always stay left-to-right; a
+    Chinese name in a font that has it, "抖音" said "Douyin"."""
     img = Image.new("RGBA", (W, 90), (0, 0, 0, 0))
+    handles = (handles or "").replace("抖音", "Douyin")
     if handles:
         d = ImageDraw.Draw(img)
         col = (170, 176, 188, 255)
@@ -276,7 +317,7 @@ def credit_png(handles: str, path: str, lang: Dict) -> str:
             for size in range(30, 25 if len(lines) == 1 and len(names) > 1 else 15, -2):   # 22 px was hard to read
                 font = ImageFont.truetype(font_path(lang["credit_font"]), size)
                 lw = d.textlength(label, font=font, **kw)
-                hw = max(d.textlength(x, font=font) for x in lines)
+                hw = max(_mixed_length(d, x, font, size) for x in lines)
                 if lw + 12 + hw <= W - 60:
                     break
             else:
@@ -285,11 +326,11 @@ def credit_png(handles: str, path: str, lang: Dict) -> str:
         x0 = (W - (lw + 12 + hw)) / 2
         ys = [45] if len(lines) == 1 else [25, 65]
         for y, text in zip(ys, lines):
-            tw = d.textlength(text, font=font)
+            tw = _mixed_length(d, text, font, size)
             if lang["rtl"]:      # Arabic label on the right
-                d.text((x0 + hw - tw, y), text, font=font, fill=col, anchor="lm")
+                _mixed_text(d, (x0 + hw - tw, y), text, font, size, col)
             else:
-                d.text((x0 + lw + 12, y), text, font=font, fill=col, anchor="lm")
+                _mixed_text(d, (x0 + lw + 12, y), text, font, size, col)
         if lang["rtl"]:
             d.text((x0 + hw + 12, 45), label, font=font, fill=col, anchor="lm", **kw)
         else:
@@ -566,14 +607,18 @@ def shakiness(path: str, t0: float, length: float, crop: Optional[str] = None) -
     return float(np.sqrt(np.mean(np.sum((path_ - smooth)[3:-3] ** 2, 1))) / 96) if len(path_) > 8 else 0.0
 
 
-def stabilised(path: str, t0: float, length: float, out: str) -> str:
+def stabilised(path: str, t0: float, length: float, out: str, pre: str = "") -> str:
     """The clip's seconds steadied (vid.stab, two passes): a smoothed camera
-    path, a slight zoom so no black edge shows."""
+    path, a slight zoom so no black edge shows. pre: the crop and the erased
+    marks, applied FIRST — steadying moves the whole picture, burnt-in text
+    with it, away from boxes placed on the raw frame (measured: a re-edit's
+    "BURNING" showed under its blurred patch on a steadied shot)."""
     trf = out + ".trf"
+    head = (pre + ",") if pre else ""
     common = ["ffmpeg", "-v", "error", "-y", "-ss", f"{t0:.3f}", "-t", f"{length:.3f}", "-i", path]
-    subprocess.run(common + ["-vf", f"vidstabdetect=shakiness=6:accuracy=9:result='{_filter_path(trf)}'", "-f", "null", "-"],
+    subprocess.run(common + ["-vf", f"{head}vidstabdetect=shakiness=6:accuracy=9:result='{_filter_path(trf)}'", "-f", "null", "-"],
                    check=True, capture_output=True)
-    subprocess.run(common + ["-vf", f"vidstabtransform=input='{_filter_path(trf)}':smoothing=12:optzoom=1:interpol=bicubic",
+    subprocess.run(common + ["-vf", f"{head}vidstabtransform=input='{_filter_path(trf)}':smoothing=12:optzoom=1:interpol=bicubic",
                              "-c:v", "libx264", "-preset", "veryfast", "-crf", "12", "-an", out], check=True, capture_output=True)
     return out
 
@@ -738,9 +783,13 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
             try:
                 before = shakiness(c["src"], t0, length, c.get("crop"))
                 if before > SHAKY:
-                    steady = stabilised(c["src"], t0, length, os.path.join(work_dir, f"stab_{s['k']}.mp4"))
-                    if shakiness(steady, 0.0, length, c.get("crop")) < before * 0.7:   # kept only if clearly steadier
+                    from adaptation.sources import delogo_filters
+                    pre = ",".join(([f"crop={c['crop']}"] if c.get("crop") else [])
+                                   + delogo_filters(c.get("delogo"), c["w"], c["h"]))
+                    steady = stabilised(c["src"], t0, length, os.path.join(work_dir, f"stab_{s['k']}.mp4"), pre)
+                    if shakiness(steady, 0.0, length, None) < before * 0.7:   # kept only if clearly steadier
                         src, seek = steady, 0.0
+                        c = {**c, "crop": None, "delogo": None}       # already cropped and cleaned
                         if notes is not None:
                             notes[s["k"]]["stabilise"] = True
             except Exception:

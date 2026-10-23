@@ -589,8 +589,8 @@ def leftover_text(clips: Dict[str, Dict], work_dir: str, finder=None) -> Dict[st
             bw, bh = int((x1 - x0) * c["w"] / 1000) + 12, int((y1 - y0) * c["h"] / 1000) + 12
             if bw <= 8 or bh <= 8 or bw * bh > 0.25 * c["w"] * c["h"]:
                 continue                        # too big to paint without ruining the clip
-            box = (max(0, x), max(0, y), bw, bh)
-            if any(_overlap(box, old) > 0.5 * bw * bh for old in c.get("delogo") or []):
+            box = caption_band((max(0, x), max(0, y), bw, bh), c["w"], c["h"])
+            if any(_overlap(box, old) > 0.5 * box[2] * box[3] for old in c.get("delogo") or []):
                 continue                        # our own painting, seen as "a blurred overlay": not painted twice
             c["delogo"] = list(c.get("delogo") or []) + [box]
             erased.setdefault(cid, []).append(quoi or "texte")
@@ -686,6 +686,20 @@ def _overlap(a, b) -> float:
     return max(0, w) * max(0, h)
 
 
+def caption_band(box: Tuple[int, int, int, int], w: int, h: int) -> Tuple[int, int, int, int]:
+    """A centred caption is shown one word at a time ("FIRE", "MAKES", then
+    "BURNING"): the box of the word seen is too narrow for the next ones
+    (measured on the cactus re-edits: the longer words showed round the
+    patch). A box centred across, in the middle or lower part, small, becomes
+    a band across the picture. Anything else stays as it is."""
+    x, y, bw, bh = box
+    cx, cy = x + bw / 2, y + bh / 2
+    if abs(cx - w / 2) > 0.08 * w or not 0.3 * h <= cy <= 0.92 * h or bh > 0.12 * h or bw > 0.75 * w:
+        return box
+    nh = int(bh * 1.4)
+    return int(0.08 * w), max(0, int(cy - nh / 2)), int(0.84 * w), nh
+
+
 def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int, List[Tuple[int, int, int, int]]]:
     """Boxes (0-1000) -> rows to cut at the top/bottom, and boxes to paint over.
     A thin strip touching the top or bottom 12 % is cropped (cleaner than any
@@ -703,7 +717,7 @@ def edges_and_patches(boxes: List[List[int]], w: int, h: int) -> Tuple[int, int,
             cut_top = max(cut_top, int(y1) + 4)
         else:
             m = 6
-            patches.append((int(x0) - m, int(y0) - m, int(bw) + 2 * m, int(bh) + 2 * m))
+            patches.append(caption_band((int(x0) - m, int(y0) - m, int(bw) + 2 * m, int(bh) + 2 * m), w, h))
     return cut_top, cut_bot, patches
 
 

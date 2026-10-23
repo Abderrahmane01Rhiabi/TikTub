@@ -212,6 +212,8 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
                      if (hit := re.search(r"(?i:logo)\s+(?:(?i:de)\s+)?([A-Z0-9][\w]+)", m))
                      and hit.group(1).lower() not in {"tiktok", "instagram", "youtube", "facebook", "de", "la", "du"}]
              for c in used}
+    for c in used:                      # a re-edit's clip: the original its watermark named ("微蓝 (抖音 69627156)")
+        add(c.get("credit"))
     for c in used:
         for name in marks[id(c)]:
             add(name)
@@ -221,7 +223,7 @@ def guess_credits(metas: List[Dict], clips: Dict[str, Dict]) -> str:
     for c in used:                      # a clip with no name on it: its source's account (one clip's watermark
         # once took the place of every source's account); an excerpt of the model Short: its creator, always
         # (the names written on it are those IT credits — measured: @Klimt-YT dropped for "Credits: @jeffthegutterguy")
-        if c.get("extrait") or (not marks[id(c)] and not logos[id(c)]):
+        if c.get("extrait") or (not marks[id(c)] and not logos[id(c)] and not c.get("credit")):
             i = c.get("source")
             add((metas[i] if isinstance(i, int) and i < len(metas) else {}).get("handle"))
     return " · ".join(out[:6])
@@ -278,7 +280,9 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             if alone:                   # two per scene: each one's best by words AND by picture (measured: 8 for
                 n = min(14, max(8, 2 * len(p["suggestions"].get("scenes") or [])))   # 6 scenes left scene 5's
                 finder.verify_best(p["suggestions"], p["reference"], n=n,          # eight obvious videos unchecked)
-                                   report=lambda ph, f: report(ph, 0.7 + 0.28 * f))
+                                   report=lambda ph, f: report(ph, 0.7 + 0.22 * f))
+                finder.follow_remontages(p["suggestions"], p["reference"], p["reference_url"],
+                                         report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
                 save(p)
         if not p["source_urls"] and not p.get("pending_excerpts"):
             p.update(status="sources_search", error=None, failed_step=None)
@@ -645,6 +649,9 @@ def _more_images(p: Dict, report: Report):
                 verifs[url] = r
             else:
                 errors[url] = err
+    before = set(verifs)
+    finder.follow_remontages(sug, {**(p.get("reference") or {}), "plans": ref_plans or []}, p.get("reference_url") or "")
+    order += [u for u in verifs if u not in before]    # the originals a re-edit led to count among the new ones
     if not script_first:                # the person ticks the videos: the useful ones are shown, nothing is picked
         helped = sorted({int(i) + 1 for u in order if u in verifs
                          for i, e in (verifs[u].get("par_scene") or {}).items()
@@ -710,7 +717,9 @@ def run_images(pid: str, report: Optional[Report] = None):
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(plans)), words_share=1.0,
-                           report=lambda ph, f: report(ph, 0.62 + 0.36 * f))
+                           report=lambda ph, f: report(ph, 0.62 + 0.3 * f))
+        finder.follow_remontages(sug, {**p["reference"], "plans": []}, p["reference_url"],
+                                 report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
         p = load(pid)
         p.update(suggestions=sug, picks=finder.auto_pick(sug, plans), status="images_review", error=None,
                  failed_step=None)
@@ -737,7 +746,8 @@ def choose_pick(pid: str, plan: int, url: Optional[str], debut: float = 0.0, fin
                        "moment": {"debut": float(debut), "fin": float(fin if fin is not None else debut + 4)},
                        "raison": e.get("raison") or "", "auto": False, "remontage": bool(v.get("remontage")),
                        "film": bool(v.get("film")),
-                       "defauts": e.get("defauts") or ""}
+                       "defauts": e.get("defauts") or "",
+                       **({"credit": e["credit"]} if v.get("remontage") and e.get("credit") else {})}
     p["picks"] = picks
     return save(p)
 
@@ -801,8 +811,11 @@ def check_plan_link(pid: str, plan: int, url: str, checker=None) -> Dict:
                          "thumb": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg" if vid else ""})
     m = _best_moment(r, plan)
     if m:
+        e = (r.get("par_scene") or {}).get(str(plan)) or {}
         p["picks"][plan] = {"url": url, "titre": r.get("title") or url, "niveau": m["niveau"],
-                            "moment": {"debut": m["debut"], "fin": m["fin"]}, "raison": m["raison"], "auto": False}
+                            "moment": {"debut": m["debut"], "fin": m["fin"]}, "raison": m["raison"], "auto": False,
+                            **{k: True for k in ("remontage", "film") if r.get(k)},
+                            **({"credit": e["credit"]} if r.get("remontage") and e.get("credit") else {})}
     return save(p)
 
 
@@ -1035,6 +1048,8 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 c.update(desc=d.get("visuel") or c["desc"], usable=bool(d.get("utilisable", True)) or not why,
                          why_not=why, shock=bool(d.get("choc_sonore")), pick_key=pick_key(k), meta=meta,
                          note=finder.warnings_of(d.get("pourquoi_pas") or ""))
+                if (picks[k] or {}).get("credit"):       # a re-edit's clip: credited to the original it shows
+                    c["credit"] = picks[k]["credit"]
                 if k in absent:                 # the wanted action is nowhere in what was downloaded
                     c["absent"] = absent[k]
                 if seen_moving.get(k):          # what the re-timing saw, in motion: the judge trusts it over stills
@@ -1997,8 +2012,8 @@ def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     sc = t["script"]
     label = langs.lang(t["language"])["credit_label"]
     desc = sc.get("description") or ""
-    if p.get("credits"):
-        desc = f"{desc}\n\n{label} {p['credits']}".strip()
+    if p.get("credits"):                # "抖音" said "Douyin", as on the picture
+        desc = f"{desc}\n\n{label} {p['credits'].replace('抖音', 'Douyin')}".strip()
     vid = f"{t['channel']}_{p['project_id']}"
     now = datetime.now().isoformat()
     ai = {"optimized_title": sc["titre"], "title": sc["titre"], "description_suggestions": [desc],
