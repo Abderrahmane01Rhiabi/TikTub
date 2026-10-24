@@ -533,7 +533,7 @@ def test_the_montage_effects_chosen_after_the_download_reach_the_script_and_the_
         "id": cid, "source": i, "src": path, "start": a, "end": b + 3, "impact": a + 1, "w": 1920, "h": 1080,
         "usable": True, "marks": [], "desc": desc, "shock": True})
     monkeypatch.setattr(sources, "describe", lambda path, segs: [{"visuel": "vu", "utilisable": True} for _ in segs])
-    monkeypatch.setattr(effects, "decide", lambda passages, clips, work: [
+    monkeypatch.setattr(effects, "decide", lambda passages, clips, work, **kw: [
         {"ralenti": True, "zoom": "les pieds", "arret": False, "transition": False} if k == 1 else None
         for k in range(len(passages))])
     ap.start_fetch(pid)

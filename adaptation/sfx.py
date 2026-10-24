@@ -200,10 +200,18 @@ def peak_of(path: str) -> float:
 
 
 def plan(segs: List[Dict], annotations: List[Dict], numbers: List[Dict], total: float,
-         own_crash: Optional[Set[int]] = None) -> List[Dict]:
+         own_crash: Optional[Set[int]] = None, rules: Optional[Dict] = None,
+         available: Optional[Set[str]] = None) -> List[Dict]:
     """The moments that get a sound: [{"kind", "t", "pourquoi"}], t where the
-    sound must be loudest. segs: the render timeline (k, out, dur, impact_out, fx)."""
+    sound must be loudest. segs: the render timeline (k, out, dur, impact_out, fx).
+    rules: the subject's tone's ({"max", "types"}: a calm subject keeps almost
+    none); available: the types that have a sound switched on — a moment whose
+    sounds are all off takes no place (a slow motion once blocked a whoosh
+    with its riser and impact turned off)."""
     own_crash = own_crash or set()
+    rules = rules or {}
+    most = rules.get("max", MAX)
+    allowed = rules.get("types")
     wanted: List[Dict] = []             # in order of importance
     for an in annotations:
         wanted.append({"t": an["start"] + 0.05, "sons": ["whoosh"], "pourquoi": "flèche / cercle"})
@@ -224,7 +232,10 @@ def plan(segs: List[Dict], annotations: List[Dict], numbers: List[Dict], total: 
         wanted.append({"t": main["out"], "sons": ["whoosh"], "pourquoi": "transition principale"})
     kept: List[Dict] = []
     for w in wanted:
-        if len(kept) >= MAX:
+        w["sons"] = [x for x in w["sons"] if (allowed is None or x in allowed) and (available is None or x in available)]
+        if not w["sons"]:
+            continue
+        if len(kept) >= most:
             break
         if 0.0 <= w["t"] < total - 0.3 and all(abs(w["t"] - k["t"]) >= GAP for k in kept):
             kept.append(w)

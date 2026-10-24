@@ -125,6 +125,9 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["mode"] = p.get("mode") or "sources"
     base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
     base["fetch_note"] = p.get("fetch_note")
+    from adaptation import tone as _tone_mod
+    base["ton"] = _tone_mod.of(p.get("reference")) if (p.get("reference") or {}).get("ton") else None
+    base["tons"] = _tone_mod.choices()
     try:
         base["wanting"] = [k + 1 for k in ap_wanting(p)] if p.get("status") in ("images_review", "sources_search") else []
     except Exception:
@@ -723,6 +726,18 @@ def start_adaptation_render(pid: str):
     p = _adaptation_call(ap.start_render, pid)
     _start_adaptation_step(pid, "rendering")
     return _serialize_adaptation(p)
+
+
+class AdaptationTone(BaseModel):
+    ton: str
+
+
+@router.patch("/api/adaptations/{pid}/ton")
+def set_adaptation_tone(pid: str, req: AdaptationTone):
+    """The subject's tone, changed by hand (every version): music, effects and sounds follow it."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.set_tone, pid, req.ton))
 
 
 @router.post("/api/adaptations/{pid}/retry")
