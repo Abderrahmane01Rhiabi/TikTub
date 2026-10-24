@@ -112,6 +112,13 @@ def build(words: List[Tuple[str, float, float]], music: Optional[str], channel: 
     beats = beats_of(music, 0.0, total) if music else []
     bounds = shot_bounds([b[0][1] for b in group_into_blocks(words)], total, beats)
     clips = choose_clips(channel, len(bounds), video_id, rng)
+    # the longest shots get the longest clips (a 5 s clip under a 4.6 s shot ran out and
+    # cut the whole chain at 6 s: the composer then looped two shots for 40 s)
+    order = sorted(range(len(bounds)), key=lambda k: bounds[k][1] - bounds[k][0], reverse=True)
+    by_length = sorted(clips, key=lambda c: c.get("duration") or 0, reverse=True)
+    clips = [None] * len(bounds)
+    for k, c in zip(order, by_length):
+        clips[k] = c
     look = rng.choice(list(LOOKS))
     work = os.path.join(os.path.dirname(out_path), "drone_shots")
     os.makedirs(work, exist_ok=True)
@@ -119,7 +126,9 @@ def build(words: List[Tuple[str, float, float]], music: Optional[str], channel: 
     parts, plans = [], []
     for i, ((a, b), c) in enumerate(zip(bounds, clips)):
         dur = b - a + FADE + 0.1
-        off = rng.uniform(1.0, max(1.0, (c.get("duration") or 10) - dur - 1.0))
+        avail = max(0.5, (c.get("duration") or 10) - 1.2)
+        stretch = min(2.0, dur / avail) if avail < dur else 1.0     # too short: gently slowed down
+        off = rng.uniform(1.0, max(1.0, (c.get("duration") or 10) - dur - 1.0)) if stretch == 1.0 else 0.6
         mv = "zoom_in" if i == 0 else MOVES[(i + rng.randrange(4)) % len(MOVES)]
         if mv.startswith("pan"):
             x = f"(iw-{W})*{'t' if mv == 'pan_r' else f'({dur:.2f}-t)'}/{dur:.2f}"
@@ -128,9 +137,13 @@ def build(words: List[Tuple[str, float, float]], music: Optional[str], channel: 
             z = f"(1+0.10*t/{dur:.2f})" if mv == "zoom_in" else f"(1.10-0.10*t/{dur:.2f})"
             vf = f"scale=w='trunc({H * 16 / 9:.0f}*{z}/2)*2':h='trunc({H}*{z}/2)*2':eval=frame,crop={W}:{H}"
         vf += f",fps=25,{LOOKS[look]},vignette=PI/5,setsar=1,format=yuv420p"
+        if stretch > 1.0:
+            vf = f"setpts={stretch:.3f}*PTS," + vf
         p = os.path.join(work, f"shot{i}.mp4")
-        subprocess.run([ffmpeg, "-v", "error", "-y", "-ss", f"{off:.2f}", "-t", f"{dur:.2f}", "-i", broll.clip_path(c),
-                        "-an", "-vf", vf, "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", p], check=True)
+        # looped as a last resort, so a shot always lasts its full length
+        subprocess.run([ffmpeg, "-v", "error", "-y", "-stream_loop", "-1", "-ss", f"{off:.2f}", "-i", broll.clip_path(c),
+                        "-an", "-vf", vf, "-t", f"{dur:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", p],
+                       check=True)
         parts.append(p)
         plans.append({"debut": round(a, 2), "fin": round(b, 2), "clip": c["id"], "theme": c.get("query"), "mouvement": mv})
 
@@ -145,4 +158,17 @@ def build(words: List[Tuple[str, float, float]], music: Optional[str], channel: 
                     "-t", f"{total:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", out_path], check=True)
     for p in parts:
         os.remove(p)
+    length = _duration(out_path, ffmpeg)
+    if length < total - 0.2:                    # never hand a short background to the composer (it would loop it)
+        raise RuntimeError(f"fond drones trop court : {length:.1f} s pour {total:.1f} s de voix")
     return {"look": look, "plans": plans}
+
+
+def _duration(path: str, ffmpeg: str = "ffmpeg") -> float:
+    probe = ffmpeg.replace("ffmpeg", "ffprobe") if ffmpeg.endswith("ffmpeg") else "ffprobe"
+    out = subprocess.run([probe, "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                         capture_output=True, text=True).stdout.strip()
+    try:
+        return float(out)
+    except ValueError:
+        return 0.0

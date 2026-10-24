@@ -110,3 +110,23 @@ def test_a_draft_keeps_the_voice_picked_on_its_card(client, project, monkeypatch
 
     r = client.post("/api/videos/s1/generate_audio", json={"voice_id": "vG"})   # regenerate with another voice
     assert r.status_code == 200 and used[-1] == "vG" and db.get_video("s1")["voice_id"] == "vG"
+
+
+def test_a_clip_shorter_than_its_shot_never_cuts_the_background_short(project, monkeypatch):
+    """Regression: a 5 s clip under a 4.6 s shot ended the background at 6.3 s
+    of 40, and the composer looped its first two shots for the whole video."""
+    import subprocess
+    from montage import broll
+    Path("assets/broll").mkdir(parents=True)
+    library = []
+    for i, length in enumerate((2, 7, 7)):
+        f = f"assets/broll/{i}.mp4"
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size=320x180:rate=25:duration={length}",
+                        "-pix_fmt", "yuv420p", f], check=True)
+        library.append({"id": i, "file": f"{i}.mp4", "w": 1920, "duration": length})
+    monkeypatch.setattr(broll, "list_clips", lambda usable_only=True: library)
+    words = [("Une.", 0.0, 1.5), ("Deux.", 2.0, 4.0), ("Trois", 6.6, 7.5), ("fin.", 7.6, 8.6)]
+
+    info = drone_montage.build(words, None, "chanA", "v1", "temp/v1/drones.mp4", seed=0)
+
+    assert drone_montage._duration("temp/v1/drones.mp4") >= 8.6 and len(info["plans"]) == 3
