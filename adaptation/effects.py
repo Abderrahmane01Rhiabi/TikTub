@@ -50,8 +50,9 @@ def clean(e) -> Optional[Dict]:
     return out if any(out.values()) else None
 
 
-def cap(fx: List[Optional[Dict]]) -> List[Optional[Dict]]:
-    """Never more of each than MAX: a pro edit keeps them for the strong moments."""
+def cap(fx: List[Optional[Dict]], limits: Optional[Dict[str, int]] = None) -> List[Optional[Dict]]:
+    """Never more of each than MAX (or the subject's tone's limits): a pro edit keeps them for the strong moments."""
+    limits = {**MAX, **(limits or {})}
     seen = {k: 0 for k in KEYS}
     out = []
     for k, e in enumerate(fx):
@@ -59,7 +60,7 @@ def cap(fx: List[Optional[Dict]]) -> List[Optional[Dict]]:
         if e:
             for key in KEYS:
                 if e.get(key):
-                    if seen[key] >= MAX[key] or (key == "transition" and k == 0):   # the first plan has nothing before it
+                    if seen[key] >= limits[key] or (key == "transition" and k == 0):   # the first plan has nothing before it
                         e[key] = None if key in ("zoom", "chiffre") else False
                     else:
                         seen[key] += 1
@@ -191,24 +192,29 @@ chaque clip), dans l'ordre. Plans (numero : phrase dite / ce que montre le clip 
 
 Choisis les effets de montage, PEU mais aux bons endroits (un montage pro n'en met pas partout) :
 - "ralenti": true -> un mouvement rapide qu'on veut voir (saut, atterrissage, choc, chute, roue sur l'obstacle) ;
-  2 plans au plus.
+  {ralenti} plan(s) au plus.
 - "zoom": "la cible" -> le sujet de la phrase est petit ou loin dans l'image (ex. "les pieds de l'homme",
   "la roue avant de la voiture blanche") : on s'en rapproche ; decris la cible pour qu'on la retrouve ;
-  null si le sujet remplit deja l'image. 3 plans au plus. Jamais sur un plan qui a deja une fleche ou un cercle.
-- "arret": true -> arret sur image sur LE detail a comprendre (souvent le plan qui a une fleche/un cercle) ;
-  1 plan au plus.
+  null si le sujet remplit deja l'image. {zoom} plan(s) au plus. Jamais sur un plan qui a deja une fleche ou un cercle.
+- "arret": true -> arret sur image sur LE detail a comprendre (souvent le plan qui a une fleche/un cercle, ou le gag
+  d'un Short drole) ; {arret} plan(s) au plus (0 : aucun).
 - "transition": true -> ce plan commence une NOUVELLE partie de l'histoire (apres l'accroche, la reponse, la
-  chute) ; 3 plans au plus, jamais le plan 1.
+  chute) ; {transition} plan(s) au plus, jamais le plan 1.
 - "chiffre": "2 m" -> un CHIFFRE FORT dit dans la phrase ou lisible dans l'image (hauteur, vitesse, force, prix,
   record), ecrit tres court (au plus 12 caracteres, dans la langue de la phrase) : il apparait en grand ; null
-  sinon ; 2 plans au plus, seulement si le chiffre frappe.
+  sinon ; {chiffre} plan(s) au plus, seulement si le chiffre frappe.
+Ton du Short : {ton} — adapte la quantite d'effets a ce ton (un sujet calme en garde tres peu).
 JSON uniquement : {{"plans": [{{"plan": numero, "ralenti": false, "zoom": null, "arret": false, "transition": false,
 "chiffre": null}}]}}"""
 
 
-def decide(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=None) -> Optional[List[Optional[Dict]]]:
+def decide(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=None,
+           tone: Optional[str] = None) -> Optional[List[Optional[Dict]]]:
     """One effects dict (or None) per passage, chosen looking at the real
-    clips; None when Gemini can't answer (the video is then edited plainly)."""
+    clips, as many as the subject's tone allows; None when Gemini can't
+    answer (the video is then edited plainly)."""
+    from adaptation import tone as T
+    limits = T.effect_limits(tone or T.DEFAULT)
     from adaptation import sources
     os.makedirs(work_dir, exist_ok=True)
     stills, idx = [], []
@@ -236,7 +242,8 @@ def decide(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=N
              for p in stills]
     try:
         r = (gemini or sources._gemini())._generate_content(
-            parts + [{"text": DECIDE_PROMPT.format(n=len(stills), plans=listing)}],
+            parts + [{"text": DECIDE_PROMPT.format(n=len(stills), plans=listing, ton=T.TONES[T.valid(tone) or T.DEFAULT]["label"],
+                                                   **limits)}],
             max_tokens=3000, timeout=120, temperature=0.2)
     except Exception:
         return None
@@ -254,7 +261,7 @@ def decide(passages: List[Dict], clips: Dict[str, Dict], work_dir: str, gemini=N
             if fx and fx.get("zoom") and passages[idx[n]].get("annotation"):
                 fx["zoom"] = None                  # the arrow is placed on the unzoomed picture
             out[idx[n]] = clean(fx)
-    return cap(out)
+    return cap(out, limits)
 
 
 # ------------------------------------------------------------------ zoom when the subject is small

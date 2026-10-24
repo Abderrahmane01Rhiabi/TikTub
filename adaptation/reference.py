@@ -13,6 +13,7 @@ On veut reproduire sa RECETTE (pas ses images) dans d'autres langues, a partir d
 Dans "a_chercher", regroupe les plans qui viennent de la meme video d'origine (meme camera, meme evenement) en une seule scene.
 JSON uniquement :
 {"sujet": "de quoi parle la video, en une phrase",
+ "ton": "spectaculaire | calme | drole | explicatif — l'AMBIANCE des images et de l'histoire, pas le fait d'expliquer (ces Shorts expliquent tous) : spectaculaire = danger, vitesse, hauteur, choc, feu, exploit ; calme = images apaisantes ou satisfaisantes (nettoyage, nature, eau, artisanat lent) ; drole = absurde, gag ; explicatif = seulement si rien de tout cela",
  "question": "la question implicite a laquelle la video repond",
  "duree_s": nombre,
  "langue": "langue de la voix",

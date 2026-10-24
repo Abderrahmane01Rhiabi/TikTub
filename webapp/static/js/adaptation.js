@@ -111,7 +111,13 @@ async function loadAdProject(){
   adProject = p;
   if (statusMoved) api('/api/adaptations').then(renderAdChips).catch(() => {});   // keep the project chips' status current
   if (changed){
-    const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.reference_url)}</span><span class="spacer"></span>
+    const toneSel = p.ton_chaine
+      ? `<span class="tiny" title="Réglé pour la chaîne dans Réglages → Voix : même musique et même style à chaque vidéo">Ton : ${esc((p.tons.find(o => o.ton === p.ton_chaine) || {}).label || p.ton_chaine)} (celui de la chaîne)</span>`
+      : p.reference && !AD_BUSY.includes(p.status)
+      ? `<label class="tiny" title="Le ton règle la musique, la quantité d'effets et les sons (au prochain aperçu)" style="display:flex;gap:6px;align-items:center">Ton
+          <select class="f" id="adTone" style="width:auto;padding:4px 8px;font-size:12px">${p.ton ? '' : '<option value="">à deviner</option>'}
+          ${(p.tons || []).map(o => `<option value="${o.ton}" ${o.ton === p.ton ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>` : '';
+    const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.reference_url)}</span>${toneSel}<span class="spacer"></span>
       <a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
       ${!AD_BUSY.includes(p.status) && p.reference ? '<button class="btn ghost small" id="adNewVersion" data-icon="globe" title="La même vidéo pour une autre chaîne, avec un nouvel angle">Nouvelle version pour une autre chaîne</button>' : ''}
       ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>
@@ -126,6 +132,13 @@ async function loadAdProject(){
       if (b.dataset.id === p.project_id) return;
       adCurrent = b.dataset.id; adProject = null; loadAdaptationList();
     });
+    const toneBox = document.getElementById('adTone');
+    if (toneBox) toneBox.onchange = async () => {
+      if (!toneBox.value) return;
+      try { await api(`/api/adaptations/${p.project_id}/ton`, { method: 'PATCH', body: JSON.stringify({ ton: toneBox.value }) });
+            toast('Ton changé : musique, effets et sons suivront au prochain aperçu', 'success'); adProject = null; loadAdProject(); }
+      catch (e){ log(e.message, 'error'); }
+    };
     const nv = document.getElementById('adNewVersion');
     if (nv) nv.onclick = async () => {
       const box = document.getElementById('adNewVersionBox');

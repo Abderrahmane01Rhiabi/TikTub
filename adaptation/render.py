@@ -831,8 +831,8 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
            preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None,
            style: Optional[str] = None, effects: Optional[List[Optional[Dict]]] = None,
-           beats: Optional[List[float]] = None) -> Dict:
-    """annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
+           beats: Optional[List[float]] = None, sound_rules: Optional[Dict] = None) -> Dict:
+    """sound_rules: the subject's tone's (adaptation.tone). annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
     picture box under the banners and captions.
     passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
     times; words: [{w, start, end}]; clips: id -> {src, start, end, impact, w, h, crop?,
@@ -908,7 +908,9 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
         g.append("".join(fx) + f"amix=inputs={len(fx)}:normalize=0,volume={SFX_GAIN}[fx]")
         mix.append("[fx]")
     # the sound effects that follow the picture (arrows, freeze, slow motion, figures, the main transition)
-    effets = sfx.sounds(sfx.plan(segs, list(annotations or []), numbers, total, own_crash))
+    lib = sfx.library()
+    effets = sfx.sounds(sfx.plan(segs, list(annotations or []), numbers, total, own_crash, sound_rules,
+                                 {k for k, v in lib.items() if v}), lib)
     for j, e in enumerate(effets):
         ei = add_input("-i", e["file"])
         g.append(f"[{ei}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={e['gain']},"
