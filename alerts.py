@@ -11,6 +11,9 @@ looking at the screen where they happen:
   publish     – a video's upload failed for a real reason (not skipped
                 because of the two above, which have their own alert).
   deleted     – a published video is gone from YouTube.
+  feed        – YouTube stopped showing a channel in the Shorts feed (no
+                view from it for days though videos went out). Every 6 h;
+                cleared once the feed brings views again.
 
 One row per problem (`key`): raising an alert that's already open does
 nothing, so the hourly checks never spam. The page shows open alerts on
@@ -103,6 +106,74 @@ def check_connections() -> int:
         connection_state(ch["name"], health["state"], health.get("reason"))
         expired += health["state"] == "expired"
     return expired
+
+
+FEED_LAG_DAYS = 3        # YouTube Analytics has a day once ~2-3 days have passed
+FEED_WINDOW_DAYS = 4     # this many processed days with no Shorts-feed view at all...
+FEED_CHANCE_DAYS = 10    # ...while a video went public in the 10 days before: YouTube is not testing it
+FEED_HISTORY_DAYS = 60
+FEED_WAS_SHOWN = 100     # feed views over those 60 days for a channel to have been shown at all
+FEED_EVERY = 6 * 3600
+_feed_checked: Dict[str, float] = {}
+
+
+def feed_state(channel: str, days: List[Dict], published: List[datetime], now: Optional[datetime] = None) -> Optional[Dict]:
+    """Whether YouTube stopped showing this channel in the Shorts feed: None
+    when it can't be told (no video recent enough to have been tested), else
+    {"stopped", "shorts_window", "shorts_before", "since"}. days: the
+    channel's daily views (youtube_uploader.get_daily_feed_views)."""
+    from datetime import timedelta
+    now = now or datetime.now()
+    end = (now - timedelta(days=FEED_LAG_DAYS)).date()
+    start = end - timedelta(days=FEED_WINDOW_DAYS - 1)
+    if not any(start - timedelta(days=FEED_CHANCE_DAYS) <= p.date() <= end for p in published):
+        return None
+    shorts = {d["date"]: d["shorts"] for d in days}
+    window = sum(v for k, v in shorts.items() if start.isoformat() <= k <= end.isoformat())
+    before = sum(v for k, v in shorts.items() if k < start.isoformat())
+    last = max((k for k, v in shorts.items() if v > 0), default=None)
+    # a channel that never took off (7 feed views in two months) was not "stopped"
+    return {"stopped": window == 0 and before >= FEED_WAS_SHOWN, "shorts_window": window, "shorts_before": before,
+            "since": last}
+
+
+def check_shorts_feed(force: bool = False) -> int:
+    """Every 6 h: a channel YouTube no longer shows in the Shorts feed gets an
+    alert (lungtemotivates went from 5 777 feed views in September 2026 to 0
+    in October, and it took a month to be noticed). Cleared once the feed
+    brings views again. Returns how many channels are stopped."""
+    import time
+    from channel_manager import ChannelManager
+    from youtube_uploader import get_daily_feed_views, has_analytics_scope
+    from stats_tracker import published_moment
+    videos = list(_db.load_all()["videos"].values())
+    stopped = 0
+    for ch in ChannelManager().list_channels():
+        name = ch["name"]
+        if not ch.get("has_token") or not has_analytics_scope(name):
+            continue
+        if not force and time.time() - _feed_checked.get(name, 0) < FEED_EVERY:
+            continue
+        _feed_checked[name] = time.time()
+        published = [p for p in (published_moment(v) for v in videos if v.get("channel") == name
+                                 and v.get("youtube_id") and v.get("status") == "uploaded") if p]
+        try:
+            state = feed_state(name, get_daily_feed_views(name, days=FEED_HISTORY_DAYS), published)
+        except Exception as e:
+            print(f"⚠️ Shorts feed check failed for {name}: {e}")
+            continue
+        key = f"feed:{name}"
+        if state and state["stopped"]:
+            stopped += 1
+            since = f" Dernière vue venue du fil : le {state['since']}." if state["since"] else ""
+            raise_alert(key, "feed", f"{_display(name)} : YouTube ne montre plus tes Shorts",
+                        f"0 vue venue du fil Shorts sur les {FEED_WINDOW_DAYS} derniers jours mesurés "
+                        f"({state['shorts_before']} sur les {FEED_HISTORY_DAYS} jours d'avant).{since} YouTube ne teste plus les vidéos : "
+                        "souvent du contenu trop répétitif (même script, même fond, même musique). "
+                        "Publie des vidéos vraiment différentes, et regarde YouTube Studio → Contenu → Restrictions.", name)
+        elif state:
+            resolve(key)
+    return stopped
 
 
 def quota_exhausted(channel: str, project_key: str, day: str):

@@ -83,14 +83,28 @@ def test_retention_is_measured_once_over_each_videos_own_first_week(project, bp,
     calls = []
     def fake(channel, videos):
         calls.append(videos)
-        return {v["youtube_id"]: {"views": 50, "average_view_percentage": 42.5, "average_view_duration": 17} for v in videos}
+        return {v["youtube_id"]: {"views": 50, "average_view_percentage": 42.5, "average_view_duration": 17,
+                                  "engaged_views": 20} for v in videos}
     monkeypatch.setattr(yu, "get_first_week_retention", fake)
+    monkeypatch.setattr(yu, "get_retention_curve", lambda c, y, s: [[0.01, 1.2, 0.5], [1.0, 0.4, 0.5]])
 
     assert stats_tracker.sync_retention(bp) == 1
     assert calls == [[{"youtube_id": "Yold", "start": "2026-01-10"}]]  # the fresh one waits for its week + processing
     assert db.get_video("old")["retention_7d"]["average_view_percentage"] == 42.5
+    assert db.get_video("old")["retention_curve"]["points"][0] == [0.01, 1.2, 0.5]  # the curve is kept with it
 
     assert stats_tracker.sync_retention(bp) == 0 and len(calls) == 1  # never measured twice
+
+
+def test_retention_measured_before_engagement_existed_is_measured_again(project, bp, monkeypatch):
+    project.add_video("old", status="uploaded", youtube_id="Yold", youtube_published_at="2026-01-10T17:00:00",
+                      retention_7d={"views": 50, "average_view_percentage": 42.5})
+    monkeypatch.setattr(yu, "get_first_week_retention", lambda c, vs: {v["youtube_id"]: {
+        "views": 50, "average_view_percentage": 42.5, "engaged_views": 20, "shares": 2} for v in vs})
+    monkeypatch.setattr(yu, "get_retention_curve", lambda c, y, s: [])
+
+    assert stats_tracker.sync_retention(bp) == 1
+    assert db.get_video("old")["retention_7d"]["shares"] == 2
 
 
 def test_first_week_retention_queries_a_7_day_window(monkeypatch, tmp_path):
@@ -99,7 +113,11 @@ def test_first_week_retention_queries_a_7_day_window(monkeypatch, tmp_path):
         def __init__(self, kw): self.kw = kw
         def execute(self):
             seen.append(self.kw)
-            return {"rows": [[80, 37.2, 15.0]]} if "Ya" in self.kw["filters"] else {"rows": []}
+            if "Yb" in self.kw["filters"]:
+                return {"rows": []}
+            if self.kw.get("dimensions") == "insightTrafficSourceType":
+                return {"rows": [["SHORTS", 60], ["YT_SEARCH", 20]]}
+            return {"rows": [[80, 37.2, 15.0, 32, 5, 1, 2, 3, 0]]}
     class Yta:
         def reports(self): return self
         def query(self, **kw): return Q(kw)
@@ -113,5 +131,9 @@ def test_first_week_retention_queries_a_7_day_window(monkeypatch, tmp_path):
     out = yu.get_first_week_retention("chanA", [{"youtube_id": "Ya", "start": "2026-03-30"},
                                                 {"youtube_id": "Yb", "start": "2026-03-30"}])
 
-    assert out == {"Ya": {"views": 80, "average_view_percentage": 37.2, "average_view_duration": 15.0}}  # no data: left out
+    assert out["Ya"] == {"views": 80, "average_view_percentage": 37.2, "average_view_duration": 15.0,
+                         "engaged_views": 32, "engaged_ratio": 0.4, "likes": 5, "comments": 1, "shares": 2,
+                         "subscribers_gained": 3, "subscribers_lost": 0, "shorts_feed_share": 0.75,
+                         "sources": {"SHORTS": 60, "YT_SEARCH": 20}}
+    assert out["Yb"]["views"] == 0 and out["Yb"]["average_view_percentage"] is None  # nobody watched: measured as 0
     assert (seen[0]["startDate"], seen[0]["endDate"]) == ("2026-03-30", "2026-04-05")
