@@ -291,7 +291,19 @@ function genHead(v, i, pillCls, pillText){
       </span>
     </div>
     ${v.title ? `<div style="font-size:13px;font-weight:600;line-height:1.35">${esc(v.title)}</div>` : ''}
+    ${planLine(v)}
   </div>`;
+}
+
+// The plan the script was written in (format, topic, hook, ending: each the
+// one the channel used least lately), and what still bothered after the retries.
+function planLine(v){
+  const p = v.script_plan;
+  if (!p) return '';
+  const parts = [`<b>${esc(SCRIPT_FORMATS[p.format] || p.format)}</b>`, esc(p.sujet),
+                 `accroche : ${esc(SCRIPT_HOOKS[p.accroche] || p.accroche)}`, `fin : ${esc(SCRIPT_ENDINGS[p.fin] || p.fin)}`];
+  const warns = (v.script_warnings || []).map(w => `<div style="color:#f5c56d">⚠ ${esc(w)}</div>`).join('');
+  return `<div class="tiny" style="color:var(--muted);line-height:1.45">${parts.join(' · ')}${warns}</div>`;
 }
 
 function cardBodyHtml(v, i){

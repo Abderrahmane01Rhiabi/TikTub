@@ -40,7 +40,7 @@ def test_groups_need_two_videos_and_show_what_beats_the_median():
 
     fmt = insights["script_format"]
     assert [g["value"] for g in fmt["groups"]] == ["B", "D"]  # "A" has a single video: not a pattern
-    assert fmt["best"]["label"] == "B · Storytime" and fmt["best"]["reliable"]
+    assert fmt["best"]["label"] == "B · Histoire" and fmt["best"]["reliable"]
     assert not fmt["worst"]["reliable"]  # only 2 videos
     assert insights["background"]["best"]["value"] == "sea.mp4"
 
@@ -81,12 +81,13 @@ def test_remake_presets_the_decor_and_feeds_the_winner_to_the_script_prompt(clie
     # the winner reaches the script prompt
     import generative.pipeline as gp_mod
     seen = {}
-    def fake_generate_script(profile, recent_titles=None, recent_formats=None, inspiration=None):
-        seen["inspiration"] = inspiration
+    def fake_generate_script(profile, plan, recent_titles=None, inspiration=None, feedback=None):
+        seen["inspiration"], seen["plan"] = inspiration, plan
         return {"script_text": "nouveau", "title": "Nouveau", "format": "D", "tags": []}
     monkeypatch.setattr(gp_mod, "generate_script", fake_generate_script)
     m.get_generative_pipeline().generate_script_for(drafts[0]["video_id"])
-    assert seen["inspiration"] == {"format": "D", "title": "Le titre gagnant", "script_text": "[calm] 3 signes..."}
+    assert seen["inspiration"] == {"title": "Le titre gagnant", "script_text": "[calm] 3 signes..."}
+    assert seen["plan"]["format"] == "D"   # the winner's format is imposed, the rest of the plan rotates
 
 
 def test_remake_refuses_a_video_from_another_channel_or_not_generated(client, project):
@@ -94,11 +95,12 @@ def test_remake_refuses_a_video_from_another_channel_or_not_generated(client, pr
     assert client.post("/api/channels/chanA/generation_draft", json={"count": 1, "inspired_by": "imported"}).status_code == 400
 
 
-def test_prompt_asks_for_same_format_new_topic():
+def test_prompt_keeps_the_winners_hook_strength_not_its_structure():
     from generative.script_generator import _build_prompt
-    prompt = _build_prompt({}, ["ex"], ["Ancien titre"], ["A", "B"], {"format": "B", "title": "Gagnant", "script_text": "Jour 1..."})
-    assert "Gagnant" in prompt and 'même format ("B")' in prompt and "SUJET doit être différent" in prompt
-    assert "sous-représenté" not in prompt  # the least-used-format nudge would fight the winner's format
+    plan = {"format": "B", "sujet": "la retraite", "accroche": "scene", "fin": "defi"}
+    prompt = _build_prompt({}, plan, ["Ancien titre"], {"title": "Gagnant", "script_text": "Jour 1..."}, examples=["ex"])
+    assert "Gagnant" in prompt and "PAS sa\nstructure" in prompt and "la retraite" in prompt
+    assert '"format": "B"' in prompt and "Histoire" in prompt
 
 
 def test_retention_is_shown_per_video_and_as_a_median_per_group():
@@ -183,13 +185,10 @@ def test_recipe_overrides_the_models_decor_and_format(client, project, monkeypat
 
     import generative.pipeline as gp_mod
     seen = {}
-    monkeypatch.setattr(gp_mod, "generate_script", lambda profile, recent_titles=None, recent_formats=None, inspiration=None:
-                        seen.update(inspiration=inspiration) or {"script_text": "n", "title": "N", "format": "D", "tags": []})
+    monkeypatch.setattr(gp_mod, "generate_script", lambda profile, plan, recent_titles=None, inspiration=None, feedback=None:
+                        seen.update(plan=plan) or {"script_text": "n", "title": "N", "format": "D", "tags": []})
     m.get_generative_pipeline().generate_script_for(draft["video_id"])
-    assert seen["inspiration"] == {"format": "D"}  # not B's structure: just the winning format
-
-    from generative.script_generator import _build_prompt
-    assert 'Indique "D"' in _build_prompt({}, ["ex"], ["t"], ["A"], {"format": "D"})
+    assert seen["plan"]["format"] == "D"  # the recipe's winning format, not the model's B
 
 
 def adaptation_recipe(duree, hook, plans, mode="script", fleches=0, ralenti=False, sfx=None, voice="v1"):

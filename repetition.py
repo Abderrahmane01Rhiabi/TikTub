@@ -99,6 +99,23 @@ def check(video: Dict, others: List[Dict]) -> Dict:
     return out
 
 
+def too_close(video: Dict, others: List[Dict]) -> List[str]:
+    """Why a freshly written script is too close to one of `others` (drafts
+    included: two scripts of one batch must differ too) — at the warning
+    level, so the AI rewrites it before anything is spent on it."""
+    script, title = _norm(_script(video)), _norm(_title(video))
+    out = []
+    for o in others:
+        if o.get("video_id") == video.get("video_id"):
+            continue
+        s, t = _ratio(script, _norm(_script(o))), _ratio(title, _norm(_title(o)))
+        if s >= WARN_SCRIPT:
+            out.append(f"script trop proche ({round(s * 100)} %) de « {_title(o)[:70]} »")
+        elif t >= WARN_TITLE:
+            out.append(f"titre trop proche ({round(t * 100)} %) de « {_title(o)[:70]} »")
+    return out
+
+
 def blocking_message(result: Dict) -> Optional[str]:
     if not result["block"]:
         return None

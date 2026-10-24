@@ -1533,6 +1533,8 @@ def serialize_generated_video(video: dict) -> dict:
         "status": video.get("status"),
         "script_text": video.get("script_text"),
         "script_format": video.get("script_format"),
+        "script_plan": video.get("script_plan"),
+        "script_warnings": video.get("script_warnings") or [],
         "title": ai.get("optimized_title") or ai.get("title"),
         "description": (ai.get("description_suggestions") or [""])[0],
         "tags": ai.get("tags", []),
