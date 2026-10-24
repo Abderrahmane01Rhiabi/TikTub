@@ -111,7 +111,9 @@ async function loadAdProject(){
   adProject = p;
   if (statusMoved) api('/api/adaptations').then(renderAdChips).catch(() => {});   // keep the project chips' status current
   if (changed){
-    const toneSel = p.reference && !AD_BUSY.includes(p.status)
+    const toneSel = p.ton_chaine
+      ? `<span class="tiny" title="Réglé pour la chaîne dans Réglages → Voix : même musique et même style à chaque vidéo">Ton : ${esc((p.tons.find(o => o.ton === p.ton_chaine) || {}).label || p.ton_chaine)} (celui de la chaîne)</span>`
+      : p.reference && !AD_BUSY.includes(p.status)
       ? `<label class="tiny" title="Le ton règle la musique, la quantité d'effets et les sons (au prochain aperçu)" style="display:flex;gap:6px;align-items:center">Ton
           <select class="f" id="adTone" style="width:auto;padding:4px 8px;font-size:12px">${p.ton ? '' : '<option value="">à deviner</option>'}
           ${(p.tons || []).map(o => `<option value="${o.ton}" ${o.ton === p.ton ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>` : '';

@@ -1166,9 +1166,9 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             p["annotations_reviewed"] = True
         report("effets de montage choisis avec les vrais clips", 0.94)
         rough = [{**x, "annotation": p["storyboard"]["plans"][k].get("annotation")} for k, x in zip(active, rough)]
-        fx = effects.decide(rough, clips, os.path.join(project_dir(pid), "work"), tone=_tone(p))
+        fx = effects.decide(rough, clips, os.path.join(project_dir(pid), "work"), tone=_tone(p, p["targets"][0]))
         fx = effects.auto_zoom(rough, clips, fx or [], os.path.join(project_dir(pid), "work"))   # a small subject: zoomed
-        fx = effects.cap(fx, tone.effect_limits(_tone(p)))
+        fx = effects.cap(fx, tone.effect_limits(_tone(p, p["targets"][0])))
         for k, e in zip(active, fx):        # shared by every language, like the arrows
             p["storyboard"]["plans"][k]["effets"] = e
         for t in p["targets"]:
@@ -1595,9 +1595,9 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
             if seen is not None:        # the arrows decided again looking at the clips themselves
                 for x, a in zip(sc["passages"], seen):
                     x["annotation"] = a
-            fx = effects.decide(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]), tone=_tone(p))
+            fx = effects.decide(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]), tone=_tone(p, t))
             fx = effects.auto_zoom(sc["passages"], p["clips"], fx or [], os.path.join(project_dir(pid), "work", t["channel"]))
-            fx = effects.cap(fx, tone.effect_limits(_tone(p)))
+            fx = effects.cap(fx, tone.effect_limits(_tone(p, t)))
             for x, e in zip(sc["passages"], fx):
                 x["effets"] = e
             for attempt in (1, 2):                     # what the re-read missed is fixed (twice at most), then shown
@@ -1810,7 +1810,7 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
                                                    offset + share * (0.3 + 0.6 * f)), annotations=anns,
-                      style=_style_of(t), effects=fx, beats=beats, sound_rules=tone.sound_rules(_tone(p)))
+                      style=_style_of(t), effects=fx, beats=beats, sound_rules=tone.sound_rules(_tone(p, t)))
     t["style"] = _style_of(t)           # the look really used (the channel's may have changed since the project began)
     r["recette"] = _recipe(p, t, r.get("recette") or {})
     c = checks.verify(out, voice_mp3, t["voice"]["passages"], [x["start"] for x in r.get("segments") or []] or None)
@@ -1826,7 +1826,7 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
     total = round(sum(x.get("duree", 0) for x in segs), 2)
     return {
         "projet": p["project_id"], "mode": p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
-        "inspire_de": p.get("remake_of"), "ton": tone.of(p.get("reference")),
+        "inspire_de": p.get("remake_of"), "ton": _tone(p, t), "ton_de_la_chaine": bool(_channel_tone(t)),
         "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
         "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
                     "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique"),
@@ -1875,7 +1875,7 @@ def _effects(p: Dict, t: Dict, work: str) -> List[Optional[Dict]]:
     cache, out = t.setdefault("fx_cache", {}), []
     os.makedirs(work, exist_ok=True)
     # the tone's limits at every render: a tone changed by hand after the script takes effect too
-    capped = effects.cap([effects.clean(x.get("effets")) for x in passages], tone.effect_limits(_tone(p)))
+    capped = effects.cap([effects.clean(x.get("effets")) for x in passages], tone.effect_limits(_tone(p, t)))
     for k, x in enumerate(passages):
         e, c = capped[k], p["clips"].get(x.get("clip"))
         if not e or not c:
@@ -1935,9 +1935,24 @@ def _track_info(path: str) -> Dict:
     return info
 
 
-def _tone(p: Dict) -> str:
-    """The subject's tone: said by the analysis (or by the person); a project
-    analysed before it existed gets it once from a short text call."""
+def _channel_tone(t: Optional[Dict]) -> Optional[str]:
+    """The tone the channel keeps for all its videos (Réglages → Voix), read now like its style; None: the subject's."""
+    if not t:
+        return None
+    try:
+        from channel_manager import ChannelManager
+        return settings.channel_settings(ChannelManager().get_channel_profile(t["channel"])).get("ton")
+    except Exception:
+        return None
+
+
+def _tone(p: Dict, t: Optional[Dict] = None) -> str:
+    """The tone of this version: the channel's when it keeps one, else the
+    subject's — said by the analysis (or by the person); a project analysed
+    before it existed gets it once from a short text call."""
+    fixed = _channel_tone(t)
+    if fixed:
+        return fixed
     ref = p.get("reference") or {}
     if not tone.valid(ref.get("ton")) and ref:
         ref["ton"] = tone.guess(ref)
@@ -1968,6 +1983,9 @@ def _choose_music(p: Dict, t: Dict) -> None:
     single track nothing changes. A track chosen by hand is kept."""
     if t.get("music_chosen") or not t.get("music_path"):
         return
+    if _channel_tone(t):                # a channel that keeps one tone keeps its own music too
+        t["music_chosen"] = True
+        return
     folder = os.path.dirname(t["music_path"])
     tracks = sorted(f for f in os.listdir(folder) if f.lower().endswith((".mp3", ".wav", ".m4a"))) if os.path.isdir(folder) else []
     t["music_chosen"] = True
@@ -1979,7 +1997,7 @@ def _choose_music(p: Dict, t: Dict) -> None:
         sc = t.get("script") or {}
         r = script._gemini()._generate_content(
             [{"text": MOOD_PROMPT.format(titre=sc.get("titre", ""), resume=" ".join(x["texte"] for x in sc.get("passages") or [])[:600],
-                                         morceaux=listing, ton=tone.music_hint(_tone(p)))}], max_tokens=1000, timeout=60, temperature=0.2)
+                                         morceaux=listing, ton=tone.music_hint(_tone(p, t)))}], max_tokens=1000, timeout=60, temperature=0.2)
         n = int(r.get("morceau")) - 1
     except Exception:
         return

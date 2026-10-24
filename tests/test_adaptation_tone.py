@@ -80,3 +80,25 @@ def test_the_api(client, project):
     r = client.patch(f"/api/adaptations/{p['project_id']}/ton", json={"ton": "spectaculaire"})
     assert r.status_code == 200 and r.json()["ton"] == "spectaculaire" and len(r.json()["tons"]) == 4
     assert client.patch(f"/api/adaptations/{p['project_id']}/ton", json={"ton": "x"}).status_code == 400
+
+
+def test_a_channel_that_keeps_one_tone_keeps_its_music_and_wins_over_the_subject(project, client, tmp_path):
+    from tests.test_adaptation_flow import channel
+    a = channel(project)
+    music = tmp_path / "music"
+    music.mkdir()
+    for f in ("i was only temporary.mp3", "other.mp3"):
+        (music / f).write_bytes(b"x")
+    r = client.put("/api/channels/chanA/adaptation", json={"settings": {"ton": "calme"}}).json()
+    assert r["settings"]["ton"] == "calme"
+    p = ap.create("https://youtube.com/shorts/x", [], [a])
+    p["reference"] = {"sujet": "x", "ton": "spectaculaire"}
+    t = p["targets"][0]
+    t.update(music_path=str(music / "i was only temporary.mp3"), music_chosen=False)
+    assert ap._tone(p, t) == "calme" and ap._tone(p) == "spectaculaire"      # the channel's, over the subject's
+    ap._choose_music(p, t)                                                       # no AI call: the channel's track stays
+    assert t["music_path"].endswith("i was only temporary.mp3") and t["music_chosen"]
+    ap.save(p)
+    assert client.get(f"/api/adaptations/{p['project_id']}").json()["ton_chaine"] == "calme"
+    assert client.put("/api/channels/chanA/adaptation", json={"settings": {"ton": None}}).json()["settings"]["ton"] is None
+    assert ap._tone(p, t) == "spectaculaire"                                     # back to the subject's

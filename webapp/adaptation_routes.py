@@ -128,6 +128,9 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     from adaptation import tone as _tone_mod
     base["ton"] = _tone_mod.of(p.get("reference")) if (p.get("reference") or {}).get("ton") else None
     base["tons"] = _tone_mod.choices()
+    from adaptation import pipeline as _ap
+    fixed = {t["channel"]: _ap._channel_tone(t) for t in p.get("targets") or []}
+    base["ton_chaine"] = next(iter(fixed.values())) if fixed and all(fixed.values()) else None   # every version keeps its channel's
     try:
         base["wanting"] = [k + 1 for k in ap_wanting(p)] if p.get("status") in ("images_review", "sources_search") else []
     except Exception:

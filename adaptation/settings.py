@@ -19,7 +19,9 @@ from adaptation import voices as el
 
 PREVIEWS_DIR = "assets/voices"
 
-DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique"}
+# "ton": a fixed tone keeps every video of the channel alike (same effects, same sounds, its own music — a
+# channel's identity, the person's choice for his channels); None: the subject's tone, said by the analysis
+DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique", "ton": None}
 
 
 def preview_path(voice_id: str) -> str:
@@ -77,6 +79,8 @@ def channel_settings(profile: Optional[Dict]) -> Dict:
     from adaptation.render import STYLES
     if raw.get("style") in STYLES:
         out["style"] = raw["style"]
+    from adaptation import tone
+    out["ton"] = tone.valid(raw.get("ton"))
     return out
 
 
@@ -98,6 +102,9 @@ def clean_update(update: Dict) -> Dict:
             out["music_start"] = max(0.0, float(update["music_start"]))
         except (TypeError, ValueError):
             pass
+    if "ton" in update:
+        from adaptation import tone
+        out["ton"] = tone.valid(update["ton"])        # None: the subject's tone
     return out
 
 
