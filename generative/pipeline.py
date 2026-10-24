@@ -38,12 +38,13 @@ from typing import Dict, List, Optional
 import db as _db
 from channel_manager import ChannelManager
 from url_manager import URLManager
-from generative import script_plan
+from generative import drone_montage, script_plan
 from generative.script_generator import generate_script
 from generative.voice_generator import synthesize
 from generative.video_composer import render_video
 
 PROCESSED_DIR = "processed_videos"
+DRONES_CHOICE = "__drones__"     # the Décor step's "Drones, un plan par phrase" option
 TEMP_DIR = "temp"
 
 
@@ -97,8 +98,10 @@ class GenerativePipeline:
         bg = recipe.get("background") if recipe.get("background") in assets["backgrounds"] else name(winner.get("bg_video_path"))
         music = recipe.get("music") if recipe.get("music") in assets["music"] else name(winner.get("bg_music_path"))
         caption = recipe.get("caption_style") if recipe.get("caption_style") in STYLES else winner.get("caption_style")
+        if winner.get("bg_video_path") == drone_montage.DRONES and not recipe.get("background"):
+            bg = DRONES_CHOICE
         preset = {
-            "bg_video_filename": bg if bg in assets["backgrounds"] else None,
+            "bg_video_filename": bg if bg in assets["backgrounds"] or bg == DRONES_CHOICE else None,
             "bg_music_filename": music if music in assets["music"] else None,
             "frame_mode": winner.get("frame_mode") or "fill",
             "rounded_corners": bool(winner.get("rounded_corners")),
@@ -228,11 +231,17 @@ class GenerativePipeline:
             ),
         }
 
-    def generate_audio_for(self, video_id: str) -> str:
+    def voice_of(self, video: Dict) -> Optional[str]:
+        """The draft's own voice (chosen on its card), else the channel's."""
+        return video.get("voice_id") or self.channel_manager.get_channel_profile(video["channel"]).get("tts_voice_id")
+
+    def generate_audio_for(self, video_id: str, voice_id: Optional[str] = None) -> str:
         """Synthesize narration (ElevenLabs — costs credits) and measure its
         real word timing (Whisper). Saved to disk so assemble() can run later,
         independently, without re-synthesizing. Also used to re-synthesize a
-        take the user doesn't like, at any point before assembly."""
+        take the user doesn't like, at any point before assembly. voice_id:
+        a voice picked for this draft (kept on it), else the draft's or the
+        channel's."""
         video = _db.get_video(video_id)
         if not video:
             raise ValueError(f"Unknown video_id: {video_id}")
@@ -240,13 +249,14 @@ class GenerativePipeline:
             raise ValueError(f"Video {video_id} has no script yet.")
 
         profile = self.channel_manager.get_channel_profile(video["channel"])
+        voice = voice_id or self.voice_of(video)
         narration_path = os.path.join(TEMP_DIR, video_id, "narration.mp3")
         words_path = os.path.join(TEMP_DIR, video_id, "words.json")
 
         try:
             words = synthesize(
                 video["script_text"],
-                voice_id=profile.get("tts_voice_id"),
+                voice_id=voice,
                 out_mp3_path=narration_path,
                 model_id=profile.get("tts_model_id", "eleven_v3"),
             )
@@ -258,7 +268,7 @@ class GenerativePipeline:
 
         self.url_manager.update_video_status(
             video_id, "audio_generated",
-            narration_path=narration_path, words_path=words_path, render_error=None,
+            narration_path=narration_path, words_path=words_path, render_error=None, voice_id=voice,
         )
         return narration_path
 
@@ -308,12 +318,18 @@ class GenerativePipeline:
             raise ValueError(f"Video {video_id} has no décor chosen yet.")
 
         out_path = os.path.join(PROCESSED_DIR, f"{video_id}.mp4")
+        drones = None
         try:
             with open(video["words_path"], encoding="utf-8") as f:
                 words = [tuple(w) for w in json.load(f)]
+            background = video["bg_video_path"]
+            if background == drone_montage.DRONES:     # a shot per sentence, built for this video
+                background = os.path.join(TEMP_DIR, video_id, "drones.mp4")
+                drones = drone_montage.build(words, video["bg_music_path"], video["channel"], video_id, background)
+                self.url_manager.update_video_status(video_id, video["status"], drones=drones)
             render_video(
-                video["narration_path"], words, video["bg_video_path"], video["bg_music_path"], out_path,
-                frame_mode=video.get("frame_mode", "fill"),
+                video["narration_path"], words, background, video["bg_music_path"], out_path,
+                frame_mode="fill" if drones else video.get("frame_mode", "fill"),
                 rounded_corners=video.get("rounded_corners", False),
                 caption_style=video.get("caption_style", "karaoke"),
                 caption_color=video.get("caption_color"),
@@ -332,7 +348,7 @@ class GenerativePipeline:
             import recette
             from generative.ffmpeg_composer import MUSIC_LEVEL
             from generative.caption_styles import group_into_blocks
-            voice = self.channel_manager.get_channel_profile(video["channel"]).get("tts_voice_id")
+            voice = self.voice_of(video)
             blocks = []
             for b in group_into_blocks(words):      # a list number ("1.") goes with the sentence it opens
                 if blocks and len(blocks[-1]) == 1 and blocks[-1][0][0].rstrip(".").isdigit():
@@ -340,8 +356,8 @@ class GenerativePipeline:
                 blocks.append(b)
             phrases = [{"debut": round(b[0][1], 2), "duree": round(b[-1][2] - b[0][1], 2),
                         "texte": " ".join(w[0] for w in b)} for b in blocks]
-            rec = recette.from_generation({**video, "video_path": out_path}, voice_id=voice, music_level=MUSIC_LEVEL,
-                                          phrases=phrases)
+            rec = recette.from_generation({**video, "video_path": out_path, **({"drones": drones} if drones else {})},
+                                          voice_id=voice, music_level=MUSIC_LEVEL, phrases=phrases)
         except Exception:
             pass                        # the recipe never blocks a video
         self.url_manager.update_video_status(video_id, "ready_for_upload", video_path=out_path, render_error=None,

@@ -57,7 +57,8 @@ def fingerprint(video: Dict) -> Dict:
             "accroche": (rec.get("accroche") or {}).get("texte"),
             "duree_s": (rec.get("structure") or {}).get("duree_s"),
             "plans": (rec.get("structure") or {}).get("plans"),
-            "fond": os.path.basename(video.get("bg_video_path") or "") or None,
+            # "drones": a different shot per sentence, never the same background twice
+            "fond": None if video.get("bg_video_path") == "drones" else os.path.basename(video.get("bg_video_path") or "") or None,
             "musique": os.path.basename(music or "") or None,
             "voix": voice.get("id") if isinstance(voice, dict) else voice,
             "style": (rec.get("style") or {}).get("visuel") or video.get("caption_style")}
