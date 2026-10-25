@@ -268,6 +268,15 @@ document.getElementById('genScheduleBtn').addEventListener('click', async () => 
   }
 });
 
+// A date I pick by hand is never refused for breaking a rule: the server
+// only says which one (spacing_hours, daily / weekly cap) — shown as a toast.
+function warnScheduleRules(entry){
+  ((entry && entry.warnings) || []).forEach(w => {
+    log(`Attention : ${w}`, 'warn');
+    toast(`Attention : ${w}`, 'warn');
+  });
+}
+
 function dateBadgeHtml(raw, readable){
   return `<div class="datebadge" data-raw="${esc(raw)}">${icon('calendar', 13)}${esc(readable || raw)}</div>`;
 }
@@ -334,6 +343,7 @@ function renderSchedule(schedule){
         const entry = await api(`/api/schedule/${row.dataset.video}`, { method:'PATCH', body: JSON.stringify({scheduled_time}) });
         input.outerHTML = dateBadgeHtml(entry.scheduled_time, formatWhen(input.value));
         log('Date mise à jour', 'success');
+        warnScheduleRules(entry);
       } catch (e){ log(e.message, 'error'); }
     }, { once:true });
   }));
@@ -524,8 +534,9 @@ function wireCalendar(box, all){
 
 async function saveSlot(item, when){
   try {
-    await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: toLocalApiTime(when) }) });
+    const entry = await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: toLocalApiTime(when) }) });
     log(`Déplacée au ${when.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} à ${hhmm(when)}`, 'success');
+    warnScheduleRules(entry);
   } catch (e){ log(e.message, 'error'); }
   calData = await api('/api/calendar');
   renderCalendar();
@@ -569,11 +580,13 @@ function openSlotDialog(item){
         await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ publish_now: nowBox.checked }) });
       }
       const value = dlg.querySelector('[data-role="when"]').value;
+      let entry = null;
       if (!nowBox.checked && value && value !== local){
-        await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: value.replace('T', ' ') + ':00' }) });
+        entry = await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: value.replace('T', ' ') + ':00' }) });
       }
       dlg.close();
       log('Planning mis à jour', 'success');
+      warnScheduleRules(entry);
       calData = await api('/api/calendar');
       renderCalendar();
     } catch (e){ err.textContent = e.message; }

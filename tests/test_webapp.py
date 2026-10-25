@@ -280,3 +280,45 @@ def test_publish_now_still_goes_out_public_immediately(client, project, fake_you
 
     assert fake_youtube.inserted[0]["status"]["privacyStatus"] == "public"
     assert answer["rescheduled"] == [] and db.get_video("now")["status"] == "uploaded"
+
+
+# ---- a manual move is never blocked, but says which rule it breaks
+
+def _pending(video_id, when):
+    return {"video_id": video_id, "channel": "chanA", "title": video_id, "scheduled_time": when, "video_data": {}}
+
+
+def test_manual_move_too_close_is_saved_with_a_warning(client, project):
+    import json
+    project.add_video("p1")
+    project.add_video("p2")
+    project.add_video("yt", status="scheduled_on_youtube", scheduled_publish_time="2030-01-15T18:00:00+01:00")
+    project.write_schedule([_pending("p1", "2030-01-07 18:00:00"), _pending("p2", "2030-01-10 18:00:00")])
+
+    close = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-07 20:00:00"})
+    assert close.status_code == 200 and close.json()["scheduled_time"] == "2030-01-07 20:00:00"   # my choice is kept
+    assert any("écart" in w for w in close.json()["warnings"])
+    assert json.load(open("upload_schedule.json"))["schedule"][1]["scheduled_time"] == "2030-01-07 20:00:00"
+    assert "warnings" not in json.load(open("upload_schedule.json"))["schedule"][1]                 # not stored
+
+    near_youtube = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-15 19:00:00"}).json()
+    assert near_youtube["warnings"]                                     # a video already on YouTube counts too
+
+    fine = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-11 18:00:00"}).json()
+    assert fine["warnings"] == []
+
+
+def test_manual_move_over_the_daily_cap_warns(client, project):
+    import yaml
+    config = yaml.safe_load(open("config.yaml"))
+    config["scheduling"]["spacing_hours"] = 1
+    config["general"]["max_daily_uploads"] = 1
+    yaml.safe_dump(config, open("config.yaml", "w"))
+    project.add_video("p1")
+    project.add_video("p2")
+    project.write_schedule([_pending("p1", "2030-01-07 09:00:00"), _pending("p2", "2030-01-08 18:00:00")])
+
+    moved = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-07 18:00:00"})
+
+    assert moved.status_code == 200
+    assert any("par jour" in w for w in moved.json()["warnings"])

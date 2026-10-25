@@ -2209,8 +2209,18 @@ def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
     if update.publish_now is not None:
         entry["publish_now"] = update.publish_now
 
+    # My choice is kept, but I'm told which rule it breaks (same rules as the guard)
+    warnings = []
+    if update.scheduled_time is not None and not entry.get("publish_now"):
+        videos = bp.url_manager.load_database()["videos"]
+        others = [e for e in schedule if e is not entry
+                  and (videos.get(e.get("video_id")) or {}).get("status") not in ("uploaded", "scheduled_on_youtube")]
+        taken = bp._taken_slots(others + bp._taken_on_youtube()).get(entry.get("channel"), {})
+        taken.pop(video_id, None)
+        warnings = [msg for _, msg in bp._slot_problems(bp._parse_slot(update.scheduled_time), list(taken.values()))]
+
     bp.scheduler.save_schedule(schedule)
-    return entry
+    return {**entry, "warnings": warnings}
 
 
 @app.get("/api/calendar")
