@@ -703,10 +703,25 @@ function fillPreflightCard(item){
       `<button class="btn secondary small" data-reprocess title="Refaire le cadrage et le traitement depuis le fichier téléchargé">${icon('refresh', 12)} Retraiter</button><button class="btn ghost small danger" data-abandon title="Retirer cette vidéo du planning">${icon('trash', 12)} Abandonner</button>`);
     facts.push(`<div class="fact warn">${icon('alert')}<span>${item.missing_files.length} fichier(s) introuvable(s) — non publiée(s)</span></div>`);
   }
-  if (item.past_dates.length){
+  // A date already passed is moved by "Publier tout" (never sent public at once): say where, beforehand
+  const moved = Object.fromEntries((item.rescheduled || []).map(r => [r.video_id, r.when]));
+  if (Object.keys(moved).length){
     worse('warn');
-    flag(row => item.past_dates.includes(row.dataset.title), `<span class="pill warn" title="Date déjà passée : sera publiée immédiatement">Date passée</span>`);
-    facts.push(`<div class="fact warn">${icon('clock')}<span>${item.past_dates.length} date(s) déjà passée(s) — publiée(s) immédiatement</span></div>`);
+    card.querySelectorAll('.publish-row').forEach(row => {
+      if (moved[row.dataset.video]) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend',
+        `<span class="pill warn" title="Date déjà passée : programmée à cette nouvelle date au lieu d'être publiée tout de suite">Replanifiée au ${esc(formatWhen(moved[row.dataset.video]))}</span>`);
+    });
+    facts.push(`<div class="fact warn">${icon('clock')}<span>${Object.keys(moved).length} date(s) déjà passée(s) — replanifiée(s) à la prochaine date libre, pas publiée(s) d'un coup</span></div>`);
+  }
+  const unplaceable = item.unplaceable || [];
+  if (unplaceable.length){
+    worse('warn');
+    const why = Object.fromEntries(unplaceable.map(u => [u.video_id, u.reason]));
+    card.querySelectorAll('.publish-row').forEach(row => {
+      if (why[row.dataset.video]) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend',
+        `<span class="pill bad" title="${esc(why[row.dataset.video])}">Sans créneau libre</span>`);
+    });
+    facts.push(`<div class="fact warn">${icon('alert')}<span>${unplaceable.length} vidéo(s) à date passée sans créneau libre — non publiée(s), voir Planning</span></div>`);
   }
 
   const pill = card.querySelector('[data-role="pf-pill"]');
@@ -740,8 +755,8 @@ function fillPreflightCard(item){
   }));
 }
 
-function publishResultsHtml(results){
-  if (!results.length) return emptyState('Rien n\'a été publié', 'Aucune vidéo en attente.', 'rocket');
+function publishResultsHtml(results, unplaced = []){
+  if (!results.length && !unplaced.length) return emptyState('Rien n\'a été publié', 'Aucune vidéo en attente.', 'rocket');
   const ok = results.filter(r => r.success).length;
   return `
   <article class="chcard">
@@ -759,9 +774,15 @@ function publishResultsHtml(results){
             <span class="tiny"> · ${esc(ch ? ch.display_name : (r.channel || ''))}</span><br>
             ${r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${r.url}</a>` : esc(r.error || '')}
             ${r.note ? `<span class="tiny"> · ${esc(r.note)}</span>` : ''}
+            ${r.rescheduled_to ? `<span class="tiny"> · date passée, replanifiée au ${esc(formatWhen(r.rescheduled_to))}</span>` : ''}
           </span>
         </div>`;
       }).join('')}
+      ${unplaced.map(u => `
+        <div class="result-line skip">
+          ${icon('skip')}
+          <span><b style="color:var(--text);font-weight:600">${esc(u.title || '')}</b><br>${esc(u.reason || '')}</span>
+        </div>`).join('')}
     </div>
   </article>`;
 }
@@ -780,8 +801,8 @@ document.getElementById('publishAllBtn').addEventListener('click', async () => {
       if (!proceed) return;
     }
     btn.innerHTML = '<span class="spinner"></span> Publication en cours...';
-    const { results } = await api('/api/publish_all', { method:'POST' });
-    document.getElementById('publishResults').innerHTML = publishResultsHtml(results);
+    const { results, unscheduled } = await api('/api/publish_all', { method:'POST' });
+    document.getElementById('publishResults').innerHTML = publishResultsHtml(results, unscheduled || []);
     log('Publication terminée', 'success');
     await loadSummaryFromSchedule(); // videos just published must disappear from "Prêt à publier"
   } catch (e){ log(e.message, 'error'); }

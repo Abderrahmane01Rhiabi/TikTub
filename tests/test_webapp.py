@@ -236,3 +236,47 @@ def test_links_sent_for_several_channels_in_the_same_second_all_get_a_batch(clie
            for ch in ("chanA", "chanB", "chanA")]
 
     assert len(set(ids)) == 3
+
+
+# ---- dates that went by before "Publier tout" (AUDIT.md §4.5 F29)
+
+def _two_days_ago():
+    from datetime import datetime, timedelta
+    return (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_a_date_passed_two_days_ago_is_rescheduled_not_published_now(client, project, fake_youtube):
+    import json
+    from datetime import datetime, timezone
+    from dateutil import parser
+    late = _two_days_ago()
+    project.add_channel("chanA")
+    project.add_video("late", video_path=project.add_video_file("late.mp4"), ai_data={"optimized_title": "En retard"})
+    project.write_schedule([{"video_id": "late", "channel": "chanA", "title": "En retard",
+                             "scheduled_time": late, "video_data": {}}], method="static")
+
+    announced = client.get("/api/publish/preflight").json()["channels"][0]["rescheduled"]
+    assert [r["video_id"] for r in announced] == ["late"]
+    assert json.load(open("upload_schedule.json"))["schedule"][0]["scheduled_time"] == late   # announced only: nothing saved
+
+    answer = client.post("/api/publish_all").json()
+
+    sent = fake_youtube.inserted[0]["status"]
+    assert sent["privacyStatus"] == "private" and parser.parse(sent["publishAt"]) > datetime.now(timezone.utc)
+    assert [r["video_id"] for r in answer["rescheduled"]] == ["late"]
+    assert answer["rescheduled"][0]["when"] == announced[0]["when"]
+    result = answer["results"][0]
+    assert result["success"] and result["rescheduled_to"] == announced[0]["when"]
+    assert db.get_video("late")["status"] == "scheduled_on_youtube"
+
+
+def test_publish_now_still_goes_out_public_immediately(client, project, fake_youtube):
+    project.add_channel("chanA")
+    project.add_video("now", video_path=project.add_video_file("now.mp4"))
+    project.write_schedule([{"video_id": "now", "channel": "chanA", "title": "now", "publish_now": True,
+                             "scheduled_time": _two_days_ago(), "video_data": {}}], method="static")
+
+    answer = client.post("/api/publish_all").json()
+
+    assert fake_youtube.inserted[0]["status"]["privacyStatus"] == "public"
+    assert answer["rescheduled"] == [] and db.get_video("now")["status"] == "uploaded"

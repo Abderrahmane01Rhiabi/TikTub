@@ -787,6 +787,51 @@ class BatchProcessor:
             print(f"⚠️ {len(unscheduled)} vidéo(s) impossible(s) à placer : " + ", ".join(sorted(dropped)))
         return unscheduled
 
+    def reschedule_past_entries(self, save: bool = True) -> Dict[str, List[Dict]]:
+        """Juste avant « Publier tout » : une date devenue passée (planning généré
+        il y a plusieurs jours, jamais publié) serait envoyée tout de suite, en
+        PUBLIC, par youtube_uploader.effective_scheduled_time. Ces vidéos (sauf
+        « Publier maintenant ») repassent par le garde-fou. save=False : rien
+        n'est enregistré, c'est l'annonce du contrôle avant publication.
+        Renvoie {'rescheduled': [...nouvelle date...], 'unscheduled': [...raison...]}."""
+        import copy
+        data = self.scheduler.load_schedule() or {}
+        schedule = data.get('schedule', []) if save else copy.deepcopy(data.get('schedule', []))
+        videos = self.url_manager.load_database()['videos']
+        lead = datetime.now(self.scheduler.timezone) + GUARD_MIN_LEAD
+
+        def is_late(entry):
+            if entry.get('publish_now') or not entry.get('scheduled_time'):
+                return False
+            if (videos.get(entry.get('video_id')) or {}).get('status') in ('uploaded', 'scheduled_on_youtube'):
+                return False
+            try:
+                return self._parse_slot(entry['scheduled_time']) < lead
+            except (ValueError, TypeError, OverflowError):
+                return False
+
+        late = [e for e in schedule if is_late(e)]
+        if not late:
+            return {'rescheduled': [], 'unscheduled': []}
+        late_ids = {e['video_id'] for e in late}
+        previous = {e['video_id']: e['scheduled_time'] for e in late}
+        others = [e for e in schedule if e.get('video_id') not in late_ids]
+        unscheduled = self._shift_off_taken_slots(late, others + self._taken_on_youtube())
+
+        def title(entry):   # what will be published, not the copy frozen in the schedule
+            return ((videos.get(entry['video_id']) or {}).get('ai_data') or {}).get('optimized_title') or entry.get('title')
+        rescheduled = [{'video_id': e['video_id'], 'title': title(e), 'channel': e.get('channel'),
+                        'previous_time': previous[e['video_id']], 'scheduled_time': e['scheduled_time'],
+                        'when': self._parse_slot(e['scheduled_time']).isoformat()} for e in late]
+        for u in unscheduled:
+            u['title'] = title(u)
+        if save:
+            dropped = {u['video_id'] for u in unscheduled}
+            self.scheduler.save_schedule([e for e in schedule if e.get('video_id') not in dropped],
+                                         unscheduled=(data.get('unscheduled') or []) + unscheduled)
+            print(f"📅 {len(rescheduled)} date(s) passée(s) replanifiée(s) avant publication")
+        return {'rescheduled': rescheduled, 'unscheduled': unscheduled}
+
     def ensure_schedule_includes_all_ready(self, schedule_method: str = None) -> List[Dict]:
         """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
         publie que ce qui est dans upload_schedule.json, donc une vidéo passée à

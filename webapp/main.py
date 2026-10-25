@@ -2115,7 +2115,10 @@ def publish_preflight():
     import quota
     from youtube_uploader import get_connection_health, current_video_data, effective_scheduled_time
 
-    _, pending, db = _pending_schedule(get_batch_processor())
+    bp = get_batch_processor()
+    _, pending, db = _pending_schedule(bp)
+    # dates already passed are moved by "Publier tout" (never sent public at once): say where, now
+    moved = bp.reschedule_past_entries(save=False)
     by_channel: Dict[str, list] = {}
     for entry in pending:
         channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
@@ -2144,6 +2147,10 @@ def publish_preflight():
             "missing_files": missing_files,
             "missing_ids": missing_ids,
             "past_dates": past_dates,
+            "rescheduled": [{k: r[k] for k in ("video_id", "title", "when")}
+                            for r in moved["rescheduled"] if r["channel"] == channel],
+            "unplaceable": [{k: u[k] for k in ("video_id", "title", "reason")}
+                            for u in moved["unscheduled"] if u["channel"] == channel],
             "blocked": blocked,
             "publishable": 0 if blocked else len(entries) - len(missing_files),
         })
@@ -2267,10 +2274,12 @@ class PublishRequest(BaseModel):
 def publish(req: PublishRequest):
     bp = get_batch_processor()
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
+    moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
     from youtube_uploader import upload_channel_schedule
     results = upload_channel_schedule(req.channel_name, auto_confirm=True)
+    _mark_rescheduled(results, moved)
     _alert_publish_results(results, req.channel_name)
-    return {"results": results}
+    return {"results": results, **moved}
 
 
 @app.post("/api/publish_all")
@@ -2279,10 +2288,20 @@ def publish_all():
     single final "Publier tout" button."""
     bp = get_batch_processor()
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
+    moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
     from youtube_uploader import upload_all_channels_schedule
     results = upload_all_channels_schedule(auto_confirm=True)
+    _mark_rescheduled(results, moved)
     _alert_publish_results(results)
-    return {"results": results}
+    return {"results": results, **moved}
+
+
+def _mark_rescheduled(results, moved):
+    """Each published video whose date had passed says where it went."""
+    when_by_id = {r["video_id"]: r["when"] for r in moved["rescheduled"]}
+    for r in results:
+        if r.get("video_id") in when_by_id:
+            r["rescheduled_to"] = when_by_id[r["video_id"]]
 
 
 def _alert_publish_results(results, channel_name=None):
