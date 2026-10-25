@@ -314,3 +314,14 @@ def test_publish_now_entries_are_left_alone(project, bp, monkeypatch):
     combined = bp.ensure_schedule_includes_all_ready()
 
     assert next(e for e in combined if e["video_id"] == "now")["scheduled_time"] == "2020-01-01 09:00:00"
+
+
+def test_guard_keeps_the_hour_the_method_chose(project, bp, monkeypatch):
+    tight_rules(bp, spacing=23, daily=5, weekly=20)                             # the real config: one a day at 20:00
+    project.add_video("yt", status="scheduled_on_youtube", scheduled_publish_time="2030-01-07T17:00:00+01:00")
+    project.add_video("v1", title="v1")
+    fake_method(monkeypatch, bp, "static", {"v1": ("chanA", datetime(2030, 1, 7, 20, 0))})
+
+    schedule = bp.create_upload_schedule(schedule_method="static")
+
+    assert bp._parse_slot(schedule[0]["scheduled_time"]) == bp.scheduler.timezone.localize(datetime(2030, 1, 8, 20, 0))

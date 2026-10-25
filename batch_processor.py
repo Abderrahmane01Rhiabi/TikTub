@@ -738,15 +738,14 @@ class BatchProcessor:
           suivant (une date passée serait publiée tout de suite, en public) ;
         - à moins de spacing_hours d'un créneau déjà pris (existing_entries :
           planning existant, vidéos programmées sur YouTube ; et les entrées
-          déjà placées) : décalée de spacing_hours en spacing_hours ;
-        - jour ou semaine au plafond (max_daily_uploads / max_weekly_uploads) :
-          jour suivant, même horaire.
+          déjà placées), ou jour / semaine au plafond (max_daily_uploads /
+          max_weekly_uploads) : jour suivant, au même horaire — l'heure choisie
+          par la méthode (heure préférée, pic d'audience) est gardée.
         Une entrée impossible à placer dans les GUARD_HORIZON_DAYS jours est
         retirée de new_entries et renvoyée avec sa raison (jamais laissée sans
         date). Les entrées « Publier maintenant » ne sont pas touchées."""
         from dateutil import parser as date_parser
         tz = self.scheduler.timezone
-        spacing = timedelta(hours=self.config['scheduling']['spacing_hours'])
         lead = (now or datetime.now(tz)) + GUARD_MIN_LEAD
         taken = self._taken_slots(existing_entries)
 
@@ -763,7 +762,7 @@ class BatchProcessor:
             limit = slot + timedelta(days=GUARD_HORIZON_DAYS)
             problems = self._slot_problems(slot, list(channel_slots.values()))
             while problems and slot <= limit:
-                slot = slot + spacing if problems[0][0] == 'spacing' else next_day(slot)
+                slot = next_day(slot)
                 problems = self._slot_problems(slot, list(channel_slots.values()))
             if problems:
                 unscheduled.append({
