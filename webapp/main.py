@@ -2102,6 +2102,15 @@ def _pending_schedule(bp):
             entry["when"] = bp._parse_slot(entry["scheduled_time"]).isoformat()
         except (KeyError, ValueError, TypeError):
             entry["when"] = None
+    # Videos the guard couldn't place (with why) — only those still waiting, under their current title
+    scheduled_ids = {e.get("video_id") for e in data.get("schedule", [])}
+    data["unscheduled"] = [
+        {"video_id": u.get("video_id"), "channel": u.get("channel"), "reason": u.get("reason"),
+         "title": ((db.get("videos", {}).get(u.get("video_id")) or {}).get("ai_data") or {}).get("optimized_title") or u.get("title")}
+        for u in data.get("unscheduled") or []
+        if (db.get("videos", {}).get(u.get("video_id")) or {}).get("status") == "ready_for_upload"
+        and u.get("video_id") not in scheduled_ids
+    ]
     return data, pending, db
 
 
@@ -2232,7 +2241,7 @@ def calendar():
     Every `when` is a timezone-aware ISO date (the schedule mixes aware and
     naive local strings depending on the method that wrote it)."""
     bp = get_batch_processor()
-    _, pending, db = _pending_schedule(bp)
+    data, pending, db = _pending_schedule(bp)
 
     items = []
     for entry in pending:
@@ -2271,6 +2280,7 @@ def calendar():
 
     return {
         "items": items,
+        "unscheduled": data["unscheduled"],
         "max_daily_uploads": bp.config["general"]["max_daily_uploads"],
         "spacing_hours": bp.config["scheduling"]["spacing_hours"],
     }

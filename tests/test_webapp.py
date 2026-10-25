@@ -322,3 +322,18 @@ def test_manual_move_over_the_daily_cap_warns(client, project):
 
     assert moved.status_code == 200
     assert any("par jour" in w for w in moved.json()["warnings"])
+
+
+def test_planning_screens_list_the_unscheduled_videos(client, project):
+    import json
+    project.add_video("wait", ai_data={"optimized_title": "Titre actuel"})
+    project.add_video("gone", status="uploaded")                       # published since: no longer listed
+    project.write_schedule([])
+    data = json.load(open("upload_schedule.json"))
+    data["unscheduled"] = [{"video_id": "wait", "title": "vieux", "channel": "chanA", "reason": "Aucun créneau libre"},
+                           {"video_id": "gone", "title": "g", "channel": "chanA", "reason": "x"}]
+    json.dump(data, open("upload_schedule.json", "w"))
+
+    for answer in (client.get("/api/schedule").json(), client.get("/api/calendar").json()):
+        assert answer["unscheduled"] == [{"video_id": "wait", "title": "Titre actuel", "channel": "chanA",
+                                          "reason": "Aucun créneau libre"}]

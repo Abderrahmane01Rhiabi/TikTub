@@ -243,7 +243,7 @@ async function loadPlanningScreen(){
       renderCalendar();
     } else {
       const data = await api('/api/schedule');
-      renderSchedule(data.schedule || []);
+      renderSchedule(data.schedule || [], data.unscheduled || []);
     }
   } catch (e){
     showLoadError(target, e, loadPlanningScreen);
@@ -281,7 +281,35 @@ function dateBadgeHtml(raw, readable){
   return `<div class="datebadge" data-raw="${esc(raw)}">${icon('calendar', 13)}${esc(readable || raw)}</div>`;
 }
 
-function renderSchedule(schedule){
+// Videos the guard couldn't place: never published without a date — listed
+// with why, above both views (Liste and Calendrier).
+function unscheduledHtml(list){
+  if (!list || !list.length) return '';
+  return `
+  <article class="chcard">
+    <div class="chcard-head">
+      <div class="who">
+        <div class="name">${icon('alert', 14)} Sans créneau</div>
+        <div class="meta">Aucune date libre : elles ne seront pas publiées. Nouvel essai au prochain « Générer le planning ».</div>
+      </div>
+      <span class="pill warn">${list.length} vidéo${list.length > 1 ? 's' : ''}</span>
+    </div>
+    <div>
+    ${list.map(u => {
+      const ch = channels.find(c => c.name === u.channel);
+      return `
+      <div class="vrow">
+        <div class="mthumb" style="background:linear-gradient(160deg,${channelColor(u.channel)},#171a21 120%)"></div>
+        <div class="vname" title="${esc(u.title || u.video_id)}">${esc(u.title || u.video_id)}</div>
+        <span class="tiny"><span class="dot" style="display:inline-block;vertical-align:middle;background:${channelColor(u.channel)}"></span> ${esc(ch ? ch.display_name : (u.channel || ''))}</span>
+        <span class="tiny muted" style="flex:2 1 260px">${esc(u.reason || '')}</span>
+      </div>`;
+    }).join('')}
+    </div>
+  </article>`;
+}
+
+function renderSchedule(schedule, unscheduled = []){
   const byChannel = {};
   schedule.forEach(e => {
     const ch = e.channel || (e.video_data && e.video_data.channel) || 'default';
@@ -290,11 +318,11 @@ function renderSchedule(schedule){
   const wrap = document.getElementById('scheduleSections');
   const names = Object.keys(byChannel);
   if (!names.length){
-    wrap.innerHTML = emptyState('Aucun planning pour l\'instant', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
+    wrap.innerHTML = unscheduledHtml(unscheduled) + emptyState('Aucun planning pour l\'instant', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
     return;
   }
 
-  wrap.innerHTML = names.map(name => {
+  wrap.innerHTML = unscheduledHtml(unscheduled) + names.map(name => {
     const chObj = channels.find(c => c.name === name);
     const entries = byChannel[name];
     return `
@@ -392,7 +420,7 @@ function renderCalendar(){
   // Lanes = channels that have anything to show at all (empty week included)
   const laneNames = channels.map(c => c.name).filter(n => all.some(i => i.channel === n));
   if (!laneNames.length){
-    box.innerHTML = emptyState('Rien de programmé', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
+    box.innerHTML = unscheduledHtml(calData.unscheduled) + emptyState('Rien de programmé', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
     return;
   }
 
@@ -444,7 +472,7 @@ function renderCalendar(){
     return `<div class="lane"><span class="dot" style="background:${channelColor(name)};margin-top:4px"></span><span>${esc(ch.display_name)}</span></div>${cells}`;
   }).join('');
 
-  box.innerHTML = `${header}
+  box.innerHTML = `${unscheduledHtml(calData.unscheduled)}${header}
     <div class="cal-wrap"><div class="cal">${head}${rows}</div></div>
     <div class="cal-legend">
       <span><span class="sw" style="background:var(--panel2)"></span>À publier (déplaçable)</span>
