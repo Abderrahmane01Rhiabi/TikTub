@@ -2102,6 +2102,15 @@ def _pending_schedule(bp):
             entry["when"] = bp._parse_slot(entry["scheduled_time"]).isoformat()
         except (KeyError, ValueError, TypeError):
             entry["when"] = None
+    # Videos the guard couldn't place (with why) — only those still waiting, under their current title
+    scheduled_ids = {e.get("video_id") for e in data.get("schedule", [])}
+    data["unscheduled"] = [
+        {"video_id": u.get("video_id"), "channel": u.get("channel"), "reason": u.get("reason"),
+         "title": ((db.get("videos", {}).get(u.get("video_id")) or {}).get("ai_data") or {}).get("optimized_title") or u.get("title")}
+        for u in data.get("unscheduled") or []
+        if (db.get("videos", {}).get(u.get("video_id")) or {}).get("status") == "ready_for_upload"
+        and u.get("video_id") not in scheduled_ids
+    ]
     return data, pending, db
 
 
@@ -2115,7 +2124,10 @@ def publish_preflight():
     import quota
     from youtube_uploader import get_connection_health, current_video_data, effective_scheduled_time
 
-    _, pending, db = _pending_schedule(get_batch_processor())
+    bp = get_batch_processor()
+    _, pending, db = _pending_schedule(bp)
+    # dates already passed are moved by "Publier tout" (never sent public at once): say where, now
+    moved = bp.reschedule_past_entries(save=False)
     by_channel: Dict[str, list] = {}
     for entry in pending:
         channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
@@ -2144,6 +2156,10 @@ def publish_preflight():
             "missing_files": missing_files,
             "missing_ids": missing_ids,
             "past_dates": past_dates,
+            "rescheduled": [{k: r[k] for k in ("video_id", "title", "when")}
+                            for r in moved["rescheduled"] if r["channel"] == channel],
+            "unplaceable": [{k: u[k] for k in ("video_id", "title", "reason")}
+                            for u in moved["unscheduled"] if u["channel"] == channel],
             "blocked": blocked,
             "publishable": 0 if blocked else len(entries) - len(missing_files),
         })
@@ -2202,8 +2218,18 @@ def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
     if update.publish_now is not None:
         entry["publish_now"] = update.publish_now
 
+    # My choice is kept, but I'm told which rule it breaks (same rules as the guard)
+    warnings = []
+    if update.scheduled_time is not None and not entry.get("publish_now"):
+        videos = bp.url_manager.load_database()["videos"]
+        others = [e for e in schedule if e is not entry
+                  and (videos.get(e.get("video_id")) or {}).get("status") not in ("uploaded", "scheduled_on_youtube")]
+        taken = bp._taken_slots(others + bp._taken_on_youtube()).get(entry.get("channel"), {})
+        taken.pop(video_id, None)
+        warnings = [msg for _, msg in bp._slot_problems(bp._parse_slot(update.scheduled_time), list(taken.values()))]
+
     bp.scheduler.save_schedule(schedule)
-    return entry
+    return {**entry, "warnings": warnings}
 
 
 @app.get("/api/calendar")
@@ -2215,7 +2241,7 @@ def calendar():
     Every `when` is a timezone-aware ISO date (the schedule mixes aware and
     naive local strings depending on the method that wrote it)."""
     bp = get_batch_processor()
-    _, pending, db = _pending_schedule(bp)
+    data, pending, db = _pending_schedule(bp)
 
     items = []
     for entry in pending:
@@ -2254,6 +2280,7 @@ def calendar():
 
     return {
         "items": items,
+        "unscheduled": data["unscheduled"],
         "max_daily_uploads": bp.config["general"]["max_daily_uploads"],
         "spacing_hours": bp.config["scheduling"]["spacing_hours"],
     }
@@ -2267,10 +2294,12 @@ class PublishRequest(BaseModel):
 def publish(req: PublishRequest):
     bp = get_batch_processor()
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
+    moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
     from youtube_uploader import upload_channel_schedule
     results = upload_channel_schedule(req.channel_name, auto_confirm=True)
+    _mark_rescheduled(results, moved)
     _alert_publish_results(results, req.channel_name)
-    return {"results": results}
+    return {"results": results, **moved}
 
 
 @app.post("/api/publish_all")
@@ -2279,10 +2308,20 @@ def publish_all():
     single final "Publier tout" button."""
     bp = get_batch_processor()
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
+    moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
     from youtube_uploader import upload_all_channels_schedule
     results = upload_all_channels_schedule(auto_confirm=True)
+    _mark_rescheduled(results, moved)
     _alert_publish_results(results)
-    return {"results": results}
+    return {"results": results, **moved}
+
+
+def _mark_rescheduled(results, moved):
+    """Each published video whose date had passed says where it went."""
+    when_by_id = {r["video_id"]: r["when"] for r in moved["rescheduled"]}
+    for r in results:
+        if r.get("video_id") in when_by_id:
+            r["rescheduled_to"] = when_by_id[r["video_id"]]
 
 
 def _alert_publish_results(results, channel_name=None):

@@ -243,7 +243,7 @@ async function loadPlanningScreen(){
       renderCalendar();
     } else {
       const data = await api('/api/schedule');
-      renderSchedule(data.schedule || []);
+      renderSchedule(data.schedule || [], data.unscheduled || []);
     }
   } catch (e){
     showLoadError(target, e, loadPlanningScreen);
@@ -268,11 +268,48 @@ document.getElementById('genScheduleBtn').addEventListener('click', async () => 
   }
 });
 
+// A date I pick by hand is never refused for breaking a rule: the server
+// only says which one (spacing_hours, daily / weekly cap) — shown as a toast.
+function warnScheduleRules(entry){
+  ((entry && entry.warnings) || []).forEach(w => {
+    log(`Attention : ${w}`, 'warn');
+    toast(`Attention : ${w}`, 'warn');
+  });
+}
+
 function dateBadgeHtml(raw, readable){
   return `<div class="datebadge" data-raw="${esc(raw)}">${icon('calendar', 13)}${esc(readable || raw)}</div>`;
 }
 
-function renderSchedule(schedule){
+// Videos the guard couldn't place: never published without a date — listed
+// with why, above both views (Liste and Calendrier).
+function unscheduledHtml(list){
+  if (!list || !list.length) return '';
+  return `
+  <article class="chcard">
+    <div class="chcard-head">
+      <div class="who">
+        <div class="name">${icon('alert', 14)} Sans créneau</div>
+        <div class="meta">Aucune date libre : elles ne seront pas publiées. Nouvel essai au prochain « Générer le planning ».</div>
+      </div>
+      <span class="pill warn">${list.length} vidéo${list.length > 1 ? 's' : ''}</span>
+    </div>
+    <div>
+    ${list.map(u => {
+      const ch = channels.find(c => c.name === u.channel);
+      return `
+      <div class="vrow">
+        <div class="mthumb" style="background:linear-gradient(160deg,${channelColor(u.channel)},#171a21 120%)"></div>
+        <div class="vname" title="${esc(u.title || u.video_id)}">${esc(u.title || u.video_id)}</div>
+        <span class="tiny"><span class="dot" style="display:inline-block;vertical-align:middle;background:${channelColor(u.channel)}"></span> ${esc(ch ? ch.display_name : (u.channel || ''))}</span>
+        <span class="tiny muted" style="flex:2 1 260px">${esc(u.reason || '')}</span>
+      </div>`;
+    }).join('')}
+    </div>
+  </article>`;
+}
+
+function renderSchedule(schedule, unscheduled = []){
   const byChannel = {};
   schedule.forEach(e => {
     const ch = e.channel || (e.video_data && e.video_data.channel) || 'default';
@@ -281,11 +318,11 @@ function renderSchedule(schedule){
   const wrap = document.getElementById('scheduleSections');
   const names = Object.keys(byChannel);
   if (!names.length){
-    wrap.innerHTML = emptyState('Aucun planning pour l\'instant', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
+    wrap.innerHTML = unscheduledHtml(unscheduled) + emptyState('Aucun planning pour l\'instant', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
     return;
   }
 
-  wrap.innerHTML = names.map(name => {
+  wrap.innerHTML = unscheduledHtml(unscheduled) + names.map(name => {
     const chObj = channels.find(c => c.name === name);
     const entries = byChannel[name];
     return `
@@ -334,6 +371,7 @@ function renderSchedule(schedule){
         const entry = await api(`/api/schedule/${row.dataset.video}`, { method:'PATCH', body: JSON.stringify({scheduled_time}) });
         input.outerHTML = dateBadgeHtml(entry.scheduled_time, formatWhen(input.value));
         log('Date mise à jour', 'success');
+        warnScheduleRules(entry);
       } catch (e){ log(e.message, 'error'); }
     }, { once:true });
   }));
@@ -382,7 +420,7 @@ function renderCalendar(){
   // Lanes = channels that have anything to show at all (empty week included)
   const laneNames = channels.map(c => c.name).filter(n => all.some(i => i.channel === n));
   if (!laneNames.length){
-    box.innerHTML = emptyState('Rien de programmé', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
+    box.innerHTML = unscheduledHtml(calData.unscheduled) + emptyState('Rien de programmé', 'Choisis une méthode puis clique « Générer le planning ».', 'calendar');
     return;
   }
 
@@ -434,7 +472,7 @@ function renderCalendar(){
     return `<div class="lane"><span class="dot" style="background:${channelColor(name)};margin-top:4px"></span><span>${esc(ch.display_name)}</span></div>${cells}`;
   }).join('');
 
-  box.innerHTML = `${header}
+  box.innerHTML = `${unscheduledHtml(calData.unscheduled)}${header}
     <div class="cal-wrap"><div class="cal">${head}${rows}</div></div>
     <div class="cal-legend">
       <span><span class="sw" style="background:var(--panel2)"></span>À publier (déplaçable)</span>
@@ -524,8 +562,9 @@ function wireCalendar(box, all){
 
 async function saveSlot(item, when){
   try {
-    await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: toLocalApiTime(when) }) });
+    const entry = await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: toLocalApiTime(when) }) });
     log(`Déplacée au ${when.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })} à ${hhmm(when)}`, 'success');
+    warnScheduleRules(entry);
   } catch (e){ log(e.message, 'error'); }
   calData = await api('/api/calendar');
   renderCalendar();
@@ -569,11 +608,13 @@ function openSlotDialog(item){
         await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ publish_now: nowBox.checked }) });
       }
       const value = dlg.querySelector('[data-role="when"]').value;
+      let entry = null;
       if (!nowBox.checked && value && value !== local){
-        await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: value.replace('T', ' ') + ':00' }) });
+        entry = await api(`/api/schedule/${item.video_id}`, { method: 'PATCH', body: JSON.stringify({ scheduled_time: value.replace('T', ' ') + ':00' }) });
       }
       dlg.close();
       log('Planning mis à jour', 'success');
+      warnScheduleRules(entry);
       calData = await api('/api/calendar');
       renderCalendar();
     } catch (e){ err.textContent = e.message; }
@@ -703,10 +744,25 @@ function fillPreflightCard(item){
       `<button class="btn secondary small" data-reprocess title="Refaire le cadrage et le traitement depuis le fichier téléchargé">${icon('refresh', 12)} Retraiter</button><button class="btn ghost small danger" data-abandon title="Retirer cette vidéo du planning">${icon('trash', 12)} Abandonner</button>`);
     facts.push(`<div class="fact warn">${icon('alert')}<span>${item.missing_files.length} fichier(s) introuvable(s) — non publiée(s)</span></div>`);
   }
-  if (item.past_dates.length){
+  // A date already passed is moved by "Publier tout" (never sent public at once): say where, beforehand
+  const moved = Object.fromEntries((item.rescheduled || []).map(r => [r.video_id, r.when]));
+  if (Object.keys(moved).length){
     worse('warn');
-    flag(row => item.past_dates.includes(row.dataset.title), `<span class="pill warn" title="Date déjà passée : sera publiée immédiatement">Date passée</span>`);
-    facts.push(`<div class="fact warn">${icon('clock')}<span>${item.past_dates.length} date(s) déjà passée(s) — publiée(s) immédiatement</span></div>`);
+    card.querySelectorAll('.publish-row').forEach(row => {
+      if (moved[row.dataset.video]) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend',
+        `<span class="pill warn" title="Date déjà passée : programmée à cette nouvelle date au lieu d'être publiée tout de suite">Replanifiée au ${esc(formatWhen(moved[row.dataset.video]))}</span>`);
+    });
+    facts.push(`<div class="fact warn">${icon('clock')}<span>${Object.keys(moved).length} date(s) déjà passée(s) — replanifiée(s) à la prochaine date libre, pas publiée(s) d'un coup</span></div>`);
+  }
+  const unplaceable = item.unplaceable || [];
+  if (unplaceable.length){
+    worse('warn');
+    const why = Object.fromEntries(unplaceable.map(u => [u.video_id, u.reason]));
+    card.querySelectorAll('.publish-row').forEach(row => {
+      if (why[row.dataset.video]) row.querySelector('[data-role="flag"]').insertAdjacentHTML('beforeend',
+        `<span class="pill bad" title="${esc(why[row.dataset.video])}">Sans créneau libre</span>`);
+    });
+    facts.push(`<div class="fact warn">${icon('alert')}<span>${unplaceable.length} vidéo(s) à date passée sans créneau libre — non publiée(s), voir Planning</span></div>`);
   }
 
   const pill = card.querySelector('[data-role="pf-pill"]');
@@ -740,8 +796,8 @@ function fillPreflightCard(item){
   }));
 }
 
-function publishResultsHtml(results){
-  if (!results.length) return emptyState('Rien n\'a été publié', 'Aucune vidéo en attente.', 'rocket');
+function publishResultsHtml(results, unplaced = []){
+  if (!results.length && !unplaced.length) return emptyState('Rien n\'a été publié', 'Aucune vidéo en attente.', 'rocket');
   const ok = results.filter(r => r.success).length;
   return `
   <article class="chcard">
@@ -759,9 +815,15 @@ function publishResultsHtml(results){
             <span class="tiny"> · ${esc(ch ? ch.display_name : (r.channel || ''))}</span><br>
             ${r.url ? `<a href="${r.url}" target="_blank" rel="noopener">${r.url}</a>` : esc(r.error || '')}
             ${r.note ? `<span class="tiny"> · ${esc(r.note)}</span>` : ''}
+            ${r.rescheduled_to ? `<span class="tiny"> · date passée, replanifiée au ${esc(formatWhen(r.rescheduled_to))}</span>` : ''}
           </span>
         </div>`;
       }).join('')}
+      ${unplaced.map(u => `
+        <div class="result-line skip">
+          ${icon('skip')}
+          <span><b style="color:var(--text);font-weight:600">${esc(u.title || '')}</b><br>${esc(u.reason || '')}</span>
+        </div>`).join('')}
     </div>
   </article>`;
 }
@@ -780,8 +842,8 @@ document.getElementById('publishAllBtn').addEventListener('click', async () => {
       if (!proceed) return;
     }
     btn.innerHTML = '<span class="spinner"></span> Publication en cours...';
-    const { results } = await api('/api/publish_all', { method:'POST' });
-    document.getElementById('publishResults').innerHTML = publishResultsHtml(results);
+    const { results, unscheduled } = await api('/api/publish_all', { method:'POST' });
+    document.getElementById('publishResults').innerHTML = publishResultsHtml(results, unscheduled || []);
     log('Publication terminée', 'success');
     await loadSummaryFromSchedule(); // videos just published must disappear from "Prêt à publier"
   } catch (e){ log(e.message, 'error'); }

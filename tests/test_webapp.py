@@ -236,3 +236,104 @@ def test_links_sent_for_several_channels_in_the_same_second_all_get_a_batch(clie
            for ch in ("chanA", "chanB", "chanA")]
 
     assert len(set(ids)) == 3
+
+
+# ---- dates that went by before "Publier tout" (AUDIT.md §4.5 F29)
+
+def _two_days_ago():
+    from datetime import datetime, timedelta
+    return (datetime.now() - timedelta(days=2)).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def test_a_date_passed_two_days_ago_is_rescheduled_not_published_now(client, project, fake_youtube):
+    import json
+    from datetime import datetime, timezone
+    from dateutil import parser
+    late = _two_days_ago()
+    project.add_channel("chanA")
+    project.add_video("late", video_path=project.add_video_file("late.mp4"), ai_data={"optimized_title": "En retard"})
+    project.write_schedule([{"video_id": "late", "channel": "chanA", "title": "En retard",
+                             "scheduled_time": late, "video_data": {}}], method="static")
+
+    announced = client.get("/api/publish/preflight").json()["channels"][0]["rescheduled"]
+    assert [r["video_id"] for r in announced] == ["late"]
+    assert json.load(open("upload_schedule.json"))["schedule"][0]["scheduled_time"] == late   # announced only: nothing saved
+
+    answer = client.post("/api/publish_all").json()
+
+    sent = fake_youtube.inserted[0]["status"]
+    assert sent["privacyStatus"] == "private" and parser.parse(sent["publishAt"]) > datetime.now(timezone.utc)
+    assert [r["video_id"] for r in answer["rescheduled"]] == ["late"]
+    assert answer["rescheduled"][0]["when"] == announced[0]["when"]
+    result = answer["results"][0]
+    assert result["success"] and result["rescheduled_to"] == announced[0]["when"]
+    assert db.get_video("late")["status"] == "scheduled_on_youtube"
+
+
+def test_publish_now_still_goes_out_public_immediately(client, project, fake_youtube):
+    project.add_channel("chanA")
+    project.add_video("now", video_path=project.add_video_file("now.mp4"))
+    project.write_schedule([{"video_id": "now", "channel": "chanA", "title": "now", "publish_now": True,
+                             "scheduled_time": _two_days_ago(), "video_data": {}}], method="static")
+
+    answer = client.post("/api/publish_all").json()
+
+    assert fake_youtube.inserted[0]["status"]["privacyStatus"] == "public"
+    assert answer["rescheduled"] == [] and db.get_video("now")["status"] == "uploaded"
+
+
+# ---- a manual move is never blocked, but says which rule it breaks
+
+def _pending(video_id, when):
+    return {"video_id": video_id, "channel": "chanA", "title": video_id, "scheduled_time": when, "video_data": {}}
+
+
+def test_manual_move_too_close_is_saved_with_a_warning(client, project):
+    import json
+    project.add_video("p1")
+    project.add_video("p2")
+    project.add_video("yt", status="scheduled_on_youtube", scheduled_publish_time="2030-01-15T18:00:00+01:00")
+    project.write_schedule([_pending("p1", "2030-01-07 18:00:00"), _pending("p2", "2030-01-10 18:00:00")])
+
+    close = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-07 20:00:00"})
+    assert close.status_code == 200 and close.json()["scheduled_time"] == "2030-01-07 20:00:00"   # my choice is kept
+    assert any("écart" in w for w in close.json()["warnings"])
+    assert json.load(open("upload_schedule.json"))["schedule"][1]["scheduled_time"] == "2030-01-07 20:00:00"
+    assert "warnings" not in json.load(open("upload_schedule.json"))["schedule"][1]                 # not stored
+
+    near_youtube = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-15 19:00:00"}).json()
+    assert near_youtube["warnings"]                                     # a video already on YouTube counts too
+
+    fine = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-11 18:00:00"}).json()
+    assert fine["warnings"] == []
+
+
+def test_manual_move_over_the_daily_cap_warns(client, project):
+    import yaml
+    config = yaml.safe_load(open("config.yaml"))
+    config["scheduling"]["spacing_hours"] = 1
+    config["general"]["max_daily_uploads"] = 1
+    yaml.safe_dump(config, open("config.yaml", "w"))
+    project.add_video("p1")
+    project.add_video("p2")
+    project.write_schedule([_pending("p1", "2030-01-07 09:00:00"), _pending("p2", "2030-01-08 18:00:00")])
+
+    moved = client.patch("/api/schedule/p2", json={"scheduled_time": "2030-01-07 18:00:00"})
+
+    assert moved.status_code == 200
+    assert any("par jour" in w for w in moved.json()["warnings"])
+
+
+def test_planning_screens_list_the_unscheduled_videos(client, project):
+    import json
+    project.add_video("wait", ai_data={"optimized_title": "Titre actuel"})
+    project.add_video("gone", status="uploaded")                       # published since: no longer listed
+    project.write_schedule([])
+    data = json.load(open("upload_schedule.json"))
+    data["unscheduled"] = [{"video_id": "wait", "title": "vieux", "channel": "chanA", "reason": "Aucun créneau libre"},
+                           {"video_id": "gone", "title": "g", "channel": "chanA", "reason": "x"}]
+    json.dump(data, open("upload_schedule.json", "w"))
+
+    for answer in (client.get("/api/schedule").json(), client.get("/api/calendar").json()):
+        assert answer["unscheduled"] == [{"video_id": "wait", "title": "Titre actuel", "channel": "chanA",
+                                          "reason": "Aucun créneau libre"}]

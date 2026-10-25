@@ -78,10 +78,11 @@ class SmartScheduler:
         
         schedule = []
         
-        # Group videos by target channel
+        # Group videos by their own channel (target_channel only when a caller
+        # forces one, as in ai_scheduler) — never all under "default"
         videos_by_channel = {}
         for video in videos:
-            channel = video.get('target_channel', 'default')
+            channel = video.get('target_channel') or video.get('channel', 'default')
             if channel not in videos_by_channel:
                 videos_by_channel[channel] = []
             videos_by_channel[channel].append(video)
@@ -100,7 +101,7 @@ class SmartScheduler:
 
         # Create time slots for next 7 days
         base_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        all_slots = []
+        slots_by_channel = {channel: [] for channel in videos_by_channel}   # each channel its own slots
 
         for day in range(days_ahead):
             current_date = base_date + timedelta(days=day)
@@ -120,56 +121,59 @@ class SmartScheduler:
                 
                 for hour in adjusted_times:
                     slot_datetime = current_date.replace(hour=hour)
-                    all_slots.append({
+                    slots_by_channel[channel].append({
                         'datetime': slot_datetime,
                         'channel': channel,
                         'is_weekend': is_weekend,
                         'peak_score': 1.0  # All slots are peak times
                     })
         
-        # Sort slots by datetime
-        all_slots.sort(key=lambda x: x['datetime'])
-        
-        # Assign videos to slots
-        slot_index = 0
+        # Assign each channel's videos to that channel's slots, in time order
+        priority_order = {'high': 0, 'normal': 1, 'low': 2}
+        unscheduled = []
         for channel, videos_list in videos_by_channel.items():
-            # Sort videos by priority
-            videos_list.sort(key=lambda x: x.get('priority', 'normal'), reverse=True)
-            
-            for video in videos_list:
-                if slot_index < len(all_slots):
-                    slot = all_slots[slot_index]
-                    
-                    # Find next slot for this channel
-                    while slot_index < len(all_slots) and all_slots[slot_index]['channel'] != channel:
-                        slot_index += 1
-                    
-                    if slot_index < len(all_slots):
-                        slot = all_slots[slot_index]
-                        
-                        schedule_entry = {
-                            'video_id': video['video_id'],
-                            'title': video.get('title', 'Unknown'),
-                            'channel': channel,
-                            'priority': video.get('priority', 'normal'),
-                            'scheduled_time': slot['datetime'].strftime('%Y-%m-%d %H:%M:%S'),
-                            'scheduled_time_readable': self.format_readable_time(slot['datetime']),
-                            'analytics_optimized': True,
-                            'peak_slot': True,
-                            'is_weekend': slot['is_weekend'],
-                            'video_data': video
-                        }
-                        
-                        schedule.append(schedule_entry)
-                        slot_index += 1
-        
+            slots = sorted(slots_by_channel[channel], key=lambda x: x['datetime'])
+            # high, then normal, then low (a stable sort keeps the order within a priority)
+            videos_list.sort(key=lambda x: priority_order.get(x.get('priority', 'normal'), 1))
+
+            for k, video in enumerate(videos_list):
+                if k >= len(slots):
+                    # never dropped silently: listed with the reason
+                    unscheduled.append({
+                        'video_id': video['video_id'],
+                        'title': video.get('title', 'Unknown'),
+                        'channel': channel,
+                        'priority': video.get('priority', 'normal'),
+                        'reason': f"Plus de créneau libre pour cette chaîne sur les {days_ahead} prochains jours "
+                                  f"({len(slots)} créneaux pour {len(videos_list)} vidéos)",
+                    })
+                    continue
+                slot = slots[k]
+                schedule_entry = {
+                    'video_id': video['video_id'],
+                    'title': video.get('title', 'Unknown'),
+                    'channel': channel,
+                    'priority': video.get('priority', 'normal'),
+                    'scheduled_time': slot['datetime'].strftime('%Y-%m-%d %H:%M:%S'),
+                    'scheduled_time_readable': self.format_readable_time(slot['datetime']),
+                    'analytics_optimized': True,
+                    'peak_slot': True,
+                    'is_weekend': slot['is_weekend'],
+                    'video_data': video
+                }
+                schedule.append(schedule_entry)
+
+        if unscheduled:
+            print(f"⚠️ {len(unscheduled)} vidéo(s) sans créneau : " + ", ".join(u['video_id'] for u in unscheduled))
+
         return {
             'created_at': datetime.now().isoformat(),
             'method': 'analytics_based',
             'total_videos': len(schedule),
             'channels_analyzed': list(channel_peak_times.keys()),
             'channel_peak_times': {ch: [f'{h:02d}:00' for h in times] for ch, times in channel_peak_times.items()},
-            'schedule': schedule
+            'schedule': schedule,
+            'unscheduled': unscheduled
         }
     
     def format_readable_time(self, dt):

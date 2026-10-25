@@ -51,6 +51,7 @@
   .toast{background:var(--panel);border:1px solid var(--border);border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;font-size:12.5px;line-height:1.4;box-shadow:0 8px 24px rgba(0,0,0,.35);cursor:pointer;animation:toast-in .18s ease;}
   .toast.error{border-left-color:var(--danger);}
   .toast.success{border-left-color:var(--ok);}
+  .toast.warn{border-left-color:#f5c56d;}
   .toast.leaving{opacity:0;transform:translateX(12px);transition:opacity .2s ease,transform .2s ease;}
   @keyframes toast-in{from{opacity:0;transform:translateX(12px);}to{opacity:1;transform:none;}}
   .load-error{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:14px;border:1px solid var(--danger);border-radius:10px;background:rgba(248,113,113,.06);font-size:12.5px;color:#f3b4b4;}
@@ -280,6 +281,7 @@
   #log{font-size:11px;color:var(--muted);white-space:pre-wrap;max-height:110px;overflow:auto;background:var(--panel2);border:1px solid var(--border);border-radius:8px;padding:8px 10px;}
   #log div.error{color:var(--danger);}
   #log div.success{color:var(--ok);}
+  #log div.warn{color:#f5c56d;}
   input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;}
 
   @keyframes tt-spin{to{transform:rotate(360deg);}}

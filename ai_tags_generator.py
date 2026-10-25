@@ -62,12 +62,11 @@ class AITagsGenerator:
         # the default first choice regardless of whether OpenAI also has credits.
         if GEMINI_AVAILABLE and self.gemini_key:
             try:
+                # a key present is enough: no test call here (it cost a request per construction);
+                # a failing call falls back to the next provider when it happens
                 self.gemini_ai = GeminiAIGenerator(self.gemini_key)
-                if self.gemini_ai.test_api_connection():
-                    self.use_gemini = True
-                    print("✅ Gemini AI initialized successfully")
-                else:
-                    print("⚠️ Gemini API connection failed")
+                self.use_gemini = True
+                print("✅ Gemini AI initialized successfully")
             except Exception as e:
                 print(f"⚠️ Gemini AI initialization failed: {e}")
 
@@ -75,11 +74,8 @@ class AITagsGenerator:
         if OPENAI_AVAILABLE and self.openai_key:
             try:
                 self.openai_ai = OpenAIGenerator(self.openai_key)
-                if self.openai_ai.test_api_connection():
-                    self.use_openai = True
-                    print("✅ OpenAI initialized successfully")
-                else:
-                    print("⚠️ OpenAI API connection failed")
+                self.use_openai = True
+                print("✅ OpenAI initialized successfully")
             except Exception as e:
                 print(f"⚠️ OpenAI initialization failed: {e}")
 

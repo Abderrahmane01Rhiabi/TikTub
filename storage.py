@@ -32,6 +32,11 @@ ORPHAN_MIN_AGE = 24 * 3600
 PUBLISHED = {"uploaded", "scheduled_on_youtube", "youtube_deleted"}
 GONE = {"discarded", "duplicate"}          # never coming back either
 REJECTED = {"rejected"}
+# temp/ folders the app itself keeps (not a video's): never orphans, never cleaned
+#   usage          – Gemini cost log (gemini_ai_generator.USAGE_LOG)
+#   music_info     – track analysis cache (adaptation/pipeline)
+#   style_previews – style preview images (webapp/adaptation_routes)
+PROTECTED_TEMP_DIRS = {"usage", "music_info", "style_previews"}
 
 
 def _size(path: str) -> int:
@@ -88,8 +93,9 @@ def scan() -> Dict:
     rows = {v["video_id"]: v for v in _db.query_videos()}
     owner_of_file = {}
     for v in rows.values():
-        if v.get("video_path"):
-            owner_of_file[os.path.normpath(v["video_path"])] = v
+        for field in ("video_path", "thumbnail_path"):   # the Adaptation's cover sits next to its video
+            if v.get(field):
+                owner_of_file[os.path.normpath(v[field])] = v
 
     items: List[Dict] = []
     if os.path.isdir(TEMP_DIR):
@@ -97,6 +103,10 @@ def scan() -> Dict:
             path = os.path.join(TEMP_DIR, name)
             if name == "adaptations" and os.path.isdir(path):
                 items.extend(_adaptation_items(path, rows))
+                continue
+            if name in PROTECTED_TEMP_DIRS and os.path.isdir(path):
+                items.append({"path": path, "video_id": None, "category": "in_use",
+                              "size": _size(path), "age": _age(path)})
                 continue
             video = rows.get(name) if os.path.isdir(path) else None
             items.append({"path": path, "video_id": video["video_id"] if video else None,

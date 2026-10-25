@@ -90,3 +90,44 @@ def test_adaptation_projects_are_kept_while_running_and_freed_once_published(pro
     Path("temp/adaptations/ad_gone").mkdir()
     cats = {os.path.basename(i["path"]): i["category"] for i in storage.scan()["items"] if "adaptations" in i["path"]}
     assert cats == {"ad_run": "in_use", "ad_done": "published", "ad_gone": "orphans"}
+
+
+def test_app_folders_in_temp_are_never_orphans(project):
+    # temp/usage (Gemini cost log), temp/music_info (track cache), temp/style_previews (style images)
+    # aren't video folders: old as they are, cleanup must leave them (AUDIT.md §8.3)
+    Path("temp/usage").mkdir(parents=True)
+    (Path("temp/usage") / "gemini.jsonl").write_text('{"model": "x"}\n')
+    Path("temp/music_info").mkdir()
+    (Path("temp/music_info") / "abc.json").write_text("{}")
+    Path("temp/style_previews").mkdir()
+    (Path("temp/style_previews") / "calme_fr.jpg").write_bytes(b"j")
+    ghost = Path("temp/ghost"); ghost.mkdir(); (ghost / "a.mp4").write_bytes(b"z")
+    for p in ("temp/usage", "temp/usage/gemini.jsonl", "temp/music_info", "temp/style_previews", ghost):
+        make_old(p)
+
+    assert {it["path"] for it in storage.scan()["items"] if it["category"] == "orphans"} == {os.path.join("temp", "ghost")}
+    storage.cleanup()
+
+    assert Path("temp/usage/gemini.jsonl").exists()
+    assert Path("temp/music_info/abc.json").exists() and Path("temp/style_previews/calme_fr.jpg").exists()
+    assert not ghost.exists()                  # a real orphan still goes
+
+
+def test_thumbnail_of_a_video_not_yet_published_is_kept(project):
+    # the Adaptation writes the cover next to the video, processed_videos/<id>.jpg (AUDIT.md §8.3)
+    thumb = Path("processed_videos/chanA_ad1.jpg"); thumb.parent.mkdir(exist_ok=True); thumb.write_bytes(b"j" * 10)
+    folder, out = files_for(project, "chanA_ad1", "ready_for_upload", thumbnail_path=str(thumb))
+    make_old(thumb)
+
+    storage.cleanup()
+
+    assert thumb.exists() and out.exists()
+
+
+def test_thumbnail_of_a_published_video_is_freed(project):
+    thumb = Path("processed_videos/chanA_ad2.jpg"); thumb.parent.mkdir(exist_ok=True); thumb.write_bytes(b"j" * 10)
+    files_for(project, "chanA_ad2", "uploaded", thumbnail_path=str(thumb))
+
+    storage.cleanup()
+
+    assert not thumb.exists()

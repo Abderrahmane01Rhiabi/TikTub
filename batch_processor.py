@@ -49,6 +49,10 @@ from typing import Dict, List, Optional  # add any other needed types here
 
 logging.basicConfig(level=logging.INFO)
 
+# Garde-fou du planning (BatchProcessor._shift_off_taken_slots)
+GUARD_MIN_LEAD = timedelta(minutes=30)   # never a slot sooner than this: YouTube would get it as "now"
+GUARD_HORIZON_DAYS = 60                  # past the planned date + this, a video is listed as unscheduled
+
 import re as _re
 
 # yt-dlp error texts → what it means for the user, in French. Checked in
@@ -622,16 +626,20 @@ class BatchProcessor:
         if schedule_method is None:
             schedule_method = "analytics" if use_analytics else "static"
 
+        method_unscheduled = []
         if schedule_method == "ai" and AI_SCHEDULING_SUPPORT:
             print(f"🤖 Création du planning IA (par vidéo) pour {len(ready_videos)} vidéos")
             channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
             result = self.ai_scheduler.create_ai_suggested_schedule(ready_videos, self.config, channel_manager)
             schedule = result['schedule']
+            method_unscheduled = result.get('unscheduled', [])
         elif schedule_method == "analytics" and ANALYTICS_SUPPORT:
             print(f"🧠 Création du planning ANALYTICS pour {len(ready_videos)} vidéos")
             if target_channel:
                 print(f"📺 Channel de destination: {target_channel}")
-            schedule = self.smart_scheduler.create_analytics_based_schedule(ready_videos)['schedule']
+            result = self.smart_scheduler.create_analytics_based_schedule(ready_videos)
+            schedule = result['schedule']
+            method_unscheduled = result.get('unscheduled', [])
         else:
             print(f"📅 Création du planning STANDARD pour {len(ready_videos)} vidéos")
             if target_channel:
@@ -639,8 +647,13 @@ class BatchProcessor:
             channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
             schedule = self.scheduler.create_upload_schedule(ready_videos, channel_manager=channel_manager)
 
+        # Garde-fou commun (dates passées, écart, plafonds), contre les vidéos déjà programmées sur YouTube
+        unscheduled = method_unscheduled + self._shift_off_taken_slots(schedule, self._taken_on_youtube())
+        schedule.sort(key=lambda e: self._parse_slot(e['scheduled_time']) if e.get('scheduled_time') else
+                      self.scheduler.timezone.localize(datetime(1970, 1, 1)))
+
         # Sauvegarde (save_schedule attend une liste de dicts, pas le wrapper avec métadonnées)
-        self.scheduler.save_schedule(schedule, schedule_method=schedule_method)
+        self.scheduler.save_schedule(schedule, schedule_method=schedule_method, unscheduled=unscheduled)
         self._record_schedule_decisions(schedule, schedule_method)
 
         return schedule
@@ -671,32 +684,152 @@ class BatchProcessor:
         dt = date_parser.parse(value)
         return dt if dt.tzinfo else self.scheduler.timezone.localize(dt)
 
-    def _shift_off_taken_slots(self, new_entries: List[Dict], existing_entries: List[Dict]):
-        """Chaque méthode de planning repart de "maintenant" : les vidéos
-        ajoutées après coup tomberaient donc sur les MÊMES premiers créneaux
-        que celles déjà planifiées sur la même chaîne. Décale chaque nouvelle
-        entrée (de spacing_hours en spacing_hours) jusqu'à ce qu'elle soit à
-        au moins spacing_hours de tout créneau déjà pris sur sa chaîne."""
-        from dateutil import parser as date_parser
-        spacing = timedelta(hours=self.config['scheduling']['spacing_hours'])
-        taken: Dict[str, List[datetime]] = {}
-        for entry in existing_entries:
-            try:
-                taken.setdefault(entry.get('channel'), []).append(self._parse_slot(entry['scheduled_time']))
-            except (KeyError, ValueError, TypeError):
-                continue
+    def _taken_on_youtube(self) -> List[Dict]:
+        """Les vidéos déjà envoyées à YouTube avec une date (scheduled_on_youtube)
+        gardent leur créneau : le garde-fou les compte comme des créneaux pris."""
+        return [{'video_id': v.get('video_id'), 'channel': v.get('channel'), 'scheduled_time': v['scheduled_publish_time']}
+                for v in self.url_manager.load_database()['videos'].values()
+                if v.get('status') == 'scheduled_on_youtube' and v.get('scheduled_publish_time')]
 
-        for entry in sorted(new_entries, key=lambda e: self._parse_slot(e['scheduled_time'])):
+    def _taken_slots(self, entries: List[Dict]) -> Dict[str, Dict[str, datetime]]:
+        """{chaîne: {video_id: créneau}} — une vidéo comptée une seule fois (la
+        dernière entrée gagne : passer les vidéos YouTube en dernier). Les
+        entrées « Publier maintenant » ou sans date ne prennent pas de créneau."""
+        taken: Dict[str, Dict[str, datetime]] = {}
+        for entry in entries:
+            if entry.get('publish_now') or not entry.get('scheduled_time'):
+                continue
+            try:
+                taken.setdefault(entry.get('channel'), {})[entry.get('video_id')] = self._parse_slot(entry['scheduled_time'])
+            except (KeyError, ValueError, TypeError, OverflowError):
+                continue
+        return taken
+
+    def _slot_problems(self, slot: datetime, others: List[datetime]) -> List[tuple]:
+        """Les règles que `slot` enfreint face aux autres créneaux de SA chaîne :
+        [(type, phrase)], type = 'spacing' | 'daily' | 'weekly'. Jours et
+        semaines comptés dans le fuseau de config.yaml."""
+        tz = self.scheduler.timezone
+        spacing_h = self.config['scheduling']['spacing_hours']
+        max_daily = self.config['general']['max_daily_uploads']
+        max_weekly = self.config['general']['max_weekly_uploads']
+        problems = []
+        gaps = [abs(slot - o) for o in others if abs(slot - o) < timedelta(hours=spacing_h)]
+        if gaps:
+            minutes = round(min(gaps).total_seconds() / 60)
+            gap = f"{minutes // 60} h {minutes % 60:02d}" if minutes >= 60 else f"{minutes} min"
+            problems.append(('spacing', f"à {gap} d'une autre vidéo de la chaîne (écart minimal : {spacing_h} h)"))
+        local = slot.astimezone(tz)
+        same_day = sum(1 for o in others if o.astimezone(tz).date() == local.date())
+        if same_day >= max_daily:
+            problems.append(('daily', f"déjà {same_day} vidéo(s) ce jour-là sur la chaîne (maximum : {max_daily} par jour)"))
+        same_week = sum(1 for o in others if o.astimezone(tz).isocalendar()[:2] == local.isocalendar()[:2])
+        if same_week >= max_weekly:
+            problems.append(('weekly', f"déjà {same_week} vidéo(s) cette semaine-là sur la chaîne (maximum : {max_weekly} par semaine)"))
+        return problems
+
+    def _shift_off_taken_slots(self, new_entries: List[Dict], existing_entries: List[Dict],
+                               now: datetime = None) -> List[Dict]:
+        """Garde-fou commun du planning, quelle que soit la méthode (static,
+        analytics, ai), appliqué juste avant l'enregistrement. Chaque méthode
+        repart de "maintenant" et ne connaît ni les créneaux déjà pris, ni
+        toujours l'heure qu'il est : pour chaque nouvelle entrée, sur sa chaîne,
+        - une date passée ou à moins de 30 min passe au même horaire un jour
+          suivant (une date passée serait publiée tout de suite, en public) ;
+        - à moins de spacing_hours d'un créneau déjà pris (existing_entries :
+          planning existant, vidéos programmées sur YouTube ; et les entrées
+          déjà placées), ou jour / semaine au plafond (max_daily_uploads /
+          max_weekly_uploads) : jour suivant, au même horaire — l'heure choisie
+          par la méthode (heure préférée, pic d'audience) est gardée.
+        Une entrée impossible à placer dans les GUARD_HORIZON_DAYS jours est
+        retirée de new_entries et renvoyée avec sa raison (jamais laissée sans
+        date). Les entrées « Publier maintenant » ne sont pas touchées."""
+        from dateutil import parser as date_parser
+        tz = self.scheduler.timezone
+        lead = (now or datetime.now(tz)) + GUARD_MIN_LEAD
+        taken = self._taken_slots(existing_entries)
+
+        def next_day(dt):   # same wall-clock time the next day, even across a DST change
+            return tz.localize(dt.astimezone(tz).replace(tzinfo=None) + timedelta(days=1))
+
+        unscheduled = []
+        timed = [e for e in new_entries if e.get('scheduled_time') and not e.get('publish_now')]
+        for entry in sorted(timed, key=lambda e: self._parse_slot(e['scheduled_time'])):
             slot = original = self._parse_slot(entry['scheduled_time'])
-            channel_slots = taken.setdefault(entry.get('channel'), [])
-            while any(abs(slot - other) < spacing for other in channel_slots):
-                slot += spacing
-            channel_slots.append(slot)
+            while slot < lead:
+                slot = next_day(slot)
+            channel_slots = taken.setdefault(entry.get('channel'), {})
+            limit = slot + timedelta(days=GUARD_HORIZON_DAYS)
+            problems = self._slot_problems(slot, list(channel_slots.values()))
+            while problems and slot <= limit:
+                slot = next_day(slot)
+                problems = self._slot_problems(slot, list(channel_slots.values()))
+            if problems:
+                unscheduled.append({
+                    'video_id': entry.get('video_id'), 'title': entry.get('title'),
+                    'channel': entry.get('channel'), 'priority': entry.get('priority', 'normal'),
+                    'reason': f"Aucun créneau libre dans les {GUARD_HORIZON_DAYS} jours après la date prévue "
+                              f"({problems[0][1]}) — réessayée au prochain « Générer le planning ».",
+                })
+                continue
+            channel_slots[entry.get('video_id')] = slot
             if slot != original:
                 # Keep the format the scheduling method originally wrote (with/without timezone)
                 had_tz = date_parser.parse(entry['scheduled_time']).tzinfo is not None
-                entry['scheduled_time'] = slot.isoformat() if had_tz else slot.strftime('%Y-%m-%d %H:%M:%S')
-                entry['scheduled_time_readable'] = slot.strftime('%A %d/%m/%Y à %H:%M')
+                local = slot.astimezone(tz)
+                entry['scheduled_time'] = local.isoformat() if had_tz else local.strftime('%Y-%m-%d %H:%M:%S')
+                entry['scheduled_time_readable'] = local.strftime('%A %d/%m/%Y à %H:%M')
+
+        if unscheduled:
+            dropped = {u['video_id'] for u in unscheduled}
+            new_entries[:] = [e for e in new_entries if e.get('video_id') not in dropped]
+            print(f"⚠️ {len(unscheduled)} vidéo(s) impossible(s) à placer : " + ", ".join(sorted(dropped)))
+        return unscheduled
+
+    def reschedule_past_entries(self, save: bool = True) -> Dict[str, List[Dict]]:
+        """Juste avant « Publier tout » : une date devenue passée (planning généré
+        il y a plusieurs jours, jamais publié) serait envoyée tout de suite, en
+        PUBLIC, par youtube_uploader.effective_scheduled_time. Ces vidéos (sauf
+        « Publier maintenant ») repassent par le garde-fou. save=False : rien
+        n'est enregistré, c'est l'annonce du contrôle avant publication.
+        Renvoie {'rescheduled': [...nouvelle date...], 'unscheduled': [...raison...]}."""
+        import copy
+        data = self.scheduler.load_schedule() or {}
+        schedule = data.get('schedule', []) if save else copy.deepcopy(data.get('schedule', []))
+        videos = self.url_manager.load_database()['videos']
+        lead = datetime.now(self.scheduler.timezone) + GUARD_MIN_LEAD
+
+        def is_late(entry):
+            if entry.get('publish_now') or not entry.get('scheduled_time'):
+                return False
+            if (videos.get(entry.get('video_id')) or {}).get('status') in ('uploaded', 'scheduled_on_youtube'):
+                return False
+            try:
+                return self._parse_slot(entry['scheduled_time']) < lead
+            except (ValueError, TypeError, OverflowError):
+                return False
+
+        late = [e for e in schedule if is_late(e)]
+        if not late:
+            return {'rescheduled': [], 'unscheduled': []}
+        late_ids = {e['video_id'] for e in late}
+        previous = {e['video_id']: e['scheduled_time'] for e in late}
+        others = [e for e in schedule if e.get('video_id') not in late_ids]
+        unscheduled = self._shift_off_taken_slots(late, others + self._taken_on_youtube())
+
+        def title(entry):   # what will be published, not the copy frozen in the schedule
+            return ((videos.get(entry['video_id']) or {}).get('ai_data') or {}).get('optimized_title') or entry.get('title')
+        rescheduled = [{'video_id': e['video_id'], 'title': title(e), 'channel': e.get('channel'),
+                        'previous_time': previous[e['video_id']], 'scheduled_time': e['scheduled_time'],
+                        'when': self._parse_slot(e['scheduled_time']).isoformat()} for e in late]
+        for u in unscheduled:
+            u['title'] = title(u)
+        if save:
+            dropped = {u['video_id'] for u in unscheduled}
+            self.scheduler.save_schedule([e for e in schedule if e.get('video_id') not in dropped],
+                                         unscheduled=(data.get('unscheduled') or []) + unscheduled)
+            print(f"📅 {len(rescheduled)} date(s) passée(s) replanifiée(s) avant publication")
+        return {'rescheduled': rescheduled, 'unscheduled': unscheduled}
 
     def ensure_schedule_includes_all_ready(self, schedule_method: str = None) -> List[Dict]:
         """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
@@ -708,11 +841,16 @@ class BatchProcessor:
         existing = self.scheduler.load_schedule() or {}
         existing_schedule = existing.get('schedule', [])
         existing_ids = {e.get('video_id') for e in existing_schedule}
+        # Already found impossible to place: retried at the next "Générer le planning",
+        # not on every screen load (with 'ai' that would be one paid call each time)
+        existing_unscheduled = existing.get('unscheduled') or []
+        waiting_ids = {u.get('video_id') for u in existing_unscheduled}
 
         db = self.url_manager.load_database()
         missing = [
             v for v in db['videos'].values()
             if v.get('status') == 'ready_for_upload' and v.get('video_id') not in existing_ids
+            and v.get('video_id') not in waiting_ids
         ]
         if not missing:
             return existing_schedule
@@ -722,18 +860,23 @@ class BatchProcessor:
         schedule_method = schedule_method or existing.get('schedule_method') or 'static'
         channel_manager = self.channel_manager if MULTI_CHANNEL_SUPPORT else None
 
+        method_unscheduled = []
         if schedule_method == 'ai' and AI_SCHEDULING_SUPPORT:
-            new_entries = self.ai_scheduler.create_ai_suggested_schedule(missing, self.config, channel_manager)['schedule']
+            result = self.ai_scheduler.create_ai_suggested_schedule(missing, self.config, channel_manager)
+            new_entries, method_unscheduled = result['schedule'], result.get('unscheduled', [])
         elif schedule_method == 'analytics' and ANALYTICS_SUPPORT:
-            new_entries = self.smart_scheduler.create_analytics_based_schedule(missing)['schedule']
+            result = self.smart_scheduler.create_analytics_based_schedule(missing)
+            new_entries, method_unscheduled = result['schedule'], result.get('unscheduled', [])
         else:
             new_entries = self.scheduler.create_upload_schedule(missing, channel_manager=channel_manager)
 
-        self._shift_off_taken_slots(new_entries, existing_schedule)
+        unscheduled = method_unscheduled + self._shift_off_taken_slots(new_entries, existing_schedule + self._taken_on_youtube())
+        still_waiting = [u for u in existing_unscheduled
+                         if (db['videos'].get(u.get('video_id')) or {}).get('status') == 'ready_for_upload']
         # An entry without a time (published right away) goes first instead of breaking the sort
         far_past = self.scheduler.timezone.localize(datetime(1970, 1, 1))
         combined = sorted(existing_schedule + new_entries,
                           key=lambda e: self._parse_slot(e['scheduled_time']) if e.get('scheduled_time') else far_past)
-        self.scheduler.save_schedule(combined, schedule_method=schedule_method)
+        self.scheduler.save_schedule(combined, schedule_method=schedule_method, unscheduled=still_waiting + unscheduled)
         self._record_schedule_decisions(new_entries, schedule_method)
         return combined
