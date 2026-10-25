@@ -30,7 +30,9 @@ RELIABLE_GROUP_SIZE = 3  # below this, shown but flagged as weak evidence
 # gaps on bigger ones stay visible.
 SCORE_SMOOTHING = 10
 
-FORMAT_LABELS = {"A": "Affirmations", "B": "Storytime", "D": "Liste éducative"}
+FORMAT_LABELS = {"A": "Affirmations", "B": "Histoire", "D": "Liste éducative", "M": "Mythe ou réalité",
+                 "C": "Citation expliquée", "E": "Exercice guidé", "L": "Lettre à toi", "P": "Le saviez-vous (psycho)"}
+# (same labels as generative/script_plan.FORMATS, kept here so this module needs no generation import)
 WEEKDAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
 
 DIMENSIONS = [

@@ -57,7 +57,8 @@ def fingerprint(video: Dict) -> Dict:
             "accroche": (rec.get("accroche") or {}).get("texte"),
             "duree_s": (rec.get("structure") or {}).get("duree_s"),
             "plans": (rec.get("structure") or {}).get("plans"),
-            "fond": os.path.basename(video.get("bg_video_path") or "") or None,
+            # "drones": a different shot per sentence, never the same background twice
+            "fond": None if video.get("bg_video_path") == "drones" else os.path.basename(video.get("bg_video_path") or "") or None,
             "musique": os.path.basename(music or "") or None,
             "voix": voice.get("id") if isinstance(voice, dict) else voice,
             "style": (rec.get("style") or {}).get("visuel") or video.get("caption_style")}
@@ -96,6 +97,23 @@ def check(video: Dict, others: List[Dict]) -> Dict:
         n = sum(1 for r in recent if fp[key] and r[key] == fp[key])
         if n >= limit:
             out["warn"].append(f"même {label} ({fp[key]}) que {n} des {len(recent)} dernières vidéos")
+    return out
+
+
+def too_close(video: Dict, others: List[Dict]) -> List[str]:
+    """Why a freshly written script is too close to one of `others` (drafts
+    included: two scripts of one batch must differ too) — at the warning
+    level, so the AI rewrites it before anything is spent on it."""
+    script, title = _norm(_script(video)), _norm(_title(video))
+    out = []
+    for o in others:
+        if o.get("video_id") == video.get("video_id"):
+            continue
+        s, t = _ratio(script, _norm(_script(o))), _ratio(title, _norm(_title(o)))
+        if s >= WARN_SCRIPT:
+            out.append(f"script trop proche ({round(s * 100)} %) de « {_title(o)[:70]} »")
+        elif t >= WARN_TITLE:
+            out.append(f"titre trop proche ({round(t * 100)} %) de « {_title(o)[:70]} »")
     return out
 
 

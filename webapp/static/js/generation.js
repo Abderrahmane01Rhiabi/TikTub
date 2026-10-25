@@ -6,6 +6,8 @@
 const generationScreen = document.getElementById('generationScreen');
 let genChannel = null;
 let genAssets = { backgrounds: [], music: [] };
+let genVoices = [];         // the library's French voices (Réglages → Voix)
+const DRONES_CHOICE = '__drones__';   // generative.pipeline.DRONES_CHOICE
 let genBatchId = null;      // the batch currently shown, or null = show the "how many videos" starter
 let genBatchPollTimer = null;
 let genCardStatus = {};     // video_id -> last-rendered status, so a card whose status hasn't
@@ -63,11 +65,13 @@ async function loadGeneration(channelName){
   const stage = document.getElementById('genStage');
   stage.innerHTML = spinnerHtml('Chargement...');
   try {
-    const [videos, assets] = await Promise.all([
+    const [videos, assets, voices] = await Promise.all([
       api(`/api/channels/${channelName}/generated_videos`),
-      api(`/api/channels/${channelName}/assets`)
+      api(`/api/channels/${channelName}/assets`),
+      api('/api/voices?language=fr').catch(() => ({ voices: [] }))
     ]);
     genAssets = assets;
+    genVoices = voices.voices || [];
     if (videos.length){
       // Some draft(s) from before a page reload/channel switch are still
       // mid-flow — resume that batch's view (pollBatchProgress re-fetches
@@ -291,7 +295,37 @@ function genHead(v, i, pillCls, pillText){
       </span>
     </div>
     ${v.title ? `<div style="font-size:13px;font-weight:600;line-height:1.35">${esc(v.title)}</div>` : ''}
+    ${planLine(v)}
   </div>`;
+}
+
+// The plan the script was written in (format, topic, hook, ending: each the
+// one the channel used least lately), and what still bothered after the retries.
+function planLine(v){
+  const p = v.script_plan;
+  if (!p) return '';
+  const parts = [`<b>${esc(SCRIPT_FORMATS[p.format] || p.format)}</b>`, esc(p.sujet),
+                 `accroche : ${esc(SCRIPT_HOOKS[p.accroche] || p.accroche)}`, `fin : ${esc(SCRIPT_ENDINGS[p.fin] || p.fin)}`];
+  const warns = (v.script_warnings || []).map(w => `<div style="color:#f5c56d">⚠ ${esc(w)}</div>`).join('');
+  return `<div class="tiny" style="color:var(--muted);line-height:1.45">${parts.join(' · ')}${warns}</div>`;
+}
+
+// The voice the draft is (or will be) read with: its own, else the channel's.
+function voicePicker(v, label){
+  if (!genVoices.length) return '';
+  const current = v.voice_id || v.default_voice_id;
+  const opts = genVoices.map(x => {
+    const bits = [x.gender === 'female' ? 'femme' : x.gender === 'male' ? 'homme' : '', x.accent && x.accent !== 'standard' ? x.accent : '']
+      .filter(Boolean).join(', ');
+    const mark = x.voice_id === v.default_voice_id ? ' · voix de la chaîne' : '';
+    return `<option value="${esc(x.voice_id)}" ${x.voice_id === current ? 'selected' : ''}>${esc(x.display_name)}${bits ? ` (${esc(bits)})` : ''}${mark}</option>`;
+  }).join('');
+  const cur = genVoices.find(x => x.voice_id === current);
+  return `<div style="margin-top:8px"><label class="f">${esc(label)}</label>
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+      <select class="f" data-role="voice" style="flex:1;min-width:200px">${opts}</select>
+      <audio data-role="voice-preview" controls preload="none" style="height:32px;max-width:220px" ${cur ? `src="${esc(cur.preview_url)}"` : ''}></audio>
+    </div></div>`;
 }
 
 function cardBodyHtml(v, i){
@@ -304,6 +338,7 @@ function cardBodyHtml(v, i){
   if (v.status === 'script_generated'){
     return `${genHead(v, i, 'warn', 'Script à relire')}
       <textarea class="f" data-role="script" style="min-height:120px">${esc(v.script_text || '')}</textarea>
+      ${voicePicker(v, 'Voix')}
       <div class="actions" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center">
         <button class="btn secondary small" data-action="save-script">Sauver</button>
         <button class="btn ghost small" data-action="regen-script">${icon('refresh', 13)} Régénérer</button>
@@ -313,15 +348,16 @@ function cardBodyHtml(v, i){
   }
 
   if (v.status === 'audio_generated'){
-    const bgOptions = genAssets.backgrounds.length
-      ? genAssets.backgrounds.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
-      : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/backgrounds/</option>`;
+    // first and default: a different drone shot per sentence (never the same background twice)
+    const bgOptions = `<option value="${DRONES_CHOICE}">✨ Drones — un plan différent par phrase (recommandé)</option>` +
+      genAssets.backgrounds.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('');
     const muOptions = genAssets.music.length
       ? genAssets.music.map(f => `<option value="${esc(f)}">${esc(f)}</option>`).join('')
       : `<option value="">Aucun fichier — ajoute-en dans channels/${esc(genChannel)}/assets/music/</option>`;
     return `${genHead(v, i, 'ok', 'Voix prête — choisis le décor')}
       ${v.decor_preset ? `<div class="tiny" style="margin:-4px 0 8px;color:var(--muted)">Décor pré-rempli avec ${v.decor_preset.from_recipe ? 'la recette gagnante de la chaîne' : 'celui de la vidéo modèle'} — modifiable.</div>` : ''}
       <audio src="/api/videos/${v.video_id}/narration" controls style="width:100%"></audio>
+      ${voicePicker(v, "Voix (pour changer : choisis-en une puis « Régénérer l'audio »)")}
       <div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap-reverse;align-items:flex-end">
         <div style="flex:1;min-width:200px;display:flex;flex-direction:column;gap:6px">
           <div><label class="f">Fond vidéo</label><select class="f" data-role="bg">${bgOptions}</select></div>
@@ -419,6 +455,17 @@ function wireCardEvents(card, v, batchId){
     }
   });
 
+  const voiceSelect = card.querySelector('[data-role="voice"]');
+  if (voiceSelect) voiceSelect.addEventListener('change', async () => {
+    const pv = card.querySelector('[data-role="voice-preview"]');
+    const chosen = genVoices.find(x => x.voice_id === voiceSelect.value);
+    if (pv && chosen){ pv.src = chosen.preview_url; pv.play().catch(() => {}); }
+    if (v.status === 'script_generated'){     // remembered for the batch's "Générer les audios"
+      try { await api(`/api/videos/${v.video_id}/voice`, { method: 'POST', body: JSON.stringify({ voice_id: voiceSelect.value }) }); }
+      catch (e){ log(e.message, 'error'); }
+    }
+  });
+
   const regenAudioBtn = card.querySelector('[data-action="regen-audio"]');
   if (regenAudioBtn) regenAudioBtn.addEventListener('click', async () => {
     if (!confirm('Regénérer la voix ? Ceci consomme à nouveau des crédits ElevenLabs.')) return;
@@ -426,7 +473,9 @@ function wireCardEvents(card, v, batchId){
     regenAudioBtn.disabled = true;
     regenAudioBtn.innerHTML = spin('Synthèse en cours (1-2 min)...');
     try {
-      await api(`/api/videos/${v.video_id}/generate_audio`, { method: 'POST' });
+      const voice = card.querySelector('[data-role="voice"]');
+      await api(`/api/videos/${v.video_id}/generate_audio`, {
+        method: 'POST', body: JSON.stringify({ voice_id: voice ? voice.value : null }) });
       refresh();
     } catch (e){
       log(e.message, 'error');
@@ -520,7 +569,7 @@ function wireCardEvents(card, v, batchId){
     // "Refaire ce style": start from the top performer's décor (still editable)
     const preset = v.decor_preset;
     if (preset){
-      if (preset.bg_video_filename && genAssets.backgrounds.includes(preset.bg_video_filename)) bgSelect.value = preset.bg_video_filename;
+      if (preset.bg_video_filename && (preset.bg_video_filename === DRONES_CHOICE || genAssets.backgrounds.includes(preset.bg_video_filename))) bgSelect.value = preset.bg_video_filename;
       const mu = card.querySelector('[data-role="music"]');
       if (preset.bg_music_filename && genAssets.music.includes(preset.bg_music_filename)){
         mu.value = preset.bg_music_filename;
@@ -533,7 +582,7 @@ function wireCardEvents(card, v, batchId){
     }
     updateColorVisibility();
     if (preset && preset.caption_color && CAPTION_COLOR_STYLES.has(captionSelect.value)) colorInput.value = preset.caption_color;
-    if (genAssets.backgrounds.length) updatePreview();
+    updatePreview();
   }
 
   const musicSelect = card.querySelector('[data-role="music"]');

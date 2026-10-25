@@ -1524,6 +1524,13 @@ def is_batch_active(batch_id: str):
     return {"active": bool(thread and thread.is_alive())}
 
 
+def _channel_voice(channel: Optional[str]) -> Optional[str]:
+    try:
+        return channel_manager.get_channel_profile(channel).get("tts_voice_id") if channel else None
+    except Exception:
+        return None
+
+
 def serialize_generated_video(video: dict) -> dict:
     ai = video.get("ai_data") or {}
     return {
@@ -1533,6 +1540,10 @@ def serialize_generated_video(video: dict) -> dict:
         "status": video.get("status"),
         "script_text": video.get("script_text"),
         "script_format": video.get("script_format"),
+        "script_plan": video.get("script_plan"),
+        "voice_id": video.get("voice_id"),
+        "default_voice_id": _channel_voice(video.get("channel")),
+        "script_warnings": video.get("script_warnings") or [],
         "title": ai.get("optimized_title") or ai.get("title"),
         "description": (ai.get("description_suggestions") or [""])[0],
         "tags": ai.get("tags", []),
@@ -1746,7 +1757,16 @@ def asset_frame_preview(
     (generative.caption_styles) so the whole décor — background AND
     captions — previews together, WYSIWYG. caption_color overrides that
     style's accent color, for the styles that support one."""
-    video_path = str(_safe_asset_path(channel_name, "backgrounds", bg_video_filename))
+    from generative.pipeline import DRONES_CHOICE
+    if bg_video_filename == DRONES_CHOICE:      # "a shot per sentence": one library shot stands for them
+        import random
+        from montage import broll
+        clips = broll.list_clips()
+        if not clips:
+            raise HTTPException(status_code=404, detail="Bibliothèque de plans drone vide")
+        video_path, frame_mode = broll.clip_path(random.choice(clips)), "fill"
+    else:
+        video_path = str(_safe_asset_path(channel_name, "backgrounds", bg_video_filename))
     border_path = channel_manager.get_background_path(channel_name)
 
     from video_processor import render_frame_preview
@@ -1759,16 +1779,35 @@ def asset_frame_preview(
     return Response(content=jpeg_bytes, media_type="image/jpeg")
 
 
+class DraftVoice(BaseModel):
+    voice_id: Optional[str] = None   # an id of the voice library; None = the channel's voice
+
+
+@app.post("/api/videos/{video_id}/voice")
+def set_draft_voice(video_id: str, req: DraftVoice):
+    """The voice this draft will be read with (chosen on its card before the
+    audio is made); the batch's "Générer les audios" uses each draft's."""
+    import db as _db
+    video = _db.get_video(video_id)
+    if not video:
+        raise HTTPException(status_code=404, detail="Video not found")
+    if req.voice_id and not _db.get_voice(req.voice_id):
+        raise HTTPException(status_code=400, detail="Voix inconnue : ajoute-la dans Réglages → Voix.")
+    get_generative_pipeline().url_manager.update_video_status(video_id, video["status"], voice_id=req.voice_id)
+    return serialize_generated_video(_db.get_video(video_id))
+
+
 @app.post("/api/videos/{video_id}/generate_audio")
-def generate_audio_for_draft(video_id: str):
+def generate_audio_for_draft(video_id: str, req: Optional[DraftVoice] = None):
     """Synchronous: fires the ElevenLabs TTS call (real credits spent) and
     measures its timing locally (Whisper) — this request blocks for real
     seconds, the UI should say so. Assembly is a separate later step so the
-    voice can be reviewed before compositing the final video."""
+    voice can be reviewed before compositing the final video. A voice_id in
+    the body reads it with that voice (kept on the draft)."""
     import db as _db
     gp = get_generative_pipeline()
     try:
-        gp.generate_audio_for(video_id)
+        gp.generate_audio_for(video_id, voice_id=req.voice_id if req else None)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
@@ -1960,7 +1999,10 @@ def finalize_generated_video(video_id: str, req: DecorRequest):
     video = _db.get_video(video_id)
     if not video:
         raise HTTPException(status_code=404, detail="Video not found")
-    bg_video_path = str(_safe_asset_path(video["channel"], "backgrounds", req.bg_video_filename))
+    from generative.pipeline import DRONES_CHOICE
+    from generative.drone_montage import DRONES
+    bg_video_path = DRONES if req.bg_video_filename == DRONES_CHOICE else \
+        str(_safe_asset_path(video["channel"], "backgrounds", req.bg_video_filename))
     bg_music_path = str(_safe_asset_path(video["channel"], "music", req.bg_music_filename))
 
     import progress

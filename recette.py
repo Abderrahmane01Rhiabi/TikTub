@@ -134,10 +134,13 @@ def from_generation(video: Dict, length: Optional[float] = None, voice_id: Optio
                 voix={"id": voice_id} if voice_id else None,
                 style={"sous_titres": video.get("caption_style") or "karaoke", "couleur": video.get("caption_color"),
                        "cadre": video.get("frame_mode") or "fill", "coins_arrondis": bool(video.get("rounded_corners")),
-                       "fond_video": os.path.basename(video.get("bg_video_path") or "") or None,
-                       "fond_video_archive": archive(video.get("bg_video_path"), "fonds")},
+                       "fond_video": "drones, un plan par phrase" if video.get("drones") else
+                                     os.path.basename(video.get("bg_video_path") or "") or None,
+                       "fond_video_archive": archive(video.get("bg_video_path"), "fonds"),
+                       **({"etalonnage": video["drones"].get("look")} if video.get("drones") else {})},
                 details={"format_script": video.get("script_format"), "inspire_de": video.get("inspired_by"),
-                         "script": video.get("script_text"), **({"plans": phrases} if phrases else {})},
+                         "script": video.get("script_text"), **({"plans": phrases} if phrases else {}),
+                         **({"plans_drone": video["drones"].get("plans")} if video.get("drones") else {})},
                 reconstruite=reconstruite)
 
 

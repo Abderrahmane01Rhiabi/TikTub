@@ -38,11 +38,13 @@ from typing import Dict, List, Optional
 import db as _db
 from channel_manager import ChannelManager
 from url_manager import URLManager
+from generative import drone_montage, script_plan
 from generative.script_generator import generate_script
 from generative.voice_generator import synthesize
 from generative.video_composer import render_video
 
 PROCESSED_DIR = "processed_videos"
+DRONES_CHOICE = "__drones__"     # the Décor step's "Drones, un plan par phrase" option
 TEMP_DIR = "temp"
 
 
@@ -58,8 +60,8 @@ class GenerativePipeline:
         followed immediately by run_batch_scripts().
 
         inspired_by ("Refaire ce style" from a top performer): every draft
-        remembers that video — its scripts get written in the same format
-        and structure (on new topics), and its décor is pre-filled in phase 3
+        remembers that video — its scripts get written in the same format,
+        with its hook's strength but not its structure (on new topics), and its décor is pre-filled in phase 3
         with the winner's choices (decor_preset), still changeable.
 
         recipe (Accueil's "idée de la semaine"): the channel's winning choice
@@ -71,7 +73,7 @@ class GenerativePipeline:
             if not winner or winner.get("source") != "generated" or winner.get("channel") != channel_name:
                 raise ValueError("Vidéo modèle introuvable sur cette chaîne")
             extra = {"inspired_by": inspired_by, "decor_preset": self._decor_preset(winner, recipe or {})}
-            if (recipe or {}).get("script_format") in ("A", "B", "D"):
+            if (recipe or {}).get("script_format") in script_plan.FORMATS:
                 extra["recipe_format"] = recipe["script_format"]
         videos = [
             {
@@ -96,8 +98,10 @@ class GenerativePipeline:
         bg = recipe.get("background") if recipe.get("background") in assets["backgrounds"] else name(winner.get("bg_video_path"))
         music = recipe.get("music") if recipe.get("music") in assets["music"] else name(winner.get("bg_music_path"))
         caption = recipe.get("caption_style") if recipe.get("caption_style") in STYLES else winner.get("caption_style")
+        if winner.get("bg_video_path") == drone_montage.DRONES and not recipe.get("background"):
+            bg = DRONES_CHOICE
         preset = {
-            "bg_video_filename": bg if bg in assets["backgrounds"] else None,
+            "bg_video_filename": bg if bg in assets["backgrounds"] or bg == DRONES_CHOICE else None,
             "bg_music_filename": music if music in assets["music"] else None,
             "frame_mode": winner.get("frame_mode") or "fill",
             "rounded_corners": bool(winner.get("rounded_corners")),
@@ -110,47 +114,67 @@ class GenerativePipeline:
         return preset
 
     RECENT_HISTORY_LIMIT = 15
+    SCRIPT_ATTEMPTS = 3
 
-    def _recent_script_history(self, channel_name: str, exclude_video_id: str):
-        """This channel's most recent generated titles + formats (newest
-        first, current video excluded) — passed to generate_script() so it
-        has something concrete to avoid repeating, including siblings
-        already scripted earlier in the same batch (sequential, so they're
-        already in the DB by the time a later video's turn comes)."""
+    def _channel_scripts(self, channel_name: str, exclude_video_id: str) -> List[Dict]:
+        """This channel's generated videos that have a script (drafts and
+        published), newest first, the current one excluded."""
         videos = [
             v for v in self.url_manager.list_videos(channel=channel_name)
             if v.get("source") == "generated" and v.get("video_id") != exclude_video_id and v.get("title")
         ]
         videos.sort(key=lambda v: v.get("updated_at") or "", reverse=True)
-        recent = videos[: self.RECENT_HISTORY_LIMIT]
-        titles = [v["title"] for v in recent]
-        formats = [v["script_format"] for v in recent if v.get("script_format")]
-        return titles, formats
+        return videos
+
+    @staticmethod
+    def _script_problems(draft: Dict, others: List[Dict], recent_titles: List[str]) -> List[str]:
+        """Why a freshly written script can't stay: too close to another of
+        the channel's scripts, a fake first-person testimony, or a title
+        opening the channel has worn out. Empty when it's fine."""
+        import repetition
+        problems = repetition.too_close(draft, others)
+        if script_plan.FAKE_TESTIMONY.search(draft.get("title", "") + " " + draft.get("script_text", "")):
+            problems.append("faux témoignage à la première personne (« j'ai testé / essayé / arrêté »)")
+        banned = {script_plan.opening(b) for b in script_plan.overused_openings(recent_titles)}
+        if script_plan.opening(draft.get("title", "")) in banned:
+            problems.append(f"titre qui commence comme d'autres déjà publiés (« {' '.join(draft['title'].split()[:2])} »)")
+        return problems
 
     def generate_script_for(self, video_id: str) -> Dict:
         """Writes ONE script (+ title/description/tags) for an existing
         draft. Also used to regenerate a script the user doesn't like, at any
-        point before audio has been generated for it."""
+        point before audio has been generated for it.
+
+        First a plan (script_plan.choose: the format, topic, hook and ending
+        the channel used least lately), then the AI writes inside it; a
+        script too close to another, a fake testimony or a worn-out title
+        opening is sent back with the reason, up to SCRIPT_ATTEMPTS times.
+        What still bothers after that is kept on the draft (script_warnings)
+        for the person to see."""
         video = _db.get_video(video_id)
         if not video:
             raise ValueError(f"Unknown video_id: {video_id}")
 
         profile = self.channel_manager.get_channel_profile(video["channel"])
-        recent_titles, recent_formats = self._recent_script_history(video["channel"], exclude_video_id=video_id)
-        inspiration = None
+        others = self._channel_scripts(video["channel"], exclude_video_id=video_id)
+        recent = others[: self.RECENT_HISTORY_LIMIT]
+        recent_titles = [v["title"] for v in recent]
+        history = [v.get("script_plan") or {"format": v.get("script_format")} for v in recent]
+        inspiration, fmt = None, None
         if video.get("inspired_by"):
             winner = _db.get_video(video["inspired_by"])
             if winner and winner.get("script_text"):
                 fmt = video.get("recipe_format") or winner.get("script_format")
-                if fmt == winner.get("script_format"):
-                    inspiration = {"format": fmt, "title": winner.get("title"),
-                                   "script_text": winner.get("script_text")}
-                else:
-                    # the winning format isn't the model's: copying its
-                    # structure would contradict it — just impose the format
-                    inspiration = {"format": fmt}
-        script = generate_script(profile, recent_titles=recent_titles, recent_formats=recent_formats,
-                                 inspiration=inspiration)
+                inspiration = {"title": winner.get("title"), "script_text": winner.get("script_text")}
+        plan = script_plan.choose(history, topics=profile.get("script_topics"), fmt=fmt)
+
+        feedback: List[str] = []
+        for _ in range(self.SCRIPT_ATTEMPTS):
+            script = generate_script(profile, plan, recent_titles=recent_titles, inspiration=inspiration,
+                                     feedback=feedback or None)
+            feedback = self._script_problems(script, others, recent_titles)
+            if not feedback:
+                break
 
         self.url_manager.update_video_status(
             video_id, "script_generated",
@@ -160,7 +184,9 @@ class GenerativePipeline:
             # the real title instead of "Video N" in Planning.
             title=script["title"],
             script_text=script["script_text"],
-            script_format=script.get("format", ""),
+            script_format=plan["format"],
+            script_plan=plan,
+            script_warnings=feedback,
             ai_data={
                 "optimized_title": script["title"],
                 "title": script["title"],
@@ -205,11 +231,17 @@ class GenerativePipeline:
             ),
         }
 
-    def generate_audio_for(self, video_id: str) -> str:
+    def voice_of(self, video: Dict) -> Optional[str]:
+        """The draft's own voice (chosen on its card), else the channel's."""
+        return video.get("voice_id") or self.channel_manager.get_channel_profile(video["channel"]).get("tts_voice_id")
+
+    def generate_audio_for(self, video_id: str, voice_id: Optional[str] = None) -> str:
         """Synthesize narration (ElevenLabs — costs credits) and measure its
         real word timing (Whisper). Saved to disk so assemble() can run later,
         independently, without re-synthesizing. Also used to re-synthesize a
-        take the user doesn't like, at any point before assembly."""
+        take the user doesn't like, at any point before assembly. voice_id:
+        a voice picked for this draft (kept on it), else the draft's or the
+        channel's."""
         video = _db.get_video(video_id)
         if not video:
             raise ValueError(f"Unknown video_id: {video_id}")
@@ -217,13 +249,14 @@ class GenerativePipeline:
             raise ValueError(f"Video {video_id} has no script yet.")
 
         profile = self.channel_manager.get_channel_profile(video["channel"])
+        voice = voice_id or self.voice_of(video)
         narration_path = os.path.join(TEMP_DIR, video_id, "narration.mp3")
         words_path = os.path.join(TEMP_DIR, video_id, "words.json")
 
         try:
             words = synthesize(
                 video["script_text"],
-                voice_id=profile.get("tts_voice_id"),
+                voice_id=voice,
                 out_mp3_path=narration_path,
                 model_id=profile.get("tts_model_id", "eleven_v3"),
             )
@@ -235,7 +268,7 @@ class GenerativePipeline:
 
         self.url_manager.update_video_status(
             video_id, "audio_generated",
-            narration_path=narration_path, words_path=words_path, render_error=None,
+            narration_path=narration_path, words_path=words_path, render_error=None, voice_id=voice,
         )
         return narration_path
 
@@ -285,12 +318,18 @@ class GenerativePipeline:
             raise ValueError(f"Video {video_id} has no décor chosen yet.")
 
         out_path = os.path.join(PROCESSED_DIR, f"{video_id}.mp4")
+        drones = None
         try:
             with open(video["words_path"], encoding="utf-8") as f:
                 words = [tuple(w) for w in json.load(f)]
+            background = video["bg_video_path"]
+            if background == drone_montage.DRONES:     # a shot per sentence, built for this video
+                background = os.path.join(TEMP_DIR, video_id, "drones.mp4")
+                drones = drone_montage.build(words, video["bg_music_path"], video["channel"], video_id, background)
+                self.url_manager.update_video_status(video_id, video["status"], drones=drones)
             render_video(
-                video["narration_path"], words, video["bg_video_path"], video["bg_music_path"], out_path,
-                frame_mode=video.get("frame_mode", "fill"),
+                video["narration_path"], words, background, video["bg_music_path"], out_path,
+                frame_mode="fill" if drones else video.get("frame_mode", "fill"),
                 rounded_corners=video.get("rounded_corners", False),
                 caption_style=video.get("caption_style", "karaoke"),
                 caption_color=video.get("caption_color"),
@@ -309,7 +348,7 @@ class GenerativePipeline:
             import recette
             from generative.ffmpeg_composer import MUSIC_LEVEL
             from generative.caption_styles import group_into_blocks
-            voice = self.channel_manager.get_channel_profile(video["channel"]).get("tts_voice_id")
+            voice = self.voice_of(video)
             blocks = []
             for b in group_into_blocks(words):      # a list number ("1.") goes with the sentence it opens
                 if blocks and len(blocks[-1]) == 1 and blocks[-1][0][0].rstrip(".").isdigit():
@@ -317,8 +356,8 @@ class GenerativePipeline:
                 blocks.append(b)
             phrases = [{"debut": round(b[0][1], 2), "duree": round(b[-1][2] - b[0][1], 2),
                         "texte": " ".join(w[0] for w in b)} for b in blocks]
-            rec = recette.from_generation({**video, "video_path": out_path}, voice_id=voice, music_level=MUSIC_LEVEL,
-                                          phrases=phrases)
+            rec = recette.from_generation({**video, "video_path": out_path, **({"drones": drones} if drones else {})},
+                                          voice_id=voice, music_level=MUSIC_LEVEL, phrases=phrases)
         except Exception:
             pass                        # the recipe never blocks a video
         self.url_manager.update_video_status(video_id, "ready_for_upload", video_path=out_path, render_error=None,

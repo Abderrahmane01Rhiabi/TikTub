@@ -331,7 +331,7 @@ function openRemakeDialog(channelName, v, suggestion){
   const dlg = document.getElementById('remakeDialog');
   const a = v.attrs;
   const reused = suggestion ? [] : [
-    a.script_format && ['Format et structure du script', `${a.script_format} · ${({A: 'Affirmations', B: 'Storytime', D: 'Liste éducative'})[a.script_format] || ''}`],
+    a.script_format && ['Format et structure du script', `${a.script_format} · ${SCRIPT_FORMATS[a.script_format] || ''}`],
     a.background && ['Fond vidéo', a.background],
     a.music && ['Musique', a.music],
     a.caption_style && ['Sous-titres', a.caption_style],

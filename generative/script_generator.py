@@ -15,107 +15,78 @@ load_dotenv()
 from gemini_ai_generator import GeminiAIGenerator
 from openai_ai_generator import OpenAIGenerator
 
-# Reference scripts (style only — topic/wording must NOT be reused) covering
-# the three formats this channel already publishes manually: D (educational
-# list), A (short affirmations), B (storytime).
-STYLE_EXAMPLES: List[str] = [
-    '[curious] 3 signes que l\'univers essaie de te manifester quelque chose : <break time="0.8s" />\n\n'
-    '[calm] 1. Tu vois le même chiffre partout, 11h11, 22h22... <break time="0.5s" />\n'
-    '2. Une idée te vient sans effort, comme une évidence. <break time="0.5s" />\n'
-    '3. Une coïncidence tellement précise que ça ne peut pas être un hasard.\n\n'
-    '[warm, excited] Lequel tu as déjà vécu ? Dis-le en commentaire !',
-
-    '[softly] Ferme les yeux, respire doucement... <break time="1.0s" />\n\n'
-    '[calm, warm] Aujourd\'hui, je choisis d\'attirer l\'abondance dans ma vie. <break time="0.6s" />\n'
-    'Je mérite le succès, <break time="0.4s" /> et chaque effort que je fais me rapproche de ma meilleure version. <break time="0.6s" />\n\n'
-    '[confident] L\'univers travaille en ma faveur.',
-
-    '[curious] J\'ai testé la méthode SATS de Neville Goddard pendant 7 jours, voici ce qui s\'est passé. <break time="0.8s" />\n\n'
-    '[calm] Jour 1 : je visualise avant de dormir, comme si c\'était déjà réel. <break time="0.6s" />\n'
-    'Jour 3 : je remarque que je pense moins au "comment", et plus au "quand". <break time="0.6s" />\n'
-    'Jour 5 : une coïncidence troublante se produit, liée exactement à ce que je visualisais. <break time="0.6s" />\n'
-    'Jour 7 : <break time="0.4s" /> [warm] je ne dirais pas que tout a changé... mais quelque chose, oui.',
-
-    '[confident] La loi de l\'assomption expliquée en 30 secondes. <break time="0.6s" />\n\n'
-    '[calm] Un : agis comme si ton souhait était déjà réalisé. <break time="0.5s" />\n'
-    'Deux : ne cherche pas le "comment", laisse l\'univers s\'en charger. <break time="0.5s" />\n'
-    'Trois : ressens l\'émotion du résultat, maintenant, pas plus tard.\n\n'
-    '[warm] C\'est aussi simple, et aussi difficile, que ça.',
-
-    '[calm, warm] Je suis capable. <break time="0.6s" />\n'
-    'Je n\'ai pas besoin de l\'approbation des autres pour avancer. <break time="0.6s" />\n\n'
-    '[confident] Ma valeur ne dépend de personne d\'autre que moi.',
-
-    '[curious] Personne ne parle de ce détail dans la manifestation. <break time="0.8s" />\n\n'
-    '[calm] Tout le monde répète "pense positif et ça arrive". <break time="0.6s" />\n'
-    'Mais la vérité, c\'est que la manifestation ne marche jamais sans une action alignée derrière. <break time="0.6s" />\n\n'
-    '[warm, confident] Visualiser, c\'est la moitié du travail. L\'autre moitié, c\'est bouger.',
-]
+from generative import script_plan
 
 
 def _build_prompt(
-    channel_profile: Dict, style_examples: List[str],
-    recent_titles: Optional[List[str]] = None, recent_formats: Optional[List[str]] = None,
-    inspiration: Optional[Dict] = None,
+    channel_profile: Dict, plan: Dict, recent_titles: Optional[List[str]] = None,
+    inspiration: Optional[Dict] = None, feedback: Optional[List[str]] = None,
+    examples: Optional[List[str]] = None,
 ) -> str:
+    """The prompt for one script written inside `plan` (script_plan.choose):
+    the channel's general style, the plan (which wins over it), two examples
+    for the tone only, what was done lately, and — on a retry — why the
+    previous attempt was refused."""
     style_prompt = channel_profile.get("script_style_prompt", "")
-    examples_block = "\n\n---\n\n".join(style_examples)
+    audience = channel_profile.get("script_audience")
+    audience_block = f"\nPublic de la chaîne : {audience}. Parle à ces personnes-là, de leur vie à elles.\n" if audience else ""
+    examples_block = "\n\n---\n\n".join(examples or script_plan.examples(plan))
+    fmt = plan["format"]
 
     history_block = ""
     if recent_titles:
         titles_list = "\n".join(f"- {t}" for t in recent_titles)
         history_block = f"""
 
-Sujets/angles DÉJÀ traités récemment sur cette chaîne — n'en refais AUCUN, ni le même angle
-reformulé différemment (ex: ne refais pas "3 signes que X" si la liste ci-dessous en contient déjà
-plusieurs, ne refais pas "j'ai testé X pendant Nh" si déjà présent) :
+Titres DÉJÀ publiés récemment sur cette chaîne — n'en refais AUCUN, ni le même angle reformulé,
+ni le même schéma de titre :
 {titles_list}"""
-        if recent_formats and not inspiration:
-            counts = {f: recent_formats.count(f) for f in ("A", "B", "D")}
-            least_used = min(counts, key=counts.get)
-            history_block += (
-                f"\n\nFormats récemment utilisés (A/B/D) : {', '.join(recent_formats)}. "
-                f"Le format \"{least_used}\" est sous-représenté — privilégie-le cette fois, "
-                f"sauf si un autre format sert clairement mieux le nouvel angle choisi."
-            )
+        banned = script_plan.overused_openings(recent_titles)
+        if banned:
+            history_block += "\n\nN'ouvre PAS le titre par : " + ", ".join(f"« {b} »" for b in banned) + "."
 
     inspiration_block = ""
-    if inspiration and not inspiration.get("script_text"):
-        fmt = inspiration.get("format") or ""
+    if inspiration and inspiration.get("script_text"):
         inspiration_block = f"""
 
-Le format "{fmt}" est celui qui marche le mieux sur cette chaîne : écris ce script dans ce format,
-sur un sujet neuf. Indique "{fmt}" dans le champ "format"."""
-    elif inspiration:
-        fmt = inspiration.get("format") or ""
-        inspiration_block = f"""
-
-Cette vidéo de la chaîne a TRÈS BIEN marché — c'est le modèle à suivre :
+Cette vidéo de la chaîne a TRÈS BIEN marché :
 Titre : {inspiration.get("title") or ""}
-Format : {fmt}
 Script :
 {inspiration.get("script_text") or ""}
 
-Écris un NOUVEAU script qui reprend ce qui la fait marcher : même format ("{fmt}"), même structure,
-même type d'accroche dans la première phrase, même rythme et même longueur approximative.
-Mais le SUJET doit être différent (ni le même thème reformulé, ni les mêmes phrases), et le titre aussi.
-Indique "{fmt}" dans le champ "format"."""
+Reprends ce qui l'a fait marcher — la FORCE de son accroche, son rythme, sa durée — mais PAS sa
+structure, PAS son schéma de titre (si elle commence par « 3 signes... », le tien ne commence pas
+pareil), PAS son sujet. YouTube cesse de montrer une chaîne qui publie des copies d'une même vidéo."""
+
+    feedback_block = ""
+    if feedback:
+        feedback_block = "\n\nTON ESSAI PRÉCÉDENT A ÉTÉ REFUSÉ :\n" + "\n".join(f"- {f}" for f in feedback) + \
+                         "\nÉcris quelque chose de vraiment différent."
 
     return f"""{style_prompt}
+{audience_block}
+LE PLAN DE CE SCRIPT (il prime sur la description générale ci-dessus, formats compris) :
+{script_plan.describe(plan)}
 
-Voici des exemples de scripts déjà publiés sur cette chaîne, à titre de référence de STYLE UNIQUEMENT
-(ton, rythme, tags de délivrance ElevenLabs, longueur) — n'en copie ni le sujet ni le texte,
-écris un script sur un sujet neuf :
+Règles :
+- Jamais de faux témoignage à la première personne (« j'ai testé », « j'ai essayé », « j'ai arrêté... pendant
+  72h ») : la voix est synthétique, l'expérience n'aurait pas eu lieu. Ça trompe le spectateur.
+- Le titre suit le format et l'accroche du plan, pas les habitudes de la chaîne.
+- Tutoie toujours le spectateur, comme dans les exemples (jamais « vous »).
+- Phrases courtes, à l'oral, avec les tags ElevenLabs v3 ([calm], [curious], [warm], [softly], [confident]...)
+  avant la phrase concernée et des pauses <break time="0.6s" /> entre les temps forts.
+
+Exemples, pour le TON et les TAGS uniquement (n'en copie ni le sujet, ni les phrases, ni la structure) :
 
 ---
 {examples_block}
 ---
-{history_block}{inspiration_block}
+{history_block}{inspiration_block}{feedback_block}
 
 Réponds UNIQUEMENT avec un objet JSON valide de cette forme exacte, rien d'autre avant ou après :
 {{
   "script_text": "le script complet en français, avec les tags [emotion] et <break time=\\"Xs\\" /> inline",
-  "format": "A ou B ou D",
+  "format": "{fmt}",
   "title": "titre YouTube accrocheur en français, sans hashtags, moins de 100 caractères",
   "description": "description YouTube en français (2-4 phrases + quelques hashtags pertinents)",
   "tags": ["tag1", "tag2", "tag3"]
@@ -139,25 +110,20 @@ SCRIPT_TEMPERATURE = 0.95  # higher than the app's shared 0.7 default — this c
 
 
 def generate_script(
-    channel_profile: Dict, style_examples: Optional[List[str]] = None,
-    recent_titles: Optional[List[str]] = None, recent_formats: Optional[List[str]] = None,
-    inspiration: Optional[Dict] = None,
+    channel_profile: Dict, plan: Dict, recent_titles: Optional[List[str]] = None,
+    inspiration: Optional[Dict] = None, feedback: Optional[List[str]] = None,
 ) -> Dict:
-    """Generate one new script + title/description/tags in the channel's style.
-
-    recent_titles/recent_formats (this channel's own generation history) are
-    threaded into the prompt so the model has something concrete to diverge
-    from, instead of just a vague "be original" instruction repeated
-    identically on every call — without them, the same fixed style examples
-    on every call made outputs converge to the same handful of angles.
+    """Generate one new script + title/description/tags inside `plan`
+    (format, topic, hook, ending — script_plan.choose). recent_titles: this
+    channel's latest titles, to diverge from; feedback: why a previous
+    attempt was refused (too close to a published video...).
 
     Tries Gemini first (free tier), falls back to OpenAI — same provider
     order as ai_tags_generator.AITagsGenerator.generate_ai_content, but
     calling call_gemini_api/call_openai_api directly with images=None since
     there is no video to analyze yet at this stage.
     """
-    prompt = _build_prompt(channel_profile, style_examples or STYLE_EXAMPLES, recent_titles, recent_formats, inspiration)
-
+    prompt = _build_prompt(channel_profile, plan, recent_titles, inspiration, feedback)
     gemini_key = os.getenv("GEMINI_API_KEY")
     if gemini_key:
         try:
