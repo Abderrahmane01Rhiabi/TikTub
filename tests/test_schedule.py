@@ -172,3 +172,145 @@ def test_ai_method_keeps_channels_and_enforces_spacing(project, bp):
     gap = (bp._parse_slot(by_id["a2"]["scheduled_time"]) - bp._parse_slot(by_id["a1"]["scheduled_time"])).total_seconds() / 3600
     assert gap >= bp.config["scheduling"]["spacing_hours"]       # the AI's 1 h gap is never trusted
     assert by_id["b1"]["scheduled_time"]                           # missing from the answer: still gets a slot
+
+
+# ---- the common guard (AUDIT.md §4.5 F29-F30): whatever the method, before saving
+
+from collections import Counter
+from datetime import datetime, timedelta
+import json
+
+
+def tight_rules(bp, spacing=2, daily=2, weekly=4):
+    bp.config["scheduling"]["spacing_hours"] = spacing
+    bp.config["general"]["max_daily_uploads"] = daily
+    bp.config["general"]["max_weekly_uploads"] = weekly
+
+
+def fake_method(monkeypatch, bp, method, plan):
+    """The chosen method hands back `plan` ({video_id: (channel, local time)}),
+    written the way that method writes dates (static: ISO with timezone,
+    analytics/ai: naive local)."""
+    def entries(videos):
+        out = []
+        for v in videos:
+            if v["video_id"] not in plan:
+                continue
+            channel, when = plan[v["video_id"]]
+            when = bp.scheduler.timezone.localize(when)
+            out.append({"video_id": v["video_id"], "title": v["video_id"], "channel": channel, "priority": "normal",
+                        "scheduled_time": when.isoformat() if method == "static" else when.strftime("%Y-%m-%d %H:%M:%S"),
+                        "scheduled_time_readable": "x", "video_data": v})
+        return out
+    if method == "static":
+        monkeypatch.setattr(bp.scheduler, "create_upload_schedule", lambda videos, channel_manager=None, **k: entries(videos))
+    elif method == "analytics":
+        monkeypatch.setattr(bp.smart_scheduler, "create_analytics_based_schedule",
+                            lambda videos, days_ahead=7: {"schedule": entries(videos), "unscheduled": []})
+    else:
+        monkeypatch.setattr(bp.ai_scheduler, "create_ai_suggested_schedule",
+                            lambda videos, config, channel_manager=None, days_ahead=7: {"schedule": entries(videos)})
+
+
+def assert_rules_hold(bp, schedule, channel):
+    slots = channel_slots(bp, schedule, channel)
+    lead = datetime.now(bp.scheduler.timezone) + timedelta(minutes=30)
+    tz = bp.scheduler.timezone
+    assert all(s >= lead for s in slots)                                         # nothing past / too soon
+    assert all(g >= bp.config["scheduling"]["spacing_hours"] for g in gaps_hours(slots))
+    assert max(Counter(s.astimezone(tz).date() for s in slots).values()) <= bp.config["general"]["max_daily_uploads"]
+    assert max(Counter(s.astimezone(tz).isocalendar()[:2] for s in slots).values()) <= bp.config["general"]["max_weekly_uploads"]
+
+
+BAD_PLAN = {                       # one past date, two too close, a day over its cap, a week over its cap
+    "past": ("chanA", datetime.now().replace(microsecond=0) - timedelta(days=2)),
+    "c1": ("chanA", datetime(2030, 1, 7, 18, 0)), "c2": ("chanA", datetime(2030, 1, 7, 18, 30)),
+    "d1": ("chanA", datetime(2030, 1, 9, 9, 0)), "d2": ("chanA", datetime(2030, 1, 9, 12, 0)),
+    "d3": ("chanA", datetime(2030, 1, 9, 15, 0)),
+    "b1": ("chanB", datetime(2030, 1, 7, 18, 0)),                                # another channel: free
+}
+
+
+@pytest.mark.parametrize("method", ["static", "analytics", "ai"])
+def test_guard_fixes_past_dates_spacing_and_caps_for_every_method(project, bp, monkeypatch, method):
+    tight_rules(bp)
+    for vid, (channel, _) in BAD_PLAN.items():
+        project.add_video(vid, channel=channel, title=vid)
+    fake_method(monkeypatch, bp, method, BAD_PLAN)
+
+    schedule = bp.create_upload_schedule(schedule_method=method)
+
+    saved = bp.scheduler.load_schedule()
+    assert {e["video_id"] for e in saved["schedule"]} == set(BAD_PLAN)        # all placed, none lost
+    assert all(e["scheduled_time"] for e in saved["schedule"])
+    assert saved.get("unscheduled") == []
+    assert_rules_hold(bp, schedule, "chanA")
+    by_id = {e["video_id"]: bp._parse_slot(e["scheduled_time"]) for e in schedule}
+    tz = bp.scheduler.timezone
+    for kept in ("c1", "d1", "d2", "b1"):                                     # a slot breaking no rule stays put
+        assert by_id[kept] == tz.localize(BAD_PLAN[kept][1])
+    assert by_id["past"].astimezone(tz).strftime("%H:%M") == BAD_PLAN["past"][1].strftime("%H:%M")   # same hour, a later day
+
+
+@pytest.mark.parametrize("method", ["static", "analytics", "ai"])
+def test_a_video_already_scheduled_on_youtube_holds_its_slot(project, bp, monkeypatch, method):
+    tight_rules(bp, spacing=23, daily=5, weekly=20)
+    project.add_video("yt", status="scheduled_on_youtube", scheduled_publish_time="2030-01-07T18:00:00+01:00")
+    project.add_video("v1", title="v1")
+    fake_method(monkeypatch, bp, method, {"v1": ("chanA", datetime(2030, 1, 7, 20, 0))})   # 2 h after it
+
+    schedule = bp.create_upload_schedule(schedule_method=method)
+
+    yt = bp._parse_slot("2030-01-07T18:00:00+01:00")
+    assert abs(bp._parse_slot(schedule[0]["scheduled_time"]) - yt) >= timedelta(hours=23)
+
+
+def test_guard_runs_on_videos_added_later_too(project, bp, monkeypatch):
+    tight_rules(bp, spacing=23, daily=5, weekly=20)
+    project.add_video("yt", status="scheduled_on_youtube", scheduled_publish_time="2030-01-07T18:00:00+01:00")
+    project.add_video("early", title="early")
+    fake_method(monkeypatch, bp, "analytics", {"early": ("chanA", datetime(2030, 1, 9, 18, 0)),
+                                               "late": ("chanA", datetime.now() - timedelta(hours=1)),
+                                               "late2": ("chanA", datetime(2030, 1, 7, 19, 0))})
+    bp.create_upload_schedule(schedule_method="analytics")
+    project.add_video("late", title="late")
+    project.add_video("late2", title="late2")
+
+    combined = bp.ensure_schedule_includes_all_ready()
+
+    slots = channel_slots(bp, combined, "chanA") + [bp._parse_slot("2030-01-07T18:00:00+01:00")]
+    assert {e["video_id"] for e in combined} == {"early", "late", "late2"}
+    assert_rules_hold(bp, combined, "chanA")
+    assert all(g >= 23 for g in gaps_hours(sorted(slots)))
+
+
+def test_a_video_impossible_to_place_is_listed_with_its_reason(project, bp, monkeypatch):
+    tight_rules(bp, spacing=1, daily=5, weekly=1)                               # one a week: 12 can't all fit
+    plan = {f"v{i}": ("chanA", datetime(2030, 1, 7, 9 + i, 0)) for i in range(12)}
+    for vid in plan:
+        project.add_video(vid, title=vid)
+    fake_method(monkeypatch, bp, "static", plan)
+
+    bp.create_upload_schedule(schedule_method="static")
+
+    saved = bp.scheduler.load_schedule()
+    placed = {e["video_id"] for e in saved["schedule"]}
+    missing = {u["video_id"] for u in saved["unscheduled"]}
+    assert placed | missing == set(plan) and not placed & missing and missing
+    assert all(e["scheduled_time"] for e in saved["schedule"])
+    assert all(u["reason"] and u["channel"] == "chanA" for u in saved["unscheduled"])
+    assert_rules_hold(bp, saved["schedule"], "chanA")
+    # not retried (nor re-asked to an AI) on every screen load: only at the next "Générer le planning"
+    assert {e["video_id"] for e in bp.ensure_schedule_includes_all_ready()} == placed
+
+
+def test_publish_now_entries_are_left_alone(project, bp, monkeypatch):
+    project.add_video("now", title="now")
+    project.write_schedule([{"video_id": "now", "channel": "chanA", "title": "now", "publish_now": True,
+                             "scheduled_time": "2020-01-01 09:00:00", "video_data": {}}], method="static")
+    project.add_video("late", title="late")
+    fake_method(monkeypatch, bp, "static", {"late": ("chanA", datetime(2030, 1, 7, 18, 0))})
+
+    combined = bp.ensure_schedule_includes_all_ready()
+
+    assert next(e for e in combined if e["video_id"] == "now")["scheduled_time"] == "2020-01-01 09:00:00"

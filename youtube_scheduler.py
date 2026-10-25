@@ -181,17 +181,23 @@ class YouTubeScheduler:
         }
     
     def save_schedule(self, schedule: List[Dict], filename: str = "upload_schedule.json",
-                      schedule_method: Optional[str] = None):
+                      schedule_method: Optional[str] = None, unscheduled: Optional[List[Dict]] = None):
         """Sauvegarde le planning.
 
         schedule_method ("static" | "analytics" | "ai") est mémorisé dans le
         fichier pour que les vidéos ajoutées plus tard au planning
         (BatchProcessor.ensure_schedule_includes_all_ready) suivent la même
         méthode que celle choisie par l'utilisateur. Sans valeur, celle déjà
-        présente dans le fichier est conservée (ex: simple modif d'une date)."""
-        if schedule_method is None and os.path.exists(filename):
+        présente dans le fichier est conservée (ex: simple modif d'une date).
+        Idem pour unscheduled : les vidéos que le garde-fou n'a pas pu placer
+        (BatchProcessor._shift_off_taken_slots), avec leur raison."""
+        if (schedule_method is None or unscheduled is None) and os.path.exists(filename):
             try:
-                schedule_method = self.load_schedule(filename).get('schedule_method')
+                previous = self.load_schedule(filename) or {}
+                if schedule_method is None:
+                    schedule_method = previous.get('schedule_method')
+                if unscheduled is None:
+                    unscheduled = previous.get('unscheduled')
             except (OSError, json.JSONDecodeError):
                 pass
         schedule_data = {
@@ -199,6 +205,7 @@ class YouTubeScheduler:
             'config_used': self.config,
             'schedule_method': schedule_method,
             'schedule': schedule,
+            'unscheduled': unscheduled or [],
             'validation': self.validate_schedule(schedule) if schedule else None
         }
         
