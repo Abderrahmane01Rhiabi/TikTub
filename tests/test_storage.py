@@ -111,3 +111,23 @@ def test_app_folders_in_temp_are_never_orphans(project):
     assert Path("temp/usage/gemini.jsonl").exists()
     assert Path("temp/music_info/abc.json").exists() and Path("temp/style_previews/calme_fr.jpg").exists()
     assert not ghost.exists()                  # a real orphan still goes
+
+
+def test_thumbnail_of_a_video_not_yet_published_is_kept(project):
+    # the Adaptation writes the cover next to the video, processed_videos/<id>.jpg (AUDIT.md §8.3)
+    thumb = Path("processed_videos/chanA_ad1.jpg"); thumb.parent.mkdir(exist_ok=True); thumb.write_bytes(b"j" * 10)
+    folder, out = files_for(project, "chanA_ad1", "ready_for_upload", thumbnail_path=str(thumb))
+    make_old(thumb)
+
+    storage.cleanup()
+
+    assert thumb.exists() and out.exists()
+
+
+def test_thumbnail_of_a_published_video_is_freed(project):
+    thumb = Path("processed_videos/chanA_ad2.jpg"); thumb.parent.mkdir(exist_ok=True); thumb.write_bytes(b"j" * 10)
+    files_for(project, "chanA_ad2", "uploaded", thumbnail_path=str(thumb))
+
+    storage.cleanup()
+
+    assert not thumb.exists()

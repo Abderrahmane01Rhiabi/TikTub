@@ -93,8 +93,9 @@ def scan() -> Dict:
     rows = {v["video_id"]: v for v in _db.query_videos()}
     owner_of_file = {}
     for v in rows.values():
-        if v.get("video_path"):
-            owner_of_file[os.path.normpath(v["video_path"])] = v
+        for field in ("video_path", "thumbnail_path"):   # the Adaptation's cover sits next to its video
+            if v.get(field):
+                owner_of_file[os.path.normpath(v[field])] = v
 
     items: List[Dict] = []
     if os.path.isdir(TEMP_DIR):
