@@ -321,8 +321,10 @@ def get_first_week_retention(channel_name: str, videos: List[Dict]) -> Dict[str,
     (YouTube Analytics, one query per video): average % watched and average
     view duration — the same age for every video, like the 7-day views of
     "Ce qui marche". videos: [{"youtube_id", "start": "YYYY-MM-DD"}].
-    Returns {youtube_id: {...}}; a video Analytics has no data for is left
-    out. Needs the yt-analytics.readonly scope."""
+    Also its engagement (engaged views, likes, shares, subscribers) and the
+    share that came from the Shorts feed. Returns {youtube_id: {...}}; a
+    video nobody watched gets views 0; one the API refused is left out.
+    Needs the yt-analytics.readonly scope."""
     token_path = get_token_path(channel_name)
     if not os.path.exists(token_path) or not has_analytics_scope(channel_name):
         return {}
@@ -340,14 +342,27 @@ def get_first_week_retention(channel_name: str, videos: List[Dict]) -> Dict[str,
         try:
             resp = yta.reports().query(
                 ids='channel==MINE', startDate=v["start"], endDate=end,
-                metrics='views,averageViewPercentage,averageViewDuration',
+                metrics='views,averageViewPercentage,averageViewDuration,engagedViews,likes,comments,shares,'
+                        'subscribersGained,subscribersLost',
                 filters=f'video=={v["youtube_id"]}').execute()
+            sources = yta.reports().query(
+                ids='channel==MINE', startDate=v["start"], endDate=end, metrics='views',
+                dimensions='insightTrafficSourceType', filters=f'video=={v["youtube_id"]}').execute()
         except HttpError:
             continue
         rows = resp.get('rows') or []
         if rows and rows[0][0]:
-            out[v["youtube_id"]] = {"views": rows[0][0], "average_view_percentage": rows[0][1],
-                                    "average_view_duration": rows[0][2]}
+            r = rows[0]
+            by_source = {s: n for s, n in sources.get('rows') or []}
+            out[v["youtube_id"]] = {
+                "views": r[0], "average_view_percentage": r[1], "average_view_duration": r[2],
+                # engaged = not swiped away at once: the share of people the start kept
+                "engaged_views": r[3], "engaged_ratio": round(r[3] / r[0], 3),
+                "likes": r[4], "comments": r[5], "shares": r[6], "subscribers_gained": r[7], "subscribers_lost": r[8],
+                "shorts_feed_share": round(by_source.get("SHORTS", 0) / r[0], 3), "sources": by_source}
+        else:                           # nobody watched it that week: a measure too (YouTube never tested it)
+            out[v["youtube_id"]] = {"views": 0, "average_view_percentage": None, "average_view_duration": None,
+                                    "engaged_views": 0, "engaged_ratio": None, "shorts_feed_share": None}
     return out
 
 
@@ -372,6 +387,31 @@ def get_retention_curve(channel_name: str, youtube_id: str, start: str) -> List[
                                metrics='audienceWatchRatio,relativeRetentionPerformance',
                                dimensions='elapsedVideoTimeRatio', filters=f'video=={youtube_id}').execute()
     return [[float(x) for x in row] for row in resp.get('rows') or []]
+
+
+def get_daily_feed_views(channel_name: str, days: int = 21) -> List[Dict]:
+    """The channel's views day by day over the last `days` days, with the
+    part that came from the Shorts feed — the one YouTube decides to show or
+    not: [{"date", "views", "shorts"}]. Days YouTube has not processed yet
+    (the last 2-3) are absent. Needs the yt-analytics.readonly scope."""
+    token_path = get_token_path(channel_name)
+    if not os.path.exists(token_path) or not has_analytics_scope(channel_name):
+        return []
+    creds = Credentials.from_authorized_user_file(token_path, SCOPES)
+    if creds.expired and creds.refresh_token:
+        creds.refresh(Request())
+        with open(token_path, 'w') as f:
+            f.write(creds.to_json())
+    yta = build('youtubeAnalytics', 'v2', credentials=creds)
+    resp = yta.reports().query(ids='channel==MINE', startDate=(datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'),
+                               endDate=datetime.now().strftime('%Y-%m-%d'), metrics='views',
+                               dimensions='day,insightTrafficSourceType').execute()
+    by_day: Dict[str, Dict] = {}
+    for day, source, views in resp.get('rows') or []:
+        d = by_day.setdefault(day, {"date": day, "views": 0, "shorts": 0})
+        d["views"] += views
+        d["shorts"] += views if source == "SHORTS" else 0
+    return [by_day[d] for d in sorted(by_day)]
 
 
 def get_channel_analytics(channel_name: str, days: int = 30) -> Dict:
@@ -1067,6 +1107,21 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
                              "success": False, "url": None, "error": "Video file not found"})
             continue
 
+        refused = None
+        try:                            # a near-copy of a published video is not sent (see repetition.py)
+            import repetition
+            from url_manager import URLManager
+            rep = repetition.check({**video_data, "video_id": video['video_id'], "channel": channel_name},
+                                   list(database.get('videos', {}).values()))
+            URLManager().update_video_status(video['video_id'], video_data.get('status', 'ready_for_upload'),
+                                             repetition={k: rep[k] for k in ("block", "warn", "empreinte")})
+            refused = repetition.blocking_message(rep)
+        except Exception as e:
+            print(f"⚠️ Contrôle de répétition impossible pour {video['video_id']}: {e}")
+        if refused:
+            results.append({"video_id": video['video_id'], "title": title, "success": False, "url": None, "error": refused})
+            continue
+
         scheduled_time, note = effective_scheduled_time(video)
 
         try:
@@ -1098,6 +1153,9 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
             "success": bool(url), "url": url, "note": note if url else None,
             "error": None if url else "Upload failed"
         })
+        if url:                         # the next videos of this run are compared with it too
+            database.setdefault('videos', {})[video['video_id']] = {**video_data, "channel": channel_name,
+                                                                    "status": "uploaded", "youtube_id": url}
 
     return results
 

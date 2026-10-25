@@ -308,8 +308,17 @@ class GenerativePipeline:
         try:                            # what made it, kept with the video (see recette.py)
             import recette
             from generative.ffmpeg_composer import MUSIC_LEVEL
+            from generative.caption_styles import group_into_blocks
             voice = self.channel_manager.get_channel_profile(video["channel"]).get("tts_voice_id")
-            rec = recette.from_generation({**video, "video_path": out_path}, voice_id=voice, music_level=MUSIC_LEVEL)
+            blocks = []
+            for b in group_into_blocks(words):      # a list number ("1.") goes with the sentence it opens
+                if blocks and len(blocks[-1]) == 1 and blocks[-1][0][0].rstrip(".").isdigit():
+                    b = blocks.pop() + b
+                blocks.append(b)
+            phrases = [{"debut": round(b[0][1], 2), "duree": round(b[-1][2] - b[0][1], 2),
+                        "texte": " ".join(w[0] for w in b)} for b in blocks]
+            rec = recette.from_generation({**video, "video_path": out_path}, voice_id=voice, music_level=MUSIC_LEVEL,
+                                          phrases=phrases)
         except Exception:
             pass                        # the recipe never blocks a video
         self.url_manager.update_video_status(video_id, "ready_for_upload", video_path=out_path, render_error=None,

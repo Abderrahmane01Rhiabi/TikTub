@@ -119,10 +119,17 @@ def from_adaptation(rec: Dict, music_path: Optional[str] = None, reconstruite: b
 
 
 def from_generation(video: Dict, length: Optional[float] = None, voice_id: Optional[str] = None,
-                    music_level: Optional[float] = None, reconstruite: bool = False) -> Dict:
-    """A narrated video on a background (generative pipeline)."""
-    return make("generation", video.get("channel"), accroche=first_sentence(video.get("script_text") or ""),
-                duree_s=length or duration(video.get("video_path")), plans=1,
+                    music_level: Optional[float] = None, reconstruite: bool = False,
+                    phrases: Optional[List[Dict]] = None) -> Dict:
+    """A narrated video on a background (generative pipeline). phrases: each
+    sentence as said, [{"debut", "duree", "texte"}] — the retention curve is
+    read sentence by sentence against them (the words file in temp/ is
+    cleaned up after publishing)."""
+    phrases = phrases or []
+    return make("generation", video.get("channel"),
+                accroche=phrases[0]["texte"] if phrases else first_sentence(video.get("script_text") or ""),
+                accroche_s=phrases[0]["duree"] if phrases else None,
+                duree_s=length or duration(video.get("video_path")), plans=len(phrases) or 1,
                 musique=_music(video.get("bg_music_path"), 0.0, volume=music_level, niveau="baisse sous la voix"),
                 voix={"id": voice_id} if voice_id else None,
                 style={"sous_titres": video.get("caption_style") or "karaoke", "couleur": video.get("caption_color"),
@@ -130,7 +137,7 @@ def from_generation(video: Dict, length: Optional[float] = None, voice_id: Optio
                        "fond_video": os.path.basename(video.get("bg_video_path") or "") or None,
                        "fond_video_archive": archive(video.get("bg_video_path"), "fonds")},
                 details={"format_script": video.get("script_format"), "inspire_de": video.get("inspired_by"),
-                         "script": video.get("script_text")},
+                         "script": video.get("script_text"), **({"plans": phrases} if phrases else {})},
                 reconstruite=reconstruite)
 
 

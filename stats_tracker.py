@@ -194,6 +194,11 @@ def start_background_tracker(batch_processor, interval_seconds: int = 3600):
             except Exception as e:
                 print(f"⚠️ Connection check failed: {e}")
             try:
+                import alerts
+                alerts.check_shorts_feed()   # every 6 h: is YouTube still showing each channel?
+            except Exception as e:
+                print(f"⚠️ Shorts feed check failed: {e}")
+            try:
                 sync_retention(batch_processor)
             except Exception as e:
                 print(f"⚠️ Retention sync failed: {e}")
@@ -210,16 +215,19 @@ RETENTION_DELAY = timedelta(days=9)  # first week + YouTube Analytics' ~2-3 days
 
 
 def sync_retention(batch_processor, limit: int = 60) -> int:
-    """Measures each published video's first-week retention once (stored on
-    the row as retention_7d), past videos included — at most `limit` per
-    run, so a big backlog is spread over a few hourly cycles."""
-    from youtube_uploader import get_first_week_retention
+    """Measures each published video's first week once (stored on the row as
+    retention_7d: % watched, engaged views, likes, shares, subscribers, the
+    share from the Shorts feed) and keeps its retention curve, past videos
+    included — at most `limit` per run, so a big backlog is spread over a
+    few hourly cycles. A row measured before the engagement figures existed
+    is measured again."""
+    from youtube_uploader import get_first_week_retention, get_retention_curve
 
     url_manager = batch_processor.url_manager
     now = datetime.now()
     due: Dict[str, List[Dict]] = {}
     for video in url_manager.list_videos():
-        if not video.get("youtube_id") or video.get("retention_7d"):
+        if not video.get("youtube_id") or "engaged_views" in (video.get("retention_7d") or {}):
             continue
         published = published_moment(video)
         if published and published + RETENTION_DELAY <= now:
@@ -239,8 +247,16 @@ def sync_retention(batch_processor, limit: int = 60) -> int:
         for v in batch:
             r = found.get(v["youtube_id"])
             if r:
+                extra = {}
+                if not (v.get("retention_curve") or {}).get("points"):     # where people leave, kept for good
+                    try:
+                        points = get_retention_curve(channel, v["youtube_id"], published_moment(v).strftime("%Y-%m-%d"))
+                        if points:
+                            extra["retention_curve"] = {"points": points, "fetched_at": now.isoformat(timespec="seconds")}
+                    except Exception:
+                        pass
                 url_manager.update_video_status(v["video_id"], v["status"],
-                                                retention_7d={**r, "measured_at": now.isoformat()})
+                                                retention_7d={**r, "measured_at": now.isoformat()}, **extra)
                 measured += 1
     if measured:
         print(f"📈 Rétention 1re semaine mesurée pour {measured} vidéo(s)")
