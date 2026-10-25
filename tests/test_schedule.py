@@ -87,3 +87,88 @@ def test_an_entry_published_right_away_without_time_does_not_break_the_schedule(
 
     assert combined[0]["video_id"] == "published_now"
     assert {e["video_id"] for e in combined} == {"published_now", "early", "late"}
+
+
+# ---- the "Analytics" and "IA" methods (AUDIT.md §8.3, points 1-2)
+
+@pytest.fixture
+def no_analytics_call(monkeypatch):
+    """Peak hours and weekdays without asking YouTube Analytics."""
+    from smart_scheduler import SmartScheduler
+    monkeypatch.setattr(SmartScheduler, "get_channel_peak_times", lambda self, ch, use_cache=True: [8, 12, 18, 20])
+    monkeypatch.setattr(SmartScheduler, "get_channel_best_weekdays", lambda self, ch, use_cache=True: [0, 1, 2, 3, 4, 5, 6])
+
+
+def test_analytics_keeps_each_videos_own_channel(project, bp, no_analytics_call):
+    for ch in ("chanA", "chanB", "chanC"):
+        for i in range(2):
+            project.add_video(f"{ch}_{i}", channel=ch, title=f"{ch} {i}")
+
+    schedule = bp.create_upload_schedule(schedule_method="analytics")
+
+    assert {e["channel"] for e in schedule} == {"chanA", "chanB", "chanC"}
+    assert all(e["channel"] == e["video_id"].split("_")[0] for e in schedule)
+    saved = bp.scheduler.load_schedule()["schedule"]
+    assert "default" not in {e["channel"] for e in saved} and len(saved) == 6
+    # each channel has its own slots: the second channel is not pushed after the first one's
+    assert channel_slots(bp, schedule, "chanA") == channel_slots(bp, schedule, "chanB") == channel_slots(bp, schedule, "chanC")
+
+
+def test_analytics_puts_high_priority_first(project, bp, no_analytics_call):
+    for vid, prio in (("low", "low"), ("high", "high"), ("normal", "normal")):
+        project.add_video(vid, title=vid, priority=prio)
+
+    schedule = bp.create_upload_schedule(schedule_method="analytics")
+
+    order = [e["video_id"] for e in sorted(schedule, key=lambda e: bp._parse_slot(e["scheduled_time"]))]
+    assert order == ["high", "normal", "low"]
+
+
+def test_analytics_never_drops_a_video_silently(project, no_analytics_call):
+    from smart_scheduler import SmartScheduler
+    videos = [{"video_id": f"v{i}", "channel": "chanA", "title": f"V{i}"} for i in range(25)]   # 5 best weekdays x 4 hours = 20 slots
+
+    result = SmartScheduler().create_analytics_based_schedule(videos, days_ahead=7)
+
+    assert len(result["schedule"]) == 20
+    assert [u["video_id"] for u in result["unscheduled"]] == [f"v{i}" for i in range(20, 25)]
+    assert all(u["channel"] == "chanA" and u["reason"] for u in result["unscheduled"])
+
+
+def test_videos_added_later_with_analytics_keep_their_channel_and_spacing(project, bp, no_analytics_call):
+    for ch in ("chanA", "chanB"):
+        project.add_video(f"{ch}_early", channel=ch, title="E")
+    bp.create_upload_schedule(schedule_method="analytics")
+    for ch in ("chanA", "chanB"):
+        project.add_video(f"{ch}_late", channel=ch, title="L")
+
+    combined = bp.ensure_schedule_includes_all_ready()
+
+    assert {e["video_id"]: e["channel"] for e in combined} == {
+        "chanA_early": "chanA", "chanB_early": "chanB", "chanA_late": "chanA", "chanB_late": "chanB"}
+    for ch in ("chanA", "chanB"):
+        assert all(g >= bp.config["scheduling"]["spacing_hours"] for g in gaps_hours(channel_slots(bp, combined, ch)))
+
+
+def test_ai_method_keeps_channels_and_enforces_spacing(project, bp):
+    project.add_video("a1", channel="chanA", title="A1")
+    project.add_video("a2", channel="chanA", title="A2")
+    project.add_video("b1", channel="chanB", title="B1")
+    asked = []
+
+    class FakeGemini:                                   # no network: the answer Gemini would give
+        def call_gemini_api(self, prompt, **kw):
+            asked.append(prompt)
+            return {"schedule": [{"video_id": "a1", "date": "2030-01-07", "time": "18:00"},
+                                 {"video_id": "a2", "date": "2030-01-07", "time": "19:00"}]}   # b1 left out
+    bp.ai_scheduler.ai_generator.gemini_ai = FakeGemini()
+    bp.ai_scheduler.ai_generator.openai_ai = None
+
+    schedule = bp.create_upload_schedule(schedule_method="ai")
+
+    assert len(asked) == 1
+    by_id = {e["video_id"]: e for e in schedule}
+    assert {v: e["channel"] for v, e in by_id.items()} == {"a1": "chanA", "a2": "chanA", "b1": "chanB"}
+    gap = (bp._parse_slot(by_id["a2"]["scheduled_time"]) - bp._parse_slot(by_id["a1"]["scheduled_time"])).total_seconds() / 3600
+    assert gap >= bp.config["scheduling"]["spacing_hours"]       # the AI's 1 h gap is never trusted
+    assert by_id["b1"]["scheduled_time"]                           # missing from the answer: still gets a slot
