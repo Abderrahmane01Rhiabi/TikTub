@@ -5,8 +5,17 @@ Manages multiple YouTube channels with individual credentials and configurations
 """
 
 import os
+import re
 import json
 from typing import Dict, List, Optional
+
+# A channel name coming from outside (a route): letters, digits, _ and - only —
+# never "..", "/" or anything else that could point outside channels/.
+CHANNEL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class UnknownChannelError(ValueError):
+    """A well-formed channel name that isn't in channel_config.json."""
 
 # Channel colors (the dot next to a channel everywhere in the app), stored in
 # channel_config.json. Channels that existed when they were hard-coded in
@@ -217,6 +226,17 @@ class ChannelManager:
         credentials_path = os.path.join(channel_dir, "credentials.json")
         token_path = os.path.join(channel_dir, "token.json")
         return credentials_path, token_path
+
+    def validate_channel_name(self, channel_name) -> str:
+        """THE check for a channel name received from outside: allowed format
+        AND an existing channel. ValueError (UnknownChannelError when the
+        format is fine but no such channel), message in French."""
+        if not isinstance(channel_name, str) or not CHANNEL_NAME_RE.match(channel_name):
+            raise ValueError(f"Nom de chaîne invalide : « {str(channel_name)[:70]} » "
+                             "(lettres, chiffres, _ et - uniquement).")
+        if channel_name not in self.get_config():
+            raise UnknownChannelError(f"Chaîne inconnue : « {channel_name} ».")
+        return channel_name
 
     def channel_exists(self, channel_name: str) -> bool:
         """Check if a channel exists"""

@@ -46,6 +46,7 @@ def test_groups_need_two_videos_and_show_what_beats_the_median():
 
 
 def test_endpoint_uses_only_this_channels_published_videos(client, project):
+    project.declare_channel("chanA")
     project.add_video("pub", youtube_id="Y1", status="uploaded", youtube_published_at="2026-09-01T10:00:00")
     project.add_video("other", channel="chanB", youtube_id="Y2", status="uploaded")
     project.add_video("draft", status="ready_for_upload")
@@ -57,6 +58,7 @@ def test_endpoint_uses_only_this_channels_published_videos(client, project):
 
 
 def test_remake_presets_the_decor_and_feeds_the_winner_to_the_script_prompt(client, project, monkeypatch):
+    project.declare_channel("chanA")
     assets = Path("channels/chanA/assets")
     (assets / "backgrounds").mkdir(parents=True)
     (assets / "music").mkdir(parents=True)
@@ -91,6 +93,7 @@ def test_remake_presets_the_decor_and_feeds_the_winner_to_the_script_prompt(clie
 
 
 def test_remake_refuses_a_video_from_another_channel_or_not_generated(client, project):
+    project.declare_channel("chanA")
     project.add_video("imported", status="uploaded", youtube_id="Y")
     assert client.post("/api/channels/chanA/generation_draft", json={"count": 1, "inspired_by": "imported"}).status_code == 400
 
@@ -165,6 +168,7 @@ def test_suggestion_carries_the_whole_winning_recipe_and_the_closest_model():
 
 
 def test_recipe_overrides_the_models_decor_and_format(client, project, monkeypatch):
+    project.declare_channel("chanA")
     assets = Path("channels/chanA/assets")
     (assets / "backgrounds").mkdir(parents=True)
     (assets / "music").mkdir(parents=True)

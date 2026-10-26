@@ -17,7 +17,7 @@ import tempfile
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Annotated, Dict, Optional
 from urllib.parse import quote
 
 # Make sure the project root (parent of webapp/) is importable regardless of
@@ -34,7 +34,7 @@ os.chdir(DATA_ROOT)
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -56,6 +56,26 @@ async def lifespan(app):
 
 app = FastAPI(title="TikTub", lifespan=lifespan)
 channel_manager = ChannelManager()
+
+
+def checked_channel(name) -> str:
+    """Every channel name a route receives (path, body or query) goes through
+    ChannelManager.validate_channel_name: 400 for a bad format (e.g. "..",
+    which would write outside channels/), 404 for a channel that doesn't exist."""
+    from channel_manager import UnknownChannelError
+    try:
+        return channel_manager.validate_channel_name(name)
+    except UnknownChannelError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _valid_channel_name(channel_name: str) -> str:
+    return checked_channel(channel_name)
+
+
+ChannelName = Annotated[str, Depends(_valid_channel_name)]   # a {channel_name} path parameter, checked
 
 # Serve downloaded/processed videos so <video> tags in the UI can preview them
 os.makedirs("temp", exist_ok=True)
@@ -586,7 +606,7 @@ def dismiss_failed_video(video_id: str):
 
 
 @app.get("/api/channels/{channel_name}/profile")
-def get_channel_profile(channel_name: str):
+def get_channel_profile(channel_name: ChannelName):
     return channel_manager.get_channel_profile(channel_name)
 
 
@@ -600,7 +620,7 @@ class ProfileUpdate(BaseModel):
 
 
 @app.put("/api/channels/{channel_name}/profile")
-def update_channel_profile(channel_name: str, update: ProfileUpdate):
+def update_channel_profile(channel_name: ChannelName, update: ProfileUpdate):
     profile = channel_manager.get_channel_profile(channel_name)
     for key, value in update.dict(exclude_unset=True).items():
         profile[key] = value
@@ -609,7 +629,7 @@ def update_channel_profile(channel_name: str, update: ProfileUpdate):
 
 
 @app.post("/api/channels/{channel_name}/background")
-async def upload_background(channel_name: str, file: UploadFile = File(...)):
+async def upload_background(channel_name: ChannelName, file: UploadFile = File(...)):
     channel_dir = Path("channels") / channel_name
     channel_dir.mkdir(parents=True, exist_ok=True)
 
@@ -631,7 +651,7 @@ async def upload_background(channel_name: str, file: UploadFile = File(...)):
 
 
 @app.get("/api/channels/{channel_name}/background")
-def get_background_image(channel_name: str):
+def get_background_image(channel_name: ChannelName):
     path = channel_manager.get_background_path(channel_name)
     if not path:
         raise HTTPException(status_code=404, detail="No background set for this channel")
@@ -639,7 +659,7 @@ def get_background_image(channel_name: str):
 
 
 @app.delete("/api/channels/{channel_name}/background")
-def remove_background(channel_name: str):
+def remove_background(channel_name: ChannelName):
     """Removes this channel's background image — future videos fall back to
     plain black (never a random pick from backgrounds/, per an earlier decision)."""
     channel_dir = Path("channels") / channel_name
@@ -658,7 +678,7 @@ def remove_background(channel_name: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/channels/{channel_name}/connect/start")
-def connect_start(channel_name: str, request: Request):
+def connect_start(channel_name: ChannelName, request: Request):
     from youtube_uploader import start_oauth_flow
 
     # Always use "localhost" (matching credentials.json's registered
@@ -719,7 +739,7 @@ def oauth_callback(request: Request):
 
 
 @app.get("/api/channels/{channel_name}/connection_status")
-def connection_status(channel_name: str):
+def connection_status(channel_name: ChannelName):
     """state tells WHY a channel isn't usable (see get_connection_health) —
     "expired" vs "not_connected" vs "error" — instead of one bare
     "Non connectée" for every case."""
@@ -741,7 +761,7 @@ def connection_status(channel_name: str):
 
 
 @app.get("/api/channels/{channel_name}/dashboard")
-def channel_dashboard(channel_name: str, refresh: bool = False):
+def channel_dashboard(channel_name: ChannelName, refresh: bool = False):
     """Every video TikTub has published to this channel, with locally-known
     metadata always shown, plus live YouTube stats (views/likes/real privacy
     status) fetched on demand (?refresh=true) — not on every page load, since
@@ -794,7 +814,7 @@ class VisibilityUpdate(BaseModel):
 
 
 @app.patch("/api/channels/{channel_name}/videos/{youtube_id}/visibility")
-def update_visibility(channel_name: str, youtube_id: str, update: VisibilityUpdate):
+def update_visibility(channel_name: ChannelName, youtube_id: str, update: VisibilityUpdate):
     from youtube_uploader import update_video_visibility
 
     try:
@@ -822,7 +842,7 @@ def update_visibility(channel_name: str, youtube_id: str, update: VisibilityUpda
 
 
 @app.get("/api/channels/{channel_name}/videos/{youtube_id}/analytics")
-def video_analytics(channel_name: str, youtube_id: str):
+def video_analytics(channel_name: ChannelName, youtube_id: str):
     from youtube_uploader import get_video_analytics, has_analytics_scope
 
     if not has_analytics_scope(channel_name):
@@ -839,7 +859,7 @@ def video_analytics(channel_name: str, youtube_id: str):
 
 
 @app.get("/api/channels/{channel_name}/performance")
-def channel_performance(channel_name: str):
+def channel_performance(channel_name: ChannelName):
     """"Ce qui marche": this channel's published videos ranked by views 7
     days after publication, each scored against the channel's median, plus
     which choices (format, décor, captions, publish day/hour...) beat it.
@@ -878,7 +898,7 @@ def sync_youtube_statuses_now():
 
 
 @app.get("/api/channels/{channel_name}/channel_analytics")
-def channel_analytics_endpoint(channel_name: str, days: int = 30):
+def channel_analytics_endpoint(channel_name: ChannelName, days: int = 30):
     from youtube_uploader import get_channel_analytics, has_analytics_scope
 
     if not has_analytics_scope(channel_name):
@@ -904,7 +924,7 @@ class UrlsSubmission(BaseModel):
 
 
 @app.post("/api/channels/{channel_name}/urls")
-def submit_urls(channel_name: str, submission: UrlsSubmission):
+def submit_urls(channel_name: ChannelName, submission: UrlsSubmission):
     bp = get_batch_processor()
 
     urls_dir = channel_manager.get_urls_input_dir(channel_name)
@@ -1034,6 +1054,8 @@ def get_batch_videos(batch_id: str, status: Optional[str] = None):
 def get_all_videos(status: Optional[str] = None, channel: Optional[str] = None):
     """Global video listing across every channel/batch — what the wizard UI uses,
     since it works on all 6 channels at once rather than one at a time."""
+    if channel:
+        checked_channel(channel)
     bp = get_batch_processor()
     videos = bp.list_all_videos(status=status, channel=channel)
     return [serialize_video(v) for v in videos]
@@ -1280,7 +1302,7 @@ MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
 
 @app.get("/api/channels/{channel_name}/montage")
-def get_channel_montage(channel_name: str):
+def get_channel_montage(channel_name: ChannelName):
     return _montage_channel_payload(channel_name)
 
 
@@ -1289,7 +1311,7 @@ class ChannelMontageUpdate(BaseModel):
 
 
 @app.put("/api/channels/{channel_name}/montage")
-def update_channel_montage(channel_name: str, update: ChannelMontageUpdate):
+def update_channel_montage(channel_name: ChannelName, update: ChannelMontageUpdate):
     from montage import recipes
     profile = channel_manager.get_channel_profile(channel_name)
     profile["montage"] = recipes.clean_settings(update.settings)
@@ -1298,7 +1320,7 @@ def update_channel_montage(channel_name: str, update: ChannelMontageUpdate):
 
 
 @app.post("/api/channels/{channel_name}/assets/music")
-async def upload_channel_music(channel_name: str, file: UploadFile = File(...)):
+async def upload_channel_music(channel_name: ChannelName, file: UploadFile = File(...)):
     """Adds a song to the channel's music folder (what Montage auto and the
     generative pipeline pick their background music from)."""
     name = Path(file.filename or "").name
@@ -1717,7 +1739,7 @@ class CreateDraftRequest(BaseModel):
 
 
 @app.post("/api/channels/{channel_name}/generation_draft")
-def create_generation_draft(channel_name: str, req: CreateDraftRequest):
+def create_generation_draft(channel_name: ChannelName, req: CreateDraftRequest):
     """Phase 1 kickoff: registers `count` draft rows (no decor — that's
     chosen later, per-video, in phase 3) and immediately starts writing their
     scripts in a background thread. The request returns right away; the UI
@@ -1788,7 +1810,7 @@ GENERATION_DRAFT_STATUSES = {"awaiting_script", "script_generated", "audio_gener
 
 
 @app.get("/api/channels/{channel_name}/generated_videos")
-def get_generated_videos(channel_name: str, status: Optional[str] = None, batch_id: Optional[str] = None):
+def get_generated_videos(channel_name: ChannelName, status: Optional[str] = None, batch_id: Optional[str] = None):
     """Without an explicit status or batch_id, only the still-in-progress
     draft(s) are returned — never a completed one. Once a video reaches
     'ready_for_upload' (and anything further downstream: 'uploaded',
@@ -1849,25 +1871,25 @@ def update_generated_script(video_id: str, update: ScriptUpdate):
 
 
 @app.get("/api/channels/{channel_name}/assets")
-def get_channel_assets(channel_name: str):
+def get_channel_assets(channel_name: ChannelName):
     """Lists the background videos/music the user has manually dropped into
     channels/<name>/assets/ — nothing here is fetched from an external API."""
     return get_generative_pipeline().list_assets(channel_name)
 
 
 @app.get("/api/channels/{channel_name}/assets/backgrounds/{filename}")
-def get_background_asset(channel_name: str, filename: str):
+def get_background_asset(channel_name: ChannelName, filename: str):
     return FileResponse(_safe_asset_path(channel_name, "backgrounds", filename))
 
 
 @app.get("/api/channels/{channel_name}/assets/music/{filename}")
-def get_music_asset(channel_name: str, filename: str):
+def get_music_asset(channel_name: ChannelName, filename: str):
     return FileResponse(_safe_asset_path(channel_name, "music", filename))
 
 
 @app.get("/api/channels/{channel_name}/asset_frame_preview")
 def asset_frame_preview(
-    channel_name: str, bg_video_filename: str, frame_mode: str = "fill",
+    channel_name: ChannelName, bg_video_filename: str, frame_mode: str = "fill",
     rounded_corners: bool = False, caption_style: Optional[str] = None, caption_color: Optional[str] = None,
 ):
     """A composited still frame of a candidate background asset with the
@@ -2175,6 +2197,8 @@ class ScheduleRequest(BaseModel):
 
 @app.post("/api/schedule")
 def create_schedule(req: ScheduleRequest):
+    if req.target_channel:
+        checked_channel(req.target_channel)
     bp = get_batch_processor()
     schedule = bp.create_upload_schedule(
         max_videos=req.max_videos,
@@ -2414,6 +2438,7 @@ class PublishRequest(BaseModel):
 
 @app.post("/api/publish")
 def publish(req: PublishRequest):
+    checked_channel(req.channel_name)
     bp = get_batch_processor()
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
     moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public

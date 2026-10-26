@@ -73,7 +73,17 @@ class Project:
         channel_dir = Path("channels") / name
         channel_dir.mkdir(parents=True, exist_ok=True)
         (channel_dir / "credentials.json").write_text(json.dumps({"installed": {"client_id": client_id}}))
+        self.declare_channel(name)
         return channel_dir
+
+    def declare_channel(self, *names):
+        """In channel_config.json, as the app knows its channels — routes
+        refuse a channel that isn't there (ChannelManager.validate_channel_name)."""
+        config_path = Path("channels") / "channel_config.json"
+        config = json.loads(config_path.read_text()) if config_path.exists() else {}
+        for name in names:
+            config.setdefault(name, {"display_name": name, "active": True})
+        config_path.write_text(json.dumps(config))
 
     def write_schedule(self, entries, method=None):
         with open("upload_schedule.json", "w", encoding="utf-8") as f:

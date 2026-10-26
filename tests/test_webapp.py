@@ -28,6 +28,7 @@ def entry(video_id, channel="chanA", when=FUTURE):
     ("ok", "connected"),
 ])
 def test_connection_status_says_why(client, project, monkeypatch, setup, expected):
+    project.declare_channel("chanA")
     if setup != "no_credentials":
         channel_dir = project.add_channel("chanA")
         if setup != "no_token":
@@ -94,6 +95,7 @@ def test_schedule_screens_work_before_any_schedule_exists(client, project):
 # ---- fixed endpoints
 
 def test_visibility_change_syncs_the_local_status(client, project, monkeypatch):
+    project.declare_channel("chanA")
     project.add_video("v1", status="scheduled_on_youtube", youtube_id="YT1")
     monkeypatch.setattr(yu, "update_video_visibility", lambda ch, yid, privacy, at=None: {"privacyStatus": privacy})
 
@@ -226,6 +228,7 @@ def test_page_is_never_cached_and_api_tells_its_build(client):
 def test_links_sent_for_several_channels_in_the_same_second_all_get_a_batch(client, project, monkeypatch):
     """Regression: batch ids were timestamp-only (to the second), so the
     second channel submitted in the same second crashed with a 500."""
+    project.declare_channel("chanA", "chanB")
     import channel_manager
     for ch in ("chanA", "chanB"):
         (project.root / "channels" / ch / "urls_input").mkdir(parents=True, exist_ok=True)
