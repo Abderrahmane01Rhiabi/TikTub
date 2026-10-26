@@ -40,3 +40,14 @@ def test_a_new_channel_gets_a_color_nobody_uses(project):
 def test_the_page_no_longer_hard_codes_channel_colors():
     core = (Path(__file__).resolve().parent.parent / "webapp/static/js/core.js").read_text(encoding="utf-8")
     assert "CHANNEL_COLORS" not in core and "meme_culture" not in core
+
+
+def test_the_profile_seed_script_is_gone():
+    """It overwrote every profile.json when run again (AUDIT.md §8.3-10)."""
+    import subprocess
+    root = Path(__file__).resolve().parent.parent
+    assert not (root / "channel_profiles_seed.py").exists()
+    tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True).stdout.split()
+    mentions = [f for f in tracked if f.endswith((".py", ".md", ".js", ".html")) and not f.startswith("tests/")
+                and "channel_profiles_seed" in (root / f).read_text(encoding="utf-8", errors="ignore")]
+    assert mentions == []
