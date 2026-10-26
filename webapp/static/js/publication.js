@@ -312,7 +312,7 @@ function unscheduledHtml(list){
 function renderSchedule(schedule, unscheduled = []){
   const byChannel = {};
   schedule.forEach(e => {
-    const ch = e.channel || (e.video_data && e.video_data.channel) || 'default';
+    const ch = e.channel || (e.video_data && e.video_data.channel) || '(sans chaîne)';
     (byChannel[ch] ||= []).push(e);
   });
   const wrap = document.getElementById('scheduleSections');
@@ -629,7 +629,7 @@ async function loadSummaryFromSchedule(){
   const schedule = data.schedule || [];
   const byChannel = {};
   schedule.forEach(e => {
-    const ch = e.channel || (e.video_data && e.video_data.channel) || 'default';
+    const ch = e.channel || (e.video_data && e.video_data.channel) || '(sans chaîne)';
     (byChannel[ch] ||= []).push(e);
   });
   const wrap = document.getElementById('summarySections');

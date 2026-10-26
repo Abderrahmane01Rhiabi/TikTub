@@ -107,7 +107,7 @@ class YouTubeScheduler:
 
         by_channel: Dict[str, List[Dict]] = {}
         for video in videos:
-            channel = video.get('channel') or video.get('target_channel', 'default')
+            channel = video.get('channel') or video.get('target_channel')
             by_channel.setdefault(channel, []).append(video)
 
         schedule = []

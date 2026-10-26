@@ -2250,7 +2250,9 @@ def publish_preflight():
     moved = bp.reschedule_past_entries(save=False)
     by_channel: Dict[str, list] = {}
     for entry in pending:
-        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
+        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel")
+        if not channel:
+            continue        # no channel: never published (upload_all_channels_schedule says so)
         by_channel.setdefault(channel, []).append(entry)
 
     report = []
@@ -2365,7 +2367,7 @@ def calendar():
 
     items = []
     for entry in pending:
-        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
+        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel")
         try:
             when = bp._parse_slot(entry["scheduled_time"]).isoformat()
         except (KeyError, ValueError, TypeError):

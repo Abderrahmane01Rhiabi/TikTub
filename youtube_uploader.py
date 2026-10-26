@@ -48,7 +48,7 @@ TOKEN_FILE = 'token.json'              # Fallback for single-channel
 STATUS_DB = 'database/videos_status.json'
 SCHEDULE_FILE = 'upload_schedule.json'
 
-def get_credentials_path(channel_name="default"):
+def get_credentials_path(channel_name=None):
     """Get credentials path for specified channel (multi-channel support)"""
     if MULTI_CHANNEL_SUPPORT:
         manager = ChannelManager()
@@ -56,7 +56,7 @@ def get_credentials_path(channel_name="default"):
         return credentials_path
     return CREDENTIALS_FILE  # Fallback to single-channel
 
-def get_token_path(channel_name="default"):
+def get_token_path(channel_name=None):
     """Get token path for specified channel (multi-channel support)"""
     if MULTI_CHANNEL_SUPPORT:
         manager = ChannelManager()
@@ -67,7 +67,7 @@ def get_token_path(channel_name="default"):
 def select_channel():
     """Interactive channel selection (returns channel name)"""
     if not MULTI_CHANNEL_SUPPORT:
-        return "default"  # Single-channel mode
+        return None  # no channel list: nothing to choose from
         
     manager = ChannelManager()
     channels = manager.list_channels()
@@ -747,7 +747,7 @@ def update_video_status(video_id, youtube_url, youtube_id, scheduled_time=None):
         return True
     return False
 
-def authenticate_youtube(channel_name="default", interactive=True):
+def authenticate_youtube(channel_name=None, interactive=True):
     """Authentification avec YouTube API (Multi-channel support).
 
     interactive=False (web app): never falls back to InstalledAppFlow's local
@@ -759,12 +759,8 @@ def authenticate_youtube(channel_name="default", interactive=True):
     
     # Check if credentials file exists
     if not os.path.exists(credentials_file):
-        if channel_name != "default":
-            print(f"❌ Credentials not found for channel '{channel_name}': {credentials_file}")
-            print("Run: python setup_channels.py")
-        else:
-            print(f"❌ Credentials file not found: {credentials_file}")
-            print("Download OAuth credentials from Google Cloud Console")
+        print(f"❌ Credentials not found for channel '{channel_name}': {credentials_file}")
+        print("Ajoute la chaîne depuis l'app : Réglages → Connexion → « Ajouter une chaîne »")
         return None
         
     creds = None
@@ -792,7 +788,7 @@ def authenticate_youtube(channel_name="default", interactive=True):
 
     return build('youtube', 'v3', credentials=creds)
 
-def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name="default"):
+def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name=None):
     """Upload une vidéo sur YouTube avec données AI et scheduling optionnel"""
     if tags is None:
         tags = ['Shorts', 'TikTok', 'Viral']
@@ -1080,10 +1076,19 @@ def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
         return []
 
     channels = set()
-    for video in schedule_data.get('schedule', []):
-        channels.add(video.get('channel') or video.get('video_data', {}).get('channel', 'default'))
-
     all_results = []
+    for video in schedule_data.get('schedule', []):
+        channel = video.get('channel') or video.get('video_data', {}).get('channel')
+        if channel:
+            channels.add(channel)
+            continue
+        status = load_video_database().get('videos', {}).get(video.get('video_id'), {}).get('status')
+        if status not in ('uploaded', 'scheduled_on_youtube'):
+            # never "the first channel": a video nobody assigned is not sent anywhere
+            all_results.append({"video_id": video.get('video_id'), "title": video.get('title'), "channel": None,
+                                "success": False, "url": None,
+                                "error": "Vidéo sans chaîne dans le planning — non publiée. Choisis sa chaîne puis régénère le planning."})
+
     for channel_name in sorted(channels):
         for result in upload_channel_schedule(channel_name, auto_confirm=auto_confirm):
             result['channel'] = channel_name
@@ -1106,7 +1111,7 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
 
     videos_to_upload = []
     for video in scheduled_videos:
-        video_channel = video.get('channel') or video.get('video_data', {}).get('channel', 'default')
+        video_channel = video.get('channel') or video.get('video_data', {}).get('channel')
         if video_channel != channel_name:
             continue
 

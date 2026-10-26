@@ -44,42 +44,17 @@ class ChannelManager:
         self.ensure_channels_structure()
 
     def ensure_channels_structure(self):
-        """Create channels directory structure if it doesn't exist"""
+        """Create channels directory structure if it doesn't exist.
+        An old single-channel credentials.json at the root is no longer
+        turned into a "default" channel (whose account nobody could tell):
+        a channel is added from the app, « Ajouter une chaîne »."""
         if not os.path.exists(self.channels_dir):
             os.makedirs(self.channels_dir)
-            
-        # Create default channel from existing credentials if they exist
         if not os.path.exists(self.config_file) and (
             os.path.exists("credentials.json") or os.path.exists("token.json")
         ):
-            self.migrate_default_channel()
-
-    def migrate_default_channel(self):
-        """Migrate existing single-channel setup to default channel"""
-        default_dir = os.path.join(self.channels_dir, "default")
-        os.makedirs(default_dir, exist_ok=True)
-        
-        # Move existing credentials to default channel
-        if os.path.exists("credentials.json"):
-            import shutil
-            shutil.copy2("credentials.json", os.path.join(default_dir, "credentials.json"))
-            print("✅ Migrated credentials.json to channels/default/")
-            
-        if os.path.exists("token.json"):
-            import shutil
-            shutil.copy2("token.json", os.path.join(default_dir, "token.json"))
-            print("✅ Migrated token.json to channels/default/")
-        
-        # Create initial config
-        config = {
-            "default": {
-                "display_name": "Default Channel",
-                "description": "Your main YouTube channel",
-                "created_at": "2025-07-30",
-                "active": True
-            }
-        }
-        self.save_config(config)
+            print("ℹ️ credentials.json à la racine ignoré : ajoute la chaîne depuis l'app "
+                  "(Réglages → Connexion → « Ajouter une chaîne »).")
 
     def get_config(self) -> Dict:
         """Load channel configuration"""
@@ -95,6 +70,9 @@ class ChannelManager:
 
     def add_channel(self, channel_name: str, display_name: str, description: str = "") -> bool:
         """Add a new channel"""
+        if channel_name == "default":
+            print("❌ « default » est réservé : choisis un autre nom de chaîne")
+            return False
         if not channel_name.replace("_", "").replace("-", "").isalnum():
             print("❌ Channel name must contain only letters, numbers, hyphens, and underscores")
             return False
@@ -229,26 +207,15 @@ class ChannelManager:
         return channels
 
     def get_channel_paths(self, channel_name: str) -> tuple:
-        """Get credentials and token paths for a channel"""
-        # Check if using old single-channel setup
-        if not os.path.exists(self.channels_dir):
-            return "credentials.json", "token.json"
-            
-        # Multi-channel setup
+        """Get credentials and token paths for a channel. No channel, or
+        "default" when no channel has that name, is an error — never "the
+        first channel" (an upload would land on a channel nobody chose)."""
+        if not channel_name or (channel_name == "default" and "default" not in self.get_config()):
+            raise ValueError(f"Aucune chaîne indiquée (« {channel_name or ''} ») : action annulée plutôt que de "
+                             "l'envoyer sur une chaîne au hasard.")
         channel_dir = os.path.join(self.channels_dir, channel_name)
         credentials_path = os.path.join(channel_dir, "credentials.json")
         token_path = os.path.join(channel_dir, "token.json")
-        
-        # If requesting "default" but it doesn't exist, try to find the first available channel
-        if channel_name == "default" and not os.path.exists(channel_dir):
-            config = self.get_config()
-            if config:
-                # Use the first available channel as fallback
-                first_channel = list(config.keys())[0]
-                channel_dir = os.path.join(self.channels_dir, first_channel)
-                credentials_path = os.path.join(channel_dir, "credentials.json")
-                token_path = os.path.join(channel_dir, "token.json")
-        
         return credentials_path, token_path
 
     def channel_exists(self, channel_name: str) -> bool:

@@ -82,7 +82,7 @@ class SmartScheduler:
         # forces one, as in ai_scheduler) — never all under "default"
         videos_by_channel = {}
         for video in videos:
-            channel = video.get('target_channel') or video.get('channel', 'default')
+            channel = video.get('target_channel') or video.get('channel')
             if channel not in videos_by_channel:
                 videos_by_channel[channel] = []
             videos_by_channel[channel].append(video)
