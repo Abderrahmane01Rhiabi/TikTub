@@ -454,6 +454,10 @@
   .cal-legend .sw{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px;border:1px solid var(--border);}
   #slotDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(440px,calc(100vw - 32px));}
   #slotDialog::backdrop{background:rgba(0,0,0,.55);}
+  #addChannelDialog{background:var(--panel);color:var(--text);border:1px solid var(--border);border-radius:12px;padding:0;width:min(560px,calc(100vw - 32px));}
+  #addChannelDialog::backdrop{background:rgba(0,0,0,.55);}
+  .dropzone{display:flex;align-items:center;gap:12px;margin-top:10px;padding:18px;border:1px dashed var(--border);border-radius:10px;cursor:pointer;color:var(--muted);font-size:12.5px;}
+  .dropzone:hover,.dropzone.over{border-color:var(--accent);color:var(--text);}
 
   /* Dashboard → Ce qui marche */
   .perf-insight .best{display:flex;flex-direction:column;gap:2px;}

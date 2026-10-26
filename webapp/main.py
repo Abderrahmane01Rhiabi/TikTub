@@ -407,6 +407,52 @@ def list_channels():
     return channel_manager.list_channels()
 
 
+# ---------------------------------------------------------------------------
+# « Ajouter une chaîne » (channel_setup.py): Google project → Gmail → confirm
+# ---------------------------------------------------------------------------
+
+@app.get("/api/google_projects")
+def google_projects():
+    """Google projects already used by a channel, with their channels and
+    today's quota (shared by the channels of one project)."""
+    import channel_setup
+    import quota
+    return {"projects": channel_setup.google_projects(channel_manager),
+            "daily_units": quota.load_settings(str(CONFIG_PATH))["daily_units"]}
+
+
+@app.post("/api/channel_drafts/upload")
+async def channel_draft_upload(file: UploadFile = File(...)):
+    """A new Google project: its OAuth client JSON, checked, kept in memory."""
+    import channel_setup
+    raw = await file.read(channel_setup.MAX_CLIENT_SECRET_BYTES + 1)
+    try:
+        config = channel_setup.parse_client_secret(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return channel_setup.public_draft(channel_setup.new_draft(config, "upload"))
+
+
+class DraftFromProject(BaseModel):
+    project_key: str
+
+
+@app.post("/api/channel_drafts/from_project")
+def channel_draft_from_project(req: DraftFromProject):
+    import channel_setup
+    config = channel_setup.client_config_for_project(channel_manager, req.project_key)
+    if not config:
+        raise HTTPException(status_code=404, detail="Projet Google introuvable parmi les chaînes existantes.")
+    return channel_setup.public_draft(channel_setup.new_draft(config, req.project_key))
+
+
+@app.delete("/api/channel_drafts/{draft_id}")
+def channel_draft_cancel(draft_id: str):
+    """Cancel: the draft (client JSON, token) only ever lived in memory."""
+    import channel_setup
+    return {"cancelled": channel_setup.drop_draft(draft_id)}
+
+
 OVERVIEW_BUCKETS = {
     "to_sort": {"selected", "montage_review"},  # downloaded, waiting for Sélection/Cadrage/Montage/Traiter
     "generating": {"awaiting_script", "script_generated", "audio_generated", "assembling"},
