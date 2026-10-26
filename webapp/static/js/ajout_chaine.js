@@ -114,11 +114,75 @@ function renderProjectStep(data){
   });
 }
 
-// ---- 2. the Gmail account (filled in by the next step of the feature)
-function renderConnectStep(){
-  addShell('Ajouter une chaîne — 2. Compte Google',
-    `<div class="muted">Projet : <b>${esc(addDraft.project_id || '')}</b></div>`,
-    `<button class="btn ghost small" data-act="cancel">Annuler</button>`);
+// ---- 2. the Gmail account, in Google's own window
+function renderConnectStep(problem){
+  addShell('Ajouter une chaîne — 2. Compte Google', `
+    <div class="muted">Projet Google : <b style="color:var(--text)">${esc(addDraft.project_id || '')}</b></div>
+    ${problem ? `<div class="fact bad" style="margin-top:10px">${icon('alert')}<span>${esc(problem)}</span></div>` : ''}
+    <div class="facts" style="margin-top:10px">
+      <div class="fact">${icon('check')}<span>Choisis ton compte Gmail, puis la chaîne si ce compte en gère plusieurs.</span></div>
+      <div class="fact">${icon('alert')}<span>Accès refusé ? Ajoute ton Gmail comme <b>utilisateur de test</b> : Google Cloud → Google Auth Platform → Audience → Utilisateurs test.</span></div>
+      <div class="fact">${icon('clock')}<span>Pour que la connexion n'expire pas tous les 7 jours, passe le projet en mode <b>« Production »</b> (Audience → Publier l'application).</span></div>
+    </div>`,
+    `<button class="btn ghost small" data-act="cancel">Annuler</button>
+     <button class="btn primary small push" data-act="google">Ouvrir la fenêtre Google</button>`);
+  addDialog().querySelector('[data-act="google"]').addEventListener('click', openGoogleWindow);
+}
+
+async function openGoogleWindow(ev){
+  const btn = ev.currentTarget;
+  btn.disabled = true;
+  let auth_url;
+  try { ({ auth_url } = await api(`/api/channel_drafts/${addDraft.draft_id}/connect`, { method: 'POST' })); }
+  catch (e){ addError(e.message); btn.disabled = false; return; }
+  const popup = window.open(auth_url, 'oauth_new_channel', 'width=520,height=650');
+  if (!popup){ addError('Le navigateur a bloqué la fenêtre Google — autorise les popups pour ce site.'); btn.disabled = false; return; }
+  btn.innerHTML = '<span class="spinner"></span> En attente de Google…';
+  const poll = setInterval(async () => {
+    if (!popup.closed || !addDraft) return;
+    clearInterval(poll);
+    try {
+      addDraft = await api(`/api/channel_drafts/${addDraft.draft_id}`);
+      if (addDraft.youtube) renderConfirmStep();
+      else renderConnectStep(addDraft.error || 'Connexion non terminée : la fenêtre Google a été fermée avant la fin.');
+    } catch (e){ addError(e.message); btn.disabled = false; }
+  }, 1000);
+}
+
+// ---- 3. confirmation: nothing is written before this
+function renderConfirmStep(){
+  const yt = addDraft.youtube;
+  addShell('Ajouter une chaîne — 3. Confirmer', `
+    <div class="fact">${icon('link')}<span>Chaîne YouTube : <b style="color:var(--text)">${esc(yt.title || '')}</b>${yt.custom_url ? ` <span class="tiny">${esc(yt.custom_url)}</span>` : ''}</span></div>
+    <label class="f">Nom technique (dossier channels/…, minuscules, chiffres et _)</label>
+    <input class="f" data-role="name" value="${esc(yt.suggested_name)}" maxlength="40">
+    <label class="f">Nom affiché dans l'app</label>
+    <input class="f" data-role="display" dir="auto" value="${esc(yt.display_name)}" maxlength="100">
+    <label class="f">Langue de la chaîne</label>
+    <select class="f" data-role="lang">
+      ${[['fr', 'Français'], ['ar', 'Arabe'], ['en', 'Anglais']].map(([v, l]) => `<option value="${v}" ${v === yt.language ? 'selected' : ''}>${l}</option>`).join('')}
+    </select>`,
+    `<button class="btn ghost small" data-act="cancel">Annuler</button>
+     <button class="btn primary small push" data-act="confirm">Créer la chaîne</button>`);
+  const dlg = addDialog();
+  dlg.querySelector('[data-act="confirm"]').addEventListener('click', async ev => {
+    const btn = ev.currentTarget;
+    btn.disabled = true;
+    addError('');
+    try {
+      const created = await api(`/api/channel_drafts/${addDraft.draft_id}/confirm`, { method: 'POST', body: JSON.stringify({
+        name: dlg.querySelector('[data-role="name"]').value.trim(),
+        display_name: dlg.querySelector('[data-role="display"]').value.trim(),
+        language: dlg.querySelector('[data-role="lang"]').value,
+      }) });
+      addDraft = null;
+      dlg.close();
+      log(`Chaîne « ${created.display_name} » ajoutée (YouTube : ${created.youtube_title})`, 'success');
+      channels = await api('/api/channels');           // everywhere in the app, no restart
+      renderUrlsGrid();
+      loadConnectionScreen();
+    } catch (e){ addError(e.message); btn.disabled = false; }
+  });
 }
 
 document.getElementById('addChannelBtn').addEventListener('click', openAddChannel);

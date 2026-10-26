@@ -98,14 +98,24 @@ def select_channel():
 
 _pending_oauth_flows = {}  # state -> (Flow, channel_name)
 
+# « Ajouter une chaîne » (channel_setup.py): a channel not created yet connects
+# under NEW_CHANNEL_PREFIX + draft id; its token is kept here, in memory, until
+# the user confirms — never written under channels/ before that.
+NEW_CHANNEL_PREFIX = "nouvelle-chaine:"
+_new_channel_tokens = {}  # NEW_CHANNEL_PREFIX + draft id -> token JSON
 
-def start_oauth_flow(channel_name: str, redirect_uri: str) -> str:
-    """Begin the OAuth flow for a channel. Returns the URL to open in a browser."""
-    credentials_path = get_credentials_path(channel_name)
-    if not os.path.exists(credentials_path):
-        raise FileNotFoundError(f"No credentials.json for channel '{channel_name}': {credentials_path}")
 
-    flow = Flow.from_client_secrets_file(credentials_path, scopes=SCOPES, redirect_uri=redirect_uri)
+def start_oauth_flow(channel_name: str, redirect_uri: str, client_config: Dict = None) -> str:
+    """Begin the OAuth flow for a channel. Returns the URL to open in a browser.
+    client_config: the OAuth client JSON itself, for a channel being added
+    (its credentials.json doesn't exist yet)."""
+    if client_config is not None:
+        flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
+    else:
+        credentials_path = get_credentials_path(channel_name)
+        if not os.path.exists(credentials_path):
+            raise FileNotFoundError(f"No credentials.json for channel '{channel_name}': {credentials_path}")
+        flow = Flow.from_client_secrets_file(credentials_path, scopes=SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type='offline', prompt='consent', include_granted_scopes='true'
     )
@@ -123,6 +133,10 @@ def complete_oauth_flow(state: str, authorization_response_url: str) -> str:
     flow, channel_name = entry
     flow.fetch_token(authorization_response=authorization_response_url)
 
+    if channel_name.startswith(NEW_CHANNEL_PREFIX):
+        _new_channel_tokens[channel_name] = flow.credentials.to_json()
+        return channel_name
+
     token_path = get_token_path(channel_name)
     os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
     with open(token_path, 'w') as f:
@@ -131,11 +145,45 @@ def complete_oauth_flow(state: str, authorization_response_url: str) -> str:
     return channel_name
 
 
-def get_connected_channel_title(channel_name: str):
-    """Returns the real YouTube channel title behind a connected token, or None
-    if that channel has no valid token yet. Lets the UI confirm the right
-    brand account got linked (several of this user's channels share a Google
-    account with multiple brand channels)."""
+def pop_oauth_target(state: str):
+    """The channel (or new-channel draft) a callback's state belongs to,
+    forgetting that pending flow — for a callback carrying ?error= instead
+    of a code (access refused on Google's page)."""
+    entry = _pending_oauth_flows.pop(state, None)
+    return entry[1] if entry else None
+
+
+def forget_new_channel(target: str):
+    """A cancelled « Ajouter une chaîne »: its pending flow and token go."""
+    for state in [s for s, (_, name) in _pending_oauth_flows.items() if name == target]:
+        _pending_oauth_flows.pop(state, None)
+    _new_channel_tokens.pop(target, None)
+
+
+def take_new_channel_token(target: str):
+    return _new_channel_tokens.pop(target, None)
+
+
+def _channel_identity(creds) -> Dict:
+    """{id, title, custom_url} of the YouTube channel behind credentials
+    (channels.list mine=True), or None when the Google account has none."""
+    youtube = build('youtube', 'v3', credentials=creds)
+    response = youtube.channels().list(part='snippet', mine=True).execute()
+    items = response.get('items', [])
+    if not items:
+        return None
+    snippet = items[0].get('snippet', {})
+    return {'id': items[0].get('id'), 'title': snippet.get('title'), 'custom_url': snippet.get('customUrl')}
+
+
+def channel_identity_from_token(token_json: str) -> Dict:
+    """Same, for a token not saved anywhere yet (a channel being added)."""
+    return _channel_identity(Credentials.from_authorized_user_info(json.loads(token_json), SCOPES))
+
+
+def get_connected_channel_identity(channel_name: str):
+    """The real YouTube channel behind a channel's saved token, or None if it
+    has no token yet."""
     token_path = get_token_path(channel_name)
     if not os.path.exists(token_path):
         return None
@@ -145,11 +193,16 @@ def get_connected_channel_title(channel_name: str):
         creds.refresh(Request())
         with open(token_path, 'w') as f:
             f.write(creds.to_json())
+    return _channel_identity(creds)
 
-    youtube = build('youtube', 'v3', credentials=creds)
-    response = youtube.channels().list(part='snippet', mine=True).execute()
-    items = response.get('items', [])
-    return items[0]['snippet']['title'] if items else None
+
+def get_connected_channel_title(channel_name: str):
+    """Returns the real YouTube channel title behind a connected token, or None
+    if that channel has no valid token yet. Lets the UI confirm the right
+    brand account got linked (several of this user's channels share a Google
+    account with multiple brand channels)."""
+    identity = get_connected_channel_identity(channel_name)
+    return identity['title'] if identity else None
 
 
 def get_connection_health(channel_name: str) -> Dict:

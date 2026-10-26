@@ -446,10 +446,62 @@ def channel_draft_from_project(req: DraftFromProject):
     return channel_setup.public_draft(channel_setup.new_draft(config, req.project_key))
 
 
+def _draft_or_404(draft_id: str):
+    import channel_setup
+    draft = channel_setup.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Ajout de chaîne introuvable ou expiré — recommence depuis « Ajouter une chaîne ».")
+    return draft
+
+
+@app.get("/api/channel_drafts/{draft_id}")
+def channel_draft_status(draft_id: str):
+    import channel_setup
+    return channel_setup.public_draft(_draft_or_404(draft_id))
+
+
+@app.post("/api/channel_drafts/{draft_id}/connect")
+def channel_draft_connect(draft_id: str, request: Request):
+    """Google's window for a channel not created yet: same flow and scopes
+    as "Connexion", with the draft's client JSON (nothing on disk)."""
+    from youtube_uploader import start_oauth_flow, NEW_CHANNEL_PREFIX
+    draft = _draft_or_404(draft_id)
+    draft.update(token=None, youtube=None, error=None)       # a new attempt starts clean
+    port = request.url.port or 80
+    redirect_uri = f"http://localhost:{port}/api/oauth/callback"   # see connect_start
+    try:
+        auth_url = start_oauth_flow(NEW_CHANNEL_PREFIX + draft_id, redirect_uri, client_config=draft["client_config"])
+    except Exception as e:
+        import channel_setup
+        raise HTTPException(status_code=400, detail=channel_setup.google_error_fr(e))
+    return {"auth_url": auth_url}
+
+
+class DraftConfirm(BaseModel):
+    name: str
+    display_name: str
+    language: str
+
+
+@app.post("/api/channel_drafts/{draft_id}/confirm")
+def channel_draft_confirm(draft_id: str, req: DraftConfirm):
+    """Only now is channels/<name>/ written (never over an existing channel)."""
+    import channel_setup
+    draft = _draft_or_404(draft_id)
+    try:
+        created = channel_setup.create_channel(channel_manager, draft, req.name, req.display_name, req.language)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    channel_setup.drop_draft(draft_id)
+    return created
+
+
 @app.delete("/api/channel_drafts/{draft_id}")
 def channel_draft_cancel(draft_id: str):
     """Cancel: the draft (client JSON, token) only ever lived in memory."""
     import channel_setup
+    from youtube_uploader import forget_new_channel, NEW_CHANNEL_PREFIX
+    forget_new_channel(NEW_CHANNEL_PREFIX + draft_id)
     return {"cancelled": channel_setup.drop_draft(draft_id)}
 
 
@@ -625,16 +677,38 @@ def connect_start(channel_name: str, request: Request):
 
 @app.get("/api/oauth/callback")
 def oauth_callback(request: Request):
-    from youtube_uploader import complete_oauth_flow
+    from html import escape
+    from youtube_uploader import complete_oauth_flow, pop_oauth_target, take_new_channel_token, NEW_CHANNEL_PREFIX
+    import channel_setup
 
     state = request.query_params.get("state")
+    google_error = request.query_params.get("error")      # e.g. access_denied: refused on Google's page
     try:
-        channel_name = complete_oauth_flow(state, str(request.url))
-        body = f"<p>Chaîne « {channel_name} » connectée ✅ — tu peux fermer cet onglet.</p>"
+        if google_error:
+            target = pop_oauth_target(state) or ""
+            raise RuntimeError(google_error)
+        target = complete_oauth_flow(state, str(request.url))
+        if target.startswith(NEW_CHANNEL_PREFIX):          # « Ajouter une chaîne »: not created yet
+            draft = channel_setup.get_draft(target[len(NEW_CHANNEL_PREFIX):])
+            if not draft:
+                raise RuntimeError("Ajout de chaîne expiré — recommence depuis « Ajouter une chaîne ».")
+            channel_setup.identify(channel_manager, draft, take_new_channel_token(target))
+            if draft["error"]:
+                raise RuntimeError(draft["error"])
+            body = (f"<p>Chaîne YouTube « {escape(draft['youtube']['title'] or '')} » trouvée ✅ — "
+                    "reviens dans TikTub pour confirmer.</p>")
+        else:
+            body = f"<p>Chaîne « {escape(target)} » connectée ✅ — tu peux fermer cet onglet.</p>"
     except Exception as e:
         import traceback
         traceback.print_exc()  # so a failure shows up in the server terminal, not just silently
-        body = f"<p>Échec de l'autorisation : {e}</p>"
+        message = str(e) if isinstance(e, RuntimeError) and not google_error else channel_setup.google_error_fr(e)
+        target = locals().get("target") or ""
+        if target.startswith(NEW_CHANNEL_PREFIX):
+            draft = channel_setup.get_draft(target[len(NEW_CHANNEL_PREFIX):])
+            if draft and not draft["error"]:
+                draft["error"] = message
+        body = f"<p>Échec de l'autorisation : {escape(message)}</p>"
 
     return HTMLResponse(f"""
         <html><body style="font-family:sans-serif;padding:40px;text-align:center">
