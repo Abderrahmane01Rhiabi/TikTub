@@ -1,9 +1,3 @@
-const CHANNEL_COLORS = {
-  // Kept distinct from the status colors (accent blue, ok green, warn amber,
-  // danger red) so a channel dot is never mistaken for a state.
-  meme_culture: '#38bdf8', animeshorts: '#b18cfd', prince_moulay_hassan: '#fb923c',
-  lungte888: '#e2e8f0', zit_bliss: '#fd8cc4', lungtemotivates: '#2dd4bf'
-};
 // Génération's script formats (generative/script_plan.py FORMATS) and plan parts
 const SCRIPT_FORMATS = { A: 'Affirmations', B: 'Histoire', D: 'Liste éducative', M: 'Mythe ou réalité',
   C: 'Citation expliquée', E: 'Exercice guidé', L: 'Lettre à toi', P: 'Le saviez-vous (psycho)' };
@@ -11,7 +5,9 @@ const SCRIPT_HOOKS = { question: 'question', fait: 'fait surprenant', choc: 'phr
   adresse: 'adresse directe', promesse: 'promesse' };
 const SCRIPT_ENDINGS = { question: 'question en commentaire', phrase: 'phrase à garder', defi: 'petit défi',
   partage: 'à envoyer à quelqu\'un', repeter: 'affirmation à répéter', chute: 'chute' };
-function channelColor(name){ return CHANNEL_COLORS[name] || '#9aa1ac'; }
+// Each channel's color comes from channel_config.json (/api/channels — see
+// channel_manager.LEGACY_COLORS): set once, a new channel gets an unused one.
+function channelColor(name){ return ((channels || []).find(c => c.name === name) || {}).color || '#9aa1ac'; }
 function esc(s){ return (s ?? '').toString().replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function spinnerHtml(text){ return `<span class="spinner-row"><span class="spinner"></span>${esc(text)}</span>`; }
 
