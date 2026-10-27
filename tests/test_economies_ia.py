@@ -100,3 +100,72 @@ def test_a_plan_the_fix_did_not_touch_keeps_its_problem(project, monkeypatch):
         for x in sc["passages"]])
     out = sb.illustration(b, "fr", only=[2])
     assert calls == [1] and len(out) == 1 and out[0].startswith("Plan 3 :")     # numbered as in the storyboard
+
+
+# ---- G3: fetching again keeps the cleaning, arrows, effects and zoom of the unchanged clips
+
+def _fetch_fakes(monkeypatch, seen):
+    from pathlib import Path
+    from adaptation import annotate, effects, sources
+
+    def download(url, d, name, sections=None):
+        Path(d).mkdir(parents=True, exist_ok=True)
+        Path(f"{d}/{name}.mp4").write_bytes(b"x")
+        return f"{d}/{name}.mp4"
+    monkeypatch.setattr(sources, "download", download)
+    monkeypatch.setattr(sources, "source_meta", lambda path: {"handle": "@auteur", "url": "u"})
+    monkeypatch.setattr(sources, "still", lambda path, t, crop, out, *a, **k: out)
+    monkeypatch.setattr(sources, "find_boxes", lambda stills: [(None, [], [])] * len(stills))
+    monkeypatch.setattr(sources, "describe", lambda path, segs: [{} for _ in segs])
+    monkeypatch.setattr(sources, "clip_at", lambda path, i, cid, a, b, found, desc="": {
+        "id": cid, "source": i, "src": path, "start": a, "end": b, "impact": a, "w": 1080, "h": 1920, "usable": True,
+        "marks": [], "desc": desc})
+    monkeypatch.setattr(sources, "leftover_text", lambda clips, work, **k: seen["left"].append(sorted(clips)) or {})
+    monkeypatch.setattr(annotate, "review", lambda ps, clips, work, **k: seen["review"].append([x["clip"] for x in ps]) or [
+        {"type": "fleche", "cible": "la cible de " + x["clip"]} for x in ps])
+    monkeypatch.setattr(effects, "decide", lambda ps, clips, work, tone=None, **k: seen["decide"].append([x["clip"] for x in ps]) or [
+        {"ralenti": True, "zoom": None, "source": x["clip"]} for x in ps])
+    monkeypatch.setattr(effects, "auto_zoom", lambda ps, clips, fx, work, **k: seen["zoom"].append([x["clip"] for x in ps]) or fx)
+    monkeypatch.setattr(effects, "cap", lambda fx, limits=None: fx)
+
+
+def test_fetching_again_redoes_only_the_changed_clip(project, monkeypatch):
+    from test_adaptation_storyboard import _images_project, fakes as _f  # noqa: F401
+    seen = {"left": [], "review": [], "decide": [], "zoom": []}
+    _fetch_fakes(monkeypatch, seen)
+    pid = _images_project(project, _fixture_calls(monkeypatch), monkeypatch)
+    ap.skip_plan(pid, 5)
+    ap.start_fetch(pid); ap.run_fetch(pid)
+    first = ap.load(pid)["storyboard"]["plans"]
+    ap.back_to_images(pid)
+    ap.choose_pick(pid, 2, "https://www.tiktok.com/@a/video/9", 3, 9)       # only plan 3 changes
+    ap.start_fetch(pid); ap.run_fetch(pid)
+
+    assert seen["review"] == [["P1", "P2", "P3", "P4", "P5"], ["P3"]]
+    assert seen["decide"] == [["P1", "P2", "P3", "P4", "P5"], ["P3"]] and seen["zoom"][1] == ["P3"]
+    assert seen["left"][1] == ["P3"]                                        # the kept clips were cleaned already
+    now = ap.load(pid)["storyboard"]["plans"]
+    assert now[0]["annotation"] == first[0]["annotation"] and now[0]["effets"] == first[0]["effets"]
+
+
+def test_a_changed_sentence_on_a_kept_clip_is_looked_at_again(project, monkeypatch):
+    from test_adaptation_storyboard import _images_project
+    seen = {"left": [], "review": [], "decide": [], "zoom": []}
+    _fetch_fakes(monkeypatch, seen)
+    pid = _images_project(project, _fixture_calls(monkeypatch), monkeypatch)
+    ap.skip_plan(pid, 5)
+    ap.start_fetch(pid); ap.run_fetch(pid)
+    ap.back_to_images(pid)
+    p = ap.load(pid)
+    p["storyboard"]["plans"][1]["textes"]["fr"]["texte"] = "Une autre phrase pour ce même clip."
+    ap.save(p)
+    ap.start_fetch(pid); ap.run_fetch(pid)
+
+    assert seen["review"][1] == ["P2"] and seen["decide"][1] == ["P2"]      # its words changed: a stale result is worse
+    assert seen["left"][1] == []                                            # its clip did not: nothing to clean again
+
+
+def _fixture_calls(monkeypatch):
+    """The storyboard fakes of test_adaptation_storyboard (fixture body, called directly)."""
+    import test_adaptation_storyboard as tas
+    return tas.fakes.__wrapped__(monkeypatch)

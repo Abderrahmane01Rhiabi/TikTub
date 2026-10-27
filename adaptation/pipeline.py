@@ -28,6 +28,7 @@ A target = one channel: its language, voice and music come from its
 settings (Réglages → Voix / channel), the voice can be changed per project.
 """
 
+import json
 import os
 import re
 import shutil
@@ -1011,6 +1012,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         old = p.get("clips") or {}
         clips = {f"P{k + 1}": old[f"P{k + 1}"] for k in _active(p)
                  if (old.get(f"P{k + 1}") or {}).get("pick_key") == pick_key(k) and os.path.exists(old[f"P{k + 1}"]["src"])}
+        kept_ids = set(clips)           # cleaned, their arrows and effects looked at, by an earlier fetch
         by_url: Dict[str, List[Tuple[int, float, float]]] = {}
         for k in _active(p):
             if f"P{k + 1}" in clips:
@@ -1182,26 +1184,42 @@ def run_fetch(pid: str, report: Optional[Report] = None):
         # 6, not 4: measured, the 4 first names left out the aquarium that filmed 4 clips of 10
         p["credits"], p["credits_auto"] = guess, guess        # every channel whose footage is used, not only watermarks
         report("texte encore visible après nettoyage ?", 0.91)
-        try:                            # added text the first cleaning missed is painted over too
-            sources.leftover_text(clips, os.path.join(project_dir(pid), "work"))
+        try:                            # added text the first cleaning missed is painted over too (new clips:
+            sources.leftover_text({cid: c for cid, c in clips.items() if cid not in kept_ids},   # the kept ones were)
+                                  os.path.join(project_dir(pid), "work"))
         except Exception:
             pass
         report("flèches et cercles revus avec les vrais clips", 0.92)
         active = _active(p)
         code = p["targets"][0]["language"]
+        work = os.path.join(project_dir(pid), "work")
+        mood = _tone(p, p["targets"][0])
         rough = [{**storyboard.script_for(p["storyboard"], code)["passages"][k], "clip": f"P{k + 1}"} for k in active]
-        seen = annotate.review(rough, clips, os.path.join(project_dir(pid), "work"))
+        plans_ = p["storyboard"]["plans"]
+        # a kept clip whose sentence, image and tone are unchanged keeps its arrow and effects (looked at already);
+        # anything else changed and it is looked at again — a stale result is worse than one more call
+        look_key = {k: json.dumps([pick_key(k), x.get("texte"), plans_[k].get("image"), mood], ensure_ascii=False)
+                    for k, x in zip(active, rough)}
+        redo = [n for n, k in enumerate(active) if not (f"P{k + 1}" in kept_ids and (plans_[k].get("revu") or {}).get("cle") == look_key[k])]
+        sub = [rough[n] for n in redo]
+        seen = annotate.review(sub, clips, work) if sub else []
         if seen is not None:            # shared by every language, like the images
-            for k, a in zip(active, seen):
-                p["storyboard"]["plans"][k]["annotation"] = a
+            for n, a in zip(redo, seen):
+                plans_[active[n]]["annotation"] = a
             p["annotations_reviewed"] = True
         report("effets de montage choisis avec les vrais clips", 0.94)
-        rough = [{**x, "annotation": p["storyboard"]["plans"][k].get("annotation")} for k, x in zip(active, rough)]
-        fx = effects.decide(rough, clips, os.path.join(project_dir(pid), "work"), tone=_tone(p, p["targets"][0]))
-        fx = effects.auto_zoom(rough, clips, fx or [], os.path.join(project_dir(pid), "work"))   # a small subject: zoomed
-        fx = effects.cap(fx, tone.effect_limits(_tone(p, p["targets"][0])))
+        rough = [{**x, "annotation": plans_[k].get("annotation")} for k, x in zip(active, rough)]
+        sub = [rough[n] for n in redo]
+        fresh = effects.decide(sub, clips, work, tone=mood) if sub else []
+        fresh = effects.auto_zoom(sub, clips, fresh or [], work) if sub else []   # a small subject: zoomed
+        raw = [(plans_[k].get("revu") or {}).get("effets_bruts") for k in active]
+        for n, e in zip(redo, list(fresh or []) + [None] * len(redo)):
+            raw[n] = e
+            if seen is not None:
+                plans_[active[n]]["revu"] = {"cle": look_key[active[n]], "effets_bruts": e}
+        fx = effects.cap(raw, tone.effect_limits(mood))        # the limits on the whole video, as before
         for k, e in zip(active, fx):        # shared by every language, like the arrows
-            p["storyboard"]["plans"][k]["effets"] = e
+            plans_[k]["effets"] = e
         for t in p["targets"]:
             full = storyboard.script_for(p["storyboard"], t["language"])
             sc = {**full, "passages": [{**full["passages"][k], "clip": f"P{k + 1}"} for k in _active(p)]}
