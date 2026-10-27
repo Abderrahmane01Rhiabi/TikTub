@@ -56,10 +56,11 @@ STEPS: Dict[str, tuple] = {
     "annotate.review":       (FLASH, "revoir les flèches sur les vrais clips"),
 }
 
-# model: [(from date, $ input, $ output)] per million tokens
+# model: [(from date, $ input, $ output, $ cached input)] per million tokens
+# (ai.google.dev/gemini-api/docs/pricing, read 2026-10-27: cached input = a tenth of the input price)
 PRICES: Dict[str, List[tuple]] = {
-    FLASH: [("2000-01-01", 0.75, 3.75), ("2027-01-01", 1.50, 7.50)],
-    PRO: [("2000-01-01", 2.00, 12.00)],
+    FLASH: [("2000-01-01", 0.75, 3.75, 0.075), ("2027-01-01", 1.50, 7.50, 0.15)],
+    PRO: [("2000-01-01", 2.00, 12.00, 0.20)],
 }
 
 
@@ -77,16 +78,22 @@ def model_for(step: str, fallback: str = FLASH) -> str:
     return _overrides().get(step) or (STEPS.get(step) or (None,))[0] or fallback
 
 
+def _row(model: str, day: str) -> tuple:
+    rows = PRICES.get(model) or PRICES[FLASH]
+    return next((r for r in reversed(rows) if day >= r[0]), rows[0])
+
+
 def price(model: str, day: str) -> tuple:
     """($ input, $ output) per million tokens for this model on this day (an unknown model: Flash's)."""
-    rows = PRICES.get(model) or PRICES[FLASH]
-    return next(((i, o) for start, i, o in reversed(rows) if day >= start), rows[0][1:])
+    return _row(model, day)[1:3]
 
 
 def cost(line: Dict, day: Optional[str] = None) -> float:
-    """One logged call's cost in dollars (day: price it at another date)."""
-    i, o = price(line.get("model") or FLASH, day or (line.get("at") or "")[:10])
-    return (line.get("prompt", 0) * i + (line.get("output", 0) + line.get("thoughts", 0)) * o) / 1e6
+    """One logged call's cost in dollars (day: price it at another date): the
+    tokens Google served from its cache are billed at the cached-input price."""
+    _, i, o, c = _row(line.get("model") or FLASH, day or (line.get("at") or "")[:10])
+    cached = min(line.get("cached", 0) or 0, line.get("prompt", 0))
+    return ((line.get("prompt", 0) - cached) * i + cached * c + (line.get("output", 0) + line.get("thoughts", 0)) * o) / 1e6
 
 
 def month_report(month: Optional[str] = None, path: Optional[str] = None) -> Dict:

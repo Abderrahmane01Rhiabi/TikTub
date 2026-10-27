@@ -224,3 +224,67 @@ def test_changed_plans_are_never_judged_with_old_checks(project, monkeypatch):
     ap.retry(pid); ap.run_images(pid)
 
     assert len(watched) == 6                                                # judged again against the new plans
+
+
+# ---- G5: the usage log says which project and which video, and what came from Google's cache
+
+def _answer(cached=0):
+    class R:
+        status_code = 200
+
+        def json(self):
+            return {"candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}],
+                    "usageMetadata": {"promptTokenCount": 10000, "candidatesTokenCount": 100, "thoughtsTokenCount": 0,
+                                      "cachedContentTokenCount": cached, "totalTokenCount": 10100,
+                                      "promptTokensDetails": [{"modality": "VIDEO", "tokenCount": 10000}]}}
+    return R()
+
+
+def test_each_call_notes_its_project_its_video_and_its_cached_tokens(monkeypatch, tmp_path):
+    import requests
+    import gemini_ai_generator as gg
+    monkeypatch.setattr(gg, "USAGE_LOG", str(tmp_path / "u.jsonl"))
+    monkeypatch.setattr(requests, "post", lambda *a, **k: _answer(cached=8000))
+    g = gg.GeminiAIGenerator(api_key="k")
+    gg._UPLOADED["https://generativelanguage.googleapis.com/v1beta/files/abc"] = "temp/adaptations/ad_1/src/src0.mp4"
+
+    with gg.usage_context(projet="ad_1"):
+        g._generate_content([{"file_data": {"file_uri": "https://www.youtube.com/watch?v=aaaaaaaaaaa"}}, {"text": "?"}])
+        g._generate_content([{"file_data": {"file_uri": "https://generativelanguage.googleapis.com/v1beta/files/abc"}},
+                             {"text": "?"}])
+        g._generate_content([{"inline_data": {"mime_type": "image/jpeg", "data": "x"}}] * 3 + [{"text": "?"}])
+    g._generate_content([{"text": "hors projet"}])
+
+    lines = [json.loads(x) for x in open(tmp_path / "u.jsonl")]
+    assert [ln.get("projet") for ln in lines] == ["ad_1", "ad_1", "ad_1", None]
+    assert lines[0]["media"] == "https://www.youtube.com/watch?v=aaaaaaaaaaa"
+    assert lines[1]["media"] == "temp/adaptations/ad_1/src/src0.mp4" and lines[2]["images"] == 3
+    assert lines[0]["cached"] == 8000
+
+
+def test_the_project_follows_into_parallel_work():
+    import gemini_ai_generator as gg
+    from concurrent.futures import ThreadPoolExecutor
+    with gg.usage_context(projet="ad_2"):
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            seen = list(pool.map(gg.in_context(lambda _: gg.USAGE_CONTEXT.get().get("projet")), range(3)))
+    assert seen == ["ad_2"] * 3
+
+
+def test_cached_tokens_are_priced_as_google_bills_them():
+    import ai_models
+    line = {"at": "2026-10-27T10:00:00", "model": ai_models.FLASH, "prompt": 1_000_000, "cached": 800_000,
+            "output": 0, "thoughts": 0}
+    # 200 000 at 0.75 $/M + 800 000 at 0.075 $/M (ai.google.dev/gemini-api/docs/pricing, 2026-10-27)
+    assert round(ai_models.cost(line), 4) == round(0.15 + 0.06, 4)
+    assert round(ai_models.cost(line, "2027-01-01"), 4) == round(0.30 + 0.12, 4)
+    assert round(ai_models.cost({**line, "cached": 0}), 4) == 0.75                    # nothing cached: as before
+
+
+def test_the_home_cost_report_counts_cached_tokens_at_their_price(tmp_path):
+    import ai_models
+    log = tmp_path / "u.jsonl"
+    log.write_text(json.dumps({"at": "2026-10-27T10:00:00", "model": ai_models.FLASH, "step": "finder._watch",
+                               "status": 200, "prompt": 1_000_000, "cached": 1_000_000, "output": 0, "thoughts": 0}) + "\n")
+    r = ai_models.month_report("2026-10", str(log))
+    assert r["total"] == round(0.075, 2) and r["au_prix_de_janvier"] == round(0.15, 2)

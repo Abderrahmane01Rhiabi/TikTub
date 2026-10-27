@@ -24,6 +24,50 @@ CREDITS_OUT = "Crédits Gemini épuisés"
 USAGE_LOG = os.path.join("temp", "usage", "gemini.jsonl")   # one line per call: what it cost, and which step asked
 _USAGE_LOCK = __import__("threading").Lock()
 
+import contextlib as _contextlib
+import contextvars as _contextvars
+
+# What a call is for, noted with its cost (ECONOMIES_IA G5): the project a step works on, set where the step
+# starts and carried into its parallel work (in_context); and each uploaded file's local path, by Gemini URI.
+USAGE_CONTEXT: "_contextvars.ContextVar[Dict]" = _contextvars.ContextVar("usage_context", default={})
+_UPLOADED: Dict[str, str] = {}
+
+
+@_contextlib.contextmanager
+def usage_context(**fields):
+    token = USAGE_CONTEXT.set({**USAGE_CONTEXT.get(), **fields})
+    try:
+        yield
+    finally:
+        USAGE_CONTEXT.reset(token)
+
+
+def in_context(fn):
+    """fn run in another thread (a pool) with the caller's usage context: a
+    thread pool does not carry it by itself."""
+    fields = USAGE_CONTEXT.get()
+
+    def run(*args, **kwargs):
+        token = USAGE_CONTEXT.set(fields)
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            USAGE_CONTEXT.reset(token)
+    return run
+
+
+def _media_of(parts) -> Dict:
+    """Which video a call looked at (a YouTube link, or the uploaded file's local path) and how many pictures."""
+    out = {}
+    for part in parts or []:
+        uri = ((part or {}).get("file_data") or {}).get("file_uri") if isinstance(part, dict) else None
+        if uri and "media" not in out:
+            out["media"] = _UPLOADED.get(uri, uri)
+    images = sum(1 for part in parts or [] if isinstance(part, dict) and part.get("inline_data"))
+    if images:
+        out["images"] = images
+    return out
+
 
 def _asking_step() -> str:
     """The app's function that made this call (module.function), found up the stack."""
@@ -35,16 +79,20 @@ def _asking_step() -> str:
     return "?"
 
 
-def log_usage(model: str, status: int, data: Optional[Dict], seconds: float) -> None:
+def log_usage(model: str, status: int, data: Optional[Dict], seconds: float, parts=None) -> None:
     """What one call cost, as Google counts it (usageMetadata): the tokens sent by
-    kind (text / image / video / audio), the thinking, the answer. Best effort."""
+    kind (text / image / video / audio), the thinking, the answer, the tokens
+    served from Google's cache (billed at a tenth) — and the project and the
+    video it was for. Best effort."""
     try:
         u = (data or {}).get("usageMetadata") or {}
         line = {"at": datetime.now().isoformat(timespec="seconds"), "model": model, "step": _asking_step(),
                 "status": status, "s": round(seconds, 1),
                 "prompt": u.get("promptTokenCount", 0), "output": u.get("candidatesTokenCount", 0),
                 "thoughts": u.get("thoughtsTokenCount", 0), "total": u.get("totalTokenCount", 0),
-                "by_kind": {d.get("modality", "?"): d.get("tokenCount", 0) for d in u.get("promptTokensDetails") or []}}
+                "by_kind": {d.get("modality", "?"): d.get("tokenCount", 0) for d in u.get("promptTokensDetails") or []},
+                "cached": u.get("cachedContentTokenCount", 0), "projet": USAGE_CONTEXT.get().get("projet"),
+                **_media_of(parts)}
         with _USAGE_LOCK:
             os.makedirs(os.path.dirname(USAGE_LOG), exist_ok=True)
             with open(USAGE_LOG, "a", encoding="utf-8") as f:
@@ -298,7 +346,7 @@ Respond with JSON:
                 body = response.json()
             except Exception:           # an error page, a test double: logged without figures
                 body = None
-            log_usage(model, response.status_code, body, time.time() - t0)
+            log_usage(model, response.status_code, body, time.time() - t0, parts)
 
             if response.status_code == 200:
                 data = response.json()
@@ -453,6 +501,7 @@ Respond with JSON:
                 print(f"⚠️ Unexpected Gemini upload response: {json.dumps(file_info)[:200]}")
                 return None
 
+            _UPLOADED[file_info['uri']] = video_path        # the journal names the local file, not Gemini's URI
             return {"name": file_info['name'], "uri": file_info['uri'], "mime_type": mime_type}
         except Exception as e:
             print(f"❌ Gemini file upload error: {e}")

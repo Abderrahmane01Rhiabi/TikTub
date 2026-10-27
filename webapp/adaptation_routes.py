@@ -115,10 +115,12 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
             def report(phase, f):
                 seen["f"] = max(seen["f"], f)
                 progress.update(key, seen["f"], phase=phase)
-            if step in ("voicing", "scripting") and only:
-                runner(pid, report, only=only)
-            else:
-                runner(pid, report)
+            from gemini_ai_generator import usage_context
+            with usage_context(projet=pid):          # each AI call of the step noted with its project
+                if step in ("voicing", "scripting") and only:
+                    runner(pid, report, only=only)
+                else:
+                    runner(pid, report)
             progress.finish(key)
         except Exception as e:
             progress.finish(key, error=str(e))
@@ -208,8 +210,11 @@ def _adaptation_or_404(pid: str) -> dict:
 
 def _adaptation_call(fn, *args):
     from adaptation.pipeline import PipelineError
+    from gemini_ai_generator import usage_context
+    pid = args[0] if args and isinstance(args[0], str) and args[0].startswith("ad_") else None
     try:
-        return fn(*args)
+        with usage_context(projet=pid):              # a chat, a link checked by hand…: noted with its project
+            return fn(*args)
     except PipelineError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

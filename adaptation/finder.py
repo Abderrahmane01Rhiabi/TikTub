@@ -27,6 +27,7 @@ from typing import Callable, Dict, List, Optional
 from urllib.parse import quote, quote_plus
 
 from adaptation.sources import ytdlp_opts
+from gemini_ai_generator import in_context   # the project's name follows into the pool (usage log)
 
 PER_QUERY = 5
 PER_SCENE = 6
@@ -212,7 +213,7 @@ def sort_out(found: List[Dict], gemini=None, prompt: str = SORT_PROMPT) -> None:
     except Exception:
         return
     with ThreadPoolExecutor(max_workers=4) as pool:
-        answers = list(pool.map(lambda t: _sort_one(t[0], t[1], g, prompt), todo))
+        answers = list(pool.map(in_context(lambda t: _sort_one(t[0], t[1], g, prompt)), todo))
     for (i, s), ks in zip(todo, answers):
         if ks is not None:
             s["candidats"] = [s["candidats"][k] for k in dict.fromkeys(ks)
@@ -597,7 +598,7 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
     model = model_of(ref)
     extra = {"model": model} if model else {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(checker, c["url"], scenes_, plans, **extra): c for c in todo}
+        futures = {pool.submit(in_context(checker), c["url"], scenes_, plans, **extra): c for c in todo}
         for k, fut in enumerate(as_completed(futures)):
             c = futures[fut]
             report(f"vérification par l'IA : {k + 1}/{len(todo)}", (k + 1) / max(1, len(todo)))

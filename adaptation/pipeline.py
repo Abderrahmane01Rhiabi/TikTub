@@ -37,6 +37,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
 
 import db
+from gemini_ai_generator import in_context, usage_context   # which project each AI call is for
 from adaptation import annotate, checks, effects, finder, langs, reference, render, script, settings, sources, storyboard, tone, voices
 
 BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering"}
@@ -342,7 +343,7 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             metas[i] = meta
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=ANALYSE_WORKERS) as pool:   # whole videos are analysed: two at once
-            for f in [pool.submit(one, k, i) for k, i in enumerate(todo)]:
+            for f in [pool.submit(in_context(one), k, i) for k, i in enumerate(todo)]:
                 f.result()
         p = load(pid)
         guess = guess_credits(metas, clips)
@@ -406,7 +407,8 @@ def _angles(p: Dict, report: Report) -> List:
 
     def write_member(m):
         try:
-            write_storyboard(m, lambda ph, f: None)
+            with usage_context(projet=m["project_id"]):         # the member's own project in the usage log
+                write_storyboard(m, lambda ph, f: None)
         except Exception as e:
             fail(m["project_id"], "analysing", e)
     for k, m in enumerate(waiting, 1):
@@ -674,7 +676,7 @@ def _more_images(p: Dict, report: Report):
             return url, None, str(e)[:200]
     done = 0
     with ThreadPoolExecutor(max_workers=3) as pool:
-        for url, r, err in pool.map(look, order):
+        for url, r, err in pool.map(in_context(look), order):
             done += 1
             report(f"vérification par l'IA : {done}/{len(order)}", 0.1 + 0.85 * done / max(1, len(order)))
             if r:
@@ -1164,7 +1166,7 @@ def run_fetch(pid: str, report: Optional[Report] = None):
                 clips[f"P{k + 1}"] = c
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:     # several sources at once (9 min -> about 4)
-            for f in [pool.submit(one, i, url, items) for i, (url, items) in enumerate(by_url.items())]:
+            for f in [pool.submit(in_context(one), i, url, items) for i, (url, items) in enumerate(by_url.items())]:
                 f.result()
         if failed:                      # a video that won't download: replaced where possible, back to the picks
             p = load(pid)
@@ -1593,7 +1595,7 @@ def check_own(pid: str, urls: List[str], checker=None) -> Dict:
         except Exception as e:
             return u, None, str(e)[:200]
     with ThreadPoolExecutor(max_workers=3) as pool:
-        results = list(pool.map(one, new))
+        results = list(pool.map(in_context(one), new))
     p = load(pid)
     sug = p["suggestions"]
     perso = {c["url"]: c for c in sug.get("perso") or []}
@@ -1690,7 +1692,7 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
                      validated=False, preview=None, voice=None)
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=max(1, n)) as pool:
-            for f in [pool.submit(one, i, t) for i, t in enumerate(todo)]:
+            for f in [pool.submit(in_context(one), i, t) for i, t in enumerate(todo)]:
                 f.result()
         p.update(status="script_review", error=None, failed_step=None)
         if not p.get("credits") or p.get("credits") == p.get("credits_auto"):     # never over a correction
