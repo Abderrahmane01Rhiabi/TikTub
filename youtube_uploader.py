@@ -1071,6 +1071,45 @@ def upload_scheduled_videos():
     print(f"📅 Toutes les vidéos sont maintenant dans YouTube Studio → Scheduled")
     print(f"🤖 YouTube publiera automatiquement aux heures programmées")
 
+# ---------------------------------------------------------------------------
+# A send cut short. videos.insert can't be undone nor asked "did it arrive?":
+# a server restart (uvicorn --reload) in the middle leaves the video perhaps
+# on YouTube, perhaps not. So a marker (upload_attempt) is written on the
+# video just before the insert and removed once it answered. Still there at
+# the next « Publier tout » = interrupted: the channel's latest uploads are
+# checked for it before ever sending it again.
+# ---------------------------------------------------------------------------
+
+def _set_upload_attempt(video_id: str, attempt):
+    import db as _db
+    from url_manager import URLManager
+    current = _db.get_video(video_id)
+    if current:
+        URLManager().update_video_status(video_id, current['status'], upload_attempt=attempt)
+
+
+def find_interrupted_upload(youtube, attempt: Dict):
+    """The YouTube id of a video sent by a cut-short attempt (same title,
+    uploaded after the attempt started) among the channel's latest uploads,
+    or None. Raises if YouTube can't be asked."""
+    import dateutil.parser
+    started = dateutil.parser.parse(attempt['started_at'])
+    channel = youtube.channels().list(part='contentDetails', mine=True).execute().get('items') or []
+    if not channel:
+        raise RuntimeError("chaîne YouTube introuvable pour ce compte")
+    uploads = channel[0]['contentDetails']['relatedPlaylists']['uploads']
+    latest = youtube.playlistItems().list(part='snippet', playlistId=uploads, maxResults=50).execute().get('items') or []
+    for item in latest:
+        snippet = item.get('snippet') or {}
+        try:
+            published = dateutil.parser.parse(snippet.get('publishedAt'))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if snippet.get('title') == attempt.get('title') and published >= started - timedelta(minutes=5):
+            return (snippet.get('resourceId') or {}).get('videoId')
+    return None
+
+
 def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
     """Publie le planning entier, en itérant sur toutes les chaînes qui y apparaissent
     (mode multi-chaînes de la UI web : un seul bouton "Publier tout")."""
@@ -1162,6 +1201,28 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
         description = video_data.get('custom_description') or (ai_data.get('description_suggestions') or [''])[0]
         tags = ai_data.get('tags', ['Shorts', 'TikTok', 'Viral'])
 
+        attempt = video_data.get('upload_attempt')
+        if attempt:                     # the last send of this video was cut short: on YouTube already?
+            try:
+                found = find_interrupted_upload(youtube, attempt)
+            except Exception as e:
+                print(f"⚠️ Vérification de l'envoi interrompu impossible ({video['video_id']}): {e}")
+                results.append({"video_id": video['video_id'], "title": title, "success": False, "url": None,
+                                "error": "Un envoi précédent de cette vidéo a été interrompu et YouTube n'a pas pu "
+                                         "être vérifié — non renvoyée pour éviter un doublon. Réessaie plus tard."})
+                continue
+            if found:
+                url = f"https://youtube.com/watch?v={found}"
+                update_video_status(video['video_id'], url, found, attempt.get('scheduled_time'))
+                _set_upload_attempt(video['video_id'], None)
+                results.append({"video_id": video['video_id'], "title": title, "success": True, "url": url,
+                                "note": "Envoi précédent interrompu : la vidéo était déjà sur YouTube, elle n'a pas été renvoyée.",
+                                "error": None})
+                database.setdefault('videos', {})[video['video_id']] = {**video_data, "channel": channel_name,
+                                                                        "status": "uploaded", "youtube_id": url}
+                continue
+            _set_upload_attempt(video['video_id'], None)     # not there: sent again below
+
         video_path = find_matching_video_file(video_data.get('video_path'), video_data)
         if not video_path:
             results.append({"video_id": video['video_id'], "title": title,
@@ -1185,6 +1246,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
 
         scheduled_time, note = effective_scheduled_time(video)
 
+        _set_upload_attempt(video['video_id'], {"started_at": datetime.now(timezone.utc).isoformat(),
+                                                "title": title[:100], "scheduled_time": scheduled_time})
         try:
             url = upload_video(
                 youtube=youtube,
@@ -1197,7 +1260,10 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
                 auto_confirm=auto_confirm,
                 channel_name=channel_name
             )
+            if url:                     # failed without a clear answer (network…): checked next time
+                _set_upload_attempt(video['video_id'], None)
         except QuotaExceededError as e:
+            _set_upload_attempt(video['video_id'], None)
             # Stop here: every further call would fail the same way. The
             # remaining videos stay ready_for_upload + in the schedule, so the
             # next "Publier tout" after the reset picks them up.
