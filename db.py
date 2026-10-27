@@ -204,6 +204,32 @@ def upsert_video(video_id: str, video: Dict, db_path: str = DB_PATH):
         conn.close()
 
 
+def update_video(video_id: str, changes: Dict, db_path: str = DB_PATH) -> Optional[Dict]:
+    """Reads, merges `changes` into, and writes back one video row in ONE
+    locked transaction (BEGIN IMMEDIATE takes SQLite's write lock before the
+    read): two threads changing different fields of the same video — the
+    hourly tracker and a click in the UI — can no longer erase each other's
+    change. Returns the updated video, None if it doesn't exist."""
+    conn = get_connection(db_path)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            row = conn.execute("SELECT data FROM videos WHERE video_id = ?", (video_id,)).fetchone()
+            if not row:
+                conn.rollback()
+                return None
+            video = json.loads(row["data"])
+            video.update(changes)
+            _upsert_video(conn, video_id, video)
+            conn.commit()
+            return video
+        except Exception:
+            conn.rollback()
+            raise
+    finally:
+        conn.close()
+
+
 def get_video(video_id: str, db_path: str = DB_PATH) -> Optional[Dict]:
     conn = get_connection(db_path)
     try:
