@@ -23,7 +23,7 @@ function renderAdChips(list){
   const bar = document.getElementById('adProjects');
   bar.innerHTML = list.length ? '<span class="tiny">Projets :</span>' + list.slice(0, 12).map(p =>
     `<button class="chipbtn ${p.project_id === adCurrent ? 'active' : ''}" data-id="${p.project_id}" style="${p.project_id === adCurrent ? 'border-color:var(--accent);color:var(--text)' : ''}">
-      ${esc((p.subject || p.reference_url || '').slice(0, 34))}${p.group ? ' · ' + esc((p.targets || []).map(t => (channels.find(c => c.name === t.channel) || {}).display_name || t.channel).join(', ')) : ''} · ${esc(AD_STATUS[p.status] || p.status)}</button>`).join('')
+      ${esc((p.subject || p.idee || p.reference_url || '').slice(0, 34))}${p.group ? ' · ' + esc((p.targets || []).map(t => (channels.find(c => c.name === t.channel) || {}).display_name || t.channel).join(', ')) : ''} · ${esc(AD_STATUS[p.status] || p.status)}</button>`).join('')
     : '<span class="tiny">Aucun projet pour l\'instant.</span>';
   bar.querySelectorAll('.chipbtn').forEach(b => b.onclick = () => { adCurrent = b.dataset.id; loadAdaptationList(); });
 }
@@ -37,8 +37,8 @@ async function loadAdaptationList(){
 }
 document.getElementById('adNewBtn').addEventListener('click', () => { adCurrent = ''; clearTimeout(adPoll); loadAdaptationList(); });
 
-function adStepsHtml(status, mode){
-  const steps = mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS;
+function adStepsHtml(status, mode, idea){
+  const steps = (mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS).map(([l, sts], i) => [i === 0 && idea ? 'Idée' : l, sts]);
   const at = steps.findIndex(([, sts]) => sts.includes(status));
   return `<div class="ad-steps">${steps.map(([l], i) =>
     `<div class="ad-step ${i < at || status === 'done' ? 'done' : i === at ? 'active' : ''}"><div class="bar"></div><div class="lbl">${i + 1} · ${l}</div></div>`).join('')}</div>`;
@@ -54,10 +54,15 @@ async function renderNewAdaptation(){
   stage.innerHTML = `${adStepsHtml('new')}
     <article class="chcard">
       <div class="chcard-body">
-        <label class="f">1. Le Short viral modèle (YouTube, TikTok…)</label>
-        <input class="f" id="adRef" placeholder="https://www.youtube.com/shorts/…">
+        <div id="adRefBox"><label class="f">1. Le Short viral modèle (YouTube, TikTok…)</label>
+        <input class="f" id="adRef" placeholder="https://www.youtube.com/shorts/…"></div>
+        <div id="adIdeaBox" style="display:none"><label class="f">1. Ton idée, en une phrase</label>
+        <textarea class="f" id="adIdea" rows="2" placeholder="Ex. : pourquoi les chats ronronnent, le secret des pyramides, comment le Maroc a battu l'Espagne…"></textarea>
+        <div class="tiny">L'app regarde ce que les gens cherchent sur YouTube, trouve les faits sur le web <b>avec leurs sources</b> (rien n'est inventé), puis écrit le script et cherche les images comme en « Script d'abord ».</div></div>
         <label class="f" style="margin-top:6px">2. Comment construire la vidéo ?</label>
         <div class="ad-row">
+          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="idee"> <b>Idée d'abord</b> <span class="pill wait">nouveau</span>
+            <span class="tiny">pas de Short modèle : tu donnes l'idée, l'app fait la recherche, le script et les images</span></label>
           <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="script" checked> <b>Script d'abord</b> <span class="pill ok">conseillé</span>
             <span class="tiny">écrire le meilleur script (rétention) avec l'image voulue de chaque phrase, puis l'app cherche ces images plan par plan</span></label>
           <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="sources"> <b>Sources d'abord</b>
@@ -86,15 +91,20 @@ async function renderNewAdaptation(){
   stage.querySelectorAll('.ad-target').forEach(x => x.addEventListener('change', syncVersions));
   syncVersions();
   stage.querySelectorAll('input[name="adMode"]').forEach(r => r.onchange = () => {
-    document.getElementById('adSrcBox').style.display = r.value === 'script' && r.checked ? 'none' : '';
+    const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value;
+    document.getElementById('adSrcBox').style.display = mode === 'sources' ? '' : 'none';
+    document.getElementById('adRefBox').style.display = mode === 'idee' ? 'none' : '';
+    document.getElementById('adIdeaBox').style.display = mode === 'idee' ? '' : 'none';
+    document.getElementById('adCreate').lastChild.textContent = mode === 'idee' ? ' Chercher les faits →' : ' Analyser →';
     syncVersions();
   });
   document.getElementById('adCreate').onclick = async ev => {
     const btn = ev.currentTarget;
     const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value || 'sources';
-    const body = { reference_url: document.getElementById('adRef').value.trim(), mode,
+    const body = { reference_url: mode === 'idee' ? '' : document.getElementById('adRef').value.trim(), mode,
+                   idea: mode === 'idee' ? document.getElementById('adIdea').value.trim() : '',
                    versions: document.getElementById('adVersions').checked,
-                   source_urls: mode === 'script' ? [] : document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean),
+                   source_urls: mode === 'sources' ? document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean) : [],
                    channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value) };
     btn.disabled = true;
     try { const p = await api('/api/adaptations', { method:'POST', body: JSON.stringify(body) }); adCurrent = p.project_id; loadAdaptationList(); }
@@ -117,8 +127,8 @@ async function loadAdProject(){
       ? `<label class="tiny" title="Le ton règle la musique, la quantité d'effets et les sons (au prochain aperçu)" style="display:flex;gap:6px;align-items:center">Ton
           <select class="f" id="adTone" style="width:auto;padding:4px 8px;font-size:12px">${p.ton ? '' : '<option value="">à deviner</option>'}
           ${(p.tons || []).map(o => `<option value="${o.ton}" ${o.ton === p.ton ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>` : '';
-    const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.reference_url)}</span>${toneSel}<span class="spacer"></span>
-      <a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
+    const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.idee || p.reference_url)}</span>${toneSel}<span class="spacer"></span>
+      ${p.idee ? `<span class="tiny" title="${esc(p.idee)}">💡 Idée d'abord</span>` : `<a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>`}
       ${!AD_BUSY.includes(p.status) && p.reference ? '<button class="btn ghost small" id="adNewVersion" data-icon="globe" title="La même vidéo pour une autre chaîne, avec un nouvel angle">Nouvelle version pour une autre chaîne</button>' : ''}
       ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>
       <div id="adNewVersionBox"></div>
@@ -126,7 +136,7 @@ async function loadAdProject(){
         `<button class="ad-vtab ${m.project_id === p.project_id ? 'on' : ''}" data-id="${m.project_id}">
           <b>${esc(m.channels.map(ch => (channels.find(c => c.name === ch) || {}).display_name || ch).join(', '))}</b>
           <span>${esc(m.angle || '')}</span><i>${esc(AD_STATUS[m.status] || m.status)}</i></button>`).join('')}</div>` : ''}`;
-    stage.innerHTML = adStepsHtml(p.status, p.mode) + head + '<div id="adBody" class="stack"></div>';
+    stage.innerHTML = adStepsHtml(p.status, p.mode, p.idee) + head + '<div id="adBody" class="stack"></div>';
     hydrateIcons(stage);
     stage.querySelectorAll('.ad-vtab').forEach(b => b.onclick = () => {
       if (b.dataset.id === p.project_id) return;
@@ -626,6 +636,18 @@ function adAnnOf(row){
   return type && cible ? { type, cible } : null;
 }
 
+// « Idée d'abord »: every fact the script may use, with the pages Google found it on
+function adFactsHtml(ref){
+  const facts = ref.faits_sources || [], said = ref.suggestions_youtube || [];
+  const link = s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.titre || 'source')}</a>`;
+  return `<details open style="margin-bottom:8px"><summary style="cursor:pointer"><b>Faits trouvés sur le web</b> :
+      ${facts.filter(f => !f.fragile).length} sourcé(s), seuls utilisés par le script</summary>
+    <ul style="margin:6px 0">${facts.map(f => `<li ${f.fragile ? 'style="opacity:.6"' : ''}>${esc(f.fait)}
+      <span class="tiny">— ${f.sources.map(link).join(', ')}${f.fragile ? ' · <b>fragile</b> (forum ou réseau social seulement) : non utilisé' : ''}</span></li>`).join('')}</ul>
+    ${said.length ? `<div class="tiny">Ce que les gens cherchent sur YouTube : ${said.map(x => `<span class="pill wait" style="margin:2px">${esc(x)}</span>`).join('')}</div>` : ''}
+  </details>`;
+}
+
 function renderAdPlan(body, p){
   const sb = p.storyboard || { plans: [] };
   const allApproved = p.targets.every(t => t.approved);
@@ -637,7 +659,7 @@ function renderAdPlan(body, p){
           <option value="custom">Mon propre angle…</option></select>
         <input class="f" id="adAngleCustom" placeholder="Décris ton angle (ex. le test honnête, ça vaut le coup ?)" style="display:none;flex:1;min-width:220px">
         <button class="btn secondary small" id="adAngleGo" data-icon="refresh" title="Le storyboard est réécrit avec cet angle (environ 1 minute)">Réécrire avec cet angle</button></div>
-    </div></article>` : '') + `<article class="chcard"><div class="chcard-body"><div class="tiny">
+    </div></article>` : '') + `<article class="chcard"><div class="chcard-body">${p.idee ? adFactsHtml(p.reference || {}) : ''}<div class="tiny">
       ${icon('sparkle', 12)} Le script est écrit <b>avant</b> les images, pour garder les gens jusqu'à la fin :
       <b>accroche</b> (2-3 s) → <b>promesse</b> → <b>montée</b> → <b>réponse</b>. Pour chaque phrase, <b>🎬 l'image voulue</b> sera cherchée ensuite :
       elle est <b>commune à toutes les langues</b>, la modifier demande de revalider chaque langue.
@@ -658,7 +680,7 @@ function renderAdPlan(body, p){
           <div class="ad-passage ad-plan" data-i="${i}">
             <div class="ad-plan-side"><b>${i + 1}</b><span class="pill ${pl.role === 'accroche' || pl.role === 'reponse' ? 'ok' : 'wait'}">${esc(AD_ROLE[pl.role] || pl.role || '')}</span>
               <span class="tiny">≥ ${pl.duree || '?'} s</span>
-              ${(pl.plans_modele || []).length ? `<span class="tiny">plan${pl.plans_modele.length > 1 ? 's' : ''} ${pl.plans_modele.join(', ')} du modèle</span>` : '<span class="tiny">image nouvelle</span>'}</div>
+              ${(pl.plans_modele || []).length ? `<span class="tiny">plan${pl.plans_modele.length > 1 ? 's' : ''} ${pl.plans_modele.join(', ')} ${p.idee ? 'du plan de départ' : 'du modèle'}</span>` : '<span class="tiny">image nouvelle</span>'}</div>
             <div class="fields">
               <label class="tiny">🎬 Image voulue (commune à toutes les langues)</label>
               <textarea class="f sc-image" rows="2" style="min-height:40px;font-size:12.5px">${esc(pl.image || '')}</textarea>
@@ -787,7 +809,7 @@ function renderAdImages(body, p){
         <div class="ad-row"><input class="f ad-plan-link" placeholder="Ton lien pour ce plan (TikTok, YouTube, VK…)" style="flex:1;min-width:220px">
           <button class="btn secondary small ad-plan-check" title="L'IA vérifie ce lien pour ce plan (15 s à 2 min)">Vérifier pour ce plan</button>
           ${pick ? '<button class="btn ghost small ad-skip">Retirer ce plan</button>' : ''}
-          ${k > 0 && pl.role !== 'accroche' && ((p.reference || {}).plans || []).length && !(pick && pick.extrait)
+          ${k > 0 && pl.role !== 'accroche' && !p.idee && ((p.reference || {}).plans || []).length && !(pick && pick.extrait)
             ? `<select class="f ad-excerpt-ref" style="width:auto;max-width:260px;font-size:12px" title="Le moment du Short modèle à prendre">
                 ${p.reference.plans.map((r, i) => `<option value="${i + 1}" ${(pl.plans_modele || [])[0] === i + 1 ? 'selected' : ''}>Modèle ${i + 1} (${adDuration(r.debut) || '0:00'}–${adDuration(r.fin) || '0:00'}) — ${esc((r.visuel || '').slice(0, 50))}</option>`).join('')}</select>
               <button class="btn ghost small ad-excerpt" title="3 secondes maximum du moment choisi, nettoyées, créditées ; 2 par vidéo au plus, jamais l'accroche">Extrait du Short modèle (dernier recours)</button>` : ''}</div>

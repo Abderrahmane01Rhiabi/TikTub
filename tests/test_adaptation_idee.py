@@ -211,3 +211,26 @@ def test_api_creates_an_idea_project_and_shows_the_facts_with_their_sources(clie
     assert shown["faits_sources"][0]["sources"][0]["url"] == "https://x.org"
     assert shown["suggestions_youtube"] == ["chats la nuit"] and shown["origine"] == "idee"
     assert client.post("/api/adaptations", json={"idea": "", "reference_url": "", "channels": ["chanA"]}).status_code == 400
+
+
+def test_a_long_idea_is_shortened_until_youtube_suggests_something():
+    """Measured: "pourquoi les avions de ligne volent…" → nothing, "pourquoi les avions" → 9 suggestions."""
+    class Answer:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+    asked = []
+
+    answers = {"Pourquoi les avions de": ["pourquoi les avions de la fumée blanche"],
+               "Pourquoi les avions": ["pourquoi les avions sont blancs", "pourquoi les avions volent si haut"]}
+
+    def get(url, params, timeout):
+        asked.append(params["q"])
+        return Answer([params["q"], answers.get(params["q"], [])])
+
+    out = idee.youtube_suggestions("Pourquoi les avions de ligne volent à 10 000 mètres d'altitude", "fr", get=get)
+
+    assert out[0] == "pourquoi les avions volent si haut"            # the closest to the idea first
+    assert set(out) == {"pourquoi les avions volent si haut", "pourquoi les avions sont blancs",
+                        "pourquoi les avions de la fumée blanche"}
+    assert len(asked) <= 6

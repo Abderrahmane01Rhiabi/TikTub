@@ -39,15 +39,28 @@ def _gemini():
 
 def youtube_suggestions(text: str, lang: str, get: Callable = requests.get) -> List[str]:
     """What YouTube's search box suggests for the idea (what people really
-    type, in that language). Unofficial and free: [] whenever it doesn't answer."""
-    try:
-        r = get("https://suggestqueries.google.com/complete/search",
-                params={"client": "firefox", "ds": "yt", "hl": lang, "q": text}, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        return [str(s) for s in (data[1] if isinstance(data, list) and len(data) > 1 else [])][:10]
-    except Exception:
-        return []
+    type, in that language), closest to the idea first. The box completes the
+    START of a search: a whole sentence gets nothing (measured: "pourquoi les
+    avions de ligne volent…" → none, "pourquoi les avions" → 9, "pourquoi les
+    avions de" → 1, off topic), so every shorter start is asked and the
+    suggestions sharing the most words with the idea come first. Unofficial
+    and free: [] whenever it doesn't answer."""
+    words = text.split()
+    tries = list(dict.fromkeys(" ".join(words[:n]) for n in [len(words), 6, 5, 4, 3, 2]
+                               if n <= len(words) and (n >= 2 or n == len(words))))
+    found: List[str] = []
+    for q in tries:
+        try:
+            r = get("https://suggestqueries.google.com/complete/search",
+                    params={"client": "firefox", "ds": "yt", "hl": lang, "q": q}, timeout=10)
+            r.raise_for_status()
+            data = r.json()
+        except Exception:
+            break
+        found += [str(x) for x in (data[1] if isinstance(data, list) and len(data) > 1 else []) if str(x) not in found]
+    idea_words = {w for w in re.findall(r"\w+", text.lower()) if len(w) > 3}
+    score = lambda x: len(idea_words & set(re.findall(r"\w+", x.lower())))
+    return sorted(found, key=score, reverse=True)[:10]
 
 
 # ---------------------------------------------------------------- 2. facts, each with its pages
