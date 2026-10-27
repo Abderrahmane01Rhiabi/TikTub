@@ -704,10 +704,10 @@ def revise_adaptation_script(pid: str, channel: TargetChannel, req: AdaptationRe
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/approve")
-def approve_adaptation_script(pid: str, channel: TargetChannel):
+def approve_adaptation_script(pid: str, channel: TargetChannel, force: bool = False):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
-    return _serialize_adaptation(_adaptation_call(ap.approve_script, pid, channel))
+    return _serialize_adaptation(_adaptation_call(ap.approve_script, pid, channel, force))
 
 
 @router.post("/api/adaptations/{pid}/voices")

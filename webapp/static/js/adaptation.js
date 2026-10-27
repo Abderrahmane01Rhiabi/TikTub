@@ -984,9 +984,13 @@ function renderAdScripts(body, p){
     card.querySelector('.sc-approve').onclick = async () => {
       busy();
       try {
-        await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
-        refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/approve`, { method:'POST' }));
-        toast('Script validé ✓', 'success');
+        const saved = await (adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible')) : api(`/api/adaptations/${p.project_id}/targets/${ch}/script`, { method:'PUT', body: JSON.stringify({ script: collect() }) }));
+        const problems = (saved.targets.find(x => x.channel === ch) || {}).problems || [];
+        // the warnings advise, you decide: watched with ▶ and happy with the clips, it goes through anyway
+        if (problems.length && !confirm(`Il reste ${problems.length} avertissement(s) :\n\n• ${problems.join('\n• ')}\n\nValider quand même ?`)){
+          refresh(saved); return; }
+        refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/approve${problems.length ? '?force=true' : ''}`, { method:'POST' }));
+        toast(problems.length ? 'Script validé malgré les avertissements' : 'Script validé ✓', 'success');
       } catch (e){ log(e.message, 'error'); refresh(await api(`/api/adaptations/${p.project_id}`)); }
     };
   });
