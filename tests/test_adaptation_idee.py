@@ -340,3 +340,28 @@ def test_the_versions_of_an_idea_are_compared_and_the_card_shows_the_idea_not_a_
     import performance
     groups = performance.versions(db.query_videos(), {})
     assert groups[0]["idee"] == "pourquoi les chats ronronnent" and groups[0]["reference_url"] == "idee:ad_lead"
+
+
+def test_one_idea_for_two_channels_searches_the_facts_once_and_gives_each_its_angle(project, fakes, monkeypatch):
+    built = []
+    monkeypatch.setattr(idee, "build", lambda text, lang: built.append(lang) or
+                        {"sujet": "chats", "question": "?", "plans": [{}], "faits": ["f1"], "origine": "idee", "idee": text})
+    lead = ap.create("", [], [channel(project, "chanA", "fr", "v_fr"), channel(project, "chanB", "ar", "v_ar")],
+                     mode="script", versions=True, idea="pourquoi les chats ronronnent")
+    member = next(x for x in ap.group_of(lead))
+
+    ap.run_analysis(lead["project_id"])
+    import time
+    for _ in range(50):                                   # the member's storyboard is written alongside
+        if ap.load(member["project_id"]).get("storyboard"):
+            break
+        time.sleep(0.1)
+
+    lead, member = ap.load(lead["project_id"]), ap.load(member["project_id"])
+    assert built == ["fr"]                                  # the web searched once for both channels
+    assert member["idee"] == lead["idee"] and member["reference"]["origine"] == "idee"
+    assert lead["angle"]["titre"] != member["angle"]["titre"]          # each channel its own angle
+    assert lead["storyboard"] and member["storyboard"] and member["status"] == "plan_review"
+    ka = ap.publication_record(lead, lead["targets"][0], "a.mp4")["url"]
+    kb = ap.publication_record(member, member["targets"][0], "b.mp4")["url"]
+    assert ka == kb == f"idee:{lead['project_id']}"                    # compared together in the Dashboard
