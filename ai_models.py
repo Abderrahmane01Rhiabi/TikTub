@@ -56,6 +56,16 @@ STEPS: Dict[str, tuple] = {
     "annotate.review":       (FLASH, "revoir les flèches sur les vrais clips"),
 }
 
+# step: the most it may think (thinkingBudget), for steps that LOOK rather than write. Measured
+# (TEST_ECONOMIES.md, Y1): at 256 the checks agree with the uncapped ones as often as two uncapped runs
+# agree with each other, and their thinking (paid as output) falls to 0. A call that sets its own wins.
+THINKING: Dict[str, int] = {
+    "finder._watch": 256,        # verification of a candidate video (YouTube link)
+    "finder._send_file": 256,    # the same verification, for a file sent
+    "sources.retime": 256,       # re-timing the moment in a downloaded file
+    "sources.find_boxes": 256,   # logos to erase (also the second cleaning pass, leftover_text)
+}
+
 # model: [(from date, $ input, $ output, $ cached input)] per million tokens
 # (ai.google.dev/gemini-api/docs/pricing, read 2026-10-27: cached input = a tenth of the input price)
 PRICES: Dict[str, List[tuple]] = {

@@ -326,15 +326,18 @@ Respond with JSON:
                     "response_mime_type": "application/json"
                 }
             }
-            if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
-                payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking}
-
-            # the model of the step asking (ai_models.STEPS — one table for the whole app), else this generator's
+            # the model of the step asking (ai_models.STEPS — one table for the whole app), else this generator's;
+            # its thinking cap (ai_models.THINKING) unless the call sets one itself
             try:
                 import ai_models
-                model = ai_models.model_for(_asking_step(), self.model_name)
+                step = _asking_step()
+                model = ai_models.model_for(step, self.model_name)
+                if thinking is None:
+                    thinking = ai_models.THINKING.get(step)
             except Exception:
                 model = self.model_name
+            if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
+                payload["generationConfig"]["thinkingConfig"] = {"thinkingBudget": thinking}
             t0 = time.time()
             response = requests.post(
                 self.url_for(model),
