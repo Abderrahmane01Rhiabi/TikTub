@@ -15,6 +15,24 @@ import pytz
 
 from atomic_write import write_file_atomic
 
+import functools
+import threading
+
+# upload_schedule.json is read, changed and rewritten whole by several paths
+# (a screen completing it, "Générer le planning", a date moved by hand,
+# « Publier tout », abandoning a video). One cycle at a time, or the one that
+# saves last erases what the other changed. Reentrant: a cycle may call another.
+SCHEDULE_LOCK = threading.RLock()
+
+
+def holding_schedule_lock(func):
+    """Runs func as one read-change-write cycle of the schedule file."""
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        with SCHEDULE_LOCK:
+            return func(*args, **kwargs)
+    return wrapper
+
 class YouTubeScheduler:
     def __init__(self, config_path="config.yaml"):
         self.load_config(config_path)

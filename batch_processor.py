@@ -14,7 +14,7 @@ import logging
 # Imports des modules créés
 from url_manager import URLManager
 from ai_tags_generator import AITagsGenerator  
-from youtube_scheduler import YouTubeScheduler
+from youtube_scheduler import YouTubeScheduler, holding_schedule_lock
 from montage import pipeline as montage_pipeline
 from montage import recipes as montage_recipes
 import recette
@@ -597,6 +597,7 @@ class BatchProcessor:
                 ]
             }
 
+    @holding_schedule_lock
     def create_upload_schedule(self, max_videos: int = None, use_analytics: bool = None,
                                 target_channel: str = None, schedule_method: str = None) -> List[Dict]:
         """Crée un planning d'upload pour les vidéos prêtes.
@@ -806,6 +807,7 @@ class BatchProcessor:
             print(f"⚠️ {len(unscheduled)} vidéo(s) impossible(s) à placer : " + ", ".join(sorted(dropped)))
         return unscheduled
 
+    @holding_schedule_lock
     def reschedule_past_entries(self, save: bool = True) -> Dict[str, List[Dict]]:
         """Juste avant « Publier tout » : une date devenue passée (planning généré
         il y a plusieurs jours, jamais publié) serait envoyée tout de suite, en
@@ -851,6 +853,7 @@ class BatchProcessor:
             print(f"📅 {len(rescheduled)} date(s) passée(s) replanifiée(s) avant publication")
         return {'rescheduled': rescheduled, 'unscheduled': unscheduled}
 
+    @holding_schedule_lock
     def ensure_schedule_includes_all_ready(self, schedule_method: str = None) -> List[Dict]:
         """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
         publie que ce qui est dans upload_schedule.json, donc une vidéo passée à

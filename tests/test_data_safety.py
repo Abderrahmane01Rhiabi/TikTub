@@ -75,3 +75,37 @@ def test_a_crash_while_saving_the_schedule_leaves_the_old_one_intact(project, mo
         pass
 
     assert open("upload_schedule.json", encoding="utf-8").read() == before
+
+
+def test_a_date_moved_while_a_screen_completes_the_schedule_is_kept(client, project, monkeypatch):
+    """A GET (Planning, Publier) adds missing videos and rewrites the file; a
+    date moved by hand at the same moment used to be overwritten."""
+    import webapp.main as m
+    project.declare_channel("chanA")
+    project.add_video("p1")
+    project.write_schedule([{"video_id": "p1", "channel": "chanA", "title": "p1",
+                             "scheduled_time": "2030-01-07 18:00:00", "video_data": {}}], method="static")
+    project.add_video("late")                                    # missing: the next GET adds it
+    bp = m.get_batch_processor()
+    reading, finish = threading.Event(), threading.Event()
+    real = bp.scheduler.create_upload_schedule
+
+    def slow_method(videos, **kw):                               # the GET has read the file and is computing
+        reading.set()
+        finish.wait(5)
+        return real(videos, **kw)
+    monkeypatch.setattr(bp.scheduler, "create_upload_schedule", slow_method)
+
+    screen = threading.Thread(target=lambda: client.get("/api/schedule"))
+    screen.start()
+    assert reading.wait(5)
+    move = threading.Thread(target=lambda: client.patch("/api/schedule/p1", json={"scheduled_time": "2030-01-09 18:00:00"}))
+    move.start()
+    time.sleep(0.3)
+    finish.set()
+    screen.join(10)
+    move.join(10)
+
+    import json
+    saved = {e["video_id"]: e for e in json.load(open("upload_schedule.json"))["schedule"]}
+    assert saved["p1"]["scheduled_time"] == "2030-01-09 18:00:00" and "late" in saved

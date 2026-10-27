@@ -40,6 +40,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from channel_manager import ChannelManager
+from youtube_scheduler import holding_schedule_lock
 
 CONFIG_PATH = DATA_ROOT / "config.yaml"
 
@@ -1092,6 +1093,7 @@ def reprocess_video(video_id: str):
 
 
 @app.post("/api/videos/{video_id}/abandon")
+@holding_schedule_lock
 def abandon_ready_video(video_id: str):
     """Drops a video that's waiting to be published (e.g. its file is gone
     and it isn't worth reprocessing): removed from upload_schedule.json —
@@ -2331,6 +2333,7 @@ class ScheduleEntryUpdate(BaseModel):
 
 
 @app.patch("/api/schedule/{video_id}")
+@holding_schedule_lock
 def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
     """Manually override one video's proposed date/time (the pencil icon), or
     flag it to publish immediately as public instead of waiting for that date
