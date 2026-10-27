@@ -168,12 +168,8 @@ https://www.tiktok.com/@user/video/999
         """Met à jour le statut d'une vidéo — lecture + écriture ciblées sur cette
         seule ligne (pas de réécriture de toute la base à chaque appel, contrairement
         à l'ancien fichier JSON)."""
-        video = _db.get_video(video_id, self.db_path)
-        if video:
-            video['status'] = status
-            video['updated_at'] = datetime.now().isoformat()
-            video.update(kwargs)
-            _db.upsert_video(video_id, video, self.db_path)
+        _db.update_video(video_id, {'status': status, 'updated_at': datetime.now().isoformat(), **kwargs},
+                         self.db_path)       # read + write under one lock: no lost update between threads
 
     def delete_video(self, video_id: str):
         """Supprime définitivement une ligne vidéo — utilisé pour abandonner un

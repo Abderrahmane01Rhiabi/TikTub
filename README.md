@@ -38,7 +38,7 @@ Première installation : `python -m venv .venv`, puis `pip install -r requiremen
 | `alerts.py`, `backup.py`, `storage.py` | Alertes, sauvegardes, stockage |
 | `db.py`, `url_manager.py` | Base SQLite (`database/tiktub.db`) |
 | `channels/<chaîne>/` | Profil, identifiants OAuth et médias de chaque chaîne |
-| `setup_channels.py`, `setup_openai.py`, `channel_profiles_seed.py` | Outils de configuration ponctuels |
+| `setup_channels.py`, `setup_openai.py` | Outils de configuration ponctuels (une chaîne s'ajoute plutôt depuis l'app : Réglages → Connexion → « Ajouter une chaîne ») |
 
 ## Tests
 

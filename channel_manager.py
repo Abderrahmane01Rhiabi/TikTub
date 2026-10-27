@@ -5,8 +5,46 @@ Manages multiple YouTube channels with individual credentials and configurations
 """
 
 import os
+import re
 import json
 from typing import Dict, List, Optional
+
+# A channel name coming from outside (a route): letters, digits, _ and - only —
+# never "..", "/" or anything else that could point outside channels/.
+CHANNEL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+class UnknownChannelError(ValueError):
+    """A well-formed channel name that isn't in channel_config.json."""
+
+# Channel colors (the dot next to a channel everywhere in the app), stored in
+# channel_config.json. Channels that existed when they were hard-coded in
+# core.js keep exactly that color; any other existing channel keeps the grey
+# it was shown in. A new channel gets a color of NEW_CHANNEL_PALETTE nobody
+# uses — all kept distinct from the status colors (accent blue, ok green,
+# warn amber, danger red) so a channel dot is never mistaken for a state.
+LEGACY_COLORS = {
+    "meme_culture": "#38bdf8", "animeshorts": "#b18cfd", "prince_moulay_hassan": "#fb923c",
+    "lungte888": "#e2e8f0", "zit_bliss": "#fd8cc4", "lungtemotivates": "#2dd4bf",
+}
+LEGACY_FALLBACK_COLOR = "#9aa1ac"
+NEW_CHANNEL_PALETTE = ["#e879f9", "#bef264", "#22d3ee", "#a78bfa", "#f97316", "#facc15",
+                       "#ec4899", "#14b8a6", "#84cc16", "#8b5cf6", "#06b6d4", "#fda4af"]
+
+
+def _unused_color(used) -> str:
+    for color in NEW_CHANNEL_PALETTE:
+        if color not in used:
+            return color
+    import colorsys
+    k = len(used)
+    while True:                       # palette exhausted: spread more hues around the wheel
+        r, g, b = colorsys.hls_to_rgb((k * 0.381966) % 1, 0.65, 0.75)
+        color = "#{:02x}{:02x}{:02x}".format(int(r * 255), int(g * 255), int(b * 255))
+        if color not in used:
+            return color
+        k += 1
+
 
 class ChannelManager:
     def __init__(self):
@@ -15,42 +53,17 @@ class ChannelManager:
         self.ensure_channels_structure()
 
     def ensure_channels_structure(self):
-        """Create channels directory structure if it doesn't exist"""
+        """Create channels directory structure if it doesn't exist.
+        An old single-channel credentials.json at the root is no longer
+        turned into a "default" channel (whose account nobody could tell):
+        a channel is added from the app, « Ajouter une chaîne »."""
         if not os.path.exists(self.channels_dir):
             os.makedirs(self.channels_dir)
-            
-        # Create default channel from existing credentials if they exist
         if not os.path.exists(self.config_file) and (
             os.path.exists("credentials.json") or os.path.exists("token.json")
         ):
-            self.migrate_default_channel()
-
-    def migrate_default_channel(self):
-        """Migrate existing single-channel setup to default channel"""
-        default_dir = os.path.join(self.channels_dir, "default")
-        os.makedirs(default_dir, exist_ok=True)
-        
-        # Move existing credentials to default channel
-        if os.path.exists("credentials.json"):
-            import shutil
-            shutil.copy2("credentials.json", os.path.join(default_dir, "credentials.json"))
-            print("✅ Migrated credentials.json to channels/default/")
-            
-        if os.path.exists("token.json"):
-            import shutil
-            shutil.copy2("token.json", os.path.join(default_dir, "token.json"))
-            print("✅ Migrated token.json to channels/default/")
-        
-        # Create initial config
-        config = {
-            "default": {
-                "display_name": "Default Channel",
-                "description": "Your main YouTube channel",
-                "created_at": "2025-07-30",
-                "active": True
-            }
-        }
-        self.save_config(config)
+            print("ℹ️ credentials.json à la racine ignoré : ajoute la chaîne depuis l'app "
+                  "(Réglages → Connexion → « Ajouter une chaîne »).")
 
     def get_config(self) -> Dict:
         """Load channel configuration"""
@@ -66,6 +79,9 @@ class ChannelManager:
 
     def add_channel(self, channel_name: str, display_name: str, description: str = "") -> bool:
         """Add a new channel"""
+        if channel_name == "default":
+            print("❌ « default » est réservé : choisis un autre nom de chaîne")
+            return False
         if not channel_name.replace("_", "").replace("-", "").isalnum():
             print("❌ Channel name must contain only letters, numbers, hyphens, and underscores")
             return False
@@ -80,12 +96,13 @@ class ChannelManager:
         os.makedirs(os.path.join(channel_dir, "urls_input"), exist_ok=True)
 
         # Update config
-        config = self.get_config()
+        config = self.ensure_colors()
         config[channel_name] = {
             "display_name": display_name,
             "description": description,
             "created_at": "2025-07-30",
-            "active": True
+            "active": True,
+            "color": _unused_color({c.get("color") for c in config.values()}),
         }
         self.save_config(config)
 
@@ -158,9 +175,20 @@ class ChannelManager:
         os.makedirs(music, exist_ok=True)
         return {"backgrounds": backgrounds, "music": music}
 
+    def ensure_colors(self) -> Dict:
+        """Gives a color to every channel that has none yet (saved once):
+        the one it had in core.js, else the grey it was shown in."""
+        config = self.get_config()
+        missing = [name for name, info in config.items() if not info.get("color")]
+        for name in missing:
+            config[name]["color"] = LEGACY_COLORS.get(name, LEGACY_FALLBACK_COLOR)
+        if missing:
+            self.save_config(config)
+        return config
+
     def list_channels(self) -> List[Dict]:
         """List all available channels"""
-        config = self.get_config()
+        config = self.ensure_colors()
         channels = []
         
         for channel_name, channel_info in config.items():
@@ -172,6 +200,7 @@ class ChannelManager:
             channels.append({
                 "name": channel_name,
                 "display_name": channel_info.get("display_name", channel_name),
+                "color": channel_info.get("color"),
                 "description": channel_info.get("description", ""),
                 "active": channel_info.get("active", True),
                 "has_credentials": has_credentials,
@@ -187,27 +216,27 @@ class ChannelManager:
         return channels
 
     def get_channel_paths(self, channel_name: str) -> tuple:
-        """Get credentials and token paths for a channel"""
-        # Check if using old single-channel setup
-        if not os.path.exists(self.channels_dir):
-            return "credentials.json", "token.json"
-            
-        # Multi-channel setup
+        """Get credentials and token paths for a channel. No channel, or
+        "default" when no channel has that name, is an error — never "the
+        first channel" (an upload would land on a channel nobody chose)."""
+        if not channel_name or (channel_name == "default" and "default" not in self.get_config()):
+            raise ValueError(f"Aucune chaîne indiquée (« {channel_name or ''} ») : action annulée plutôt que de "
+                             "l'envoyer sur une chaîne au hasard.")
         channel_dir = os.path.join(self.channels_dir, channel_name)
         credentials_path = os.path.join(channel_dir, "credentials.json")
         token_path = os.path.join(channel_dir, "token.json")
-        
-        # If requesting "default" but it doesn't exist, try to find the first available channel
-        if channel_name == "default" and not os.path.exists(channel_dir):
-            config = self.get_config()
-            if config:
-                # Use the first available channel as fallback
-                first_channel = list(config.keys())[0]
-                channel_dir = os.path.join(self.channels_dir, first_channel)
-                credentials_path = os.path.join(channel_dir, "credentials.json")
-                token_path = os.path.join(channel_dir, "token.json")
-        
         return credentials_path, token_path
+
+    def validate_channel_name(self, channel_name) -> str:
+        """THE check for a channel name received from outside: allowed format
+        AND an existing channel. ValueError (UnknownChannelError when the
+        format is fine but no such channel), message in French."""
+        if not isinstance(channel_name, str) or not CHANNEL_NAME_RE.match(channel_name):
+            raise ValueError(f"Nom de chaîne invalide : « {str(channel_name)[:70]} » "
+                             "(lettres, chiffres, _ et - uniquement).")
+        if channel_name not in self.get_config():
+            raise UnknownChannelError(f"Chaîne inconnue : « {channel_name} ».")
+        return channel_name
 
     def channel_exists(self, channel_name: str) -> bool:
         """Check if a channel exists"""

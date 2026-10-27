@@ -208,3 +208,125 @@ def test_reprocess_sends_a_video_back_to_cadrage_keeping_its_ai_data(client, pro
     v1 = db.get_video("v1")
     assert v1["status"] == "selected" and v1["reprocess_keep_ai"] and v1["ai_data"]["optimized_title"] == "reviewed"
     assert client.post("/api/videos/v2/reprocess").status_code == 400  # source gone too
+
+
+# ---- a send cut short (server restarted mid-publish, AUDIT.md §8.3-7)
+
+class ServerKilled(BaseException):
+    """What a restart does to the publishing thread: nothing after this line runs."""
+
+
+def test_youtube_id_is_saved_as_soon_as_youtube_answers(project, fake_youtube, monkeypatch):
+    project.add_channel("chanA")
+    project.add_video("v1", video_path=project.add_video_file("v1.mp4"))
+    project.write_schedule([schedule_entry("v1")])
+
+    def killed(channel):
+        raise ServerKilled()
+    monkeypatch.setattr(quota, "record_upload", killed)      # the next step after the insert
+
+    try:
+        yu.upload_channel_schedule("chanA")
+    except ServerKilled:
+        pass
+
+    video = db.get_video("v1")
+    assert video["youtube_id"] == "yt1" and video["status"] == "scheduled_on_youtube"
+
+
+class Answer:
+    def __init__(self, data=None, error=None):
+        self.data, self.error = data, error
+
+    def execute(self):
+        if self.error:
+            raise self.error
+        return self.data
+
+
+class ChannelUploads:
+    """channels.list(mine) → the uploads playlist; playlistItems.list → its latest videos."""
+    def __init__(self, videos, error=None):
+        self.videos, self.error = videos, error
+
+    def channels(self):
+        return type("C", (), {"list": lambda _, **kw: Answer(
+            {"items": [{"contentDetails": {"relatedPlaylists": {"uploads": "UU1"}}}]}, self.error)})()
+
+    def playlistItems(self):
+        return type("P", (), {"list": lambda _, **kw: Answer({"items": [
+            {"snippet": {"title": t, "publishedAt": at, "resourceId": {"videoId": vid}}} for vid, t, at in self.videos]})})()
+
+
+def interrupted(project, title="Mon titre"):
+    """A send cut short: the marker written before videos.insert is still there."""
+    project.add_channel("chanA")
+    started = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+    project.add_video("v1", video_path=project.add_video_file("v1.mp4"), ai_data={"optimized_title": title},
+                      upload_attempt={"started_at": started, "title": title, "scheduled_time": FUTURE})
+    project.write_schedule([schedule_entry("v1", title=title)])
+
+
+def test_a_send_cut_short_found_on_youtube_is_not_sent_again(project, fake_youtube, monkeypatch):
+    interrupted(project)
+    just_after = (datetime.now(timezone.utc) - timedelta(minutes=9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    uploads = ChannelUploads([("YTold", "Mon titre", "2020-01-01T00:00:00Z"), ("YTcut", "Mon titre", just_after)])
+    monkeypatch.setattr(type(fake_youtube), "channels", lambda self: uploads.channels(), raising=False)
+    monkeypatch.setattr(type(fake_youtube), "playlistItems", lambda self: uploads.playlistItems(), raising=False)
+
+    result = yu.upload_channel_schedule("chanA")[0]
+
+    assert fake_youtube.inserted == []                                   # never twice on YouTube
+    assert result["success"] and "interrompu" in result["note"]
+    video = db.get_video("v1")
+    assert video["youtube_id"] == "YTcut" and video["status"] == "scheduled_on_youtube"
+    assert not video.get("upload_attempt")
+
+
+def test_a_send_cut_short_not_on_youtube_is_sent_normally(project, fake_youtube, monkeypatch):
+    interrupted(project)
+    uploads = ChannelUploads([("YTold", "Mon titre", "2020-01-01T00:00:00Z")])
+    monkeypatch.setattr(type(fake_youtube), "channels", lambda self: uploads.channels(), raising=False)
+    monkeypatch.setattr(type(fake_youtube), "playlistItems", lambda self: uploads.playlistItems(), raising=False)
+
+    result = yu.upload_channel_schedule("chanA")[0]
+
+    assert result["success"] and len(fake_youtube.inserted) == 1
+    assert not db.get_video("v1").get("upload_attempt")
+
+
+def test_a_send_cut_short_that_cant_be_checked_is_held_back(project, fake_youtube, monkeypatch):
+    interrupted(project)
+    uploads = ChannelUploads([], error=OSError("network unreachable"))
+    monkeypatch.setattr(type(fake_youtube), "channels", lambda self: uploads.channels(), raising=False)
+
+    result = yu.upload_channel_schedule("chanA")[0]
+
+    assert fake_youtube.inserted == [] and not result["success"] and "interrompu" in result["error"]
+    assert db.get_video("v1")["upload_attempt"]                           # still checked next time
+
+
+def test_the_marker_is_there_during_the_send_and_gone_after(project, fake_youtube, monkeypatch):
+    project.add_channel("chanA")
+    project.add_video("v1", video_path=project.add_video_file("v1.mp4"))
+    project.write_schedule([schedule_entry("v1")])
+    seen = []
+    execute = type(fake_youtube).execute
+    monkeypatch.setattr(type(fake_youtube), "execute",
+                        lambda self: seen.append(db.get_video("v1").get("upload_attempt")) or execute(self))
+
+    yu.upload_channel_schedule("chanA")
+
+    assert seen and seen[0]["title"] == "old title" and seen[0]["started_at"]
+    assert not db.get_video("v1").get("upload_attempt")
+
+
+def test_a_send_that_failed_without_answer_is_checked_next_time(project, fake_youtube):
+    project.add_channel("chanA")
+    project.add_video("v1", video_path=project.add_video_file("v1.mp4"))
+    project.write_schedule([schedule_entry("v1")])
+    fake_youtube.errors = [ConnectionResetError("connection lost mid-upload")]   # did YouTube get it? unknown
+
+    result = yu.upload_channel_schedule("chanA")[0]
+
+    assert not result["success"] and db.get_video("v1")["upload_attempt"]

@@ -51,9 +51,10 @@ def test_publish_results_alert_real_failures_only(project):
 
 def test_publish_endpoint_raises_alerts_and_they_can_be_dismissed(client, project, monkeypatch):
     import youtube_uploader as yu
-    monkeypatch.setattr(yu, "upload_all_channels_schedule", lambda auto_confirm=True: [
+    monkeypatch.setattr(yu, "upload_all_channels_schedule", lambda auto_confirm=True, on_result=None: [
         {"video_id": "v1", "title": "T1", "success": False, "error": "Upload failed", "channel": "chanA"}])
-    client.post("/api/publish_all")
+    from conftest import publish_all_and_wait
+    publish_all_and_wait(client)
 
     listed = client.get("/api/alerts").json()
     assert [a["key"] for a in listed] == ["publish:v1"] and listed[0]["channel"] == "chanA"

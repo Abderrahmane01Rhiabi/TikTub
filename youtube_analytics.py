@@ -13,7 +13,7 @@ from google.oauth2.credentials import Credentials
 class YouTubeAnalytics:
     """Get real engagement data from YouTube channels"""
     
-    def __init__(self, channel_name="default"):
+    def __init__(self, channel_name):
         self.channel_name = channel_name
         self.analytics_service = None
         
@@ -139,7 +139,7 @@ class YouTubeAnalytics:
         ranked = sorted(averaged, key=averaged.get, reverse=True)
         return ranked[:top_days]
 
-def test_analytics(channel_name="default"):
+def test_analytics(channel_name):
     """Test analytics functionality"""
     print(f"📊 Testing Analytics for {channel_name}")
     print("=" * 40)

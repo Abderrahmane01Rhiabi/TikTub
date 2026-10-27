@@ -17,7 +17,7 @@ import tempfile
 import threading
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Annotated, Dict, Optional
 from urllib.parse import quote
 
 # Make sure the project root (parent of webapp/) is importable regardless of
@@ -34,12 +34,13 @@ os.chdir(DATA_ROOT)
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, JSONResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from channel_manager import ChannelManager
+from youtube_scheduler import holding_schedule_lock
 
 CONFIG_PATH = DATA_ROOT / "config.yaml"
 
@@ -56,6 +57,26 @@ async def lifespan(app):
 
 app = FastAPI(title="TikTub", lifespan=lifespan)
 channel_manager = ChannelManager()
+
+
+def checked_channel(name) -> str:
+    """Every channel name a route receives (path, body or query) goes through
+    ChannelManager.validate_channel_name: 400 for a bad format (e.g. "..",
+    which would write outside channels/), 404 for a channel that doesn't exist."""
+    from channel_manager import UnknownChannelError
+    try:
+        return channel_manager.validate_channel_name(name)
+    except UnknownChannelError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+def _valid_channel_name(channel_name: str) -> str:
+    return checked_channel(channel_name)
+
+
+ChannelName = Annotated[str, Depends(_valid_channel_name)]   # a {channel_name} path parameter, checked
 
 # Serve downloaded/processed videos so <video> tags in the UI can preview them
 os.makedirs("temp", exist_ok=True)
@@ -407,6 +428,104 @@ def list_channels():
     return channel_manager.list_channels()
 
 
+# ---------------------------------------------------------------------------
+# « Ajouter une chaîne » (channel_setup.py): Google project → Gmail → confirm
+# ---------------------------------------------------------------------------
+
+@app.get("/api/google_projects")
+def google_projects():
+    """Google projects already used by a channel, with their channels and
+    today's quota (shared by the channels of one project)."""
+    import channel_setup
+    import quota
+    return {"projects": channel_setup.google_projects(channel_manager),
+            "daily_units": quota.load_settings(str(CONFIG_PATH))["daily_units"]}
+
+
+@app.post("/api/channel_drafts/upload")
+async def channel_draft_upload(file: UploadFile = File(...)):
+    """A new Google project: its OAuth client JSON, checked, kept in memory."""
+    import channel_setup
+    raw = await file.read(channel_setup.MAX_CLIENT_SECRET_BYTES + 1)
+    try:
+        config = channel_setup.parse_client_secret(raw)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return channel_setup.public_draft(channel_setup.new_draft(config, "upload"))
+
+
+class DraftFromProject(BaseModel):
+    project_key: str
+
+
+@app.post("/api/channel_drafts/from_project")
+def channel_draft_from_project(req: DraftFromProject):
+    import channel_setup
+    config = channel_setup.client_config_for_project(channel_manager, req.project_key)
+    if not config:
+        raise HTTPException(status_code=404, detail="Projet Google introuvable parmi les chaînes existantes.")
+    return channel_setup.public_draft(channel_setup.new_draft(config, req.project_key))
+
+
+def _draft_or_404(draft_id: str):
+    import channel_setup
+    draft = channel_setup.get_draft(draft_id)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Ajout de chaîne introuvable ou expiré — recommence depuis « Ajouter une chaîne ».")
+    return draft
+
+
+@app.get("/api/channel_drafts/{draft_id}")
+def channel_draft_status(draft_id: str):
+    import channel_setup
+    return channel_setup.public_draft(_draft_or_404(draft_id))
+
+
+@app.post("/api/channel_drafts/{draft_id}/connect")
+def channel_draft_connect(draft_id: str, request: Request):
+    """Google's window for a channel not created yet: same flow and scopes
+    as "Connexion", with the draft's client JSON (nothing on disk)."""
+    from youtube_uploader import start_oauth_flow, NEW_CHANNEL_PREFIX
+    draft = _draft_or_404(draft_id)
+    draft.update(token=None, youtube=None, error=None)       # a new attempt starts clean
+    port = request.url.port or 80
+    redirect_uri = f"http://localhost:{port}/api/oauth/callback"   # see connect_start
+    try:
+        auth_url = start_oauth_flow(NEW_CHANNEL_PREFIX + draft_id, redirect_uri, client_config=draft["client_config"])
+    except Exception as e:
+        import channel_setup
+        raise HTTPException(status_code=400, detail=channel_setup.google_error_fr(e))
+    return {"auth_url": auth_url}
+
+
+class DraftConfirm(BaseModel):
+    name: str
+    display_name: str
+    language: str
+
+
+@app.post("/api/channel_drafts/{draft_id}/confirm")
+def channel_draft_confirm(draft_id: str, req: DraftConfirm):
+    """Only now is channels/<name>/ written (never over an existing channel)."""
+    import channel_setup
+    draft = _draft_or_404(draft_id)
+    try:
+        created = channel_setup.create_channel(channel_manager, draft, req.name, req.display_name, req.language)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    channel_setup.drop_draft(draft_id)
+    return created
+
+
+@app.delete("/api/channel_drafts/{draft_id}")
+def channel_draft_cancel(draft_id: str):
+    """Cancel: the draft (client JSON, token) only ever lived in memory."""
+    import channel_setup
+    from youtube_uploader import forget_new_channel, NEW_CHANNEL_PREFIX
+    forget_new_channel(NEW_CHANNEL_PREFIX + draft_id)
+    return {"cancelled": channel_setup.drop_draft(draft_id)}
+
+
 OVERVIEW_BUCKETS = {
     "to_sort": {"selected", "montage_review"},  # downloaded, waiting for Sélection/Cadrage/Montage/Traiter
     "generating": {"awaiting_script", "script_generated", "audio_generated", "assembling"},
@@ -488,7 +607,7 @@ def dismiss_failed_video(video_id: str):
 
 
 @app.get("/api/channels/{channel_name}/profile")
-def get_channel_profile(channel_name: str):
+def get_channel_profile(channel_name: ChannelName):
     return channel_manager.get_channel_profile(channel_name)
 
 
@@ -502,7 +621,7 @@ class ProfileUpdate(BaseModel):
 
 
 @app.put("/api/channels/{channel_name}/profile")
-def update_channel_profile(channel_name: str, update: ProfileUpdate):
+def update_channel_profile(channel_name: ChannelName, update: ProfileUpdate):
     profile = channel_manager.get_channel_profile(channel_name)
     for key, value in update.dict(exclude_unset=True).items():
         profile[key] = value
@@ -511,7 +630,7 @@ def update_channel_profile(channel_name: str, update: ProfileUpdate):
 
 
 @app.post("/api/channels/{channel_name}/background")
-async def upload_background(channel_name: str, file: UploadFile = File(...)):
+async def upload_background(channel_name: ChannelName, file: UploadFile = File(...)):
     channel_dir = Path("channels") / channel_name
     channel_dir.mkdir(parents=True, exist_ok=True)
 
@@ -533,7 +652,7 @@ async def upload_background(channel_name: str, file: UploadFile = File(...)):
 
 
 @app.get("/api/channels/{channel_name}/background")
-def get_background_image(channel_name: str):
+def get_background_image(channel_name: ChannelName):
     path = channel_manager.get_background_path(channel_name)
     if not path:
         raise HTTPException(status_code=404, detail="No background set for this channel")
@@ -541,7 +660,7 @@ def get_background_image(channel_name: str):
 
 
 @app.delete("/api/channels/{channel_name}/background")
-def remove_background(channel_name: str):
+def remove_background(channel_name: ChannelName):
     """Removes this channel's background image — future videos fall back to
     plain black (never a random pick from backgrounds/, per an earlier decision)."""
     channel_dir = Path("channels") / channel_name
@@ -560,7 +679,7 @@ def remove_background(channel_name: str):
 # ---------------------------------------------------------------------------
 
 @app.post("/api/channels/{channel_name}/connect/start")
-def connect_start(channel_name: str, request: Request):
+def connect_start(channel_name: ChannelName, request: Request):
     from youtube_uploader import start_oauth_flow
 
     # Always use "localhost" (matching credentials.json's registered
@@ -579,16 +698,38 @@ def connect_start(channel_name: str, request: Request):
 
 @app.get("/api/oauth/callback")
 def oauth_callback(request: Request):
-    from youtube_uploader import complete_oauth_flow
+    from html import escape
+    from youtube_uploader import complete_oauth_flow, pop_oauth_target, take_new_channel_token, NEW_CHANNEL_PREFIX
+    import channel_setup
 
     state = request.query_params.get("state")
+    google_error = request.query_params.get("error")      # e.g. access_denied: refused on Google's page
     try:
-        channel_name = complete_oauth_flow(state, str(request.url))
-        body = f"<p>Chaîne « {channel_name} » connectée ✅ — tu peux fermer cet onglet.</p>"
+        if google_error:
+            target = pop_oauth_target(state) or ""
+            raise RuntimeError(google_error)
+        target = complete_oauth_flow(state, str(request.url))
+        if target.startswith(NEW_CHANNEL_PREFIX):          # « Ajouter une chaîne »: not created yet
+            draft = channel_setup.get_draft(target[len(NEW_CHANNEL_PREFIX):])
+            if not draft:
+                raise RuntimeError("Ajout de chaîne expiré — recommence depuis « Ajouter une chaîne ».")
+            channel_setup.identify(channel_manager, draft, take_new_channel_token(target))
+            if draft["error"]:
+                raise RuntimeError(draft["error"])
+            body = (f"<p>Chaîne YouTube « {escape(draft['youtube']['title'] or '')} » trouvée ✅ — "
+                    "reviens dans TikTub pour confirmer.</p>")
+        else:
+            body = f"<p>Chaîne « {escape(target)} » connectée ✅ — tu peux fermer cet onglet.</p>"
     except Exception as e:
         import traceback
         traceback.print_exc()  # so a failure shows up in the server terminal, not just silently
-        body = f"<p>Échec de l'autorisation : {e}</p>"
+        message = str(e) if isinstance(e, RuntimeError) and not google_error else channel_setup.google_error_fr(e)
+        target = locals().get("target") or ""
+        if target.startswith(NEW_CHANNEL_PREFIX):
+            draft = channel_setup.get_draft(target[len(NEW_CHANNEL_PREFIX):])
+            if draft and not draft["error"]:
+                draft["error"] = message
+        body = f"<p>Échec de l'autorisation : {escape(message)}</p>"
 
     return HTMLResponse(f"""
         <html><body style="font-family:sans-serif;padding:40px;text-align:center">
@@ -599,7 +740,7 @@ def oauth_callback(request: Request):
 
 
 @app.get("/api/channels/{channel_name}/connection_status")
-def connection_status(channel_name: str):
+def connection_status(channel_name: ChannelName):
     """state tells WHY a channel isn't usable (see get_connection_health) —
     "expired" vs "not_connected" vs "error" — instead of one bare
     "Non connectée" for every case."""
@@ -621,7 +762,7 @@ def connection_status(channel_name: str):
 
 
 @app.get("/api/channels/{channel_name}/dashboard")
-def channel_dashboard(channel_name: str, refresh: bool = False):
+def channel_dashboard(channel_name: ChannelName, refresh: bool = False):
     """Every video TikTub has published to this channel, with locally-known
     metadata always shown, plus live YouTube stats (views/likes/real privacy
     status) fetched on demand (?refresh=true) — not on every page load, since
@@ -674,7 +815,7 @@ class VisibilityUpdate(BaseModel):
 
 
 @app.patch("/api/channels/{channel_name}/videos/{youtube_id}/visibility")
-def update_visibility(channel_name: str, youtube_id: str, update: VisibilityUpdate):
+def update_visibility(channel_name: ChannelName, youtube_id: str, update: VisibilityUpdate):
     from youtube_uploader import update_video_visibility
 
     try:
@@ -702,7 +843,7 @@ def update_visibility(channel_name: str, youtube_id: str, update: VisibilityUpda
 
 
 @app.get("/api/channels/{channel_name}/videos/{youtube_id}/analytics")
-def video_analytics(channel_name: str, youtube_id: str):
+def video_analytics(channel_name: ChannelName, youtube_id: str):
     from youtube_uploader import get_video_analytics, has_analytics_scope
 
     if not has_analytics_scope(channel_name):
@@ -719,7 +860,7 @@ def video_analytics(channel_name: str, youtube_id: str):
 
 
 @app.get("/api/channels/{channel_name}/performance")
-def channel_performance(channel_name: str):
+def channel_performance(channel_name: ChannelName):
     """"Ce qui marche": this channel's published videos ranked by views 7
     days after publication, each scored against the channel's median, plus
     which choices (format, décor, captions, publish day/hour...) beat it.
@@ -758,7 +899,7 @@ def sync_youtube_statuses_now():
 
 
 @app.get("/api/channels/{channel_name}/channel_analytics")
-def channel_analytics_endpoint(channel_name: str, days: int = 30):
+def channel_analytics_endpoint(channel_name: ChannelName, days: int = 30):
     from youtube_uploader import get_channel_analytics, has_analytics_scope
 
     if not has_analytics_scope(channel_name):
@@ -784,7 +925,7 @@ class UrlsSubmission(BaseModel):
 
 
 @app.post("/api/channels/{channel_name}/urls")
-def submit_urls(channel_name: str, submission: UrlsSubmission):
+def submit_urls(channel_name: ChannelName, submission: UrlsSubmission):
     bp = get_batch_processor()
 
     urls_dir = channel_manager.get_urls_input_dir(channel_name)
@@ -914,6 +1055,8 @@ def get_batch_videos(batch_id: str, status: Optional[str] = None):
 def get_all_videos(status: Optional[str] = None, channel: Optional[str] = None):
     """Global video listing across every channel/batch — what the wizard UI uses,
     since it works on all 6 channels at once rather than one at a time."""
+    if channel:
+        checked_channel(channel)
     bp = get_batch_processor()
     videos = bp.list_all_videos(status=status, channel=channel)
     return [serialize_video(v) for v in videos]
@@ -950,6 +1093,7 @@ def reprocess_video(video_id: str):
 
 
 @app.post("/api/videos/{video_id}/abandon")
+@holding_schedule_lock
 def abandon_ready_video(video_id: str):
     """Drops a video that's waiting to be published (e.g. its file is gone
     and it isn't worth reprocessing): removed from upload_schedule.json —
@@ -1160,7 +1304,7 @@ MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
 
 
 @app.get("/api/channels/{channel_name}/montage")
-def get_channel_montage(channel_name: str):
+def get_channel_montage(channel_name: ChannelName):
     return _montage_channel_payload(channel_name)
 
 
@@ -1169,7 +1313,7 @@ class ChannelMontageUpdate(BaseModel):
 
 
 @app.put("/api/channels/{channel_name}/montage")
-def update_channel_montage(channel_name: str, update: ChannelMontageUpdate):
+def update_channel_montage(channel_name: ChannelName, update: ChannelMontageUpdate):
     from montage import recipes
     profile = channel_manager.get_channel_profile(channel_name)
     profile["montage"] = recipes.clean_settings(update.settings)
@@ -1178,7 +1322,7 @@ def update_channel_montage(channel_name: str, update: ChannelMontageUpdate):
 
 
 @app.post("/api/channels/{channel_name}/assets/music")
-async def upload_channel_music(channel_name: str, file: UploadFile = File(...)):
+async def upload_channel_music(channel_name: ChannelName, file: UploadFile = File(...)):
     """Adds a song to the channel's music folder (what Montage auto and the
     generative pipeline pick their background music from)."""
     name = Path(file.filename or "").name
@@ -1597,7 +1741,7 @@ class CreateDraftRequest(BaseModel):
 
 
 @app.post("/api/channels/{channel_name}/generation_draft")
-def create_generation_draft(channel_name: str, req: CreateDraftRequest):
+def create_generation_draft(channel_name: ChannelName, req: CreateDraftRequest):
     """Phase 1 kickoff: registers `count` draft rows (no decor — that's
     chosen later, per-video, in phase 3) and immediately starts writing their
     scripts in a background thread. The request returns right away; the UI
@@ -1668,7 +1812,7 @@ GENERATION_DRAFT_STATUSES = {"awaiting_script", "script_generated", "audio_gener
 
 
 @app.get("/api/channels/{channel_name}/generated_videos")
-def get_generated_videos(channel_name: str, status: Optional[str] = None, batch_id: Optional[str] = None):
+def get_generated_videos(channel_name: ChannelName, status: Optional[str] = None, batch_id: Optional[str] = None):
     """Without an explicit status or batch_id, only the still-in-progress
     draft(s) are returned — never a completed one. Once a video reaches
     'ready_for_upload' (and anything further downstream: 'uploaded',
@@ -1729,25 +1873,25 @@ def update_generated_script(video_id: str, update: ScriptUpdate):
 
 
 @app.get("/api/channels/{channel_name}/assets")
-def get_channel_assets(channel_name: str):
+def get_channel_assets(channel_name: ChannelName):
     """Lists the background videos/music the user has manually dropped into
     channels/<name>/assets/ — nothing here is fetched from an external API."""
     return get_generative_pipeline().list_assets(channel_name)
 
 
 @app.get("/api/channels/{channel_name}/assets/backgrounds/{filename}")
-def get_background_asset(channel_name: str, filename: str):
+def get_background_asset(channel_name: ChannelName, filename: str):
     return FileResponse(_safe_asset_path(channel_name, "backgrounds", filename))
 
 
 @app.get("/api/channels/{channel_name}/assets/music/{filename}")
-def get_music_asset(channel_name: str, filename: str):
+def get_music_asset(channel_name: ChannelName, filename: str):
     return FileResponse(_safe_asset_path(channel_name, "music", filename))
 
 
 @app.get("/api/channels/{channel_name}/asset_frame_preview")
 def asset_frame_preview(
-    channel_name: str, bg_video_filename: str, frame_mode: str = "fill",
+    channel_name: ChannelName, bg_video_filename: str, frame_mode: str = "fill",
     rounded_corners: bool = False, caption_style: Optional[str] = None, caption_color: Optional[str] = None,
 ):
     """A composited still frame of a candidate background asset with the
@@ -2055,6 +2199,8 @@ class ScheduleRequest(BaseModel):
 
 @app.post("/api/schedule")
 def create_schedule(req: ScheduleRequest):
+    if req.target_channel:
+        checked_channel(req.target_channel)
     bp = get_batch_processor()
     schedule = bp.create_upload_schedule(
         max_videos=req.max_videos,
@@ -2130,7 +2276,9 @@ def publish_preflight():
     moved = bp.reschedule_past_entries(save=False)
     by_channel: Dict[str, list] = {}
     for entry in pending:
-        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
+        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel")
+        if not channel:
+            continue        # no channel: never published (upload_all_channels_schedule says so)
         by_channel.setdefault(channel, []).append(entry)
 
     report = []
@@ -2185,6 +2333,7 @@ class ScheduleEntryUpdate(BaseModel):
 
 
 @app.patch("/api/schedule/{video_id}")
+@holding_schedule_lock
 def update_schedule_entry(video_id: str, update: ScheduleEntryUpdate):
     """Manually override one video's proposed date/time (the pencil icon), or
     flag it to publish immediately as public instead of waiting for that date
@@ -2245,7 +2394,7 @@ def calendar():
 
     items = []
     for entry in pending:
-        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel", "default")
+        channel = entry.get("channel") or (entry.get("video_data") or {}).get("channel")
         try:
             when = bp._parse_slot(entry["scheduled_time"]).isoformat()
         except (KeyError, ValueError, TypeError):
@@ -2292,6 +2441,7 @@ class PublishRequest(BaseModel):
 
 @app.post("/api/publish")
 def publish(req: PublishRequest):
+    checked_channel(req.channel_name)
     bp = get_batch_processor()
     bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
     moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
@@ -2302,18 +2452,57 @@ def publish(req: PublishRequest):
     return {"results": results, **moved}
 
 
+PUBLISH_JOB = "publish_all"
+_publish_start_lock = threading.Lock()
+
+
 @app.post("/api/publish_all")
 def publish_all():
     """Publish the entire schedule, across every channel it touches — the wizard's
-    single final "Publier tout" button."""
+    single final "Publier tout" button. Runs in a background thread and answers
+    at once (it used to be one request lasting minutes); progress and, at the
+    end, the results come from GET /api/publish_status. A second start while
+    one runs is refused. A restart in the middle is covered by the
+    upload_attempt marker (youtube_uploader.find_interrupted_upload)."""
+    import progress
     bp = get_batch_processor()
-    bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
-    moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
-    from youtube_uploader import upload_all_channels_schedule
-    results = upload_all_channels_schedule(auto_confirm=True)
-    _mark_rescheduled(results, moved)
-    _alert_publish_results(results)
-    return {"results": results, **moved}
+    with _publish_start_lock:
+        if progress.is_running(PUBLISH_JOB):
+            return {"started": False, "running": True}
+        progress.start(PUBLISH_JOB, kind="publish", phase="préparation", total=0, sent=0, title=None,
+                       results=[], rescheduled=[], unscheduled=[])
+
+    def run():
+        from youtube_uploader import upload_all_channels_schedule
+        try:
+            bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
+            moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
+            total = len(_pending_schedule(bp)[1])
+            progress.update(PUBLISH_JOB, 0.0, phase="envoi", total=total, **moved)
+            sent = []
+
+            def on_result(result):
+                sent.append(result)
+                progress.update(PUBLISH_JOB, len(sent) / max(total, 1), sent=len(sent), title=result.get("title"))
+
+            results = upload_all_channels_schedule(auto_confirm=True, on_result=on_result)
+            _mark_rescheduled(results, moved)
+            _alert_publish_results(results)
+            progress.finish(PUBLISH_JOB, results=results, sent=len(results), **moved)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            progress.finish(PUBLISH_JOB, error=str(e))
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True}
+
+
+@app.get("/api/publish_status")
+def publish_status():
+    """The current/last « Publier tout » run (see publish_all)."""
+    import progress
+    return progress.get(PUBLISH_JOB) or {"key": None, "done": True, "results": [], "rescheduled": [], "unscheduled": []}
 
 
 def _mark_rescheduled(results, moved):

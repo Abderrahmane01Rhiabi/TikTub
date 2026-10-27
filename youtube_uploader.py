@@ -21,6 +21,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
+from atomic_write import write_file_atomic   # token.json: never half-written
+
 # Import multi-channel support
 try:
     from channel_manager import ChannelManager
@@ -48,7 +50,7 @@ TOKEN_FILE = 'token.json'              # Fallback for single-channel
 STATUS_DB = 'database/videos_status.json'
 SCHEDULE_FILE = 'upload_schedule.json'
 
-def get_credentials_path(channel_name="default"):
+def get_credentials_path(channel_name=None):
     """Get credentials path for specified channel (multi-channel support)"""
     if MULTI_CHANNEL_SUPPORT:
         manager = ChannelManager()
@@ -56,7 +58,7 @@ def get_credentials_path(channel_name="default"):
         return credentials_path
     return CREDENTIALS_FILE  # Fallback to single-channel
 
-def get_token_path(channel_name="default"):
+def get_token_path(channel_name=None):
     """Get token path for specified channel (multi-channel support)"""
     if MULTI_CHANNEL_SUPPORT:
         manager = ChannelManager()
@@ -67,7 +69,7 @@ def get_token_path(channel_name="default"):
 def select_channel():
     """Interactive channel selection (returns channel name)"""
     if not MULTI_CHANNEL_SUPPORT:
-        return "default"  # Single-channel mode
+        return None  # no channel list: nothing to choose from
         
     manager = ChannelManager()
     channels = manager.list_channels()
@@ -98,14 +100,24 @@ def select_channel():
 
 _pending_oauth_flows = {}  # state -> (Flow, channel_name)
 
+# « Ajouter une chaîne » (channel_setup.py): a channel not created yet connects
+# under NEW_CHANNEL_PREFIX + draft id; its token is kept here, in memory, until
+# the user confirms — never written under channels/ before that.
+NEW_CHANNEL_PREFIX = "nouvelle-chaine:"
+_new_channel_tokens = {}  # NEW_CHANNEL_PREFIX + draft id -> token JSON
 
-def start_oauth_flow(channel_name: str, redirect_uri: str) -> str:
-    """Begin the OAuth flow for a channel. Returns the URL to open in a browser."""
-    credentials_path = get_credentials_path(channel_name)
-    if not os.path.exists(credentials_path):
-        raise FileNotFoundError(f"No credentials.json for channel '{channel_name}': {credentials_path}")
 
-    flow = Flow.from_client_secrets_file(credentials_path, scopes=SCOPES, redirect_uri=redirect_uri)
+def start_oauth_flow(channel_name: str, redirect_uri: str, client_config: Dict = None) -> str:
+    """Begin the OAuth flow for a channel. Returns the URL to open in a browser.
+    client_config: the OAuth client JSON itself, for a channel being added
+    (its credentials.json doesn't exist yet)."""
+    if client_config is not None:
+        flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
+    else:
+        credentials_path = get_credentials_path(channel_name)
+        if not os.path.exists(credentials_path):
+            raise FileNotFoundError(f"No credentials.json for channel '{channel_name}': {credentials_path}")
+        flow = Flow.from_client_secrets_file(credentials_path, scopes=SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type='offline', prompt='consent', include_granted_scopes='true'
     )
@@ -123,19 +135,56 @@ def complete_oauth_flow(state: str, authorization_response_url: str) -> str:
     flow, channel_name = entry
     flow.fetch_token(authorization_response=authorization_response_url)
 
+    if channel_name.startswith(NEW_CHANNEL_PREFIX):
+        _new_channel_tokens[channel_name] = flow.credentials.to_json()
+        return channel_name
+
     token_path = get_token_path(channel_name)
     os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
-    with open(token_path, 'w') as f:
-        f.write(flow.credentials.to_json())
+    write_file_atomic(token_path, flow.credentials.to_json())
 
     return channel_name
 
 
-def get_connected_channel_title(channel_name: str):
-    """Returns the real YouTube channel title behind a connected token, or None
-    if that channel has no valid token yet. Lets the UI confirm the right
-    brand account got linked (several of this user's channels share a Google
-    account with multiple brand channels)."""
+def pop_oauth_target(state: str):
+    """The channel (or new-channel draft) a callback's state belongs to,
+    forgetting that pending flow — for a callback carrying ?error= instead
+    of a code (access refused on Google's page)."""
+    entry = _pending_oauth_flows.pop(state, None)
+    return entry[1] if entry else None
+
+
+def forget_new_channel(target: str):
+    """A cancelled « Ajouter une chaîne »: its pending flow and token go."""
+    for state in [s for s, (_, name) in _pending_oauth_flows.items() if name == target]:
+        _pending_oauth_flows.pop(state, None)
+    _new_channel_tokens.pop(target, None)
+
+
+def take_new_channel_token(target: str):
+    return _new_channel_tokens.pop(target, None)
+
+
+def _channel_identity(creds) -> Dict:
+    """{id, title, custom_url} of the YouTube channel behind credentials
+    (channels.list mine=True), or None when the Google account has none."""
+    youtube = build('youtube', 'v3', credentials=creds)
+    response = youtube.channels().list(part='snippet', mine=True).execute()
+    items = response.get('items', [])
+    if not items:
+        return None
+    snippet = items[0].get('snippet', {})
+    return {'id': items[0].get('id'), 'title': snippet.get('title'), 'custom_url': snippet.get('customUrl')}
+
+
+def channel_identity_from_token(token_json: str) -> Dict:
+    """Same, for a token not saved anywhere yet (a channel being added)."""
+    return _channel_identity(Credentials.from_authorized_user_info(json.loads(token_json), SCOPES))
+
+
+def get_connected_channel_identity(channel_name: str):
+    """The real YouTube channel behind a channel's saved token, or None if it
+    has no token yet."""
     token_path = get_token_path(channel_name)
     if not os.path.exists(token_path):
         return None
@@ -143,13 +192,17 @@ def get_connected_channel_title(channel_name: str):
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
+    return _channel_identity(creds)
 
-    youtube = build('youtube', 'v3', credentials=creds)
-    response = youtube.channels().list(part='snippet', mine=True).execute()
-    items = response.get('items', [])
-    return items[0]['snippet']['title'] if items else None
+
+def get_connected_channel_title(channel_name: str):
+    """Returns the real YouTube channel title behind a connected token, or None
+    if that channel has no valid token yet. Lets the UI confirm the right
+    brand account got linked (several of this user's channels share a Google
+    account with multiple brand channels)."""
+    identity = get_connected_channel_identity(channel_name)
+    return identity['title'] if identity else None
 
 
 def get_connection_health(channel_name: str) -> Dict:
@@ -219,8 +272,7 @@ def get_video_stats(channel_name: str, youtube_video_ids: List[str]) -> Dict[str
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     youtube = build('youtube', 'v3', credentials=creds)
     stats = {}
@@ -276,8 +328,7 @@ def get_video_analytics(channel_name: str, youtube_video_id: str) -> Dict:
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     start_date, end_date = '2020-01-01', datetime.now().strftime('%Y-%m-%d')
@@ -331,8 +382,7 @@ def get_first_week_retention(channel_name: str, videos: List[Dict]) -> Dict[str,
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
 
     out = {}
@@ -380,8 +430,7 @@ def get_retention_curve(channel_name: str, youtube_id: str, start: str) -> List[
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     resp = yta.reports().query(ids='channel==MINE', startDate=start, endDate=datetime.now().strftime("%Y-%m-%d"),
                                metrics='audienceWatchRatio,relativeRetentionPerformance',
@@ -400,8 +449,7 @@ def get_daily_feed_views(channel_name: str, days: int = 21) -> List[Dict]:
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     resp = yta.reports().query(ids='channel==MINE', startDate=(datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'),
                                endDate=datetime.now().strftime('%Y-%m-%d'), metrics='views',
@@ -426,8 +474,7 @@ def get_channel_analytics(channel_name: str, days: int = 30) -> Dict:
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     end_date = datetime.now().strftime('%Y-%m-%d')
@@ -497,8 +544,7 @@ def update_video_visibility(channel_name: str, youtube_video_id: str,
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     youtube = build('youtube', 'v3', credentials=creds)
 
@@ -694,7 +740,7 @@ def update_video_status(video_id, youtube_url, youtube_id, scheduled_time=None):
         return True
     return False
 
-def authenticate_youtube(channel_name="default", interactive=True):
+def authenticate_youtube(channel_name=None, interactive=True):
     """Authentification avec YouTube API (Multi-channel support).
 
     interactive=False (web app): never falls back to InstalledAppFlow's local
@@ -706,12 +752,8 @@ def authenticate_youtube(channel_name="default", interactive=True):
     
     # Check if credentials file exists
     if not os.path.exists(credentials_file):
-        if channel_name != "default":
-            print(f"❌ Credentials not found for channel '{channel_name}': {credentials_file}")
-            print("Run: python setup_channels.py")
-        else:
-            print(f"❌ Credentials file not found: {credentials_file}")
-            print("Download OAuth credentials from Google Cloud Console")
+        print(f"❌ Credentials not found for channel '{channel_name}': {credentials_file}")
+        print("Ajoute la chaîne depuis l'app : Réglages → Connexion → « Ajouter une chaîne »")
         return None
         
     creds = None
@@ -734,12 +776,11 @@ def authenticate_youtube(channel_name="default", interactive=True):
         # Sauvegarde le token
         # Create directory if it doesn't exist (for multi-channel)
         os.makedirs(os.path.dirname(token_file), exist_ok=True)
-        with open(token_file, 'w') as token:
-            token.write(creds.to_json())
+        write_file_atomic(token_file, creds.to_json())
 
     return build('youtube', 'v3', credentials=creds)
 
-def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name="default"):
+def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name=None):
     """Upload une vidéo sur YouTube avec données AI et scheduling optionnel"""
     if tags is None:
         tags = ['Shorts', 'TikTok', 'Viral']
@@ -815,6 +856,17 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
         if youtube_video_id:
             url = f"https://youtube.com/watch?v={youtube_video_id}"
             print(f"✅ Upload réussi!")
+
+            # Saved FIRST, before anything else can go wrong (thumbnail, quota,
+            # a server restart): a video already on YouTube must never look
+            # "ready" again, or the next « Publier tout » would send it twice.
+            if video_id:
+                if update_video_status(video_id, url, youtube_video_id, scheduled_time):
+                    status_msg = "programmée" if scheduled_time else "uploadée"
+                    print(f"📊 Statut mis à jour: {status_msg}")
+                else:
+                    print(f"⚠️ Erreur mise à jour statut")
+
             try:                        # a cover picture made with the video (Adaptation): best effort
                 import db as _db
                 thumb = ((_db.get_video(video_id) or {}).get("thumbnail_path") if video_id else None)
@@ -835,14 +887,6 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
             except Exception as e:
                 print(f"⚠️ Suivi du quota non enregistré: {e}")
 
-            # Met à jour la base de données
-            if video_id:
-                if update_video_status(video_id, url, youtube_video_id, scheduled_time):
-                    status_msg = "programmée" if scheduled_time else "uploadée"
-                    print(f"📊 Statut mis à jour: {status_msg}")
-                else:
-                    print(f"⚠️ Erreur mise à jour statut")
-            
             return url
 
     except HttpError as e:
@@ -1019,7 +1063,66 @@ def upload_scheduled_videos():
     print(f"📅 Toutes les vidéos sont maintenant dans YouTube Studio → Scheduled")
     print(f"🤖 YouTube publiera automatiquement aux heures programmées")
 
-def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
+# ---------------------------------------------------------------------------
+# A send cut short. videos.insert can't be undone nor asked "did it arrive?":
+# a server restart (uvicorn --reload) in the middle leaves the video perhaps
+# on YouTube, perhaps not. So a marker (upload_attempt) is written on the
+# video just before the insert and removed once it answered. Still there at
+# the next « Publier tout » = interrupted: the channel's latest uploads are
+# checked for it before ever sending it again.
+# ---------------------------------------------------------------------------
+
+def _set_upload_attempt(video_id: str, attempt):
+    import db as _db
+    from url_manager import URLManager
+    current = _db.get_video(video_id)
+    if current:
+        URLManager().update_video_status(video_id, current['status'], upload_attempt=attempt)
+
+
+def find_interrupted_upload(youtube, attempt: Dict):
+    """The YouTube id of a video sent by a cut-short attempt (same title,
+    uploaded after the attempt started) among the channel's latest uploads,
+    or None. Raises if YouTube can't be asked."""
+    import dateutil.parser
+    started = dateutil.parser.parse(attempt['started_at'])
+    channel = youtube.channels().list(part='contentDetails', mine=True).execute().get('items') or []
+    if not channel:
+        raise RuntimeError("chaîne YouTube introuvable pour ce compte")
+    uploads = channel[0]['contentDetails']['relatedPlaylists']['uploads']
+    latest = youtube.playlistItems().list(part='snippet', playlistId=uploads, maxResults=50).execute().get('items') or []
+    for item in latest:
+        snippet = item.get('snippet') or {}
+        try:
+            published = dateutil.parser.parse(snippet.get('publishedAt'))
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if snippet.get('title') == attempt.get('title') and published >= started - timedelta(minutes=5):
+            return (snippet.get('resourceId') or {}).get('videoId')
+    return None
+
+
+class _ReportedResults(list):
+    """A run's results, each one also handed to on_result the moment it
+    lands — the live progress of « Publier tout » (webapp: /api/publish_status)."""
+
+    def __init__(self, on_result=None, channel=None):
+        super().__init__()
+        self.on_result, self.channel = on_result, channel
+
+    def append(self, result):
+        if self.channel is not None:
+            result['channel'] = self.channel
+        super().append(result)
+        if self.on_result:
+            self.on_result(result)
+
+    def extend(self, results):
+        for result in results:
+            self.append(result)
+
+
+def upload_all_channels_schedule(auto_confirm: bool = True, on_result=None) -> List[Dict]:
     """Publie le planning entier, en itérant sur toutes les chaînes qui y apparaissent
     (mode multi-chaînes de la UI web : un seul bouton "Publier tout")."""
     schedule_data = load_schedule()
@@ -1027,22 +1130,31 @@ def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
         return []
 
     channels = set()
+    all_results = _ReportedResults(on_result)
     for video in schedule_data.get('schedule', []):
-        channels.add(video.get('channel') or video.get('video_data', {}).get('channel', 'default'))
+        channel = video.get('channel') or video.get('video_data', {}).get('channel')
+        if channel:
+            channels.add(channel)
+            continue
+        status = load_video_database().get('videos', {}).get(video.get('video_id'), {}).get('status')
+        if status not in ('uploaded', 'scheduled_on_youtube'):
+            # never "the first channel": a video nobody assigned is not sent anywhere
+            all_results.append({"video_id": video.get('video_id'), "title": video.get('title'), "channel": None,
+                                "success": False, "url": None,
+                                "error": "Vidéo sans chaîne dans le planning — non publiée. Choisis sa chaîne puis régénère le planning."})
 
-    all_results = []
+    all_results = list(all_results)
     for channel_name in sorted(channels):
-        for result in upload_channel_schedule(channel_name, auto_confirm=auto_confirm):
-            result['channel'] = channel_name
-            all_results.append(result)
+        all_results.extend(upload_channel_schedule(channel_name, auto_confirm=auto_confirm, on_result=on_result))
 
     return all_results
 
-def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> List[Dict]:
+def upload_channel_schedule(channel_name: str, auto_confirm: bool = True, on_result=None) -> List[Dict]:
     """Non-interactive variant of upload_scheduled_videos(), for the web UI: uploads
     every scheduled video whose target channel matches `channel_name`, with no input().
-    Returns a list of {video_id, title, success, url, error}."""
-    results = []
+    Returns a list of {video_id, title, success, url, error, channel}; on_result
+    gets each one as soon as it's known."""
+    results = _ReportedResults(on_result, channel_name)
 
     schedule_data = load_schedule()
     if not schedule_data:
@@ -1053,7 +1165,7 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
 
     videos_to_upload = []
     for video in scheduled_videos:
-        video_channel = video.get('channel') or video.get('video_data', {}).get('channel', 'default')
+        video_channel = video.get('channel') or video.get('video_data', {}).get('channel')
         if video_channel != channel_name:
             continue
 
@@ -1075,7 +1187,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
 
     import quota
     if quota.is_exhausted(channel_name):
-        return skip_all(videos_to_upload, QUOTA_SKIP_MESSAGE)
+        results.extend(skip_all(videos_to_upload, QUOTA_SKIP_MESSAGE))
+        return list(results)
 
     health = get_connection_health(channel_name)
     if health["state"] != "connected":
@@ -1084,14 +1197,17 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
             "not_connected": "Chaîne jamais connectée — connecte-la dans ⚙️ Réglages → Connexion.",
             "missing_credentials": "Pas de credentials.json pour cette chaîne.",
         }
-        return skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}"))
+        results.extend(skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}")))
+        return list(results)
 
     try:
         youtube = authenticate_youtube(channel_name, interactive=False)
     except Exception as e:
-        return skip_all(videos_to_upload, f"Authentification échouée : {e}")
+        results.extend(skip_all(videos_to_upload, f"Authentification échouée : {e}"))
+        return list(results)
     if not youtube:
-        return skip_all(videos_to_upload, f"Authentification échouée pour la chaîne '{channel_name}'")
+        results.extend(skip_all(videos_to_upload, f"Authentification échouée pour la chaîne '{channel_name}'"))
+        return list(results)
 
     for index, video in enumerate(videos_to_upload):
         video_data = current_video_data(video, database)
@@ -1100,6 +1216,28 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
         title = ai_data.get('optimized_title') or video['title']
         description = video_data.get('custom_description') or (ai_data.get('description_suggestions') or [''])[0]
         tags = ai_data.get('tags', ['Shorts', 'TikTok', 'Viral'])
+
+        attempt = video_data.get('upload_attempt')
+        if attempt:                     # the last send of this video was cut short: on YouTube already?
+            try:
+                found = find_interrupted_upload(youtube, attempt)
+            except Exception as e:
+                print(f"⚠️ Vérification de l'envoi interrompu impossible ({video['video_id']}): {e}")
+                results.append({"video_id": video['video_id'], "title": title, "success": False, "url": None,
+                                "error": "Un envoi précédent de cette vidéo a été interrompu et YouTube n'a pas pu "
+                                         "être vérifié — non renvoyée pour éviter un doublon. Réessaie plus tard."})
+                continue
+            if found:
+                url = f"https://youtube.com/watch?v={found}"
+                update_video_status(video['video_id'], url, found, attempt.get('scheduled_time'))
+                _set_upload_attempt(video['video_id'], None)
+                results.append({"video_id": video['video_id'], "title": title, "success": True, "url": url,
+                                "note": "Envoi précédent interrompu : la vidéo était déjà sur YouTube, elle n'a pas été renvoyée.",
+                                "error": None})
+                database.setdefault('videos', {})[video['video_id']] = {**video_data, "channel": channel_name,
+                                                                        "status": "uploaded", "youtube_id": url}
+                continue
+            _set_upload_attempt(video['video_id'], None)     # not there: sent again below
 
         video_path = find_matching_video_file(video_data.get('video_path'), video_data)
         if not video_path:
@@ -1124,6 +1262,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
 
         scheduled_time, note = effective_scheduled_time(video)
 
+        _set_upload_attempt(video['video_id'], {"started_at": datetime.now(timezone.utc).isoformat(),
+                                                "title": title[:100], "scheduled_time": scheduled_time})
         try:
             url = upload_video(
                 youtube=youtube,
@@ -1136,7 +1276,10 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
                 auto_confirm=auto_confirm,
                 channel_name=channel_name
             )
+            if url:                     # failed without a clear answer (network…): checked next time
+                _set_upload_attempt(video['video_id'], None)
         except QuotaExceededError as e:
+            _set_upload_attempt(video['video_id'], None)
             # Stop here: every further call would fail the same way. The
             # remaining videos stay ready_for_upload + in the schedule, so the
             # next "Publier tout" after the reset picks them up.

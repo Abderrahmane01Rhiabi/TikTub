@@ -14,7 +14,7 @@ import logging
 # Imports des modules créés
 from url_manager import URLManager
 from ai_tags_generator import AITagsGenerator  
-from youtube_scheduler import YouTubeScheduler
+from youtube_scheduler import YouTubeScheduler, holding_schedule_lock
 from montage import pipeline as montage_pipeline
 from montage import recipes as montage_recipes
 import recette
@@ -116,8 +116,10 @@ class BatchProcessor:
         with open(config_path, 'r') as f:
             self.config = yaml.safe_load(f)
     
-    def process_url_file(self, file_path: str, batch_name: str = None, channel_name: str = "default") -> str:
+    def process_url_file(self, file_path: str, batch_name: str = None, channel_name: str = None) -> str:
         """Traite un fichier d'URLs et crée un batch, tagué avec la chaîne cible"""
+        if not channel_name:
+            raise ValueError("Chaîne cible obligatoire pour un import (jamais « default »).")
         if not batch_name:
             batch_name = f"batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
@@ -595,6 +597,7 @@ class BatchProcessor:
                 ]
             }
 
+    @holding_schedule_lock
     def create_upload_schedule(self, max_videos: int = None, use_analytics: bool = None,
                                 target_channel: str = None, schedule_method: str = None) -> List[Dict]:
         """Crée un planning d'upload pour les vidéos prêtes.
@@ -614,8 +617,14 @@ class BatchProcessor:
                     video['target_channel'] = target_channel
                 ready_videos.append(video)
 
+        # A video nobody assigned to a channel is never scheduled (never "default")
+        no_channel = self._without_channel(ready_videos)
+        ready_videos = [v for v in ready_videos if v not in no_channel]
+
         if not ready_videos:
             print("❌ Aucune vidéo prête pour l'upload")
+            if no_channel:
+                self.scheduler.save_schedule([], schedule_method=schedule_method, unscheduled=self._no_channel_entries(no_channel))
             return []
 
         # Limite le nombre si spécifié
@@ -648,7 +657,8 @@ class BatchProcessor:
             schedule = self.scheduler.create_upload_schedule(ready_videos, channel_manager=channel_manager)
 
         # Garde-fou commun (dates passées, écart, plafonds), contre les vidéos déjà programmées sur YouTube
-        unscheduled = method_unscheduled + self._shift_off_taken_slots(schedule, self._taken_on_youtube())
+        unscheduled = (self._no_channel_entries(no_channel) + method_unscheduled
+                       + self._shift_off_taken_slots(schedule, self._taken_on_youtube()))
         schedule.sort(key=lambda e: self._parse_slot(e['scheduled_time']) if e.get('scheduled_time') else
                       self.scheduler.timezone.localize(datetime(1970, 1, 1)))
 
@@ -683,6 +693,17 @@ class BatchProcessor:
         from dateutil import parser as date_parser
         dt = date_parser.parse(value)
         return dt if dt.tzinfo else self.scheduler.timezone.localize(dt)
+
+    @staticmethod
+    def _without_channel(videos: List[Dict]) -> List[Dict]:
+        return [v for v in videos if not (v.get('target_channel') or v.get('channel'))]
+
+    @staticmethod
+    def _no_channel_entries(videos: List[Dict]) -> List[Dict]:
+        return [{'video_id': v.get('video_id'), 'title': v.get('title') or v.get('original_title'), 'channel': None,
+                 'priority': v.get('priority', 'normal'),
+                 'reason': "Vidéo sans chaîne : jamais publiée sur une chaîne au hasard. Choisis sa chaîne, puis régénère le planning."}
+                for v in videos]
 
     def _taken_on_youtube(self) -> List[Dict]:
         """Les vidéos déjà envoyées à YouTube avec une date (scheduled_on_youtube)
@@ -786,6 +807,7 @@ class BatchProcessor:
             print(f"⚠️ {len(unscheduled)} vidéo(s) impossible(s) à placer : " + ", ".join(sorted(dropped)))
         return unscheduled
 
+    @holding_schedule_lock
     def reschedule_past_entries(self, save: bool = True) -> Dict[str, List[Dict]]:
         """Juste avant « Publier tout » : une date devenue passée (planning généré
         il y a plusieurs jours, jamais publié) serait envoyée tout de suite, en
@@ -831,6 +853,7 @@ class BatchProcessor:
             print(f"📅 {len(rescheduled)} date(s) passée(s) replanifiée(s) avant publication")
         return {'rescheduled': rescheduled, 'unscheduled': unscheduled}
 
+    @holding_schedule_lock
     def ensure_schedule_includes_all_ready(self, schedule_method: str = None) -> List[Dict]:
         """Filet de sécurité appelé juste avant une publication : 'Publier tout' ne
         publie que ce qui est dans upload_schedule.json, donc une vidéo passée à
@@ -852,7 +875,11 @@ class BatchProcessor:
             if v.get('status') == 'ready_for_upload' and v.get('video_id') not in existing_ids
             and v.get('video_id') not in waiting_ids
         ]
+        no_channel = self._without_channel(missing)
+        missing = [v for v in missing if v not in no_channel]
         if not missing:
+            if no_channel:
+                self.scheduler.save_schedule(existing_schedule, unscheduled=existing_unscheduled + self._no_channel_entries(no_channel))
             return existing_schedule
 
         print(f"⚠️ {len(missing)} vidéo(s) prête(s) manquaient du planning — ajout automatique avant publication")
@@ -870,7 +897,8 @@ class BatchProcessor:
         else:
             new_entries = self.scheduler.create_upload_schedule(missing, channel_manager=channel_manager)
 
-        unscheduled = method_unscheduled + self._shift_off_taken_slots(new_entries, existing_schedule + self._taken_on_youtube())
+        unscheduled = (self._no_channel_entries(no_channel) + method_unscheduled
+                       + self._shift_off_taken_slots(new_entries, existing_schedule + self._taken_on_youtube()))
         still_waiting = [u for u in existing_unscheduled
                          if (db['videos'].get(u.get('video_id')) or {}).get('status') == 'ready_for_upload']
         # An entry without a time (published right away) goes first instead of breaking the sort

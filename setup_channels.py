@@ -206,37 +206,14 @@ def delete_channel(manager: ChannelManager):
         print("\n❌ Deletion cancelled")
 
 def migrate_single_channel(manager: ChannelManager):
-    """Migrate existing single-channel setup"""
+    """The old root credentials.json is no longer turned into a "default"
+    channel (nobody could tell which YouTube account it was)."""
     print("\n🔄 MIGRATE SINGLE-CHANNEL SETUP")
     print("=" * 40)
-    
-    # Check if already migrated
-    if os.path.exists("channels"):
-        print("✅ Multi-channel setup already exists")
-        return
-        
-    # Check for existing credentials
-    has_credentials = os.path.exists("credentials.json")
-    has_token = os.path.exists("token.json")
-    
-    if not has_credentials and not has_token:
-        print("❌ No existing credentials found to migrate")
-        print("Use option 2 to add a new channel instead")
-        return
-        
-    print("Found existing single-channel setup:")
-    print(f"🔑 credentials.json: {'✅ Found' if has_credentials else '❌ Missing'}")
-    print(f"🎟️  token.json: {'✅ Found' if has_token else '❌ Missing'}")
-    
-    confirm = input("\nMigrate to multi-channel setup? (y/n): ").lower().strip()
-    if confirm != 'y':
-        print("❌ Migration cancelled")
-        return
-        
-    # Trigger migration
-    manager.ensure_channels_structure()
-    print("✅ Migration completed!")
-    print("Your existing setup is now available as 'Default Channel'")
+    print("ℹ️ Plus de migration automatique vers une chaîne « default ».")
+    print("   Ajoute la chaîne depuis l'app : Réglages → Connexion → « Ajouter une chaîne »")
+    print("   (dépose le credentials.json de la racine comme « nouveau projet »).")
+    return
 
 def show_help():
     """Show help and instructions"""
@@ -255,7 +232,7 @@ def show_help():
     print("")
     print("📁 FILE STRUCTURE:")
     print("channels/")
-    print("├── default/            # Your main channel")
+    print("├── ma_chaine/          # Your main channel")
     print("│   ├── credentials.json")
     print("│   └── token.json")
     print("├── gaming_channel/     # Gaming content")

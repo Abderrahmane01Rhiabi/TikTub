@@ -15,9 +15,9 @@ import sys
 import tempfile
 import threading
 from pathlib import Path
-from typing import Optional
+from typing import Annotated, Optional
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -26,6 +26,20 @@ router = APIRouter()
 
 def _main():
     return sys.modules["webapp.main"]
+
+
+# Channel names in these routes go through the same check as webapp.main's
+# (ChannelManager.validate_channel_name): allowed format, existing channel.
+def _valid_channel_name(channel_name: str) -> str:
+    return _main().checked_channel(channel_name)
+
+
+def _valid_target_channel(channel: str) -> str:
+    return _main().checked_channel(channel)
+
+
+ChannelName = Annotated[str, Depends(_valid_channel_name)]
+TargetChannel = Annotated[str, Depends(_valid_target_channel)]
 
 
 def _adaptation_channel_payload(channel_name: str) -> dict:
@@ -54,7 +68,7 @@ def adaptation_style_preview(name: str, lang: str = "fr"):
 
 
 @router.get("/api/channels/{channel_name}/adaptation")
-def get_channel_adaptation(channel_name: str):
+def get_channel_adaptation(channel_name: ChannelName):
     return _adaptation_channel_payload(channel_name)
 
 
@@ -64,7 +78,7 @@ class ChannelAdaptationUpdate(BaseModel):
 
 
 @router.put("/api/channels/{channel_name}/adaptation")
-def update_channel_adaptation(channel_name: str, update: ChannelAdaptationUpdate):
+def update_channel_adaptation(channel_name: ChannelName, update: ChannelAdaptationUpdate):
     from adaptation import settings as ad
     from adaptation.langs import LANGS
     profile = _main().channel_manager.get_channel_profile(channel_name)
@@ -209,6 +223,8 @@ class AdaptationCreate(BaseModel):
 @router.post("/api/adaptations")
 def create_adaptation(req: AdaptationCreate):
     from adaptation import pipeline as ap
+    for ch in req.channels:
+        _main().checked_channel(ch)
     targets = [{"channel": ch, "profile": _main().channel_manager.get_channel_profile(ch),
                 "music_dir": _main().channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
     p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, req.mode, req.versions)
@@ -406,7 +422,7 @@ class AdaptationNewVersion(BaseModel):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/angle")
-def change_adaptation_target_angle(pid: str, channel: str, req: AdaptationAngle):
+def change_adaptation_target_angle(pid: str, channel: TargetChannel, req: AdaptationAngle):
     """Sources d'abord with versions: another angle for one channel's script (about a minute)."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
@@ -419,6 +435,7 @@ def change_adaptation_target_angle(pid: str, channel: str, req: AdaptationAngle)
 def new_adaptation_version(pid: str, req: AdaptationNewVersion):
     """Another channel's version of the same Short, with a new angle."""
     from adaptation import pipeline as ap
+    _main().checked_channel(req.channel)
     _adaptation_or_404(pid)
     ch = {"channel": req.channel, "profile": _main().channel_manager.get_channel_profile(req.channel),
           "music_dir": _main().channel_manager.get_assets_dirs(req.channel)["music"]}
@@ -436,14 +453,14 @@ class AdaptationPlanRevise(BaseModel):
 
 
 @router.put("/api/adaptations/{pid}/targets/{channel}/plan")
-def edit_adaptation_plan(pid: str, channel: str, req: AdaptationPlan):
+def edit_adaptation_plan(pid: str, channel: TargetChannel, req: AdaptationPlan):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.edit_plan, pid, channel, req.plan))
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/plan/revise")
-def revise_adaptation_plan(pid: str, channel: str, req: AdaptationPlanRevise):
+def revise_adaptation_plan(pid: str, channel: TargetChannel, req: AdaptationPlanRevise):
     from adaptation import pipeline as ap
     from adaptation.script import ScriptError
     _adaptation_or_404(pid)
@@ -456,7 +473,7 @@ def revise_adaptation_plan(pid: str, channel: str, req: AdaptationPlanRevise):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/plan/approve")
-def approve_adaptation_plan(pid: str, channel: str):
+def approve_adaptation_plan(pid: str, channel: TargetChannel):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.approve_plan, pid, channel))
@@ -616,7 +633,7 @@ def force_adaptation_clip(pid: str, cid: str):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/keep")
-def keep_adaptation_passage(pid: str, channel: str, k: int):
+def keep_adaptation_passage(pid: str, channel: TargetChannel, k: int):
     """The check says the sentence and its picture don't match: keep it anyway."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
@@ -624,7 +641,7 @@ def keep_adaptation_passage(pid: str, channel: str, k: int):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/clip")
-def use_adaptation_clip_proposal(pid: str, channel: str, k: int):
+def use_adaptation_clip_proposal(pid: str, channel: TargetChannel, k: int):
     """Take the other clip the check found for this sentence (the sentence stays)."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
@@ -632,7 +649,7 @@ def use_adaptation_clip_proposal(pid: str, channel: str, k: int):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/passages/{k}/proposal")
-def use_adaptation_proposal(pid: str, channel: str, k: int):
+def use_adaptation_proposal(pid: str, channel: TargetChannel, k: int):
     """Take the sentence the check wrote for what the clip shows."""
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
@@ -663,7 +680,7 @@ class AdaptationScript(BaseModel):
 
 
 @router.put("/api/adaptations/{pid}/targets/{channel}/script")
-def edit_adaptation_script(pid: str, channel: str, req: AdaptationScript):
+def edit_adaptation_script(pid: str, channel: TargetChannel, req: AdaptationScript):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.edit_script, pid, channel, req.script))
@@ -674,7 +691,7 @@ class AdaptationRevise(BaseModel):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/revise")
-def revise_adaptation_script(pid: str, channel: str, req: AdaptationRevise):
+def revise_adaptation_script(pid: str, channel: TargetChannel, req: AdaptationRevise):
     from adaptation import pipeline as ap
     from adaptation.script import ScriptError
     _adaptation_or_404(pid)
@@ -687,7 +704,7 @@ def revise_adaptation_script(pid: str, channel: str, req: AdaptationRevise):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/approve")
-def approve_adaptation_script(pid: str, channel: str):
+def approve_adaptation_script(pid: str, channel: TargetChannel):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.approve_script, pid, channel))
@@ -707,7 +724,7 @@ class AdaptationVoice(BaseModel):
 
 
 @router.patch("/api/adaptations/{pid}/targets/{channel}/voice")
-def change_adaptation_voice(pid: str, channel: str, req: AdaptationVoice):
+def change_adaptation_voice(pid: str, channel: TargetChannel, req: AdaptationVoice):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     p = _adaptation_call(ap.change_voice, pid, channel, req.voice_id)
@@ -716,7 +733,7 @@ def change_adaptation_voice(pid: str, channel: str, req: AdaptationVoice):
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/validate")
-def validate_adaptation_preview(pid: str, channel: str):
+def validate_adaptation_preview(pid: str, channel: TargetChannel):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.validate_preview, pid, channel))

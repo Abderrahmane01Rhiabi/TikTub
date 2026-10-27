@@ -9,6 +9,7 @@ from google.auth.exceptions import RefreshError
 import db
 import quota
 import youtube_uploader as yu
+from conftest import publish_all_and_wait
 
 FUTURE = "2030-01-07T18:00:00+01:00"
 
@@ -28,6 +29,7 @@ def entry(video_id, channel="chanA", when=FUTURE):
     ("ok", "connected"),
 ])
 def test_connection_status_says_why(client, project, monkeypatch, setup, expected):
+    project.declare_channel("chanA")
     if setup != "no_credentials":
         channel_dir = project.add_channel("chanA")
         if setup != "no_token":
@@ -94,6 +96,7 @@ def test_schedule_screens_work_before_any_schedule_exists(client, project):
 # ---- fixed endpoints
 
 def test_visibility_change_syncs_the_local_status(client, project, monkeypatch):
+    project.declare_channel("chanA")
     project.add_video("v1", status="scheduled_on_youtube", youtube_id="YT1")
     monkeypatch.setattr(yu, "update_video_visibility", lambda ch, yid, privacy, at=None: {"privacyStatus": privacy})
 
@@ -226,6 +229,7 @@ def test_page_is_never_cached_and_api_tells_its_build(client):
 def test_links_sent_for_several_channels_in_the_same_second_all_get_a_batch(client, project, monkeypatch):
     """Regression: batch ids were timestamp-only (to the second), so the
     second channel submitted in the same second crashed with a 500."""
+    project.declare_channel("chanA", "chanB")
     import channel_manager
     for ch in ("chanA", "chanB"):
         (project.root / "channels" / ch / "urls_input").mkdir(parents=True, exist_ok=True)
@@ -259,7 +263,7 @@ def test_a_date_passed_two_days_ago_is_rescheduled_not_published_now(client, pro
     assert [r["video_id"] for r in announced] == ["late"]
     assert json.load(open("upload_schedule.json"))["schedule"][0]["scheduled_time"] == late   # announced only: nothing saved
 
-    answer = client.post("/api/publish_all").json()
+    answer = publish_all_and_wait(client)
 
     sent = fake_youtube.inserted[0]["status"]
     assert sent["privacyStatus"] == "private" and parser.parse(sent["publishAt"]) > datetime.now(timezone.utc)
@@ -276,7 +280,7 @@ def test_publish_now_still_goes_out_public_immediately(client, project, fake_you
     project.write_schedule([{"video_id": "now", "channel": "chanA", "title": "now", "publish_now": True,
                              "scheduled_time": _two_days_ago(), "video_data": {}}], method="static")
 
-    answer = client.post("/api/publish_all").json()
+    answer = publish_all_and_wait(client)
 
     assert fake_youtube.inserted[0]["status"]["privacyStatus"] == "public"
     assert answer["rescheduled"] == [] and db.get_video("now")["status"] == "uploaded"
@@ -337,3 +341,36 @@ def test_planning_screens_list_the_unscheduled_videos(client, project):
     for answer in (client.get("/api/schedule").json(), client.get("/api/calendar").json()):
         assert answer["unscheduled"] == [{"video_id": "wait", "title": "Titre actuel", "channel": "chanA",
                                           "reason": "Aucun créneau libre"}]
+
+
+# ---- « Publier tout » in the background (AUDIT.md §8.3-7)
+
+def test_publish_all_runs_in_the_background_with_live_progress(client, project, fake_youtube, monkeypatch):
+    import threading
+    project.add_channel("chanA")
+    for vid in ("p1", "p2"):
+        project.add_video(vid, video_path=project.add_video_file(f"{vid}.mp4"))
+    project.write_schedule([entry("p1"), entry("p2")], method="static")
+    release, first_sent = threading.Event(), threading.Event()
+    execute = type(fake_youtube).execute
+
+    def slow_execute(self):
+        if len(self.inserted) == 2:                   # the second video waits: the run is "in progress"
+            first_sent.set()
+            release.wait(10)
+        return execute(self)
+    monkeypatch.setattr(type(fake_youtube), "execute", slow_execute)
+
+    assert client.post("/api/publish_all").json() == {"started": True}           # answers at once
+    assert first_sent.wait(10)
+    running = client.get("/api/publish_status").json()
+    assert not running["done"] and running["total"] == 2 and running["sent"] == 1
+    assert client.post("/api/publish_all").json() == {"started": False, "running": True}   # never two runs
+    release.set()
+
+    import time
+    end = time.time() + 10
+    while not client.get("/api/publish_status").json()["done"] and time.time() < end:
+        time.sleep(0.05)
+    final = client.get("/api/publish_status").json()
+    assert [r["success"] for r in final["results"]] == [True, True] and final["sent"] == 2

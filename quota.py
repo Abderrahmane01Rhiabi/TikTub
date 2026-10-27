@@ -65,16 +65,20 @@ def load_settings(config_path: str = "config.yaml") -> Dict[str, int]:
 
 def project_key(credentials_path: str) -> Optional[str]:
     """Identifiant stable du projet Google Cloud d'un credentials.json : un
-    hash de son client_id (le client_id lui-même n'est jamais stocké ni
-    affiché). None si le fichier est absent ou illisible."""
+    hash de son project_id — Google compte le quota par PROJET, et un même
+    projet peut avoir plusieurs clients OAuth (un par chaîne, par exemple).
+    Sans project_id dans le fichier, un hash de son client_id (le client_id
+    lui-même n'est jamais stocké ni affiché). None si le fichier est absent
+    ou illisible."""
     try:
         with open(credentials_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         section = data.get("installed") or data.get("web") or {}
-        client_id = section.get("client_id")
+        project_id, client_id = section.get("project_id"), section.get("client_id")
         if not client_id:
             return None
-        return hashlib.sha1(client_id.encode("utf-8")).hexdigest()[:12]
+        identity = f"project:{project_id}" if project_id else client_id
+        return hashlib.sha1(identity.encode("utf-8")).hexdigest()[:12]
     except (OSError, json.JSONDecodeError, AttributeError):
         return None
 

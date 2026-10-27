@@ -32,7 +32,7 @@ class AIScheduler:
         # but no need to hit even the cache once per video).
         peak_hours_by_channel: Dict[str, List[int]] = {}
         if self.smart_scheduler:
-            for channel in {v.get('target_channel') or v.get('channel', 'default') for v in videos}:
+            for channel in {v.get('target_channel') or v.get('channel') for v in videos}:
                 try:
                     peak_hours_by_channel[channel] = self.smart_scheduler.get_channel_peak_times(channel)
                 except Exception as e:
@@ -40,7 +40,7 @@ class AIScheduler:
 
         video_lines = []
         for v in videos:
-            channel = v.get('target_channel') or v.get('channel', 'default')
+            channel = v.get('target_channel') or v.get('channel')
             profile = channel_manager.get_channel_profile(channel) if channel_manager else {}
             ai_data = v.get('ai_data', {})
             video_lines.append({
@@ -122,7 +122,7 @@ Respond ONLY with valid JSON in this exact format:
         # Enforce spacing_hours + max_daily_uploads per channel (never trust the AI blindly)
         by_channel: Dict[str, List[Dict]] = {}
         for v in videos:
-            channel = v.get('target_channel') or v.get('channel', 'default')
+            channel = v.get('target_channel') or v.get('channel')
             by_channel.setdefault(channel, []).append(v)
 
         schedule = []

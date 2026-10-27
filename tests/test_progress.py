@@ -43,6 +43,7 @@ def test_eta_appears_once_there_is_enough_progress():
 
 @pytest.fixture
 def draft_ready_for_decor(project):
+    project.declare_channel("chanA")
     assets = Path("channels/chanA/assets")
     for sub, name in (("backgrounds", "bg.mp4"), ("music", "m.mp3")):
         (assets / sub).mkdir(parents=True, exist_ok=True)

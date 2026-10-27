@@ -371,12 +371,36 @@ def probe(path: str) -> Dict:
 
 
 def _gray_frames(path: str, w: int, h: int, fps: float, crop: Optional[str] = None,
-                 ss: float = 0.0, t: Optional[float] = None) -> np.ndarray:
+                 ss: float = 0.0, t: Optional[float] = None, dtype=float) -> np.ndarray:
     vf = (f"crop={crop}," if crop else "") + f"fps={fps},scale={w}:{h}"
     cmd = ["ffmpeg", "-v", "error", "-ss", f"{ss:.3f}"] + (["-t", f"{t:.3f}"] if t else []) + \
           ["-i", path, "-vf", vf, "-f", "rawvideo", "-pix_fmt", "gray", "-"]
     raw = subprocess.run(cmd, capture_output=True).stdout
-    return np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(float)
+    return np.frombuffer(raw, np.uint8).reshape(-1, h, w).astype(dtype)
+
+
+def _frame_diffs(path: str, w: int, h: int, fps: float, crop: Optional[str] = None,
+                 chunk: int = 100) -> np.ndarray:
+    """Mean absolute difference between consecutive frames (one value per
+    pair), read from ffmpeg a few frames at a time: memory stays the same
+    whatever the length of the source (decoding a 20-minute source at once
+    held several GB)."""
+    vf = (f"crop={crop}," if crop else "") + f"fps={fps},scale={w}:{h}"
+    cmd = ["ffmpeg", "-v", "error", "-i", path, "-vf", vf, "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+    size, parts, last = w * h, [], None
+    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
+        while True:
+            raw = proc.stdout.read(size * chunk)
+            n = len(raw) // size
+            if not n:
+                break
+            f = np.frombuffer(raw[:n * size], np.uint8).reshape(n, h, w).astype(np.float32)
+            if last is not None:
+                f = np.concatenate([last[None], f])
+            if len(f) > 1:
+                parts.append(np.abs(np.diff(f, axis=0)).mean((1, 2)))
+            last = f[-1]
+    return np.concatenate(parts) if parts else np.zeros(0, np.float32)
 
 
 # --------------------------------------------------------------- clean picture
@@ -418,13 +442,12 @@ def band_from_area(area: Optional[List[int]], w: int, h: int) -> Optional[Tuple[
 def detect_cuts(path: str, info: Dict, crop: Optional[str], min_len: float = 1.2) -> List[Tuple[float, float]]:
     """Clip boundaries from frame-difference peaks (25 fps, small frames)."""
     fps = 25.0
-    f = _gray_frames(path, 96, 96, fps, crop)
-    if len(f) < 3:
+    d = _frame_diffs(path, 96, 96, fps, crop)          # streamed: never the whole video in memory
+    if len(d) < 2:
         return [(0.0, info["duration"])]
-    d = np.abs(np.diff(f, axis=0)).mean((1, 2))
     med = np.median(d) + 1e-6
     peaks = [i + 1 for i in range(len(d)) if d[i] > 4 * med]
-    small = _gray_frames(path, 16, 16, fps, crop)
+    small = _gray_frames(path, 16, 16, fps, crop, dtype=np.uint8)   # 8x lighter than float, is_cut averages it
     cuts = []
     for i in peaks:
         t = i / fps

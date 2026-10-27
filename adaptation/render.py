@@ -756,7 +756,8 @@ def _shifted(c: Dict, s: Dict, t0: float) -> Tuple[Dict, Dict]:
     return c2, {**s, "ws": s["ws"] - t0, "pieces": pcs}
 
 
-RENDERING = threading.BoundedSemaphore(1)   # two final renders at once once ran out of memory
+import render_slot
+RENDERING = render_slot.SLOT   # one heavy render in the whole app (render_slot.py)
 
 
 def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, preview: bool, progress=None,
@@ -820,9 +821,8 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
 
 
 def render(*args, **kw) -> Dict:
-    """Final renders one at a time (two at once ran out of memory); previews freely."""
-    if kw.get("preview"):
-        return _render(*args, **kw)
+    """One render at a time, previews included (two at once ran out of memory;
+    a preview beside a final render could too): see render_slot.py."""
     with RENDERING:
         return _render(*args, **kw)
 

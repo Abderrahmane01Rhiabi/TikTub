@@ -78,8 +78,8 @@ def sync_youtube_statuses(batch_processor) -> Dict[str, int]:
     due_by_channel: Dict[str, List[Dict]] = {}
     for video in url_manager.list_videos(status="scheduled_on_youtube"):
         when = published_moment(video)
-        if video.get("youtube_id") and when and when <= now:
-            due_by_channel.setdefault(video.get("channel", "default"), []).append(video)
+        if video.get("youtube_id") and when and when <= now and video.get("channel"):   # never a "default" channel
+            due_by_channel.setdefault(video["channel"], []).append(video)
 
     for channel, videos in due_by_channel.items():
         try:
@@ -136,9 +136,8 @@ def run_snapshot_cycle(batch_processor):
             continue
         captured = url_manager.get_captured_checkpoints(video["video_id"])
         due = _due_checkpoints(video, now, captured)
-        if due:
-            channel = video.get("channel", "default")
-            due_by_channel.setdefault(channel, []).append((video, due))
+        if due and video.get("channel"):
+            due_by_channel.setdefault(video["channel"], []).append((video, due))
 
     if not due_by_channel:
         return
@@ -230,8 +229,8 @@ def sync_retention(batch_processor, limit: int = 60) -> int:
         if not video.get("youtube_id") or "engaged_views" in (video.get("retention_7d") or {}):
             continue
         published = published_moment(video)
-        if published and published + RETENTION_DELAY <= now:
-            due.setdefault(video.get("channel", "default"), []).append(video)
+        if published and published + RETENTION_DELAY <= now and video.get("channel"):
+            due.setdefault(video["channel"], []).append(video)
 
     measured = 0
     for channel, videos in due.items():
