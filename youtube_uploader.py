@@ -21,6 +21,8 @@ from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
 
+from atomic_write import write_file_atomic   # token.json: never half-written
+
 # Import multi-channel support
 try:
     from channel_manager import ChannelManager
@@ -139,8 +141,7 @@ def complete_oauth_flow(state: str, authorization_response_url: str) -> str:
 
     token_path = get_token_path(channel_name)
     os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
-    with open(token_path, 'w') as f:
-        f.write(flow.credentials.to_json())
+    write_file_atomic(token_path, flow.credentials.to_json())
 
     return channel_name
 
@@ -191,8 +192,7 @@ def get_connected_channel_identity(channel_name: str):
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     return _channel_identity(creds)
 
 
@@ -272,8 +272,7 @@ def get_video_stats(channel_name: str, youtube_video_ids: List[str]) -> Dict[str
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     youtube = build('youtube', 'v3', credentials=creds)
     stats = {}
@@ -329,8 +328,7 @@ def get_video_analytics(channel_name: str, youtube_video_id: str) -> Dict:
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     start_date, end_date = '2020-01-01', datetime.now().strftime('%Y-%m-%d')
@@ -384,8 +382,7 @@ def get_first_week_retention(channel_name: str, videos: List[Dict]) -> Dict[str,
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
 
     out = {}
@@ -433,8 +430,7 @@ def get_retention_curve(channel_name: str, youtube_id: str, start: str) -> List[
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     resp = yta.reports().query(ids='channel==MINE', startDate=start, endDate=datetime.now().strftime("%Y-%m-%d"),
                                metrics='audienceWatchRatio,relativeRetentionPerformance',
@@ -453,8 +449,7 @@ def get_daily_feed_views(channel_name: str, days: int = 21) -> List[Dict]:
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     resp = yta.reports().query(ids='channel==MINE', startDate=(datetime.now() - timedelta(days=days)).strftime('%Y-%m-%d'),
                                endDate=datetime.now().strftime('%Y-%m-%d'), metrics='views',
@@ -479,8 +474,7 @@ def get_channel_analytics(channel_name: str, days: int = 30) -> Dict:
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     yta = build('youtubeAnalytics', 'v2', credentials=creds)
     end_date = datetime.now().strftime('%Y-%m-%d')
@@ -550,8 +544,7 @@ def update_video_visibility(channel_name: str, youtube_video_id: str,
     creds = Credentials.from_authorized_user_file(token_path, SCOPES)
     if creds.expired and creds.refresh_token:
         creds.refresh(Request())
-        with open(token_path, 'w') as f:
-            f.write(creds.to_json())
+        write_file_atomic(token_path, creds.to_json())
 
     youtube = build('youtube', 'v3', credentials=creds)
 
@@ -783,8 +776,7 @@ def authenticate_youtube(channel_name=None, interactive=True):
         # Sauvegarde le token
         # Create directory if it doesn't exist (for multi-channel)
         os.makedirs(os.path.dirname(token_file), exist_ok=True)
-        with open(token_file, 'w') as token:
-            token.write(creds.to_json())
+        write_file_atomic(token_file, creds.to_json())
 
     return build('youtube', 'v3', credentials=creds)
 

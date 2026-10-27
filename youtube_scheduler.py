@@ -13,6 +13,8 @@ import yaml
 from dateutil import parser
 import pytz
 
+from atomic_write import write_file_atomic
+
 class YouTubeScheduler:
     def __init__(self, config_path="config.yaml"):
         self.load_config(config_path)
@@ -209,8 +211,8 @@ class YouTubeScheduler:
             'validation': self.validate_schedule(schedule) if schedule else None
         }
         
-        with open(filename, 'w', encoding='utf-8') as f:
-            json.dump(schedule_data, f, indent=2, ensure_ascii=False)
+        # built in full first, then swapped in at once: a crash never leaves an empty schedule
+        write_file_atomic(filename, json.dumps(schedule_data, indent=2, ensure_ascii=False))
         
         print(f"✅ Planning sauvegardé dans {filename}")
         return filename

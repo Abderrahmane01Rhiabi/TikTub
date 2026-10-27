@@ -263,6 +263,7 @@ def create_channel(manager, draft: Dict, name: str, display_name: str, language:
     import os
     import re
     import shutil
+    from atomic_write import write_file_atomic
     name, display_name = (name or "").strip(), (display_name or "").strip()
     if not draft.get("token") or not draft.get("youtube") or draft.get("error"):
         raise ValueError(draft.get("error") or "La connexion Google n'est pas terminée.")
@@ -287,8 +288,7 @@ def create_channel(manager, draft: Dict, name: str, display_name: str, language:
     try:
         with open(os.path.join(folder, "credentials.json"), "w", encoding="utf-8") as f:
             json.dump(draft["client_config"], f, indent=2)
-        with open(os.path.join(folder, "token.json"), "w", encoding="utf-8") as f:
-            f.write(draft["token"])
+        write_file_atomic(os.path.join(folder, "token.json"), draft["token"])
         config = manager.get_config()
         config[name].update({"youtube_channel_id": youtube["id"], "youtube_title": youtube.get("title"),
                              "youtube_custom_url": youtube.get("custom_url")})
