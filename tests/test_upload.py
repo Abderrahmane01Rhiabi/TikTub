@@ -208,3 +208,27 @@ def test_reprocess_sends_a_video_back_to_cadrage_keeping_its_ai_data(client, pro
     v1 = db.get_video("v1")
     assert v1["status"] == "selected" and v1["reprocess_keep_ai"] and v1["ai_data"]["optimized_title"] == "reviewed"
     assert client.post("/api/videos/v2/reprocess").status_code == 400  # source gone too
+
+
+# ---- a send cut short (server restarted mid-publish, AUDIT.md §8.3-7)
+
+class ServerKilled(BaseException):
+    """What a restart does to the publishing thread: nothing after this line runs."""
+
+
+def test_youtube_id_is_saved_as_soon_as_youtube_answers(project, fake_youtube, monkeypatch):
+    project.add_channel("chanA")
+    project.add_video("v1", video_path=project.add_video_file("v1.mp4"))
+    project.write_schedule([schedule_entry("v1")])
+
+    def killed(channel):
+        raise ServerKilled()
+    monkeypatch.setattr(quota, "record_upload", killed)      # the next step after the insert
+
+    try:
+        yu.upload_channel_schedule("chanA")
+    except ServerKilled:
+        pass
+
+    video = db.get_video("v1")
+    assert video["youtube_id"] == "yt1" and video["status"] == "scheduled_on_youtube"

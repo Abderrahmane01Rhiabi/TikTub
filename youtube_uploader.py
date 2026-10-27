@@ -864,6 +864,17 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
         if youtube_video_id:
             url = f"https://youtube.com/watch?v={youtube_video_id}"
             print(f"✅ Upload réussi!")
+
+            # Saved FIRST, before anything else can go wrong (thumbnail, quota,
+            # a server restart): a video already on YouTube must never look
+            # "ready" again, or the next « Publier tout » would send it twice.
+            if video_id:
+                if update_video_status(video_id, url, youtube_video_id, scheduled_time):
+                    status_msg = "programmée" if scheduled_time else "uploadée"
+                    print(f"📊 Statut mis à jour: {status_msg}")
+                else:
+                    print(f"⚠️ Erreur mise à jour statut")
+
             try:                        # a cover picture made with the video (Adaptation): best effort
                 import db as _db
                 thumb = ((_db.get_video(video_id) or {}).get("thumbnail_path") if video_id else None)
@@ -884,14 +895,6 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
             except Exception as e:
                 print(f"⚠️ Suivi du quota non enregistré: {e}")
 
-            # Met à jour la base de données
-            if video_id:
-                if update_video_status(video_id, url, youtube_video_id, scheduled_time):
-                    status_msg = "programmée" if scheduled_time else "uploadée"
-                    print(f"📊 Statut mis à jour: {status_msg}")
-                else:
-                    print(f"⚠️ Erreur mise à jour statut")
-            
             return url
 
     except HttpError as e:
