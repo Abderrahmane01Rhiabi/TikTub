@@ -2064,7 +2064,9 @@ def video_fiche(video_id: Optional[str] = None, youtube_id: Optional[str] = None
         "video_id": vid, "channel": ch, "status": video.get("status"),
         "titre": ai.get("optimized_title") or video.get("title") or video.get("original_title"),
         "description": ai.get("description"), "tags": ai.get("tags") or [],
-        "youtube_url": video.get("youtube_url"), "modele_url": video.get("url") if rec.get("type") == "adaptation" else None,
+        "youtube_url": video.get("youtube_url"),
+        "modele_url": video.get("url") if rec.get("type") == "adaptation" and str(video.get("url") or "").startswith("http") else None,
+        "idee": (rec.get("details") or {}).get("idee"),          # « Idée d'abord »: the idea instead of a model Short
         "source_url": video.get("url") if rec.get("type") != "adaptation" else None,
         "thumbnail_url": latest.get("thumbnail_url") or video_media_url({"video_path": video.get("thumbnail_path")}),
         "publiee": published.isoformat() if published else None,

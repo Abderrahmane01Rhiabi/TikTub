@@ -504,7 +504,7 @@ def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, 
     # 2. the Short's pictures, searched by image
     images = {"frames": [], "source": None, "error": None, "search_error": None}
     extra = []
-    if work_dir:
+    if work_dir and reference_url:      # « Idée d'abord »: no model Short, no pictures to search
         try:
             fr = frames_fn(ref, reference_url, work_dir, found,
                            report=lambda ph, f: report(ph, 0.42 + 0.18 * f))

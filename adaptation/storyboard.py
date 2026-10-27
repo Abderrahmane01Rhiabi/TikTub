@@ -129,9 +129,19 @@ l'histoire, autre fin), chacun capable de garder le spectateur jusqu'a la fin, a
 JSON uniquement : {{"angles": [{{"titre": "2 a 6 mots", "idee": "1 ou 2 phrases : la question posee, le fil, la fin"}}]}}"""
 
 
+STRICT_FACTS = """FAITS (video sans modele, faite a partir d'une idee) : n'utilise AUCUN autre fait que les "faits
+utilisables" ci-dessus (chacun vient d'une page web verifiee). Aucun chiffre, date ou nom qui n'y est pas.
+
+"""
+
+
 def angles(reference: Dict, n: int = 3, avoid: Optional[List[str]] = None, gemini=None) -> List[Dict]:
     """n different angles on the reference's subject, none of the ones already used."""
     deja = ("Angles DEJA utilises, a ne pas reprendre : " + " ; ".join(avoid) + "\n") if avoid else ""
+    said = reference.get("suggestions_youtube") or []        # « Idée d'abord »: what people really search
+    if said:
+        deja += ("Ce que les gens tapent sur YouTube a ce sujet (un angle qui repond a l'une de ces recherches "
+                 "accroche mieux) : " + " ; ".join(said[:10]) + "\n")
     r = (gemini or _gemini())._generate_content([{"text": ANGLES_PROMPT.format(
         sujet=reference.get("sujet"), question=reference.get("question"), faits="; ".join(reference.get("faits") or []),
         n=n, deja=deja)}], max_tokens=3000, timeout=90, temperature=0.9)
@@ -155,7 +165,8 @@ def write(reference: Dict, codes: List[str], gemini=None, angle: Optional[Dict] 
                                  plans=_plans_listing(reference), faits="; ".join(reference.get("faits") or []),
                                  douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
                                  pub=reference.get("publicite") or "aucune", langues=_languages_listing(codes),
-                                 angle=ANGLE_PART.format(**angle) if angle else "",
+                                 angle=(ANGLE_PART.format(**angle) if angle else "")
+                                 + (STRICT_FACTS if reference.get("origine") == "idee" else ""),
                                  exemple=exemple, exemple_meta=exemple_meta)
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.7)
     return normalise(r, codes)

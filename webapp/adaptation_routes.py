@@ -137,6 +137,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base = {k: p.get(k) for k in ("project_id", "status", "reference_url", "credits", "error", "failed_step",
                                    "created_at", "updated_at")}
     base["mode"] = p.get("mode") or "sources"
+    base["idee"] = p.get("idee")
     base["annotations_reviewed"] = bool(p.get("annotations_reviewed"))
     base["fetch_note"] = p.get("fetch_note")
     from adaptation import tone as _tone_mod
@@ -177,7 +178,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["targets"] = targets
     if full:
         ref = p.get("reference") or {}
-        base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s")}
+        base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s",
+                                                     "origine", "faits_sources", "suggestions_youtube")}
         base["reference"]["plans"] = [{k: x.get(k) for k in ("debut", "fin", "visuel")}
                                       for x in ref.get("plans") or [] if isinstance(x, dict)]
         base["clips"] = [{**{k: c.get(k) for k in ("id", "source", "start", "end", "impact", "desc", "camera", "usable",
@@ -213,7 +215,8 @@ def _adaptation_call(fn, *args):
 
 
 class AdaptationCreate(BaseModel):
-    reference_url: str
+    reference_url: str = ""
+    idea: str = ""                      # « Idée d'abord »: no model Short
     source_urls: list = Field(default_factory=list)
     channels: list
     mode: str = "sources"
@@ -227,7 +230,8 @@ def create_adaptation(req: AdaptationCreate):
         _main().checked_channel(ch)
     targets = [{"channel": ch, "profile": _main().channel_manager.get_channel_profile(ch),
                 "music_dir": _main().channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
-    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, req.mode, req.versions)
+    mode = "script" if req.mode == "idee" else req.mode
+    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, mode, req.versions, None, None, req.idea)
     _start_adaptation_step(p["project_id"], "analysing")
     return _serialize_adaptation(p)
 
