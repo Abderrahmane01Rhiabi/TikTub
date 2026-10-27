@@ -62,3 +62,31 @@ def test_bad_config_values_fall_back_to_defaults(project):
         f.write("youtube:\n  quota:\n    upload_cost: -5\n    daily_units: lots\n")
     assert quota.load_settings() == {"upload_cost": quota.DEFAULT_UPLOAD_COST,
                                      "daily_units": quota.DEFAULT_DAILY_UNITS}
+
+
+# ---- quota is per Google Cloud PROJECT, not per OAuth client
+
+def credentials(project, channel, client_id, project_id=None):
+    import json
+    folder = project.add_channel(channel, client_id=client_id)
+    section = {"client_id": client_id, **({"project_id": project_id} if project_id else {})}
+    (folder / "credentials.json").write_text(json.dumps({"installed": section}))
+
+
+def test_two_oauth_clients_of_one_google_project_share_its_quota(project):
+    credentials(project, "meme", "client-1", "calcium-market")
+    credentials(project, "cest", "client-2", "calcium-market")          # another client, same project
+    credentials(project, "other", "client-3", "ytpvidsat")
+
+    quota.record_upload("meme")
+    quota.mark_exhausted("meme")
+
+    assert quota.project_key_for_channel("meme") == quota.project_key_for_channel("cest")
+    assert quota.status_for_channel("cest")["uploads_today"] == 1 and quota.is_exhausted("cest")
+    assert not quota.is_exhausted("other")
+
+
+def test_a_json_without_project_id_falls_back_to_its_client(project):
+    credentials(project, "a", "client-A")
+    credentials(project, "b", "client-B")
+    assert quota.project_key_for_channel("a") != quota.project_key_for_channel("b")
