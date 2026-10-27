@@ -325,3 +325,17 @@ def test_guard_keeps_the_hour_the_method_chose(project, bp, monkeypatch):
     schedule = bp.create_upload_schedule(schedule_method="static")
 
     assert bp._parse_slot(schedule[0]["scheduled_time"]) == bp.scheduler.timezone.localize(datetime(2030, 1, 8, 20, 0))
+
+
+def test_static_slots_keep_their_hour_across_the_switch_to_winter_time(project):
+    """Planned on Oct 24 (summer time, +02:00) for 20:00: the slots after
+    Oct 25 3:00 (winter time, +01:00) are still 20:00 in Paris, not 19:00."""
+    scheduler = YouTubeScheduler("config.yaml")
+    scheduler.config["scheduling"].update(preferred_days=["monday", "tuesday", "wednesday", "thursday", "friday",
+                                                          "saturday", "sunday"], preferred_hours=["20:00"], spacing_hours=23)
+    tz = scheduler.timezone
+    start = tz.localize(datetime(2026, 10, 24, 12, 0))
+
+    slots = scheduler.get_optimal_publish_times(3, start)
+
+    assert [s.astimezone(tz).strftime("%d %H:%M %z") for s in slots] == ["24 20:00 +0200", "25 20:00 +0100", "26 20:00 +0100"]

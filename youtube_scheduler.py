@@ -85,33 +85,36 @@ class YouTubeScheduler:
         return publish_times
     
     def find_next_optimal_slot(self, from_date: datetime, preferred_days: List[int], preferred_hours: List[str]) -> datetime:
-        """Trouve le prochain créneau optimal"""
-        current = from_date
-        
+        """Trouve le prochain créneau optimal.
+
+        Les jours et heures sont comptés en heure LOCALE (fuseau de config.yaml)
+        puis convertis avec le bon décalage de CE jour-là : garder celui du
+        point de départ donnait, après le passage à l'heure d'hiver, un 20:00
+        « +02:00 » — soit 19:00 à Paris."""
+        if from_date.tzinfo is None:
+            from_date = self.timezone.localize(from_date)
+        local_start = from_date.astimezone(self.timezone).replace(tzinfo=None)
+
+        def at(day, hour_str):
+            hour, minute = map(int, hour_str.split(':'))
+            return self.timezone.localize(day.replace(hour=hour, minute=minute, second=0, microsecond=0))
+
         # Cherche jusqu'à 14 jours max
         for days_ahead in range(14):
-            check_date = current + timedelta(days=days_ahead)
+            check_date = local_start + timedelta(days=days_ahead)
             
             # Vérifie si c'est un jour préféré
             if check_date.weekday() in preferred_days:
                 # Trouve la meilleure heure
                 for hour_str in preferred_hours:
-                    hour, minute = map(int, hour_str.split(':'))
-                    potential_time = check_date.replace(
-                        hour=hour, 
-                        minute=minute, 
-                        second=0, 
-                        microsecond=0
-                    )
+                    potential_time = at(check_date, hour_str)
                     
                     # Vérifie que c'est dans le futur
                     if potential_time > from_date:
                         return potential_time
         
         # Fallback: prochaine heure préférée
-        next_day = current + timedelta(days=1)
-        hour, minute = map(int, preferred_hours[0].split(':'))
-        return next_day.replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return at(local_start + timedelta(days=1), preferred_hours[0])
     
     def create_upload_schedule(self, videos: List[Dict], start_date: Optional[datetime] = None,
                                 channel_manager=None) -> List[Dict]:
