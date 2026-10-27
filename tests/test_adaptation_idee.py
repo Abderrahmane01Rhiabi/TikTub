@@ -295,3 +295,48 @@ def test_the_sheet_of_an_idea_describes_its_images_in_french_whatever_the_channe
     g = FakeGemini()
     idee.plan("لماذا لا تتجمد مياه البحر", ["حقيقة"], [], gemini=g)
     assert "EN FRANCAIS" in g.plan_prompts[0]
+
+
+# ---- after the preview: the published video of an idea (no model Short)
+
+def idea_project(group="ad_lead"):
+    t = {"channel": "chanA", "language": "fr", "script": {"titre": "T", "description": "d", "tags": ["x"]}}
+    return {"project_id": "ad_me", "reference_url": "", "idee": "pourquoi les chats ronronnent", "group": group,
+            "credits": "@someone", "targets": [t]}, t
+
+
+def test_the_versions_of_one_idea_share_one_key_never_a_fake_link():
+    p, t = idea_project()
+    rec = ap.publication_record(p, t, "processed_videos/x.mp4")
+    assert rec["url"] == "idee:ad_lead"                                    # FR and AR versions of the idea: one key
+    p2, t2 = idea_project(group=None)
+    assert ap.publication_record(p2, t2, "x.mp4")["url"] == "idee:ad_me"
+    p3, t3 = idea_project()
+    p3.update(reference_url="https://youtube.com/shorts/REF", idee=None)
+    assert ap.publication_record(p3, t3, "x.mp4")["url"] == "https://youtube.com/shorts/REF"   # a model Short: unchanged
+
+
+def test_remake_of_an_idea_video_is_a_script_first_project():
+    v = {"video_id": "v1", "channel": "chanA", "url": "idee:ad_lead",
+         "recette": {"type": "adaptation", "voix": {"id": "v"}, "style": {"visuel": "x"}, "details": {"mode": "idee"}}}
+    assert ap.style_to_remake(v, [])["mode"] == "script"
+
+
+def test_the_versions_of_an_idea_are_compared_and_the_card_shows_the_idea_not_a_link(client, project, monkeypatch):
+    import db
+    import youtube_uploader
+    from test_performance import adaptation_recipe, CURVE
+    rec = adaptation_recipe(20, 2.0, 4)
+    rec["details"]["idee"] = "pourquoi les chats ronronnent"
+    for vid, ch in (("fr", "chanA"), ("ar", "chanB")):
+        project.add_video(vid, channel=ch, youtube_id="Y" + vid, status="uploaded", youtube_published_at="2026-09-01T10:00:00",
+                          url="idee:ad_lead", recette=rec, ai_data={"optimized_title": "T " + vid})
+    monkeypatch.setattr(youtube_uploader, "get_retention_curve", lambda ch, yid, start: CURVE)
+
+    card = client.get("/api/fiche?video_id=fr").json()
+
+    assert [v["video_id"] for v in card["versions"]] == ["ar"]
+    assert card["modele_url"] is None and card["idee"] == "pourquoi les chats ronronnent"
+    import performance
+    groups = performance.versions(db.query_videos(), {})
+    assert groups[0]["idee"] == "pourquoi les chats ronronnent" and groups[0]["reference_url"] == "idee:ad_lead"

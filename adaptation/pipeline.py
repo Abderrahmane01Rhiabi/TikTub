@@ -156,7 +156,9 @@ def style_to_remake(video: Dict, versions: List[Dict]) -> Dict:
         m = r.get("musique") or {}
         per[v.get("channel")] = {"voice_id": (r.get("voix") or {}).get("id"), "music_file": m.get("fichier"),
                                  "music_start": m.get("debut_s"), "style": (r.get("style") or {}).get("visuel")}
-    return {"mode": d.get("mode") or "sources", "versions": len(per) > 1, "channels": list(per), "par_chaine": per}
+    mode = d.get("mode") or "sources"
+    return {"mode": "script" if mode == "idee" else mode,    # a remake starts from a new model Short
+            "versions": len(per) > 1, "channels": list(per), "par_chaine": per}
 
 
 def group_of(p: Dict) -> List[Dict]:
@@ -1851,7 +1853,7 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
     total = round(sum(x.get("duree", 0) for x in segs), 2)
     return {
         "projet": p["project_id"], "mode": "idee" if p.get("idee") else p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
-        "inspire_de": p.get("remake_of"), "ton": _tone(p, t), "ton_de_la_chaine": bool(_channel_tone(t)),
+        "inspire_de": p.get("remake_of"), "idee": p.get("idee"), "ton": _tone(p, t), "ton_de_la_chaine": bool(_channel_tone(t)),
         "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
         "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
                     "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique"),
@@ -2139,7 +2141,10 @@ def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     now = datetime.now().isoformat()
     ai = {"optimized_title": sc["titre"], "title": sc["titre"], "description_suggestions": [desc],
           "description": desc, "tags": sc.get("tags") or []}
-    return {"video_id": vid, "batch_id": p["project_id"], "channel": t["channel"], "url": p["reference_url"],
+    # an idea has no model Short: its versions (one per channel) share "idee:<group>", the key the Dashboard
+    # compares versions by, and "Refaire ce style" / the video card find them with — never shown as a link
+    key = p["reference_url"] or f"idee:{p.get('group') or p['project_id']}"
+    return {"video_id": vid, "batch_id": p["project_id"], "channel": t["channel"], "url": key,
             "status": "ready_for_upload", "priority": "normal", "source": "adaptation",
             "adaptation_project": p["project_id"], "original_title": sc["titre"], "video_path": path,
             "ai_data": ai, "added_at": now, "updated_at": now}

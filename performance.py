@@ -327,7 +327,8 @@ def versions(videos: List[Dict], history_by_video: Dict[str, List[Dict]]) -> Lis
                 "retention_7d": (r or {}).get("retention_7d"),
                 "apres_accroche": curve.get("apres_accroche")})
         items.sort(key=lambda x: (x["channel"] or ""))
-        out.append({"reference_url": url, "versions": items, **_winner(items),
+        idea = next(((v.get("recette") or {}).get("details") or {}).get("idee") for v in vs)
+        out.append({"reference_url": url, "idee": idea, "versions": items, **_winner(items),
                     "published": max((x["published"] or "") for x in items)})
     out.sort(key=lambda g: g["published"], reverse=True)
     return out

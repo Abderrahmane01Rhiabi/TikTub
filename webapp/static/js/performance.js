@@ -123,7 +123,7 @@ async function loadVersions(){
     <article class="chcard">
       <div class="chcard-head">
         <div class="who"><div class="name">${esc(g.versions[0].titre || 'Short')}</div>
-          <div class="meta" style="margin-left:0"><a href="${esc(g.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>
+          <div class="meta" style="margin-left:0">${g.idee ? `💡 Idée : ${esc(g.idee)}` : `<a href="${esc(g.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>`}
           ${g.gagnant ? ` · <b style="color:var(--ok)">${esc(chName(g.versions.find(v => v.video_id === g.gagnant).channel))} garde mieux</b> (+${g.ecart} points, ${esc(g.critere)})`
             : g.critere ? ` · égalité (${esc(g.critere)}, ${g.ecart} point${g.ecart > 1 ? 's' : ''} d'écart)` : ' · pas encore mesuré'}</div></div>
         <button class="btn ghost small" data-cmp="${gi}">${icon('chart', 13)} Comparer les courbes</button>
@@ -243,7 +243,7 @@ async function openFicheDialog(id, opts = {}){
           <div class="stack" style="gap:4px;min-width:0"><b>${esc(d.titre || '')}</b>
             <div class="row" style="display:flex;gap:10px;flex-wrap:wrap">
               ${d.youtube_url ? `<a href="${esc(d.youtube_url)}" target="_blank" rel="noopener">YouTube ↗</a>` : ''}
-              ${d.modele_url ? `<a href="${esc(d.modele_url)}" target="_blank" rel="noopener">Short modèle ↗</a>` : ''}
+              ${d.modele_url ? `<a href="${esc(d.modele_url)}" target="_blank" rel="noopener">Short modèle ↗</a>` : d.idee ? `<span>💡 ${esc(d.idee)}</span>` : ''}
               ${d.source_url ? `<a href="${esc(d.source_url)}" target="_blank" rel="noopener">Source ↗</a>` : ''}
               ${(d.versions || []).map(v => `<a href="#" data-other="${esc(v.video_id)}">Version ${esc(chName(v.channel))} →</a>`).join('')}
             </div></div>
