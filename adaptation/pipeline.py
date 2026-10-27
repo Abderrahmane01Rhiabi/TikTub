@@ -83,18 +83,26 @@ def _new_pid() -> str:
 
 
 def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
-           versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None) -> Dict:
+           versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None,
+           idea: Optional[str] = None) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
     mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
     versions (script mode, several channels): one project per channel, a group — the reference
-    is read once, each channel gets its own angle, so its video differs from the others."""
+    is read once, each channel gets its own angle, so its video differs from the others.
+    idea (« Idée d'abord »): no model Short — a Script d'abord project whose sheet is built
+    from the idea and facts found on the web (adaptation/idee.py)."""
     urls = [u.strip() for u in source_urls if u and u.strip()]
+    idea = " ".join((idea or "").split())
+    if idea:
+        mode, reference_url = "script", ""
     if mode not in MODES:
         raise PipelineError("Mode inconnu.")
     if mode == "script":
         urls = []                       # the footage is searched for the script, plan by plan
-    if not reference_url.strip():
-        raise PipelineError("Il faut le lien du Short modèle.")
+    if not idea and not reference_url.strip():
+        raise PipelineError("Il faut le lien du Short modèle, ou ton idée.")
+    if idea and len(idea) < 8:
+        raise PipelineError("Décris ton idée en une phrase (au moins quelques mots).")
     if not channels:
         raise PipelineError("Choisis au moins une chaîne cible.")
     targets = []
@@ -120,6 +128,8 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
     base = {"status": "analysing", "reference_url": reference_url.strip(), "mode": mode,
             "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
             "credits": "", "credits_auto": "", "error": None, "failed_step": None, "remake_of": remake_of}
+    if idea:
+        base["idee"] = idea
     if mode == "sources" and versions and len(targets) > 1:
         base["versions"] = True         # one project, the same clips, an angle per channel at the script step
     if mode == "script" and versions and len(targets) > 1:
@@ -163,7 +173,7 @@ def new_version(pid: str, channel: Dict) -> Dict:
         raise PipelineError("Le Short modèle de ce projet n'est pas encore analysé.")
     if any(t["channel"] == channel["channel"] for x in [src] + group_of(src) for t in x["targets"]):
         raise PipelineError(f"La chaîne {channel['channel']} a déjà sa version de ce Short.")
-    fresh = create(src["reference_url"], [], [channel], mode="script")
+    fresh = create(src["reference_url"], [], [channel], mode="script", idea=src.get("idee"))
     if not src.get("group"):
         src["group"] = src["project_id"]
         save(src)
@@ -260,8 +270,13 @@ def run_analysis(pid: str, report: Optional[Report] = None):
     p = load(pid)
     try:
         if not p.get("reference"):
-            report("analyse du Short modèle", 0.02)
-            p["reference"] = reference.analyse(p["reference_url"])
+            if p.get("idee"):           # « Idée d'abord »: the sheet comes from the idea and the web, not a video
+                from adaptation import idee
+                report("recherche des faits sur le web", 0.02)
+                p["reference"] = idee.build(p["idee"], _codes(p)[0])
+            else:
+                report("analyse du Short modèle", 0.02)
+                p["reference"] = reference.analyse(p["reference_url"])
             save(p)
         if p.get("mode") == "script":
             members = _angles(p, report)
@@ -1320,6 +1335,8 @@ EXCERPTS_PER_VIDEO = 2
 
 def _short_file(p: Dict) -> Optional[str]:
     """The reference Short on disk (downloaded for the picture search), or downloaded now."""
+    if not p.get("reference_url"):
+        raise PipelineError("Pas de Short modèle dans un projet « Idée d'abord » : pas d'extrait possible.")
     d = os.path.join(project_dir(p["project_id"]), "finder")
     for name in ("short.mp4", "short.webm", "short.mkv"):
         if os.path.exists(os.path.join(d, name)):
@@ -1833,7 +1850,7 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
     segs = [x for x in plans]
     total = round(sum(x.get("duree", 0) for x in segs), 2)
     return {
-        "projet": p["project_id"], "mode": p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
+        "projet": p["project_id"], "mode": "idee" if p.get("idee") else p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
         "inspire_de": p.get("remake_of"), "ton": _tone(p, t), "ton_de_la_chaine": bool(_channel_tone(t)),
         "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
         "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),

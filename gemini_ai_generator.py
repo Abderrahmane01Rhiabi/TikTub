@@ -340,6 +340,45 @@ Respond with JSON:
             self._api_error_count += 1
             return {"error": str(e)}
 
+    def grounded(self, prompt: str, max_tokens: int = 4000, timeout: int = 120, temperature: float = 0.2) -> Dict:
+        """One call with Google Search (Grounding with Google Search): {"text",
+        "queries", "supports": [{"text": a sentence of the answer, "sources":
+        [{"title", "uri"}] — the pages Google says support it]}}, or {"error"}.
+        Plain text, not JSON: measured (2026-10-27) that Google links each
+        sentence to its pages in text mode, and barely in JSON mode — where the
+        model may also skip the search and cite pages from memory."""
+        payload = {"contents": [{"parts": [{"text": prompt}]}], "tools": [{"google_search": {}}],
+                   "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}}
+        try:
+            import ai_models
+            model = ai_models.model_for(_asking_step(), self.model_name)
+        except Exception:
+            model = self.model_name
+        try:
+            t0 = time.time()
+            response = requests.post(self.url_for(model), params={"key": self.api_key}, json=payload, timeout=timeout)
+            try:
+                body = response.json()
+            except Exception:
+                body = None
+            log_usage(model, response.status_code, body, time.time() - t0)
+            if response.status_code != 200 or not body:
+                return {"error": f"API error: {response.status_code}"}
+            cand = (body.get("candidates") or [{}])[0]
+            text = "".join(p.get("text", "") for p in (cand.get("content") or {}).get("parts") or [])
+            meta = cand.get("groundingMetadata") or {}
+            chunks = [c.get("web") or {} for c in meta.get("groundingChunks") or []]
+            supports = []
+            for s in meta.get("groundingSupports") or []:
+                pages = [{"title": chunks[i].get("title"), "uri": chunks[i].get("uri")}
+                         for i in s.get("groundingChunkIndices") or [] if 0 <= i < len(chunks)]
+                if pages:
+                    supports.append({"text": (s.get("segment") or {}).get("text", ""), "sources": pages})
+            return {"text": text, "queries": meta.get("webSearchQueries") or [], "supports": supports}
+        except Exception as e:
+            print(f"❌ Gemini grounded call failed: {e}")
+            return {"error": str(e)}
+
     def test_api_connection(self) -> bool:
         """Test Gemini API connection"""
         try:

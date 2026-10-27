@@ -30,6 +30,8 @@ OVERRIDES = os.path.join("database", "ai_models.json")
 # step: (model, what it does) — every step of the app that asks the AI
 STEPS: Dict[str, tuple] = {
     "reference.analyse":     (FLASH, "regarder le Short modèle"),
+    "idee.research":         (FLASH, "chercher les faits sur le web (Google), « Idée d'abord »"),
+    "idee.plan":             (FLASH, "construire le plan à partir de l'idée"),
     "storyboard.angles":     (FLASH, "proposer les angles (une version par chaîne)"),
     "storyboard.write":      (FLASH, "écrire le storyboard"),
     "storyboard.critique":   (PRO,   "relire le storyboard"),
