@@ -148,6 +148,10 @@ def build(idea: str, lang: str, gemini=None, resolve: Callable = resolve) -> Dic
     g = gemini or _gemini()
     suggestions = youtube_suggestions(idea, lang)
     facts = research(idea, lang, gemini=g, resolve=resolve)
+    if sum(not f["fragile"] for f in facts) < MIN_FACTS:
+        # one search is uneven (measured on an Arabic idea: 2 sourced facts, then 8 for the same search): once more
+        known = {f["fait"] for f in facts}
+        facts += [f for f in research(idea, lang, gemini=g, resolve=resolve) if f["fait"] not in known]
     solid = [f["fait"] for f in facts if not f["fragile"]]
     if len(solid) < MIN_FACTS:
         raise IdeeError(f"Pas assez de faits sourcés trouvés sur le web pour cette idée ({len(solid)} sur {MIN_FACTS} "

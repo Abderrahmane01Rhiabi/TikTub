@@ -248,3 +248,29 @@ def test_angles_of_an_idea_see_what_people_search_on_youtube():
     assert "pourquoi les avions volent si haut" in seen["prompt"]
     sb.angles({"sujet": "trams", "question": "?", "faits": ["f1"]}, 3, gemini=G())
     assert "tapent sur YouTube" not in seen["prompt"]                       # a model Short: unchanged
+
+
+def test_a_passage_google_ties_across_two_lines_sources_both():
+    two = {"text": "- Premier fait vérifié ici.\n- Second fait vérifié là.", "queries": [], "supports": [
+        {"text": "Premier fait vérifié ici.\n- Second fait vérifié là.",
+         "sources": [{"title": "noaa.gov", "uri": "https://noaa.gov/a"}]}]}
+    facts = idee.research("x", "fr", gemini=FakeGemini(grounded=two), resolve=no_redirects)
+    assert [f["fait"] for f in facts] == ["Premier fait vérifié ici.", "Second fait vérifié là."]
+
+
+def test_too_few_facts_the_first_time_the_search_is_made_once_more(monkeypatch):
+    """Measured on an Arabic idea: one search gave 2 sourced facts, the same one again gave 8."""
+    monkeypatch.setattr(idee, "youtube_suggestions", lambda text, lang: [])
+    thin = {"text": "- Un seul fait sourcé.", "queries": [],
+            "supports": [{"text": "Un seul fait sourcé.", "sources": [{"title": "a.org", "uri": "https://a.org"}]}]}
+
+    class Twice(FakeGemini):
+        def grounded(self, prompt, **kw):
+            self.grounded_calls.append(prompt)
+            return thin if len(self.grounded_calls) == 1 else grounded_answer()
+    g = Twice()
+
+    ref = idee.build("pourquoi les chats ronronnent", "fr", gemini=g, resolve=no_redirects)
+
+    assert len(g.grounded_calls) == 2
+    assert "Un seul fait sourcé." in ref["faits"] and len(ref["faits"]) == 4       # both searches merged
