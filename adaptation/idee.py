@@ -46,8 +46,9 @@ def youtube_suggestions(text: str, lang: str, get: Callable = requests.get) -> L
     suggestions sharing the most words with the idea come first. Unofficial
     and free: [] whenever it doesn't answer."""
     words = text.split()
-    tries = list(dict.fromkeys(" ".join(words[:n]) for n in [len(words), 6, 5, 4, 3, 2]
-                               if n <= len(words) and (n >= 2 or n == len(words))))
+    tries = list(dict.fromkeys([" ".join(words[:n]) for n in [len(words), 6, 5, 4, 3, 2]
+                                if n <= len(words) and (n >= 2 or n == len(words))]
+                               + [" ".join(words[2:n]) for n in (5, 4) if len(words) >= n]))   # the subject alone
     found: List[str] = []
     for q in tries:
         try:
@@ -58,9 +59,12 @@ def youtube_suggestions(text: str, lang: str, get: Callable = requests.get) -> L
         except Exception:
             break
         found += [str(x) for x in (data[1] if isinstance(data, list) and len(data) > 1 else []) if str(x) not in found]
-    idea_words = {w for w in re.findall(r"\w+", text.lower()) if len(w) > 3}
-    score = lambda x: len(idea_words & set(re.findall(r"\w+", x.lower())))
-    return sorted(found, key=score, reverse=True)[:10]
+    # the subject is in the words AFTER the first two ("pourquoi les", "لماذا لا"): a suggestion sharing
+    # none of them is off topic (measured: « لماذا لا » → TikTok, Play Store…)
+    words_of = lambda x: set(re.findall(r"\w+", x.lower()))
+    core = {w for w in re.findall(r"\w+", " ".join(words[2:]).lower()) if len(w) > 2} or words_of(text)
+    kept = [x for x in found if core & words_of(x)]
+    return sorted(kept, key=lambda x: len(core & words_of(x)), reverse=True)[:10]
 
 
 # ---------------------------------------------------------------- 2. facts, each with its pages

@@ -233,7 +233,7 @@ def test_a_long_idea_is_shortened_until_youtube_suggests_something():
     assert out[0] == "pourquoi les avions volent si haut"            # the closest to the idea first
     assert set(out) == {"pourquoi les avions volent si haut", "pourquoi les avions sont blancs",
                         "pourquoi les avions de la fumée blanche"}
-    assert len(asked) <= 6
+    assert len(asked) <= 8
 
 
 def test_angles_of_an_idea_see_what_people_search_on_youtube():
@@ -274,3 +274,16 @@ def test_too_few_facts_the_first_time_the_search_is_made_once_more(monkeypatch):
 
     assert len(g.grounded_calls) == 2
     assert "Un seul fait sourcé." in ref["faits"] and len(ref["faits"]) == 4       # both searches merged
+
+
+def test_suggestions_that_only_share_the_first_words_are_dropped():
+    """Measured: « لماذا لا » (why not) completed to TikTok, Play Store… — nothing about the sea."""
+    class Answer:
+        def __init__(self, data): self.data = data
+        def raise_for_status(self): pass
+        def json(self): return self.data
+
+    def get(url, params, timeout):
+        return Answer([params["q"], ["لماذا لا تتجمد اقدام البطريق", "لماذا لا يعمل متجر بلاي", "لماذا لا يشتغل التيك توك"]])
+
+    assert idee.youtube_suggestions("لماذا لا تتجمد مياه البحر بسهولة", "ar", get=get) == ["لماذا لا تتجمد اقدام البطريق"]
