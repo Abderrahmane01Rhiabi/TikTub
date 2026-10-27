@@ -55,7 +55,7 @@ def test_a_clip_changed_by_hand_is_judged_again_and_keep_survives_elsewhere(monk
     assert calls == []                                                   # nothing changed: no new call
     t["script"]["passages"][1]["clip"] = "P3"
     ap._rejudge(p, t)
-    assert calls == [["P1", "P3"]]
+    assert calls == [["P3"]]                                             # only the changed one (ECONOMIES_IA G1)
     assert t["accords"][0].get("garde") and not t["accords"][1].get("garde")
 
 

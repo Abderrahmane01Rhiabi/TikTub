@@ -290,7 +290,8 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
                      for f in files]
     images = ("Trois images fixes de chaque clip suivent. Une image fixe peut etre ambigue (un saut fige au moment ou un "
               "bus passe) : l'\"action verifiee\", vue en mouvement, fait foi sur ce qui se passe.\n" if pics else "")
-    used = {p["clip"] for p in ps}
+    # "clips_utilises": the clips of the whole script when only some sentences are judged again
+    used = set(script.get("clips_utilises") or ()) | {p["clip"] for p in ps}
     spare = {cid: c for cid, c in clips.items() if cid not in used and c.get("usable", True)}
     autres = ("AUTRES CLIPS disponibles (identifiant : ce qu'il montre, duree) :\n" + "\n".join(
         f"- {cid} : {(c.get('action') or c.get('desc') or '?')[:160]} ({c['end'] - c['start']:.1f}s)"

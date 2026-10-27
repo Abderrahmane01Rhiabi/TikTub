@@ -1637,7 +1637,7 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
             swaps = _swap_clips(sc, t["accords"])
             if swaps:                   # a sentence over the wrong picture: another clip that shows it, the words kept
                 sc = {**sc, "corrections": sc.get("corrections", []) + swaps}
-                t["accords"] = _judge(sc, p["clips"], t["language"], work)
+                t["accords"] = _judge_changed(sc, p["clips"], t["language"], work, t["accords"])   # the swapped ones only
             t.update(script=sc, problems=_fetched_problems(sc, p["clips"], t["language"], t["accords"]), approved=False,
                      validated=False, preview=None, voice=None)
         from concurrent.futures import ThreadPoolExecutor
@@ -1693,11 +1693,34 @@ def _swap_clips(sc: Dict, accords: Optional[List[Dict]]) -> List[str]:
     return done
 
 
+def _judge_changed(sc: Dict, clips: Dict[str, Dict], code: str, work: Optional[str],
+                   old: Optional[List[Dict]]) -> Optional[List[Dict]]:
+    """Only the sentences whose verdict no longer matches them (other words or
+    another clip) are judged again, with their pictures; the others keep their
+    verdict. Without usable verdicts (none yet, another number of sentences):
+    the whole script, as before."""
+    ps = sc.get("passages") or []
+    if not old or len(old) != len(ps):
+        return _judge(sc, clips, code, work)
+    changed = [k for k, x in enumerate(ps) if not _accord(old, k, x)]
+    if not changed:
+        return old
+    sub = {**sc, "passages": [ps[k] for k in changed], "clips_utilises": [x["clip"] for x in ps]}
+    fresh = _judge(sub, clips, code, work)
+    if fresh is None:
+        return None
+    out = list(old)
+    for k, a in zip(changed, fresh):
+        out[k] = a
+    return out
+
+
 def _rejudge(p: Dict, t: Dict) -> None:
     """A clip or a sentence changed by hand: judged again (it escaped the check)."""
     sc = t.get("script") or {}
     if any(not _accord(t.get("accords"), k, x) for k, x in enumerate(sc.get("passages") or [])):
-        fresh = _judge(sc, p["clips"], t["language"], os.path.join(project_dir(p["project_id"]), "work", t["channel"]))
+        fresh = _judge_changed(sc, p["clips"], t["language"],
+                               os.path.join(project_dir(p["project_id"]), "work", t["channel"]), t.get("accords"))
         if fresh is not None:
             old = t.get("accords") or []
             for k, a in enumerate(fresh):           # "garder quand même" survives for an unchanged passage
