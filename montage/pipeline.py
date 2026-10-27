@@ -20,6 +20,7 @@ from typing import Callable, Dict, List, Optional
 
 from montage import broll, planner, recipes, render
 from montage.transcribe import transcribe
+import render_slot
 
 Report = Callable[[str, float], None]
 
@@ -103,13 +104,15 @@ def _render(video: Dict, profile: Dict, music_dir: Optional[str], out_path: str,
 
 def render_preview(video: Dict, profile: Dict, music_dir: Optional[str]) -> str:
     out = os.path.join(work_dir(video["video_id"]), "preview.mp4")
-    _render(video, profile, music_dir, out, preview=True)
+    with render_slot.SLOT:              # one heavy render at a time in the app
+        _render(video, profile, music_dir, out, preview=True)
     return out
 
 
 def render_final(video: Dict, profile: Dict, music_dir: Optional[str], out_path: str,
                  progress_cb=None) -> Dict:
-    summary = _render(video, profile, music_dir, out_path, preview=False, progress_cb=progress_cb)
+    with render_slot.SLOT:              # one heavy render at a time in the app
+        summary = _render(video, profile, music_dir, out_path, preview=False, progress_cb=progress_cb)
     broll.record_usage(video.get("channel", "default"), video["montage"]["brolls"], video["video_id"])
     return summary
 

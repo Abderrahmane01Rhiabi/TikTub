@@ -42,6 +42,7 @@ from generative import drone_montage, script_plan
 from generative.script_generator import generate_script
 from generative.voice_generator import synthesize
 from generative.video_composer import render_video
+import render_slot
 
 PROCESSED_DIR = "processed_videos"
 DRONES_CHOICE = "__drones__"     # the Décor step's "Drones, un plan par phrase" option
@@ -323,19 +324,20 @@ class GenerativePipeline:
             with open(video["words_path"], encoding="utf-8") as f:
                 words = [tuple(w) for w in json.load(f)]
             background = video["bg_video_path"]
-            if background == drone_montage.DRONES:     # a shot per sentence, built for this video
-                background = os.path.join(TEMP_DIR, video_id, "drones.mp4")
-                drones = drone_montage.build(words, video["bg_music_path"], video["channel"], video_id, background)
-                self.url_manager.update_video_status(video_id, video["status"], drones=drones)
-            render_video(
-                video["narration_path"], words, background, video["bg_music_path"], out_path,
-                frame_mode="fill" if drones else video.get("frame_mode", "fill"),
-                rounded_corners=video.get("rounded_corners", False),
-                caption_style=video.get("caption_style", "karaoke"),
-                caption_color=video.get("caption_color"),
-                border_image_path=self.channel_manager.get_background_path(video["channel"]),
-                progress_cb=progress_cb,
-            )
+            with render_slot.SLOT:                     # one heavy render at a time in the app
+                if background == drone_montage.DRONES:     # a shot per sentence, built for this video
+                    background = os.path.join(TEMP_DIR, video_id, "drones.mp4")
+                    drones = drone_montage.build(words, video["bg_music_path"], video["channel"], video_id, background)
+                    self.url_manager.update_video_status(video_id, video["status"], drones=drones)
+                render_video(
+                    video["narration_path"], words, background, video["bg_music_path"], out_path,
+                    frame_mode="fill" if drones else video.get("frame_mode", "fill"),
+                    rounded_corners=video.get("rounded_corners", False),
+                    caption_style=video.get("caption_style", "karaoke"),
+                    caption_color=video.get("caption_color"),
+                    border_image_path=self.channel_manager.get_background_path(video["channel"]),
+                    progress_cb=progress_cb,
+                )
         except Exception as e:
             self.url_manager.update_video_status(video_id, "rendering_failed", render_error=str(e))
             raise
