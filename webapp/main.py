@@ -2449,18 +2449,57 @@ def publish(req: PublishRequest):
     return {"results": results, **moved}
 
 
+PUBLISH_JOB = "publish_all"
+_publish_start_lock = threading.Lock()
+
+
 @app.post("/api/publish_all")
 def publish_all():
     """Publish the entire schedule, across every channel it touches — the wizard's
-    single final "Publier tout" button."""
+    single final "Publier tout" button. Runs in a background thread and answers
+    at once (it used to be one request lasting minutes); progress and, at the
+    end, the results come from GET /api/publish_status. A second start while
+    one runs is refused. A restart in the middle is covered by the
+    upload_attempt marker (youtube_uploader.find_interrupted_upload)."""
+    import progress
     bp = get_batch_processor()
-    bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
-    moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
-    from youtube_uploader import upload_all_channels_schedule
-    results = upload_all_channels_schedule(auto_confirm=True)
-    _mark_rescheduled(results, moved)
-    _alert_publish_results(results)
-    return {"results": results, **moved}
+    with _publish_start_lock:
+        if progress.is_running(PUBLISH_JOB):
+            return {"started": False, "running": True}
+        progress.start(PUBLISH_JOB, kind="publish", phase="préparation", total=0, sent=0, title=None,
+                       results=[], rescheduled=[], unscheduled=[])
+
+    def run():
+        from youtube_uploader import upload_all_channels_schedule
+        try:
+            bp.ensure_schedule_includes_all_ready()  # safety net: see ensure_schedule_includes_all_ready docstring
+            moved = bp.reschedule_past_entries()     # a date gone by is moved, never published at once in public
+            total = len(_pending_schedule(bp)[1])
+            progress.update(PUBLISH_JOB, 0.0, phase="envoi", total=total, **moved)
+            sent = []
+
+            def on_result(result):
+                sent.append(result)
+                progress.update(PUBLISH_JOB, len(sent) / max(total, 1), sent=len(sent), title=result.get("title"))
+
+            results = upload_all_channels_schedule(auto_confirm=True, on_result=on_result)
+            _mark_rescheduled(results, moved)
+            _alert_publish_results(results)
+            progress.finish(PUBLISH_JOB, results=results, sent=len(results), **moved)
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            progress.finish(PUBLISH_JOB, error=str(e))
+
+    threading.Thread(target=run, daemon=True).start()
+    return {"started": True}
+
+
+@app.get("/api/publish_status")
+def publish_status():
+    """The current/last « Publier tout » run (see publish_all)."""
+    import progress
+    return progress.get(PUBLISH_JOB) or {"key": None, "done": True, "results": [], "rescheduled": [], "unscheduled": []}
 
 
 def _mark_rescheduled(results, moved):

@@ -1110,7 +1110,27 @@ def find_interrupted_upload(youtube, attempt: Dict):
     return None
 
 
-def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
+class _ReportedResults(list):
+    """A run's results, each one also handed to on_result the moment it
+    lands — the live progress of « Publier tout » (webapp: /api/publish_status)."""
+
+    def __init__(self, on_result=None, channel=None):
+        super().__init__()
+        self.on_result, self.channel = on_result, channel
+
+    def append(self, result):
+        if self.channel is not None:
+            result['channel'] = self.channel
+        super().append(result)
+        if self.on_result:
+            self.on_result(result)
+
+    def extend(self, results):
+        for result in results:
+            self.append(result)
+
+
+def upload_all_channels_schedule(auto_confirm: bool = True, on_result=None) -> List[Dict]:
     """Publie le planning entier, en itérant sur toutes les chaînes qui y apparaissent
     (mode multi-chaînes de la UI web : un seul bouton "Publier tout")."""
     schedule_data = load_schedule()
@@ -1118,7 +1138,7 @@ def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
         return []
 
     channels = set()
-    all_results = []
+    all_results = _ReportedResults(on_result)
     for video in schedule_data.get('schedule', []):
         channel = video.get('channel') or video.get('video_data', {}).get('channel')
         if channel:
@@ -1131,18 +1151,18 @@ def upload_all_channels_schedule(auto_confirm: bool = True) -> List[Dict]:
                                 "success": False, "url": None,
                                 "error": "Vidéo sans chaîne dans le planning — non publiée. Choisis sa chaîne puis régénère le planning."})
 
+    all_results = list(all_results)
     for channel_name in sorted(channels):
-        for result in upload_channel_schedule(channel_name, auto_confirm=auto_confirm):
-            result['channel'] = channel_name
-            all_results.append(result)
+        all_results.extend(upload_channel_schedule(channel_name, auto_confirm=auto_confirm, on_result=on_result))
 
     return all_results
 
-def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> List[Dict]:
+def upload_channel_schedule(channel_name: str, auto_confirm: bool = True, on_result=None) -> List[Dict]:
     """Non-interactive variant of upload_scheduled_videos(), for the web UI: uploads
     every scheduled video whose target channel matches `channel_name`, with no input().
-    Returns a list of {video_id, title, success, url, error}."""
-    results = []
+    Returns a list of {video_id, title, success, url, error, channel}; on_result
+    gets each one as soon as it's known."""
+    results = _ReportedResults(on_result, channel_name)
 
     schedule_data = load_schedule()
     if not schedule_data:
@@ -1175,7 +1195,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
 
     import quota
     if quota.is_exhausted(channel_name):
-        return skip_all(videos_to_upload, QUOTA_SKIP_MESSAGE)
+        results.extend(skip_all(videos_to_upload, QUOTA_SKIP_MESSAGE))
+        return list(results)
 
     health = get_connection_health(channel_name)
     if health["state"] != "connected":
@@ -1184,14 +1205,17 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True) -> Lis
             "not_connected": "Chaîne jamais connectée — connecte-la dans ⚙️ Réglages → Connexion.",
             "missing_credentials": "Pas de credentials.json pour cette chaîne.",
         }
-        return skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}"))
+        results.extend(skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}")))
+        return list(results)
 
     try:
         youtube = authenticate_youtube(channel_name, interactive=False)
     except Exception as e:
-        return skip_all(videos_to_upload, f"Authentification échouée : {e}")
+        results.extend(skip_all(videos_to_upload, f"Authentification échouée : {e}"))
+        return list(results)
     if not youtube:
-        return skip_all(videos_to_upload, f"Authentification échouée pour la chaîne '{channel_name}'")
+        results.extend(skip_all(videos_to_upload, f"Authentification échouée pour la chaîne '{channel_name}'"))
+        return list(results)
 
     for index, video in enumerate(videos_to_upload):
         video_data = current_video_data(video, database)

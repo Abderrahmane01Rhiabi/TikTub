@@ -625,6 +625,7 @@ function openSlotDialog(item){
 // ---------- Step 6 : Summary & publish ----------
 
 async function loadSummaryFromSchedule(){
+  resumePublishing();                 // a run started before a page reload is still going
   const data = await api('/api/schedule');
   const schedule = data.schedule || [];
   const byChannel = {};
@@ -842,10 +843,37 @@ document.getElementById('publishAllBtn').addEventListener('click', async () => {
       if (!proceed) return;
     }
     btn.innerHTML = '<span class="spinner"></span> Publication en cours...';
-    const { results, unscheduled } = await api('/api/publish_all', { method:'POST' });
-    document.getElementById('publishResults').innerHTML = publishResultsHtml(results, unscheduled || []);
-    log('Publication terminée', 'success');
-    await loadSummaryFromSchedule(); // videos just published must disappear from "Prêt à publier"
+    await api('/api/publish_all', { method:'POST' });     // runs in the background (or was already running)
+    await followPublishing(btn);
   } catch (e){ log(e.message, 'error'); }
   finally { btn.disabled = false; btn.innerHTML = originalHtml; }
 });
+
+async function resumePublishing(){
+  const btn = document.getElementById('publishAllBtn');
+  let job = null;
+  try { job = await api('/api/publish_status'); } catch (_) { return; }
+  if (!job || job.done || btn.disabled) return;      // nothing running, or already followed
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  try { await followPublishing(btn); }
+  catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = originalHtml; }
+}
+
+// « Publier tout » runs on the server in the background: its progress, then
+// its results, are read from /api/publish_status until it's done.
+async function followPublishing(btn){
+  for (;;){
+    const job = await api('/api/publish_status');
+    if (job.done){
+      if (job.error) throw new Error(`Publication interrompue : ${job.error}`);
+      document.getElementById('publishResults').innerHTML = publishResultsHtml(job.results || [], job.unscheduled || []);
+      log('Publication terminée', 'success');
+      await loadSummaryFromSchedule(); // videos just published must disappear from "Prêt à publier"
+      return;
+    }
+    btn.innerHTML = `<span class="spinner"></span> Publication en cours… ${job.sent || 0}/${job.total || '?'}${job.title ? ' · ' + esc(job.title) : ''}`;
+    await new Promise(r => setTimeout(r, 1500));
+  }
+}

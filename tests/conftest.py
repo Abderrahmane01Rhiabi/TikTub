@@ -172,3 +172,18 @@ def fake_youtube(monkeypatch):
                         lambda ch: {"state": "connected", "youtube_channel_title": ch, "reason": None})
     monkeypatch.setattr(yu, "authenticate_youtube", lambda ch, interactive=True: service)
     return service
+
+
+def publish_all_and_wait(client, timeout=20):
+    """« Publier tout » runs in the background: start it, then wait for
+    /api/publish_status to say it's done; returns that final status."""
+    import time
+    started = client.post("/api/publish_all").json()
+    assert started.get("started") or started.get("running"), started
+    end = time.time() + timeout
+    while time.time() < end:
+        status = client.get("/api/publish_status").json()
+        if status.get("done"):
+            return status
+        time.sleep(0.05)
+    raise AssertionError("« Publier tout » did not finish")
