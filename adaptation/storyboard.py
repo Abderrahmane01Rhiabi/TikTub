@@ -138,6 +138,10 @@ utilisables" ci-dessus (chacun vient d'une page web verifiee). Aucun chiffre, da
 def angles(reference: Dict, n: int = 3, avoid: Optional[List[str]] = None, gemini=None) -> List[Dict]:
     """n different angles on the reference's subject, none of the ones already used."""
     deja = ("Angles DEJA utilises, a ne pas reprendre : " + " ; ".join(avoid) + "\n") if avoid else ""
+    said = reference.get("suggestions_youtube") or []        # « Idée d'abord »: what people really search
+    if said:
+        deja += ("Ce que les gens tapent sur YouTube a ce sujet (un angle qui repond a l'une de ces recherches "
+                 "accroche mieux) : " + " ; ".join(said[:10]) + "\n")
     r = (gemini or _gemini())._generate_content([{"text": ANGLES_PROMPT.format(
         sujet=reference.get("sujet"), question=reference.get("question"), faits="; ".join(reference.get("faits") or []),
         n=n, deja=deja)}], max_tokens=3000, timeout=90, temperature=0.9)

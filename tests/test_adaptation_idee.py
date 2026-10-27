@@ -234,3 +234,17 @@ def test_a_long_idea_is_shortened_until_youtube_suggests_something():
     assert set(out) == {"pourquoi les avions volent si haut", "pourquoi les avions sont blancs",
                         "pourquoi les avions de la fumée blanche"}
     assert len(asked) <= 6
+
+
+def test_angles_of_an_idea_see_what_people_search_on_youtube():
+    seen = {}
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            seen["prompt"] = parts[0]["text"]
+            return {"angles": [{"titre": "Le vrai secret", "idee": "x"}]}
+    sb.angles({"sujet": "avions", "question": "?", "faits": ["f1"],
+               "suggestions_youtube": ["pourquoi les avions volent si haut"]}, 3, gemini=G())
+    assert "pourquoi les avions volent si haut" in seen["prompt"]
+    sb.angles({"sujet": "trams", "question": "?", "faits": ["f1"]}, 3, gemini=G())
+    assert "tapent sur YouTube" not in seen["prompt"]                       # a model Short: unchanged
