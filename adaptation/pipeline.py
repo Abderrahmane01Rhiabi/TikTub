@@ -1775,12 +1775,20 @@ def revise_script(pid: str, channel: str, request: str) -> Dict:
     return _commit(pid, channel, t)
 
 
-def approve_script(pid: str, channel: str) -> Dict:
+def approve_script(pid: str, channel: str, force: bool = False) -> Dict:
+    """force: the person watched the clips and keeps them, the warnings stay
+    shown but no longer block. Only what would break the render still does."""
     p = load(pid)
     _expect(p, "script_review")
     t = target(p, channel)
+    ps = (t["script"] or {}).get("passages") or []
+    if force:
+        missing = [x["clip"] for x in ps if x.get("clip") not in p["clips"]]
+        if missing or not 3 <= len(ps) <= 12:
+            raise PipelineError("Impossible même en forçant : " + (f"clip(s) inexistant(s) : {', '.join(missing)}."
+                                                                    if missing else f"{len(ps)} passages, il en faut entre 3 et 12."))
     problems = _fetched_problems(t["script"] or {}, p["clips"], t["language"], t.get("accords"))
-    if problems:
+    if problems and not force:
         raise PipelineError("À corriger avant de valider : " + " ".join(problems))
     t["approved"] = True
     return save(p)

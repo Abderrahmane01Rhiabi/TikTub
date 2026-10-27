@@ -141,6 +141,21 @@ def test_a_script_with_problems_cannot_be_approved(project, fakes):
         ap.approve_script(p["project_id"], "chanA")
 
 
+def test_forced_approval_passes_warnings_but_not_a_broken_script(project, fakes):
+    p = new_project(project)
+    pid = p["project_id"]
+    ap.run_analysis(pid); ap.start_scripts(pid); ap.run_scripts(pid)
+    sc = ap.target(ap.load(pid), "chanA")["script"]
+    sc["passages"][0]["texte"] = "Et donc :"
+    p = ap.edit_script(pid, "chanA", sc)
+    assert ap.target(p, "chanA")["problems"]
+    assert ap.target(ap.approve_script(pid, "chanA", force=True), "chanA")["approved"]
+    sc["passages"][0]["clip"] = "ZZ"
+    ap.edit_script(pid, "chanA", sc)
+    with pytest.raises(ap.PipelineError, match="inexistant"):
+        ap.approve_script(pid, "chanA", force=True)
+
+
 def test_a_failed_check_blocks_the_validation_and_a_voice_change_redoes_one_target(project, fakes):
     p = new_project(project)
     pid = p["project_id"]
