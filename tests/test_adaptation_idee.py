@@ -287,3 +287,11 @@ def test_suggestions_that_only_share_the_first_words_are_dropped():
         return Answer([params["q"], ["لماذا لا تتجمد اقدام البطريق", "لماذا لا يعمل متجر بلاي", "لماذا لا يشتغل التيك توك"]])
 
     assert idee.youtube_suggestions("لماذا لا تتجمد مياه البحر بسهولة", "ar", get=get) == ["لماذا لا تتجمد اقدام البطريق"]
+
+
+def test_the_sheet_of_an_idea_describes_its_images_in_french_whatever_the_channel_language():
+    """Measured on an Arabic channel: Arabic facts gave Arabic wanted images — but an image is shared
+    by every language of the project (a French version added later must read it too)."""
+    g = FakeGemini()
+    idee.plan("لماذا لا تتجمد مياه البحر", ["حقيقة"], [], gemini=g)
+    assert "EN FRANCAIS" in g.plan_prompts[0]

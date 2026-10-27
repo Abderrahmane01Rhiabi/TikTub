@@ -131,6 +131,8 @@ Ecris le plan de la video, comme si on analysait un Short viral sur ce sujet :
 - 6 a 8 plans : accroche, mise en place, explication, suspense, chute ;
 - "visuel" : une scene REELLE et concrete, qu'on trouve filmee sur YouTube (pas d'animation, pas de schema) ;
 - "paroles" : l'idee de ce qui est dit, en n'utilisant QUE les faits ci-dessus.
+Ecris "sujet", "question" et chaque "visuel" EN FRANCAIS, quelle que soit la langue de l'idee et des faits (une image
+sert a toutes les langues de la video) ; "paroles" peut rester dans la langue des faits.
 JSON uniquement :
 {{"sujet": "une phrase", "question": "la question a laquelle la video repond",
  "ton": "spectaculaire | calme | drole | explicatif", "duree_s": 35,

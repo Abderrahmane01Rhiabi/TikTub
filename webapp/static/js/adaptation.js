@@ -642,7 +642,7 @@ function adFactsHtml(ref){
   const link = s => `<a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.titre || 'source')}</a>`;
   return `<details open style="margin-bottom:8px"><summary style="cursor:pointer"><b>Faits trouvés sur le web</b> :
       ${facts.filter(f => !f.fragile).length} sourcé(s), seuls utilisés par le script</summary>
-    <ul style="margin:6px 0">${facts.map(f => `<li ${f.fragile ? 'style="opacity:.6"' : ''}>${esc(f.fait)}
+    <ul style="margin:6px 0">${facts.map(f => `<li dir="auto" ${f.fragile ? 'style="opacity:.6"' : ''}><bdi>${esc(f.fait)}</bdi>
       <span class="tiny">— ${f.sources.map(link).join(', ')}${f.fragile ? ' · <b>fragile</b> (forum ou réseau social seulement) : non utilisé' : ''}</span></li>`).join('')}</ul>
     ${said.length ? `<div class="tiny">Ce que les gens cherchent sur YouTube : ${said.map(x => `<span class="pill wait" style="margin:2px">${esc(x)}</span>`).join('')}</div>` : ''}
   </details>`;
