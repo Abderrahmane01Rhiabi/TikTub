@@ -169,3 +169,58 @@ def _fixture_calls(monkeypatch):
     """The storyboard fakes of test_adaptation_storyboard (fixture body, called directly)."""
     import test_adaptation_storyboard as tas
     return tas.fakes.__wrapped__(monkeypatch)
+
+
+# ---- G4: a search run again keeps the checks already made (same link AND same plans)
+
+def _search_fakes(monkeypatch, watched, fail_after=True):
+    from adaptation import finder
+    monkeypatch.setattr(finder, "plan_queries", lambda found: {})
+    urls = [f"https://www.youtube.com/watch?v=aaaaaaaaaa{k}" for k in range(3)]
+    monkeypatch.setattr(finder, "suggest", lambda ref, url, work_dir=None, wanted=None, local=None, report=None, **kw: {
+        "scenes": [{**w, "candidats": [{"url": u, "title": "Compil", "duration": 600, "score": 3, "origines": ["youtube"]}
+                                       for u in urls]} for w in wanted], "comptes": [], "verifs": {}})
+
+    def check(url, scenes, plans=None, **kw):
+        watched.append(url)
+        return {"verdict": "oui", "title": "Compil", "duration": 600,
+                "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 10, "fin": 14}]}}}
+    monkeypatch.setattr(finder, "check", check)
+
+    def remontages(*a, **k):
+        if fail_after[0]:
+            raise RuntimeError("le serveur a redémarré")
+    monkeypatch.setattr(finder, "follow_remontages", remontages)
+
+
+def test_a_search_run_again_does_not_watch_the_same_videos_again(project, monkeypatch):
+    from test_adaptation_storyboard import _approved_project
+    watched, fail = [], [True]
+    _search_fakes(monkeypatch, watched, fail)
+    pid = _approved_project(project, _fixture_calls(monkeypatch))
+    ap.start_images(pid)
+    ap.run_images(pid)                                                      # fails after the checks
+    assert ap.load(pid)["status"] == "error" and len(watched) == 3
+
+    fail[0] = False
+    ap.retry(pid); ap.run_images(pid)
+
+    assert len(watched) == 3                                                # nothing watched twice
+    assert ap.load(pid)["status"] == "images_review" and len(ap.load(pid)["suggestions"]["verifs"]) == 3
+
+
+def test_changed_plans_are_never_judged_with_old_checks(project, monkeypatch):
+    from test_adaptation_storyboard import _approved_project
+    watched, fail = [], [True]
+    _search_fakes(monkeypatch, watched, fail)
+    pid = _approved_project(project, _fixture_calls(monkeypatch))
+    ap.start_images(pid)
+    ap.run_images(pid)
+    p = ap.load(pid)
+    p["storyboard"]["plans"][0]["image"] = "un tram vide dans un dépôt, la nuit, vu de face"   # another plan
+    ap.save(p)
+
+    fail[0] = False
+    ap.retry(pid); ap.run_images(pid)
+
+    assert len(watched) == 6                                                # judged again against the new plans

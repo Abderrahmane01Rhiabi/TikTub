@@ -562,7 +562,8 @@ def all_candidates(sug: Dict) -> List[Dict]:
 
 
 def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, workers: int = 3,
-                report: Optional[Callable[[str, float], None]] = None, words_share: float = 0.5) -> Dict:
+                report: Optional[Callable[[str, float], None]] = None, words_share: float = 0.5,
+                on_result: Optional[Callable[[str, Dict], None]] = None) -> Dict:
     """Gemini watches the n most promising candidates, in parallel (a YouTube
     link takes ~15 s, a VK/Rutube file ~2 min). Results land in sug["verifs"];
     a failure is noted, never fatal. words_share: the part of the budget for
@@ -604,6 +605,9 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
                 verifs[c["url"]] = fut.result()
             except Exception as e:
                 errors[c["url"]] = str(e)[:200]
+                continue
+            if on_result:               # kept as it comes: a restart mid-search must not pay it again
+                on_result(c["url"], verifs[c["url"]])
     return sug
 
 

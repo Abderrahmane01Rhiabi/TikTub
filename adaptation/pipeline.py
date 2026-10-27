@@ -740,16 +740,32 @@ def run_images(pid: str, report: Optional[Report] = None):
         local = lambda found: {i: {"pays": q["pays"], "langue": q["langue"], "recherches": q["locales"]}
                                for i, q in queries.items() if q.get("locales")}
         wanted = finder.wanted_from_storyboard(plans, queries)
+        # what a check judges (each scene, the sentence said over it, its clues, the model Short): the checks
+        # made by a run cut short are kept only while all of it is unchanged — never judged against old plans
+        judged = json.dumps([[w.get("scene"), w.get("phrase"), w.get("indices")] for w in wanted]
+                            + [finder.model_of(p.get("reference"))], ensure_ascii=False, sort_keys=True)
+        cache = p.get("verif_cache") or {}
+        already = dict(cache.get("verifs") or {}) if cache.get("cle") == judged else {}
         shared = SharedSearch(p, wanted)
         sug = finder.suggest(p["reference"], p["reference_url"], work_dir=os.path.join(project_dir(pid), "finder"),
                              wanted=wanted, local=local, search=shared.search, frames_fn=shared.frames,
                              image_search=shared.image_search, report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
         shared.save()
+        sug.setdefault("verifs", {}).update(already)        # verify_best skips a video already in verifs
+
+        def keep(url: str, result: Dict):
+            q = load(pid)
+            vc = q.get("verif_cache") or {}
+            if vc.get("cle") != judged:
+                vc = {"cle": judged, "verifs": {}}
+            vc["verifs"][url] = result
+            q["verif_cache"] = vc
+            save(q)
         if shared.reused:
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(plans)), words_share=1.0,
-                           report=lambda ph, f: report(ph, 0.62 + 0.3 * f))
+                           report=lambda ph, f: report(ph, 0.62 + 0.3 * f), on_result=keep)
         finder.follow_remontages(sug, {**p["reference"], "plans": []}, p["reference_url"],
                                  report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
         p = load(pid)
