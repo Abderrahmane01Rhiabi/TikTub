@@ -58,3 +58,45 @@ def test_the_match_never_offers_a_clip_an_unjudged_sentence_uses():
     out = script.match({"passages": [{"clip": "P2", "texte": "B."}], "clips_utilises": ["P1", "P2", "P3"]},
                        _clips(), "fr", gemini=G())
     assert "P1 : plan 1" not in G.prompt and "P4 : plan 4" in G.prompt and out[0]["autre_clip"] is None
+
+
+# ---- G2: the 2nd round of storyboard fixes judges only the plans the fix changed
+
+def test_the_second_round_judges_only_the_plans_the_fix_changed(project, monkeypatch):
+    from adaptation import storyboard as sb
+    from test_adaptation_storyboard import GOOD, channel
+    p = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")], mode="script")
+    p["reference"] = {"sujet": "trams", "question": "?", "plans": [{}]}
+    ap.save(p)
+    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None: sb.normalise(json.loads(json.dumps(GOOD)), codes))
+    monkeypatch.setattr(sb, "critique", lambda b, codes: b)
+    judged = []
+
+    def match(sc, clips, code, gemini=None, stills=None):
+        judged.append([x["texte"] for x in sc["passages"]])
+        return [{"clip": x["clip"], "texte": x["texte"], "note": "non" if x["texte"].startswith("Un freinage") else "bon",
+                 "pourquoi": "on ne voit pas de passagers", "proposition": "", "autre_clip": None} for x in sc["passages"]]
+    monkeypatch.setattr(script, "match", match)
+
+    def revise(b, codes, request):                      # the fix rewrites plan 4 only
+        out = json.loads(json.dumps(b))
+        out["plans"][3]["textes"]["fr"]["texte"] = "Les passagers debout seraient projetés en avant."
+        return out
+    monkeypatch.setattr(sb, "revise", revise)
+
+    ap.write_storyboard(ap.load(p["project_id"]), lambda phase, f: None)
+
+    assert len(judged) == 2 and len(judged[0]) == 6                       # 1st round: every plan
+    assert judged[1] == ["Les passagers debout seraient projetés en avant."]  # 2nd round: only the plan fixed
+
+
+def test_a_plan_the_fix_did_not_touch_keeps_its_problem(project, monkeypatch):
+    from adaptation import storyboard as sb
+    from test_adaptation_storyboard import GOOD
+    b = sb.normalise(json.loads(json.dumps(GOOD)), ["fr"])
+    calls = []
+    monkeypatch.setattr(script, "match", lambda sc, clips, code, gemini=None, stills=None: calls.append(len(sc["passages"])) or [
+        {"clip": x["clip"], "texte": x["texte"], "note": "non", "pourquoi": "rien", "proposition": "", "autre_clip": None}
+        for x in sc["passages"]])
+    out = sb.illustration(b, "fr", only=[2])
+    assert calls == [1] and len(out) == 1 and out[0].startswith("Plan 3 :")     # numbered as in the storyboard

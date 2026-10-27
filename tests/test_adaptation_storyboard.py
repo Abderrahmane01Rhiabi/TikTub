@@ -104,7 +104,7 @@ def fakes(monkeypatch):
         return sb.normalise(b, codes)
     monkeypatch.setattr(sb, "write", write)
     monkeypatch.setattr(sb, "critique", lambda b, codes: {**b, "corrections": ["relu"]})
-    monkeypatch.setattr(sb, "illustration", lambda b, code: calls.setdefault("illustrated", []).append(code) or [])
+    monkeypatch.setattr(sb, "illustration", lambda b, code, **kw: calls.setdefault("illustrated", []).append(code) or [])
 
     def revise(b, codes, request):
         calls["revise"].append(request)

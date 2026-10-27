@@ -180,23 +180,27 @@ def unfilmable(bundle: Dict) -> List[str]:
             for k, p in enumerate(bundle.get("plans") or [], 1) if UNFILMABLE.search(p.get("image") or "")]
 
 
-def illustration(bundle: Dict, code: str, gemini=None) -> List[str]:
+def illustration(bundle: Dict, code: str, gemini=None, only: Optional[List[int]] = None) -> List[str]:
     """Each sentence against its own image, before any search (the same judge
     as after the download, on the wanted image): what a viewer would hear
-    without seeing it. Empty when it can't be judged."""
+    without seeing it. Empty when it can't be judged. only: the plans to judge
+    (0-based, e.g. those a fix changed); the messages keep the storyboard's numbers."""
     from adaptation import script
     plans = bundle.get("plans") or []
+    ks = list(range(len(plans))) if only is None else [k for k in only if 0 <= k < len(plans)]
+    if not ks:
+        return []
     clips = {f"P{k + 1}": {"start": 0.0, "end": max(float(p.get("duree") or 4), 2.0), "desc": p.get("image") or ""}
              for k, p in enumerate(plans)}
-    sc = {"passages": [{"clip": f"P{k + 1}", "texte": (p.get("textes") or {}).get(code, {}).get("texte", "")}
-                       for k, p in enumerate(plans)]}
+    sc = {"passages": [{"clip": f"P{k + 1}", "texte": (plans[k].get("textes") or {}).get(code, {}).get("texte", "")}
+                       for k in ks], "clips_utilises": list(clips)}
     try:
         verdicts = script.match(sc, clips, code, gemini=gemini)
     except Exception:
         return []
-    return [f"Plan {k} : la phrase ne se voit pas dans son image ({a['pourquoi'] or 'autre chose a l ecran'}) : "
+    return [f"Plan {k + 1} : la phrase ne se voit pas dans son image ({a['pourquoi'] or 'autre chose a l ecran'}) : "
             f"reecris la phrase pour qu'elle commente ce qu'on voit, ou change l'image pour montrer ce qu'elle dit."
-            for k, a in enumerate(verdicts, 1) if a["note"] == "non" or (a["note"] == "moyen" and k == 1)]
+            for k, a in zip(ks, verdicts) if a["note"] == "non" or (a["note"] == "moyen" and k == 0)]
 
 
 def critique(bundle: Dict, codes: List[str], gemini=None) -> Dict:

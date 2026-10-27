@@ -417,16 +417,30 @@ def _angles(p: Dict, report: Report) -> List:
     return threads
 
 
+def _plan_number(message: str) -> int:
+    m = re.match(r"Plan (\d+)", message)
+    return int(m.group(1)) if m else 0
+
+
 def write_storyboard(p: Dict, report: Report):
     codes = _codes(p)
     report("écriture du storyboard" + (f" : « {p['angle']['titre']} »" if p.get("angle") else ""), 0.35)
     b = storyboard.write(p["reference"], codes, angle=p.get("angle"))
     report("relecture (rétention, langue, images)", 0.65)
     b = storyboard.critique(b, codes)
+    judged = None                       # (each plan's image and words, the problems found) at the last look
     for attempt in (1, 2):              # what the re-read missed is fixed (twice at most), then shown
         hard = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
         report("chaque phrase comparée à son image", 0.8)
-        seen = storyboard.illustration(b, codes[0]) + storyboard.unfilmable(b)   # images are shared: one language
+        keys = [(pl.get("image"), ((pl.get("textes") or {}).get(codes[0]) or {}).get("texte")) for pl in b["plans"]]
+        if judged and len(judged[0]) == len(keys):      # the 2nd look: only the plans the fix changed
+            changed = [k for k, x in enumerate(keys) if x != judged[0][k]]
+            kept = [m for m in judged[1] if _plan_number(m) - 1 not in changed]
+            ill = kept + (storyboard.illustration(b, codes[0], only=changed) if changed else [])
+        else:
+            ill = storyboard.illustration(b, codes[0])  # images are shared: one language
+        judged = (keys, ill)
+        seen = ill + storyboard.unfilmable(b)
         left = hard + seen
         if not left:
             break
