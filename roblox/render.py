@@ -82,7 +82,10 @@ def dialogue_lines(words, a: float, b: float) -> List[Dict]:
         cur.append((w, s, e))
     if cur:
         out.append(cur)
-    return [{"texte": " ".join(w for w, _, _ in l), "a": l[0][1], "b": l[-1][2] + 0.25} for l in out]
+    shown = [{"texte": " ".join(w for w, _, _ in l), "a": l[0][1], "b": l[-1][2] + 0.25} for l in out]
+    for cur, nxt in zip(shown, shown[1:]):          # a player talking without a pause: one line on screen at a time
+        cur["b"] = min(cur["b"], nxt["a"])
+    return shown
 
 
 # ------------------------------------------------------------------ picture and sound

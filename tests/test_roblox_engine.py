@@ -118,3 +118,9 @@ def test_the_channels_music_replaces_the_original_sound(source):
     out = str(d / "music.mp4")
     assert render.make("pov", {"moment": "w0#0", "debut": 0, "fin": 6, "pov": T}, ctx, out, music=music) == 6.0
     assert abs(duration(out) - 6.0) < 0.3                                       # a 3-s track loops to the end
+
+
+def test_two_lines_of_dialogue_never_show_at_once():
+    words = [(w, 10 + 0.2 * k, 10 + 0.2 * k + 0.18) for k, w in enumerate("so hey Barry you have not no well gotta do it now".split())]
+    lines = render.dialogue_lines(words, 0, 100)                     # a player who talks without a pause
+    assert len(lines) >= 2 and all(a["b"] <= b["a"] for a, b in zip(lines, lines[1:]))
