@@ -93,3 +93,25 @@ def test_a_check_that_cannot_be_read_is_asked_again_alone(sent):
     g = gg.GeminiAIGenerator(api_key="k")
     found, seen = sources.retime_and_check("f.mp4", [{"image": "x", "a": 6, "b": 9}], [(6, 9)], 15.0, (g, {"file_data": {}}))
     assert found[0]["debut"] == 7.1 and seen is None
+
+
+# ---- Y7: the judge's pictures at medium resolution (560 tokens each instead of 1120)
+
+def test_the_judge_sends_its_stills_at_medium_resolution(sent, tmp_path):
+    img = tmp_path / "a.jpg"
+    img.write_bytes(b"\xff\xd8\xff")
+    sent.answer = json.dumps({"passages": [{"passage": 1, "note": "bon"}]})
+    g = gg.GeminiAIGenerator(api_key="k")
+    sc = {"passages": [{"clip": "P1", "texte": "Il glisse"}]}
+    script.match(sc, {"P1": {"start": 0.0, "end": 3.0, "desc": "glisse"}}, "fr", gemini=g, stills={0: [str(img)] * 3})
+    pics = [x for x in sent.payloads[0]["contents"][0]["parts"] if "inline_data" in x]
+    assert len(pics) == 3 and all(x["mediaResolution"] == {"level": "MEDIA_RESOLUTION_MEDIUM"} for x in pics)
+
+
+def test_the_logos_keep_their_full_resolution(sent, monkeypatch, tmp_path):
+    img = tmp_path / "a.jpg"
+    img.write_bytes(b"\xff\xd8\xff")
+    g = gg.GeminiAIGenerator(api_key="k")
+    monkeypatch.setattr(sources, "_gemini", lambda: g)
+    sources.find_boxes([str(img)])
+    assert not any("mediaResolution" in x for x in sent.payloads[0]["contents"][0]["parts"])

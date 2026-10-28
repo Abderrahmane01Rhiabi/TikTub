@@ -286,8 +286,9 @@ def match(script: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None,
         files = [f for f in (stills or {}).get(k) or [] if os.path.exists(f)]
         if files:
             pics.append({"text": f"Images du clip du passage {k + 1} :"})
-            pics += [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(f, "rb").read()).decode()}}
-                     for f in files]
+            # medium resolution: 560 tokens a still instead of 1120, the same verdicts (TEST_ECONOMIES.md, Y7)
+            pics += [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(open(f, "rb").read()).decode()},
+                      "mediaResolution": {"level": "MEDIA_RESOLUTION_MEDIUM"}} for f in files]
     images = ("Trois images fixes de chaque clip suivent. Une image fixe peut etre ambigue (un saut fige au moment ou un "
               "bus passe) : l'\"action verifiee\", vue en mouvement, fait foi sur ce qui se passe.\n" if pics else "")
     # "clips_utilises": the clips of the whole script when only some sentences are judged again
