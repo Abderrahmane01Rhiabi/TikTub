@@ -1,0 +1,75 @@
+"""Montage Roblox, the routes and the screen: a project created, its texts corrected, its Shorts made, watched and
+sent to Publication, all through the API (YouTube, Gemini and ffmpeg faked, the background steps run inline)."""
+
+import os
+
+import db
+from test_roblox_pipeline import fakes  # noqa: F401  (the fixture)
+
+
+def inline(monkeypatch):
+    import webapp.roblox_routes as rr
+    from roblox import pipeline as rp
+    monkeypatch.setattr(rr, "_start", lambda pid, step: rp.RUNNERS[step](pid))
+
+
+def test_a_project_through_the_api(client, project, fakes, monkeypatch):
+    inline(monkeypatch)
+    project.add_channel("chanA")
+    project.add_channel("chanB")
+    body = {"url": "https://www.youtube.com/watch?v=NvGUWTH2U5Q", "styles": ["clip", "devine"],
+            "cibles": [{"langue": "fr", "channel": "chanA"}, {"langue": "en", "channel": "chanB"}]}
+    r = client.post("/api/roblox", json=body)
+    assert r.status_code == 200
+    pid = r.json()["project_id"]
+    p = client.get(f"/api/roblox/{pid}").json()
+    assert p["status"] == "plan_review" and p["titre"] == "FUNNY MOMENTS" and p["noms_styles"]["devine"] == "Devine la suite"
+    assert p["moments"] == {"w0#0": "r", "w600#0": "r"}
+    assert [x["project_id"] for x in client.get("/api/roblox").json()] == [pid]
+    r = client.put(f"/api/roblox/{pid}/textes", json={"style": "clip", "langue": "fr", "edit": {"titre": "Beurk"}})
+    assert r.status_code == 200 and r.json()["plan"]["clip"]["titre"]["fr"] == "Beurk"
+    p = client.post(f"/api/roblox/{pid}/render").json()
+    p = client.get(f"/api/roblox/{pid}").json()
+    assert p["status"] == "review" and sorted(p["videos"]) == ["clip_en", "clip_fr", "devine_en", "devine_fr"]
+    assert client.get(p["videos"]["clip_fr"]["url"]).status_code == 200
+    r = client.post(f"/api/roblox/{pid}/send", json={"videos": ["clip_fr"]})
+    assert r.status_code == 200 and r.json()["videos"]["clip_fr"]["video_id"] == f"chanA_{pid}_clip_fr"
+    assert db.get_video(f"chanA_{pid}_clip_fr")["status"] == "ready_for_upload"
+    assert client.delete(f"/api/roblox/{pid}").status_code == 200
+    assert client.get(f"/api/roblox/{pid}").status_code == 400
+    assert db.get_video(f"chanA_{pid}_clip_fr")                                  # what was sent stays in Publication
+
+
+def test_wrong_requests_are_refused_plainly(client, project, monkeypatch):
+    inline(monkeypatch)
+    project.add_channel("chanA")
+    ok = {"url": "https://y", "styles": ["clip"], "cibles": [{"langue": "fr", "channel": "chanA"}]}
+    assert client.post("/api/roblox", json={**ok, "styles": []}).json()["detail"] == "Choisis au moins un style."
+    assert client.post("/api/roblox", json={**ok, "cibles": [{"langue": "fr", "channel": "nope"}]}).status_code == 404
+    assert client.post("/api/roblox/rb_x/render").status_code == 400
+
+
+def test_a_failed_step_can_be_run_again(client, project, fakes, monkeypatch):
+    from roblox import moments
+    inline(monkeypatch)
+    project.add_channel("chanA")
+    found = {"n": 0}
+
+    def find(path, dur):
+        found["n"] += 1
+        return [] if found["n"] <= 2 else [{"debut": 10.0, "fin": 22.0, "chute": 18.0, "resume": "r"}]
+    monkeypatch.setattr(moments, "find", find)
+    pid = client.post("/api/roblox", json={"url": "https://y", "styles": ["clip"], "cibles": [{"langue": "fr", "channel": "chanA"}]}).json()["project_id"]
+    assert client.get(f"/api/roblox/{pid}").json()["status"] == "error"
+    assert client.post(f"/api/roblox/{pid}/retry").status_code == 200
+    assert client.get(f"/api/roblox/{pid}").json()["status"] == "plan_review"
+
+
+def test_the_screen_is_in_the_app():
+    static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "webapp", "static")
+    html = open(os.path.join(static, "index.html"), encoding="utf-8").read()
+    core = open(os.path.join(static, "js", "core.js"), encoding="utf-8").read()
+    js = open(os.path.join(static, "js", "roblox.js"), encoding="utf-8").read()
+    assert 'data-space="roblox"' in html and 'id="robloxScreen"' in html and "/static/js/roblox.js" in html
+    assert "openRoblox()" in core and "robloxScreen" in core
+    assert "async function loadRbProject" in js and js.count("esc(") > 20

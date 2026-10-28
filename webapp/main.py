@@ -1553,6 +1553,9 @@ def voice_preview(voice_id: str):
 # The Adaptation's routes: webapp/adaptation_routes.py (included here, where they stood: same order)
 from webapp.adaptation_routes import router as _adaptation_router  # noqa: E402
 app.include_router(_adaptation_router)
+# Montage Roblox: one long video -> several Shorts (webapp/roblox_routes.py)
+from webapp.roblox_routes import router as _roblox_router  # noqa: E402
+app.include_router(_roblox_router)
 
 
 @app.post("/api/batches/{batch_id}/process")

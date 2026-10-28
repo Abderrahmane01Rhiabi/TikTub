@@ -116,6 +116,7 @@ function render(){
   if (currentSpace !== 'dashboard') dashboardScreen.classList.remove('active');
   if (currentSpace !== 'generation') generationScreen.classList.remove('active');
   if (currentSpace !== 'adaptation') document.getElementById('adaptationScreen').classList.remove('active');
+  if (currentSpace !== 'roblox') document.getElementById('robloxScreen').classList.remove('active');
   stepBtns.forEach(btn => {
     const i = +btn.dataset.i;
     btn.style.display = btn.dataset.space === stepSpace ? '' : 'none';
@@ -139,6 +140,7 @@ function goTo(i){
 function openSpace(space){
   if (space === 'generation'){ currentSpace = space; render(); openGeneration(); return; }
   if (space === 'adaptation'){ currentSpace = space; render(); openAdaptation(); return; }
+  if (space === 'roblox'){ currentSpace = space; render(); openRoblox(); return; }
   if (space === 'dashboard'){ currentSpace = space; render(); openDashboard(); return; }
   if (STEP_SPACES[space]){ goTo(lastStep[space]); return; }
   currentSpace = 'home';
