@@ -34,7 +34,7 @@ STEPS: Dict[str, tuple] = {
     "idee.plan":             (FLASH, "construire le plan à partir de l'idée"),
     "storyboard.angles":     (FLASH, "proposer les angles (une version par chaîne)"),
     "storyboard.write":      (FLASH, "écrire le storyboard"),
-    "storyboard.critique":   (PRO,   "relire le storyboard"),
+    "storyboard.critique":   (FLASH, "relire le storyboard"),     # Pro before; Flash read as well (TEST_ECONOMIES.md, Y6)
     "storyboard.revise":     (FLASH, "corriger le storyboard"),
     "finder.plan_queries":   (FLASH, "écrire les recherches de chaque plan"),
     "finder.local_queries":  (FLASH, "écrire les recherches dans la langue du pays"),

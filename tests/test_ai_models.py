@@ -43,7 +43,7 @@ def test_the_months_report(tmp_path):
 
 
 def test_a_call_goes_to_the_model_of_the_step_asking(tmp_path, monkeypatch):
-    """A call made from storyboard.critique is sent to Pro and logged as Pro."""
+    """A call made from script.critique is sent to Pro and logged as Pro."""
     monkeypatch.setattr(gg, "USAGE_LOG", str(tmp_path / "usage.jsonl"))
     sent = []
 
@@ -55,18 +55,18 @@ def test_a_call_goes_to_the_model_of_the_step_asking(tmp_path, monkeypatch):
             return {"candidates": [{"content": {"parts": [{"text": "{\"ok\": true}"}]}}],
                     "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 2}}
     monkeypatch.setattr(gg.requests, "post", lambda url, **kw: sent.append(url) or Answer())
-    (tmp_path / "storyboard.py").write_text("def critique(g):\n    return g._generate_content([{'text': 'x'}])\n"
+    (tmp_path / "script.py").write_text("def critique(g):\n    return g._generate_content([{'text': 'x'}])\n"
                                             "def write(g):\n    return g._generate_content([{'text': 'x'}])\n")
     monkeypatch.syspath_prepend(str(tmp_path))
-    sys.modules.pop("storyboard", None)
-    import storyboard as fake_step
+    sys.modules.pop("script", None)
+    import script as fake_step
     g = gg.GeminiAIGenerator(api_key="k")
     assert fake_step.critique(g) == {"ok": True} and fake_step.write(g) == {"ok": True}
     assert "/gemini-pro-latest:" in sent[0] and "/gemini-flash-latest:" in sent[1]
     logged = [json.loads(x) for x in open(tmp_path / "usage.jsonl")]
-    assert [(x["step"], x["model"]) for x in logged] == [("storyboard.critique", ai_models.PRO),
-                                                        ("storyboard.write", ai_models.FLASH)]
-    sys.modules.pop("storyboard", None)
+    assert [(x["step"], x["model"]) for x in logged] == [("script.critique", ai_models.PRO),
+                                                        ("script.write", ai_models.FLASH)]
+    sys.modules.pop("script", None)
 
 
 def test_the_api(client, monkeypatch, tmp_path):

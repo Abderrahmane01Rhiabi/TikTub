@@ -115,3 +115,10 @@ def test_the_logos_keep_their_full_resolution(sent, monkeypatch, tmp_path):
     monkeypatch.setattr(sources, "_gemini", lambda: g)
     sources.find_boxes([str(img)])
     assert not any("mediaResolution" in x for x in sent.payloads[0]["contents"][0]["parts"])
+
+
+# ---- Y6: the storyboard re-read by Flash (the script's re-reading stays on Pro until compared)
+
+def test_the_storyboard_is_re_read_by_flash_and_the_script_still_by_pro():
+    assert ai_models.model_for("storyboard.critique", "x") == ai_models.FLASH
+    assert ai_models.model_for("script.critique", "x") == ai_models.PRO
