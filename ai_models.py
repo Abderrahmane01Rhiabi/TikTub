@@ -8,6 +8,9 @@ from STEPS. Changing a step's model is one line here, or, without touching
 the code, an entry in database/ai_models.json: {"finder._watch": "<model>"}.
 
 A step not listed uses the generator's own model (gemini-flash-latest).
+A step that only sends text may also be given to DeepSeek or OpenAI
+(Réglages → Modèles d'IA); when that model fails, the step's own Gemini
+model answers instead (gemini_ai_generator, ai_providers).
 Measured 2026-10-22/23 (see ADAPTATION_BILAN.md): Flash-Lite and 3 Flash
 Preview judged videos worse; the two re-reads stay on Pro (the Arabic
 endings slipped past Flash twice).
@@ -25,6 +28,8 @@ from typing import Dict, List, Optional
 
 FLASH = "gemini-flash-latest"
 PRO = "gemini-pro-latest"
+DEEPSEEK = "deepseek-flash"
+OPENAI = "gpt-4o-mini"          # the model openai_ai_generator already uses as the second choice
 OVERRIDES = os.path.join("database", "ai_models.json")
 
 # step: (model, what it does) — every step of the app that asks the AI
@@ -55,6 +60,48 @@ STEPS: Dict[str, tuple] = {
     "effects.auto_zoom":     (FLASH, "mesurer la taille du sujet"),
     "annotate.locate":       (FLASH, "placer les flèches et cercles"),
     "annotate.review":       (FLASH, "revoir les flèches sur les vrais clips"),
+    "storyboard.adapt_to":   (FLASH, "réécrire un plan pour une image déjà trouvée"),
+    "tone.guess":            (FLASH, "deviner le ton du sujet"),
+    "pipeline._choose_music": (FLASH, "choisir la musique"),
+    "script_generator.generate_script": (FLASH, "écrire le script (Génération)"),
+    "planner.plan_video":    (FLASH, "regarder le clip et choisir les moments (Montage auto)"),
+    "planner.pick_keywords": (FLASH, "choisir les mots à mettre en valeur (Montage auto)"),
+    "ai_tags_generator.generate_ai_content": (FLASH, "titre, description et tags d'une vidéo importée"),
+    "ai_scheduler._ask_ai_for_slots": (FLASH, "proposer les heures de publication (planning « IA »)"),
+}
+
+# the steps that send ONLY text (no video, picture, YouTube link or Google search): the only ones another
+# provider may serve. Anything else stays on Gemini, whatever database/ai_models.json says.
+TEXT_ONLY = {"idee.plan", "storyboard.angles", "storyboard.write", "storyboard.critique", "storyboard.revise",
+             "storyboard.adapt_to", "finder.plan_queries", "finder.local_queries", "finder.action_queries",
+             "finder._sort_one", "script.write", "script.critique", "script.revise", "tone.guess",
+             "pipeline._choose_music", "script_generator.generate_script", "planner.pick_keywords",
+             "ai_scheduler._ask_ai_for_slots"}
+GROUNDED = {"idee.research"}            # Google Search: Gemini Flash only
+
+# model: who serves it, its name on screen, the key it needs (in .env)
+MODELS: Dict[str, Dict[str, str]] = {
+    FLASH: {"fournisseur": "gemini", "nom": "Gemini Flash", "cle": "GEMINI_API_KEY"},
+    PRO: {"fournisseur": "gemini", "nom": "Gemini Pro", "cle": "GEMINI_API_KEY"},
+    DEEPSEEK: {"fournisseur": "deepseek", "nom": "DeepSeek Flash", "cle": "DEEPSEEK_API_KEY"},
+    OPENAI: {"fournisseur": "openai", "nom": "OpenAI GPT-4o mini", "cle": "OPENAI_API_KEY"},
+}
+
+# what was measured before offering a choice (TEST_ECONOMIES.md, RELECTURE_SCRIPT_PRO_FLASH.md, RESULTATS_MODELES.md)
+TESTED: Dict[tuple, str] = {
+    ("storyboard.critique", PRO): "testé : relisait le storyboard avant le 28/10",
+    ("script.critique", FLASH): "testé sur 2 scripts (FR, AR) : à lire dans RELECTURE_SCRIPT_PRO_FLASH.md",
+    ("storyboard.write", DEEPSEEK): "testé sur 5 cas : brouillons parfois trop longs",
+    ("storyboard.critique", DEEPSEEK): "testé sur 5 cas : respecte la durée, coupe parfois une explication",
+    ("storyboard.revise", DEEPSEEK): "testé sur 5 cas : respecte la durée, coupe parfois une explication",
+    ("script_generator.generate_script", DEEPSEEK): "testé sur 5 scripts : le plus vivant ; données stockées en Chine",
+}
+
+TRANSCRIPTION = ["whisper-1", "faster-whisper-small", "faster-whisper-medium"]
+TRANSCRIPTION_NOTES = {
+    "whisper-1": "OpenAI, payant (0,006 $/min) : utilisé aujourd'hui",
+    "faster-whisper-small": "sur ce PC, gratuit : testé en anglais, pas en français ; peu fiable en darija",
+    "faster-whisper-medium": "sur ce PC, gratuit mais lent et ≈ 1,5 Go de mémoire pendant les rendus",
 }
 
 # step: the most it may think (thinkingBudget), for steps that LOOK rather than write. Measured
@@ -73,6 +120,9 @@ THINKING: Dict[str, int] = {
 PRICES: Dict[str, List[tuple]] = {
     FLASH: [("2000-01-01", 0.75, 3.75, 0.075), ("2027-01-01", 1.50, 7.50, 0.15)],
     PRO: [("2000-01-01", 2.00, 12.00, 0.20)],
+    # api-docs.deepseek.com/quick_start/pricing (2026-10-28): off-peak; twice that in its peak hours ("tarif": "plein")
+    DEEPSEEK: [("2000-01-01", 0.15, 0.60, 0.003)],
+    OPENAI: [("2000-01-01", 0.15, 0.60, 0.075)],
 }
 
 
@@ -90,6 +140,55 @@ def model_for(step: str, fallback: str = FLASH) -> str:
     return _overrides().get(step) or (STEPS.get(step) or (None,))[0] or fallback
 
 
+def gemini_default(step: str, fallback: str = FLASH) -> str:
+    """The step's own Gemini model (STEPS, never the file): it answers when the chosen model fails."""
+    m = (STEPS.get(step) or (None,))[0] or fallback
+    return m if provider_of(m) == "gemini" else FLASH
+
+
+def provider_of(model: str) -> str:
+    return (MODELS.get(model) or {}).get("fournisseur", "gemini")
+
+
+def choices(step: str) -> List[str]:
+    """The models this step may use: a step that looks at pictures or videos, or searches Google, stays on Gemini."""
+    if step in GROUNDED:
+        return [FLASH]
+    if step in TEXT_ONLY:
+        return [FLASH, PRO, DEEPSEEK, OPENAI]
+    return [FLASH, PRO]
+
+
+def accepts(step: str, model: str) -> bool:
+    return model in choices(step)
+
+
+def _dotenv_key(name: str) -> Optional[str]:
+    """A key added to .env while the server runs (os.environ was read at start)."""
+    try:
+        from dotenv import dotenv_values
+        return dotenv_values(".env").get(name) or None
+    except Exception:
+        return None
+
+
+def key_of(model: str) -> Optional[str]:
+    name = (MODELS.get(model) or {}).get("cle")
+    return (os.getenv(name) or _dotenv_key(name)) if name else None
+
+
+def deepseek_peak(t: Optional[datetime] = None) -> bool:
+    """DeepSeek's peak hours (twice the price): 01-04 h and 06-10 h UTC, Monday to Friday."""
+    from datetime import timezone
+    t = t or datetime.now(timezone.utc)
+    return t.weekday() < 5 and (1 <= t.hour < 4 or 6 <= t.hour < 10)
+
+
+def transcription_model() -> str:
+    m = _overrides().get("transcription")
+    return m if m in TRANSCRIPTION else TRANSCRIPTION[0]
+
+
 def _row(model: str, day: str) -> tuple:
     rows = PRICES.get(model) or PRICES[FLASH]
     return next((r for r in reversed(rows) if day >= r[0]), rows[0])
@@ -105,7 +204,8 @@ def cost(line: Dict, day: Optional[str] = None) -> float:
     tokens Google served from its cache are billed at the cached-input price."""
     _, i, o, c = _row(line.get("model") or FLASH, day or (line.get("at") or "")[:10])
     cached = min(line.get("cached", 0) or 0, line.get("prompt", 0))
-    return ((line.get("prompt", 0) - cached) * i + cached * c + (line.get("output", 0) + line.get("thoughts", 0)) * o) / 1e6
+    peak = 2 if line.get("tarif") == "plein" else 1
+    return peak * ((line.get("prompt", 0) - cached) * i + cached * c + (line.get("output", 0) + line.get("thoughts", 0)) * o) / 1e6
 
 
 def month_report(month: Optional[str] = None, path: Optional[str] = None) -> Dict:

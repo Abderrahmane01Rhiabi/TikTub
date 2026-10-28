@@ -79,11 +79,23 @@ def _asking_step() -> str:
     return "?"
 
 
-def log_usage(model: str, status: int, data: Optional[Dict], seconds: float, parts=None) -> None:
+def write_usage(line: Dict) -> None:
+    """One line of the usage log (another provider's calls too: ai_providers). Best effort."""
+    try:
+        with _USAGE_LOCK:
+            os.makedirs(os.path.dirname(USAGE_LOG), exist_ok=True)
+            with open(USAGE_LOG, "a", encoding="utf-8") as f:
+                f.write(json.dumps(line) + "\n")
+    except Exception:
+        pass
+
+
+def log_usage(model: str, status: int, data: Optional[Dict], seconds: float, parts=None,
+              extra: Optional[Dict] = None) -> None:
     """What one call cost, as Google counts it (usageMetadata): the tokens sent by
     kind (text / image / video / audio), the thinking, the answer, the tokens
     served from Google's cache (billed at a tenth) — and the project and the
-    video it was for. Best effort."""
+    video it was for. extra: a relay ("relais_de": the model that failed before). Best effort."""
     try:
         u = (data or {}).get("usageMetadata") or {}
         line = {"at": datetime.now().isoformat(timespec="seconds"), "model": model, "step": _asking_step(),
@@ -92,11 +104,8 @@ def log_usage(model: str, status: int, data: Optional[Dict], seconds: float, par
                 "thoughts": u.get("thoughtsTokenCount", 0), "total": u.get("totalTokenCount", 0),
                 "by_kind": {d.get("modality", "?"): d.get("tokenCount", 0) for d in u.get("promptTokensDetails") or []},
                 "cached": u.get("cachedContentTokenCount", 0), "projet": USAGE_CONTEXT.get().get("projet"),
-                **_media_of(parts)}
-        with _USAGE_LOCK:
-            os.makedirs(os.path.dirname(USAGE_LOG), exist_ok=True)
-            with open(USAGE_LOG, "a", encoding="utf-8") as f:
-                f.write(json.dumps(line) + "\n")
+                **_media_of(parts), **(extra or {})}
+        write_usage(line)
     except Exception:
         pass
 
@@ -328,12 +337,20 @@ Respond with JSON:
             }
             # the model of the step asking (ai_models.STEPS — one table for the whole app), else this generator's;
             # its thinking cap (ai_models.THINKING) unless the call sets one itself
+            relay = None
             try:
                 import ai_models
                 step = _asking_step()
                 model = ai_models.model_for(step, self.model_name)
                 if thinking is None:
                     thinking = ai_models.THINKING.get(step)
+                if ai_models.provider_of(model) != "gemini":    # a text step given to another provider (Réglages)
+                    import ai_providers
+                    answer, why = ai_providers.ask(model, step, parts, max_tokens, timeout, temperature)
+                    if why is None:
+                        return answer
+                    relay = {"relais_de": model, "raison": why}        # it failed: the step's own Gemini model answers
+                    model = ai_models.gemini_default(step, self.model_name)
             except Exception:
                 model = self.model_name
             if thinking is not None:       # a cap on the model's thinking tokens: a small edit needs little
@@ -349,7 +366,7 @@ Respond with JSON:
                 body = response.json()
             except Exception:           # an error page, a test double: logged without figures
                 body = None
-            log_usage(model, response.status_code, body, time.time() - t0, parts)
+            log_usage(model, response.status_code, body, time.time() - t0, parts, relay)
 
             if response.status_code == 200:
                 data = response.json()
@@ -402,7 +419,10 @@ Respond with JSON:
                    "generationConfig": {"temperature": temperature, "maxOutputTokens": max_tokens}}
         try:
             import ai_models
-            model = ai_models.model_for(_asking_step(), self.model_name)
+            step = _asking_step()
+            model = ai_models.model_for(step, self.model_name)
+            if ai_models.provider_of(model) != "gemini":        # Google Search is Gemini's only
+                model = ai_models.gemini_default(step, self.model_name)
         except Exception:
             model = self.model_name
         try:
