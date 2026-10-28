@@ -283,6 +283,29 @@ def durations(bundle: Dict, codes: List[str]) -> None:
         p["duree"] = round(max([seconds(p["textes"][c]["texte"], c) for c in codes if c in p["textes"]] or [0]) + 0.3, 1)
 
 
+LENGTH_AIM = 33.0                 # seconds of voice a too long storyboard is cut down to (TOTAL_S: aim 25-35)
+LENGTH_FIX = "DUREE IMPOSEE : la voix doit tenir en 25 a 35 secondes, raccourcis les phrases."
+
+
+def total_seconds(bundle: Dict, code: str) -> float:
+    return sum(seconds(((p.get("textes") or {}).get(code) or {}).get("texte", ""), code) for p in bundle.get("plans") or [])
+
+
+def length_budgets(bundle: Dict, codes: List[str]) -> str:
+    """For a language whose voice is too long, the most each plan may say (its share of LENGTH_AIM): given with the
+    fix from the start — measured, asked only "25 to 35 s", Gemini's fixes still ran 38 to 48 s (RESULTATS_MODELES.md)."""
+    out = []
+    for c in codes:
+        texts = [((p.get("textes") or {}).get(c) or {}).get("texte", "") for p in bundle.get("plans") or []]
+        total = sum(seconds(t, c) for t in texts)
+        if total <= TOTAL_S[1]:
+            continue
+        f = LENGTH_AIM / total
+        out.append(f"[{c}] la voix fait environ {total:.0f} s, il faut 25 a 35 s : " + ", ".join(
+            f"plan {k} : {max(15, int(len(t) * f))} caracteres au plus" for k, t in enumerate(texts, 1) if t) + ".")
+    return (" Longueurs : " + " ".join(out) + " Coupe des mots, garde chaque fait et chaque chiffre avec son unite.") if out else ""
+
+
 def script_for(bundle: Dict, code: str) -> Dict:
     """One language's script, in the format the rest of the app uses (no clips yet)."""
     m = (bundle.get("meta") or {}).get(code) or {}

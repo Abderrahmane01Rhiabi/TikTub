@@ -449,18 +449,37 @@ def write_storyboard(p: Dict, report: Report):
             break
         report("correction", 0.85)
         try:
-            fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + FIX_HOW)
+            fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + FIX_HOW
+                                      + storyboard.length_budgets(b, codes))
         except script.ScriptError:
             break
         now = sum(len(storyboard.problems(fixed, c)) for c in codes)
         if now > len(hard) or (not seen and now >= len(hard)):     # a fix that breaks more than it mends: kept out
             break
         b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
+    b = _fit_length(b, codes)
     p = load(p["project_id"])
     p["storyboard"] = b
     _refresh_plan(p)
     p.update(status="plan_review", error=None, failed_step=None)
     save(p)
+
+
+def _fit_length(b: Dict, codes: List[str]) -> Dict:
+    """A voice still too long after the fix is asked once more, firmly; the shorter version is kept only if it
+    breaks nothing more — else the best so far stays, with the usual warning."""
+    budgets = storyboard.length_budgets(b, codes)
+    if not budgets:
+        return b
+    try:
+        fixed = storyboard.revise(b, codes, storyboard.LENGTH_FIX + budgets)
+    except script.ScriptError:
+        return b
+    over = lambda x: sum(max(0.0, storyboard.total_seconds(x, c) - storyboard.TOTAL_S[1]) for c in codes)
+    count = lambda x: sum(len(storyboard.problems(x, c)) for c in codes)
+    if over(fixed) < over(b) and count(fixed) <= count(b):
+        return {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : durée trop longue, phrases raccourcies"]}
+    return b
 
 
 def edit_plan(pid: str, channel: str, new: Dict) -> Dict:
