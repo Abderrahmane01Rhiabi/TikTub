@@ -306,6 +306,64 @@ def length_budgets(bundle: Dict, codes: List[str]) -> str:
     return (" Longueurs : " + " ".join(out) + " Coupe des mots, garde chaque fait et chaque chiffre avec son unite.") if out else ""
 
 
+RATE = {"par", "per", "chaque", "كل", "لكل"}       # "35 grammes PAR kilogramme": the unit that gives the number its meaning
+
+
+def _stem(w: str) -> str:
+    for pre in ("بال", "وال", "لل", "ال"):
+        if w.startswith(pre) and len(w) > len(pre) + 3:
+            w = w[len(pre):]
+            break
+    return w[:5]
+
+
+FILLERS = {"de", "d", "du", "des", "en", "plus", "environ", "من", "نحو", "حوالي"}
+
+
+def _unit(after: List[str]) -> Optional[str]:
+    """The word a number counts ("130 litres", "35 غراماً", "240 %"), past the small words."""
+    return next((w for w in after if w not in FILLERS and w != "."), None)
+
+
+def _same_word(a: str, b: str) -> bool:
+    a, b = _stem(a), _stem(b)
+    n = min(len(a), len(b))
+    return n >= 1 and a[:max(n, 1)] == b[:max(n, 1)] and (n >= 3 or a == b)
+
+
+def lost_numbers(before: Dict, after: Dict, codes: List[str], facts: List[str]) -> List[str]:
+    """A sourced number of the draft (one of the facts) that a re-read or a fix DISTORTED, in French: changed for
+    another of the same unit ("130 litres" → "plus de 100 litres"), or kept but cut from what gives it its meaning
+    ("35 grammes par kilogramme" → "35 grammes"). Moved, in words or in digits, or a fact left out altogether
+    (choosing what to tell is the re-read's job, measured on RESULTATS_MODELES.md): fine. Only numbers of the
+    facts: a doubtful one the re-read changed must stay changed."""
+    from adaptation import nombres
+    sourced = set().union(*(nombres.values(f) for f in facts)) if facts else set()
+    out = []
+    for c in codes:
+        texts_after = [((p.get("textes") or {}).get(c) or {}).get("texte", "") for p in after.get("plans") or []]
+        found_after = [(m, nxt) for t in texts_after for m, nxt in nombres.occurrences(t)]
+        for k, p in enumerate(before.get("plans") or [], 1):
+            text = ((p.get("textes") or {}).get(c) or {}).get("texte", "")
+            for n, nxt in nombres.occurrences(text):
+                if (n <= 10 and n == int(n)) or not any(nombres.same(n, x) for x in sourced):
+                    continue
+                where = [t for t in texts_after if any(nombres.same(n, v) for v in nombres.values(t))]
+                unit = _unit(nxt)
+                if not where:
+                    other = next((m for m, nxt2 in found_after if unit and not any(nombres.same(m, x) for x in sourced)
+                                  and _unit(nxt2) and _same_word(_unit(nxt2), unit)), None)     # not another sourced fact
+                    if other is not None:
+                        out.append(f"Plan {k} [{c}] : le fait sourcé dit {n:g} {unit}, le texte dit maintenant {other:g} : "
+                                   f"remets {n:g} (« {text} »).")
+                    continue
+                rate = next((nxt[i + 1] for i, w in enumerate(nxt[:-1]) if w in RATE), None)
+                if rate and not any(_same_word(w, rate) for t in where for w in nombres.tokens(t)):
+                    out.append(f"Plan {k} [{c}] : le chiffre {n:g} a perdu son unité ({nxt[nxt.index(rate) - 1]} {rate}) : "
+                               "remets-la, sinon le chiffre n'a plus de sens.")
+    return out
+
+
 def script_for(bundle: Dict, code: str) -> Dict:
     """One language's script, in the format the rest of the app uses (no clips yet)."""
     m = (bundle.get("meta") or {}).get(code) or {}

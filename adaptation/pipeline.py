@@ -429,6 +429,7 @@ def write_storyboard(p: Dict, report: Report):
     codes = _codes(p)
     report("écriture du storyboard" + (f" : « {p['angle']['titre']} »" if p.get("angle") else ""), 0.35)
     b = storyboard.write(p["reference"], codes, angle=p.get("angle"))
+    draft, facts = b, p["reference"].get("faits") or []
     report("relecture (rétention, langue, images)", 0.65)
     b = storyboard.critique(b, codes)
     judged = None                       # (each plan's image and words, the problems found) at the last look
@@ -443,7 +444,8 @@ def write_storyboard(p: Dict, report: Report):
         else:
             ill = storyboard.illustration(b, codes[0])  # images are shared: one language
         judged = (keys, ill)
-        seen = ill + storyboard.unfilmable(b)
+        lost = storyboard.lost_numbers(draft, b, codes, facts) if attempt == 1 else []    # sent back once, never in a loop
+        seen = ill + storyboard.unfilmable(b) + lost
         left = hard + seen
         if not left:
             break
@@ -456,8 +458,10 @@ def write_storyboard(p: Dict, report: Report):
         now = sum(len(storyboard.problems(fixed, c)) for c in codes)
         if now > len(hard) or (not seen and now >= len(hard)):     # a fix that breaks more than it mends: kept out
             break
+        if len(storyboard.lost_numbers(draft, fixed, codes, facts)) > len(storyboard.lost_numbers(draft, b, codes, facts)):
+            break                                                   # nor one that drops a sourced number
         b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
-    b = _fit_length(b, codes)
+    b = _fit_length(b, codes, draft, facts)
     p = load(p["project_id"])
     p["storyboard"] = b
     _refresh_plan(p)
@@ -465,9 +469,9 @@ def write_storyboard(p: Dict, report: Report):
     save(p)
 
 
-def _fit_length(b: Dict, codes: List[str]) -> Dict:
+def _fit_length(b: Dict, codes: List[str], draft: Optional[Dict] = None, facts: Optional[List[str]] = None) -> Dict:
     """A voice still too long after the fix is asked once more, firmly; the shorter version is kept only if it
-    breaks nothing more — else the best so far stays, with the usual warning."""
+    breaks nothing more (nor drops a sourced number) — else the best so far stays, with the usual warning."""
     budgets = storyboard.length_budgets(b, codes)
     if not budgets:
         return b
@@ -477,7 +481,8 @@ def _fit_length(b: Dict, codes: List[str]) -> Dict:
         return b
     over = lambda x: sum(max(0.0, storyboard.total_seconds(x, c) - storyboard.TOTAL_S[1]) for c in codes)
     count = lambda x: sum(len(storyboard.problems(x, c)) for c in codes)
-    if over(fixed) < over(b) and count(fixed) <= count(b):
+    lost = lambda x: len(storyboard.lost_numbers(draft, x, codes, facts or [])) if draft else 0
+    if over(fixed) < over(b) and count(fixed) <= count(b) and lost(fixed) <= lost(b):
         return {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : durée trop longue, phrases raccourcies"]}
     return b
 
