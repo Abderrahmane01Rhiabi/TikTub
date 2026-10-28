@@ -1,0 +1,4 @@
+videos/
+transcription/*.mp4
+transcription/*.mp3
+__pycache__/
