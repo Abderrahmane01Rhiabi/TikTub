@@ -66,3 +66,30 @@ def test_the_logos_step_thinks_at_most_256_tokens(sent, monkeypatch, tmp_path):
     monkeypatch.setattr(sources, "_gemini", lambda: g)
     sources.find_boxes([str(img)])
     assert thinking_of(sent.payloads[0]) == 256
+
+
+# ---- Y3: one look per downloaded file for the re-timing and the check (the orientation stays apart)
+
+def test_the_retiming_and_the_check_are_one_request(sent):
+    sent.answer = json.dumps({"plans": [{"plan": 1, "visible": True, "debut": 7.1, "fin": 8.3, "fort": 7.5,
+                                         "ce_qu_on_voit": "il glisse"}, {"plan": 2, "visible": False, "ce_qu_on_voit": "un toit"}],
+                              "passages": [{"visuel": "un mat", "utilisable": True}, {"utilisable": False,
+                                                                                      "pourquoi_pas": "presentateur"}]})
+    g = gg.GeminiAIGenerator(api_key="k")
+    asks = [{"image": "glisse le long du mat", "phrase": "Ce frottement…", "a": 6, "b": 9},
+            {"image": "saute du toit", "phrase": "Puis il saute", "a": 10, "b": 12}]
+    found, seen = sources.retime_and_check("f.mp4", asks, [(6, 9), (10, 12)], 15.0, (g, {"file_data": {"file_uri": "u"}}))
+    assert len(sent.payloads) == 1
+    assert found == [{"visible": True, "debut": 7.1, "fin": 8.3, "fort": 7.5, "vu": "il glisse"}, {"visible": False, "vu": "un toit"}]
+    assert seen == [{"visuel": "un mat", "utilisable": True}, {"utilisable": False, "pourquoi_pas": "presentateur"}]
+    parts = sent.payloads[0]["contents"][0]["parts"]
+    assert parts[0]["video_metadata"] == {"fps": 4}
+    assert "6.0-9.0 s" in parts[1]["text"] and "1. 6.00-9.00" in parts[1]["text"] and "rotation" not in parts[1]["text"]
+    assert thinking_of(sent.payloads[0]) == 256
+
+
+def test_a_check_that_cannot_be_read_is_asked_again_alone(sent):
+    sent.answer = json.dumps({"plans": [{"plan": 1, "visible": True, "debut": 7.1, "fin": 8.3}]})
+    g = gg.GeminiAIGenerator(api_key="k")
+    found, seen = sources.retime_and_check("f.mp4", [{"image": "x", "a": 6, "b": 9}], [(6, 9)], 15.0, (g, {"file_data": {}}))
+    assert found[0]["debut"] == 7.1 and seen is None

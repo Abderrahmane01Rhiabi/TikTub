@@ -768,18 +768,23 @@ def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagg
     def gemini_file(path):
         yield ("g", {"file_data": {}})
     monkeypatch.setattr(sources, "gemini_file", gemini_file)
-    monkeypatch.setattr(sources, "describe", lambda path, segs, file=None: [{"visuel": "vu", "utilisable": True} for _ in segs])
+    described = []
+    monkeypatch.setattr(sources, "describe", lambda path, segs, file=None: described.append(segs) or
+                        [{"visuel": "vu", "utilisable": True} for _ in segs])
     asked = []
 
     turned = []
     monkeypatch.setattr(sources, "orientation", lambda f: 90)
     monkeypatch.setattr(sources, "rotated", lambda path, deg: turned.append(deg) or path.replace(".mp4", "_r90.mp4"))
 
-    def retime(path, asks, length, file=None):
+    def retime_and_check(path, asks, segs, length, file):         # one look for the moment and the check (Y3)
         asked.extend(asks)
-        return [{"visible": True, "debut": x["a"] + 2.0, "fin": x["a"] + 2.5, "vu": "il glisse"} if n == 0 else
-                ({"visible": False, "vu": "un toit"} if n == 1 else None) for n, x in enumerate(asks)]
-    monkeypatch.setattr(sources, "retime", retime)
+        assert segs == [(x["a"], x["b"]) for x in asks]
+        return ([{"visible": True, "debut": x["a"] + 2.0, "fin": x["a"] + 2.5, "vu": "il glisse"} if n == 0 else
+                 ({"visible": False, "vu": "un toit"} if n == 1 else None) for n, x in enumerate(asks)],
+                [{"visuel": "vu", "utilisable": True} for _ in segs])
+    monkeypatch.setattr(sources, "retime_and_check", retime_and_check)
+    monkeypatch.setattr(sources, "retime", lambda *a, **k: pytest.fail("re-timed apart"))
     monkeypatch.setattr(script, "match", lambda sc, clips, code, **kw: None)
     ap.start_fetch(pid)
     ap.run_fetch(pid)
@@ -791,6 +796,7 @@ def test_after_the_download_each_moment_is_retimed_and_a_missing_action_is_flagg
     c1 = p["clips"]["P1"]
     assert c1["start"] <= c1["impact"] <= c1["end"] and first + 2.0 <= c1["impact"] <= first + 2.5   # in the action
     assert turned == [90] and c1["src"].endswith("_r90.mp4")                   # lying on its side: turned upright
+    assert described == []                                                      # checked in the same look
     t = p["targets"][0]
     assert any("Passage 2 : l'action voulue ne se voit pas" in x for x in t["problems"])
     p = ap.force_clip(pid, "P2")

@@ -567,22 +567,31 @@ def retime(path: str, asks: List[Dict], length: float, file=None) -> List[Option
         with gemini_file(path) as f:
             return retime(path, asks, length, f)
     g, part = file
-    listing = "\n".join(f"{n}. action : {x['image']} | phrase : « {x.get('phrase') or ''} » | moment approximatif : "
-                        f"{x['a']:.1f}-{x['b']:.1f} s" for n, x in enumerate(asks, 1))
+    listing = _listing(asks)
     fps = 4 if length <= 40 else 2                  # finer than the search's look, within a sensible token budget
     try:
         r = g._generate_content([{**part, "video_metadata": {"fps": fps}}, {"text": RETIME_PROMPT.format(plans=listing)}],
                                 max_tokens=4000, timeout=180, temperature=0.1)
     except Exception:
         return [None] * len(asks)
+    return _found(r, len(asks), length)
+
+
+def _listing(asks: List[Dict]) -> str:
+    return "\n".join(f"{n}. action : {x['image']} | phrase : « {x.get('phrase') or ''} » | moment approximatif : "
+                     f"{x['a']:.1f}-{x['b']:.1f} s" for n, x in enumerate(asks, 1))
+
+
+def _found(r, n_asks: int, length: float) -> List[Optional[Dict]]:
+    """The re-timing's answer, read per ask (None where Gemini can't say)."""
     items = r.get("plans") if isinstance(r, dict) else None
-    out: List[Optional[Dict]] = [None] * len(asks)
+    out: List[Optional[Dict]] = [None] * n_asks
     for e in items if isinstance(items, list) else []:
         try:
             n = int(e.get("plan")) - 1
         except (TypeError, ValueError, AttributeError):
             continue
-        if not 0 <= n < len(asks):
+        if not 0 <= n < n_asks:
             continue
         vu = str(e.get("ce_qu_on_voit") or "").strip()[:200]
         if e.get("visible") is False:
@@ -612,11 +621,47 @@ def describe(path: str, segments: List[Tuple[float, float]], file=None) -> List[
     listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
     r = g._generate_content([part, {"text": DESCRIBE_PROMPT.format(segments=listing)}],
                             max_tokens=16000, timeout=180, temperature=0.2)
+    return _passages(r, len(segments))
+
+
+def _passages(r, n: int) -> List[Dict]:
     items = r if isinstance(r, list) else (r.get("passages") if isinstance(r, dict) else None)
     if not isinstance(items, list):
         from gemini_ai_generator import plain_error
         raise SourceError(plain_error(r) or f"Description de la source inutilisable : {str(r)[:200]}")
-    return (items + [{}] * len(segments))[:len(segments)]
+    return (items + [{}] * n)[:n]
+
+
+# the re-timing and the check in one look at the file (TEST_ECONOMIES.md, Y3: same moments, same verdicts, about
+# 40 % cheaper). The orientation stays a question of its own: asked here too, it said 90 for a video needing 270.
+RETIME_CHECK_PROMPT = (RETIME_PROMPT.split("JSON uniquement")[0] + "\nEnsuite le CONTROLE. " +
+                       DESCRIBE_PROMPT.replace("Voici une video source, deja decoupee en passages (secondes) :",
+                                               "Un passage par plan, dans le meme ordre (moments approximatifs : si tu "
+                                               "as trouve l'action ailleurs, controle-la la ou tu l'as trouvee) :")
+                       .replace('{{"passages": [', '{{"plans": [{{"plan": numero, "visible": true, "debut": s, "fin": s, '
+                                '"fort": s, "ce_qu_on_voit": "..."}}],\n "passages": [', 1))
+
+
+def retime_and_check(path: str, asks: List[Dict], segments: List[Tuple[float, float]], length: float,
+                     file) -> Tuple[List[Optional[Dict]], Optional[List[Dict]]]:
+    """retime() and describe() in a single call: (per ask, per segment), one
+    segment per ask, its moment before re-timing (the check follows the action
+    where it was found). A check that can't be read comes back None (the
+    caller asks describe() alone)."""
+    g, part = file
+    fps = 4 if length <= 40 else 2
+    listing = "\n".join(f"{k + 1}. {a:.2f}-{b:.2f}" for k, (a, b) in enumerate(segments))
+    try:
+        r = g._generate_content([{**part, "video_metadata": {"fps": fps}},
+                                 {"text": RETIME_CHECK_PROMPT.format(plans=_listing(asks), segments=listing)}],
+                                max_tokens=16000, timeout=180, temperature=0.1)
+    except Exception:
+        return [None] * len(asks), None
+    try:
+        seen = _passages(r, len(segments))
+    except SourceError:
+        seen = None
+    return _found(r, len(asks), length), seen
 
 
 BOX_BATCH = 10

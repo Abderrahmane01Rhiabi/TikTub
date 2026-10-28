@@ -43,6 +43,7 @@ STEPS: Dict[str, tuple] = {
     "finder._watch":         (FLASH, "regarder une vidéo candidate (YouTube)"),
     "finder._send_file":     (FLASH, "regarder une vidéo candidate (fichier)"),
     "sources.retime":        (FLASH, "recaler le moment exact"),
+    "sources.retime_and_check": (FLASH, "recaler le moment et contrôler le clip (un seul regard)"),
     "sources.orientation":   (FLASH, "redresser une vidéo tournée"),
     "sources.describe":      (FLASH, "contrôler les clips téléchargés"),
     "sources.find_boxes":    (FLASH, "trouver l'image utile et les logos à effacer"),
@@ -63,6 +64,7 @@ THINKING: Dict[str, int] = {
     "finder._watch": 256,        # verification of a candidate video (YouTube link)
     "finder._send_file": 256,    # the same verification, for a file sent
     "sources.retime": 256,       # re-timing the moment in a downloaded file
+    "sources.retime_and_check": 256,    # the same, with the check of the clips (Y3)
     "sources.find_boxes": 256,   # logos to erase (also the second cleaning pass, leftover_text)
 }
 

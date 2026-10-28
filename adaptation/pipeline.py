@@ -1093,12 +1093,17 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             moments = [(k, file_time(a), file_time(a) + (b - a), need) for k, a, b, need in items]
             absent, seen_moving, action_at = {}, {}, {}
             asks = [(n, m) for n, m in enumerate(moments) if m[3] > 0]        # an excerpt stays where it was cut
+            seen = None
             if gfile and asks:
                 report(f"vidéo {i + 1}/{len(by_url)} : l'IA recale chaque moment", 0.05 + 0.8 * (i + 0.5) / len(by_url))
                 code = p["targets"][0]["language"]
-                found_at = sources.retime(path, [{"image": plans[m[0]]["image"], "a": m[1], "b": m[2],
-                                                  "phrase": (plans[m[0]].get("textes") or {}).get(code, {}).get("texte")}
-                                                 for _, m in asks], length or moments[-1][2] + 10, gfile)
+                wanted = [{"image": plans[m[0]]["image"], "a": m[1], "b": m[2],
+                           "phrase": (plans[m[0]].get("textes") or {}).get(code, {}).get("texte")} for _, m in asks]
+                if len(asks) == len(moments):       # one look for the moment and the check (an excerpt: two)
+                    found_at, seen = sources.retime_and_check(path, wanted, [(m[1], m[2]) for _, m in asks],
+                                                              length or moments[-1][2] + 10, gfile)
+                else:
+                    found_at = sources.retime(path, wanted, length or moments[-1][2] + 10, gfile)
                 for (n, (k, fa, fb, need)), r in zip(asks, found_at):
                     if r and r["visible"]:
                         moments[n] = (k, r["debut"], r["fin"], need)
@@ -1130,10 +1135,11 @@ def run_fetch(pid: str, report: Optional[Report] = None):
             ok = [st for st in stills if os.path.exists(st)]          # a missing still: no cleaning, never a crash
             boxes = iter(sources.find_boxes(ok)) if ok else iter([])
             found = [next(boxes, (None, [], [])) if os.path.exists(st) else (None, [], []) for st in stills]
-            report(f"vidéo {i + 1}/{len(by_url)} : contrôle des moments par l'IA", 0.05 + 0.8 * (i + 0.8) / len(by_url))
             try:                        # the same check as an analysed source: a presenter, a title, a logo… is refused
-                segs = [(a, b) for _, a, b in times]
-                seen = sources.describe(path, segs, file=gfile) if gfile else sources.describe(path, segs)
+                if seen is None:
+                    report(f"vidéo {i + 1}/{len(by_url)} : contrôle des moments par l'IA", 0.05 + 0.8 * (i + 0.8) / len(by_url))
+                    segs = [(a, b) for _, a, b in times]
+                    seen = sources.describe(path, segs, file=gfile) if gfile else sources.describe(path, segs)
             except Exception:
                 seen = [{} for _ in times]
             finally:
