@@ -88,6 +88,23 @@ def _adaptation_items(root: str, rows: Dict) -> List[Dict]:
     return out
 
 
+def _roblox_items(root: str, rows: Dict) -> List[Dict]:
+    """temp/roblox/<project>: its passages and Shorts, kept while the project runs; published once every Short it
+    sent is on YouTube; an orphan when the project no longer exists."""
+    out = []
+    for pid in os.listdir(root):
+        path = os.path.join(root, pid)
+        project = _db.get_roblox(pid)
+        if not project:
+            category = "orphans"
+        else:
+            statuses = [(rows.get(v.get("video_id")) or {}).get("status") for v in project.get("videos", {}).values() if v.get("video_id")]
+            category = "published" if (project["status"] == "done" and statuses
+                                       and all(st in PUBLISHED for st in statuses)) else "in_use"
+        out.append({"path": path, "video_id": None, "category": category, "size": _size(path), "age": _age(path)})
+    return out
+
+
 def scan() -> Dict:
     """Every temp/ folder and processed file, sorted by category."""
     rows = {v["video_id"]: v for v in _db.query_videos()}
@@ -103,6 +120,9 @@ def scan() -> Dict:
             path = os.path.join(TEMP_DIR, name)
             if name == "adaptations" and os.path.isdir(path):
                 items.extend(_adaptation_items(path, rows))
+                continue
+            if name == "roblox" and os.path.isdir(path):
+                items.extend(_roblox_items(path, rows))
                 continue
             if name in PROTECTED_TEMP_DIRS and os.path.isdir(path):
                 items.append({"path": path, "video_id": None, "category": "in_use",
