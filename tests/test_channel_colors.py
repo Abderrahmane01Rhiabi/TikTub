@@ -47,7 +47,8 @@ def test_the_profile_seed_script_is_gone():
     import subprocess
     root = Path(__file__).resolve().parent.parent
     assert not (root / "channel_profiles_seed.py").exists()
-    tracked = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True).stdout.split()
+    tracked = subprocess.run(["git", "ls-files", "-z"], cwd=root, capture_output=True, text=True).stdout.split("\0")
+    records = {"AUDIT.md"}             # the audit that asked for its removal tells why: a record, not an instruction
     mentions = [f for f in tracked if f.endswith((".py", ".md", ".js", ".html")) and not f.startswith("tests/")
-                and "channel_profiles_seed" in (root / f).read_text(encoding="utf-8", errors="ignore")]
+                and f not in records and "channel_profiles_seed" in (root / f).read_text(encoding="utf-8", errors="ignore")]
     assert mentions == []
