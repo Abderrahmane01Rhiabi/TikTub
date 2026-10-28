@@ -4,8 +4,9 @@
 sont côte à côte dans `etude_modeles/A_LIRE.md` : la qualité, c'est à toi de la juger. Ici, seulement des mesures.
 
 Mistral a été écarté à ta demande (seul `ministral-14b`, un petit modèle, est ouvert gratuitement).
-**DeepSeek et Qwen ne sont pas encore testés** : les clés `DEEPSEEK_API_KEY` et `DASHSCOPE_API_KEY` ne sont pas dans
-`.env`. Tout est prêt : il suffit de les ajouter puis de lancer les commandes en fin de fichier.
+**DeepSeek est testé. Qwen ne l'est pas** : `DASHSCOPE_API_KEY` n'est pas dans `.env` (seule l'adresse
+`DASHSCOPE_BASE_URL` l'est). Tout est prêt pour Qwen : il suffit d'ajouter la clé puis de lancer les commandes en fin de
+fichier.
 
 ## 1. Les offres gratuites
 
@@ -14,7 +15,7 @@ Mistral a été écarté à ta demande (seul `ministral-14b`, un petit modèle, 
 | Modèle | `openai/gpt-oss-120b` | `deepseek-flash` (V4.1 Flash) | `qwen3-vl-plus` |
 | Gratuit ? | oui | non : 0,15 $ / 0,60 $ par million (entrée / sortie) en heure creuse, le double en heure pleine | 1 million de tokens offerts, 90 jours ; puis 0,20 $ / 1,60 $ par million |
 | Limites | 30 requêtes/min, 1 000/jour, **8 000 tokens/min**, **200 000 tokens/jour** | — | vidéo en base64 : fichier < 7 Mo |
-| Tes données | pas d'entraînement sans ton accord (contrat §4.2) | à vérifier quand tu ouvres le compte | à vérifier quand tu ouvres le compte |
+| Tes données | pas d'entraînement sans ton accord (contrat §4.2) | ⚠️ stockées **en Chine** ; la politique dit utiliser les saisies pour « entraîner et améliorer » ses modèles, avec un droit de refus (pas de précision propre à l'API) | à vérifier quand tu ouvres le compte |
 | Usage commercial | les textes t'appartiennent (§8.1) ; ⚠️ le contrat interdit un usage « destiné à éviter de payer » (§6.3(d)(iii)) | payant : pas de question | payant après l'essai |
 | Heures | — | heures pleines 01-04 h et 06-10 h UTC en semaine : l'étude refuse d'y appeler | — |
 
@@ -39,7 +40,7 @@ lettres, français et arabe ; chaque cas est listé dans `A_LIRE.md`).
 |---|---|---|---|---|---|---|---|---|
 | Gemini Flash (témoin) | 5 | 100 % | 100 % | 0 % | 3.8 | 0 chiffre(s) sur 3 sorties | 23.3 s | 0 |
 | Groq gpt-oss-120b | 5 | 100 % | 100 % | 0 % | 3.4 | 0 chiffre(s) sur 3 sorties | 6.3 s | 0 |
-| DeepSeek Flash | — | *pas encore testé (clé absente)* | | | | | | |
+| DeepSeek Flash | 5 | 100 % | 100 % | 0 % | 3.2 | 0 chiffre(s) sur 3 sorties | 45.3 s | 0 |
 
 **Relire le storyboard** (`storyboard.critique`)
 
@@ -47,7 +48,7 @@ lettres, français et arabe ; chaque cas est listé dans `A_LIRE.md`).
 |---|---|---|---|---|---|---|---|---|
 | Gemini Flash (témoin) | 5 | 100 % | 100 % | 40 % | 1.0 | 2 chiffre(s) sur 3 sorties | 22.5 s | 0 |
 | Groq gpt-oss-120b | 5 | 100 % | 100 % | 20 % | 3.8 | 0 chiffre(s) sur 3 sorties | 5.6 s | 0 |
-| DeepSeek Flash | — | *pas encore testé (clé absente)* | | | | | | |
+| DeepSeek Flash | 5 | 100 % | 100 % | 80 % | 0.4 | 0 chiffre(s) sur 3 sorties | 43.0 s | 0 |
 
 **Corriger le storyboard** (`storyboard.revise`)
 
@@ -55,7 +56,7 @@ lettres, français et arabe ; chaque cas est listé dans `A_LIRE.md`).
 |---|---|---|---|---|---|---|---|---|
 | Gemini Flash (témoin) | 5 | 100 % | 100 % | 0 % | 1.0 | 0 chiffre(s) sur 3 sorties | 48.6 s | 0 |
 | Groq gpt-oss-120b | 5 | 100 % | 100 % | 0 % | 3.2 | 0 chiffre(s) sur 3 sorties | 5.7 s | 0 |
-| DeepSeek Flash | — | *pas encore testé (clé absente)* | | | | | | |
+| DeepSeek Flash | 5 | 100 % | 100 % | 100 % | 0.0 | 0 chiffre(s) sur 3 sorties | 32.1 s | 0 |
 
 **Script de la Génération** (`script_generator.generate_script`)
 
@@ -63,7 +64,7 @@ lettres, français et arabe ; chaque cas est listé dans `A_LIRE.md`).
 |---|---|---|---|---|---|---|---|---|
 | Gemini Flash (témoin) | 5 | 80 % | 80 % | 80 % | 0.0 | — | 16.9 s | 0 |
 | Groq gpt-oss-120b | 5 | 100 % | 100 % | 100 % | 0.0 | — | 3.7 s | 0 |
-| DeepSeek Flash | — | *pas encore testé (clé absente)* | | | | | | |
+| DeepSeek Flash | 5 | 100 % | 100 % | 100 % | 0.0 | — | 8.4 s | 0 |
 
 Remarques mesurées :
 - Gemini : 1 script de Génération sur 5 inutilisable (réponse illisible) : l'app serait passée à OpenAI.
@@ -139,11 +140,12 @@ du storyboard comptée sur Flash, comme aujourd'hui) :
 | Si on remplaçait Gemini sur… | Aujourd'hui | Au 1ᵉʳ janvier 2027 (Flash ×2) |
 |---|---|---|
 | les 4 étapes testées | **≈ 5.64 $/mois** | **≈ 11.27 $/mois** |
+| **si c'est DeepSeek Flash qui remplace Gemini** sur ces 4 étapes (coût mesuré, heures creuses ; ×2 en heures pleines) | ≈ 1.75 $/mois (≈ 3.49 $ si tout tombe en heures pleines) | pas de changement de prix annoncé |
 | toutes les étapes texte (sauf recherche Google et relecture du script) | ≈ 9.25 $/mois | ≈ 18.50 $/mois |
 
 Pour comparer : sur la même période, tout Gemini coûte ≈ 82 $/mois (avant les économies du 28/10) ;
 les étapes texte n'en sont qu'une petite part : l'essentiel est la vidéo (`finder._watch` ≈ 42 %).
-Si DeepSeek remplaçait ces 4 étapes au lieu de Groq (payant), il faudrait retirer son coût (mesuré quand la clé sera là).
+Avec Groq (gratuit) l'économie est totale (5,64 $ → 0 $) ; avec DeepSeek elle est de Gemini moins le coût DeepSeek de la ligne ci-dessus. La réflexion de DeepSeek (≈ 6 000 à 8 000 tokens par étape) est facturée comme sortie.
 
 ## 6. Ce qu'il faudrait changer dans le code (non fait)
 
@@ -172,13 +174,10 @@ Si DeepSeek remplaçait ces 4 étapes au lieu de Groq (payant), il faudrait reti
 | Gemini | **0.371 $** (budget 0,50 $) |
 | OpenAI whisper-1 | 0.018 $ |
 | Groq | 0 $ (offre gratuite) |
-| DeepSeek | 0.000 $ (budget 1 $) — pas encore testé |
+| DeepSeek | 0.075 $ (budget 1 $)  |
 | Qwen | 0 $ — pas encore testé |
 
-## Pour finir DeepSeek et Qwen
+## Pour finir Qwen
 
-1. Ajoute `DEEPSEEK_API_KEY=…` et `DASHSCOPE_API_KEY=…` dans `.env` (et `DASHSCOPE_BASE_URL` si ton espace
-   Singapour a sa propre adresse).
-2. Lance, **hors des heures pleines de DeepSeek** (pas entre 01-04 h ni 06-10 h UTC en semaine) :
-   `python etude_modeles/ecriture.py deepseek-flash` puis `python etude_modeles/video.py qwen` puis
-   `python etude_modeles/rapport.py`. Les tableaux et `A_LIRE.md` se complètent seuls.
+1. Ajoute `DASHSCOPE_API_KEY=…` dans `.env` (`DASHSCOPE_BASE_URL` y est déjà).
+2. Lance `python etude_modeles/video.py qwen` puis `python etude_modeles/rapport.py`. Les tableaux se complètent seuls.

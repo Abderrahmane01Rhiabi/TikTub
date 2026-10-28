@@ -154,7 +154,7 @@ def groq():
 
 def deepseek():
     return Compatible("deepseek-flash", "https://api.deepseek.com/chat/completions", os.getenv("DEEPSEEK_API_KEY"),
-                      "deepseek-flash", max_sortie=8192, champ_max="max_tokens")
+                      "deepseek-flash", max_sortie=24000, champ_max="max_tokens")
 
 
 # ------------------------------------------------------------------ les chiffres d'un texte (FR / AR)

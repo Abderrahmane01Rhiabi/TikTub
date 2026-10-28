@@ -63,7 +63,7 @@ def table_ecriture():
         for m in MODELES:
             xs = [x for x in ECR if x["etape"] == e and x["modele"] == m]
             if not xs:
-                out.append(f"| {NOMS[m]} | — | *pas encore testé (clé absente)* | | | | | | |")
+                out.append(f"| {NOMS[m]} | — | *pas testé* | | | | | | |")
                 continue
             ok = [x for x in xs if x.get("complet")]
             idee = [x for x in ok if x.get("hors_faits") is not None]
@@ -206,6 +206,10 @@ if __name__ == "__main__":
     tok_jour_all = sum(a[0] for a in agg.values()) / jours
     sb, gen = capacite()
     tt, _ = table_transcription()
+    nb = {e: sum(a[3] for s_, a in agg.items() if s_ == e) for e in ETAPES}
+    moy = {e: (lambda xs: sum(x["cout"] for x in xs) / len(xs) if xs else 0)([x for x in ECR if x["modele"] == "deepseek-flash" and x["etape"] == e]) for e in ETAPES}
+    ds_creux = sum(nb[e] * moy[e] for e in ETAPES) * mois
+    ds_pleine = ds_creux * 2
     raf = json.load(open(os.path.join(R, "groq_rafale.json"), encoding="utf-8"))
     vids = json.load(open(os.path.join(R, "videos_telechargees.json"), encoding="utf-8"))
     whisper_cout = sum(x["whisper-1"]["cout"] for x in json.load(open(os.path.join(R, "transcription.json"))).values())
@@ -218,8 +222,9 @@ if __name__ == "__main__":
 sont côte à côte dans `etude_modeles/A_LIRE.md` : la qualité, c'est à toi de la juger. Ici, seulement des mesures.
 
 Mistral a été écarté à ta demande (seul `ministral-14b`, un petit modèle, est ouvert gratuitement).
-**DeepSeek et Qwen ne sont pas encore testés** : les clés `DEEPSEEK_API_KEY` et `DASHSCOPE_API_KEY` ne sont pas dans
-`.env`. Tout est prêt : il suffit de les ajouter puis de lancer les commandes en fin de fichier.
+**DeepSeek est testé. Qwen ne l'est pas** : `DASHSCOPE_API_KEY` n'est pas dans `.env` (seule l'adresse
+`DASHSCOPE_BASE_URL` l'est). Tout est prêt pour Qwen : il suffit d'ajouter la clé puis de lancer les commandes en fin de
+fichier.
 
 ## 1. Les offres gratuites
 
@@ -228,7 +233,7 @@ Mistral a été écarté à ta demande (seul `ministral-14b`, un petit modèle, 
 | Modèle | `openai/gpt-oss-120b` | `deepseek-flash` (V4.1 Flash) | `qwen3-vl-plus` |
 | Gratuit ? | oui | non : 0,15 $ / 0,60 $ par million (entrée / sortie) en heure creuse, le double en heure pleine | 1 million de tokens offerts, 90 jours ; puis 0,20 $ / 1,60 $ par million |
 | Limites | 30 requêtes/min, 1 000/jour, **8 000 tokens/min**, **200 000 tokens/jour** | — | vidéo en base64 : fichier < 7 Mo |
-| Tes données | pas d'entraînement sans ton accord (contrat §4.2) | à vérifier quand tu ouvres le compte | à vérifier quand tu ouvres le compte |
+| Tes données | pas d'entraînement sans ton accord (contrat §4.2) | ⚠️ stockées **en Chine** ; la politique dit utiliser les saisies pour « entraîner et améliorer » ses modèles, avec un droit de refus (pas de précision propre à l'API) | à vérifier quand tu ouvres le compte |
 | Usage commercial | les textes t'appartiennent (§8.1) ; ⚠️ le contrat interdit un usage « destiné à éviter de payer » (§6.3(d)(iii)) | payant : pas de question | payant après l'essai |
 | Heures | — | heures pleines 01-04 h et 06-10 h UTC en semaine : l'étude refuse d'y appeler | — |
 
@@ -306,11 +311,12 @@ du storyboard comptée sur Flash, comme aujourd'hui) :
 | Si on remplaçait Gemini sur… | Aujourd'hui | Au 1ᵉʳ janvier 2027 (Flash ×2) |
 |---|---|---|
 | les 4 étapes testées | **≈ {cout_t:.2f} $/mois** | **≈ {cout_t27:.2f} $/mois** |
+| **si c'est DeepSeek Flash qui remplace Gemini** sur ces 4 étapes (coût mesuré, heures creuses ; ×2 en heures pleines) | ≈ {ds_creux:.2f} $/mois (≈ {ds_pleine:.2f} $ si tout tombe en heures pleines) | pas de changement de prix annoncé |
 | toutes les étapes texte (sauf recherche Google et relecture du script) | ≈ {cout_all:.2f} $/mois | ≈ {cout_all27:.2f} $/mois |
 
 Pour comparer : sur la même période, tout Gemini coûte ≈ {total_periode * mois:.0f} $/mois (avant les économies du 28/10) ;
 les étapes texte n'en sont qu'une petite part : l'essentiel est la vidéo (`finder._watch` ≈ 42 %).
-Si DeepSeek remplaçait ces 4 étapes au lieu de Groq (payant), il faudrait retirer son coût (mesuré quand la clé sera là).
+Avec Groq (gratuit) l'économie est totale (5,64 $ → 0 $) ; avec DeepSeek elle est de Gemini moins le coût DeepSeek de la ligne ci-dessus. La réflexion de DeepSeek (≈ 6 000 à 8 000 tokens par étape) est facturée comme sortie.
 
 ## 6. Ce qu'il faudrait changer dans le code (non fait)
 
@@ -339,16 +345,13 @@ Si DeepSeek remplaçait ces 4 étapes au lieu de Groq (payant), il faudrait reti
 | Gemini | **{c.depense_gemini():.3f} $** (budget 0,50 $) |
 | OpenAI whisper-1 | {whisper_cout:.3f} $ |
 | Groq | 0 $ (offre gratuite) |
-| DeepSeek | {ds:.3f} $ (budget 1 $) {'— pas encore testé' if not ds else ''} |
+| DeepSeek | {ds:.3f} $ (budget 1 $) {'— pas testé' if not ds else ''} |
 | Qwen | {'0 $ — pas encore testé' if not qwen_tok else f'{qwen_tok:,} tokens de l’essai gratuit'} |
 
-## Pour finir DeepSeek et Qwen
+## Pour finir Qwen
 
-1. Ajoute `DEEPSEEK_API_KEY=…` et `DASHSCOPE_API_KEY=…` dans `.env` (et `DASHSCOPE_BASE_URL` si ton espace
-   Singapour a sa propre adresse).
-2. Lance, **hors des heures pleines de DeepSeek** (pas entre 01-04 h ni 06-10 h UTC en semaine) :
-   `python etude_modeles/ecriture.py deepseek-flash` puis `python etude_modeles/video.py qwen` puis
-   `python etude_modeles/rapport.py`. Les tableaux et `A_LIRE.md` se complètent seuls.
+1. Ajoute `DASHSCOPE_API_KEY=…` dans `.env` (`DASHSCOPE_BASE_URL` y est déjà).
+2. Lance `python etude_modeles/video.py qwen` puis `python etude_modeles/rapport.py`. Les tableaux se complètent seuls.
 """)
     out.close()
     print("ok", round(cout_t, 2), round(cout_t27, 2), sb, gen)
