@@ -32,6 +32,7 @@
     <button class="step" data-i="12" data-space="settings">Drones</button>
     <button class="step" data-i="13" data-space="settings">Voix</button>
     <button class="step" data-i="14" data-space="settings">Effets sonores</button>
+    <button class="step" data-i="15" data-space="settings">Modèles d'IA</button>
     <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
     <button class="step" data-i="9" data-space="settings">Stockage</button>
     <button class="step" data-i="2" data-space="import">1 · URLs</button>
@@ -149,7 +150,7 @@
     <dialog id="addChannelDialog"></dialog>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 8</span>
+      <span class="progress-text">Réglages · 1 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -165,7 +166,7 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 8</span>
+      <span class="progress-text">Réglages · 2 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -183,7 +184,7 @@
     <div class="stack" id="backupList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 7 sur 8</span>
+      <span class="progress-text">Réglages · 8 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -199,7 +200,7 @@
     <div class="stack" id="storageView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 8 sur 8</span>
+      <span class="progress-text">Réglages · 9 sur 9</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -284,7 +285,7 @@
     <div class="grid-3" id="montageSettingsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 8</span>
+      <span class="progress-text">Réglages · 3 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -308,7 +309,7 @@
     <div id="brollGrid" class="broll-grid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 4 sur 8</span>
+      <span class="progress-text">Réglages · 4 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -332,7 +333,7 @@
     <div class="grid-3" id="adChannelGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 5 sur 8</span>
+      <span class="progress-text">Réglages · 5 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -360,7 +361,24 @@
     <div class="stack" id="sfxList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 6 sur 8</span>
+      <span class="progress-text">Réglages · 6 sur 9</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 15 : which AI model does each step (Réglages) -->
+  <section class="screen" data-idx="15">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Modèles d'IA</h1>
+        <p class="sub">Le modèle de chaque étape. ★ = recommandé (celui d'aujourd'hui). Une étape qui regarde une image ou une vidéo, ou cherche sur Google, reste sur Gemini 🔒. Si le modèle choisi échoue (clé absente, limite, réponse illisible), Gemini prend le relais tout seul. Le changement compte dès la prochaine étape, sans redémarrer.</p>
+      </div>
+      <div class="actions"><button class="btn secondary" id="aiModelsResetBtn" data-icon="refresh">Revenir aux réglages recommandés</button></div>
+    </div>
+    <div class="stack" id="aiModelsView"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 7 sur 9</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>

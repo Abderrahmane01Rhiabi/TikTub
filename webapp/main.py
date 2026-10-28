@@ -287,6 +287,35 @@ def ai_usage(month: Optional[str] = None):
     return ai_models.month_report(month)
 
 
+@app.get("/api/ai-models")
+def ai_models_view():
+    """Réglages → Modèles d'IA: each step, the models it may use, the one chosen, what it cost in 30 days."""
+    import ai_models
+    return ai_models.settings_view()
+
+
+class AiModelChoice(BaseModel):
+    etape: str
+    modele: str
+
+
+@app.post("/api/ai-models")
+def ai_models_choose(req: AiModelChoice):
+    import ai_models
+    try:
+        ai_models.set_choice(req.etape, req.modele)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return ai_models.settings_view()
+
+
+@app.post("/api/ai-models/reset")
+def ai_models_reset():
+    import ai_models
+    ai_models.reset_choices()
+    return ai_models.settings_view()
+
+
 @app.get("/api/storage")
 def storage_overview():
     import storage

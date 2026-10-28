@@ -97,6 +97,11 @@ TESTED: Dict[tuple, str] = {
     ("script_generator.generate_script", DEEPSEEK): "testé sur 5 scripts : le plus vivant ; données stockées en Chine",
 }
 
+# the screen's parts (Réglages → Modèles d'IA); every step not listed elsewhere belongs to Adaptation et Idée
+PARTS = [("Génération", ["script_generator.generate_script"]),
+         ("Import et Montage auto", ["planner.plan_video", "planner.pick_keywords", "ai_tags_generator.generate_ai_content"]),
+         ("Planning", ["ai_scheduler._ask_ai_for_slots"])]
+
 TRANSCRIPTION = ["whisper-1", "faster-whisper-small", "faster-whisper-medium"]
 TRANSCRIPTION_NOTES = {
     "whisper-1": "OpenAI, payant (0,006 $/min) : utilisé aujourd'hui",
@@ -238,3 +243,81 @@ def month_report(month: Optional[str] = None, path: Optional[str] = None) -> Dic
     return {"mois": month, "total": round(total, 2), "appels": calls, "echecs": failed,
             "au_prix_de_janvier": round(later, 2), "par_etape": rows,
             "le": datetime.now().isoformat(timespec="seconds")}
+
+
+# ------------------------------------------------------------------ Réglages → Modèles d'IA
+
+def _write_overrides(data: Dict[str, str]) -> None:
+    os.makedirs(os.path.dirname(OVERRIDES) or ".", exist_ok=True)
+    tmp = OVERRIDES + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, OVERRIDES)
+
+
+def set_choice(step: str, model: str) -> None:
+    """The person's choice for a step (or "transcription"); the recommended one removes the entry."""
+    data = _overrides()
+    if step == "transcription":
+        if model not in TRANSCRIPTION:
+            raise ValueError(f"Transcription inconnue : {model}")
+        default = TRANSCRIPTION[0]
+    else:
+        if step not in STEPS:
+            raise ValueError(f"Étape inconnue : {step}")
+        if not accepts(step, model):
+            raise ValueError(f"{(MODELS.get(model) or {}).get('nom', model)} ne peut pas faire cette étape "
+                             "(elle envoie une image, une vidéo ou cherche sur Google).")
+        default = STEPS[step][0]
+    if model == default:
+        data.pop(step, None)
+    else:
+        data[step] = model
+    _write_overrides(data)
+
+
+def reset_choices() -> None:
+    """Back to the recommended models (those of STEPS)."""
+    _write_overrides({})
+
+
+def costs_by_step(days: int = 30, path: Optional[str] = None) -> Dict[str, tuple]:
+    """step: (dollars, calls) over the last days, every provider together."""
+    from datetime import timedelta
+    from gemini_ai_generator import USAGE_LOG
+    since = (datetime.now() - timedelta(days=days)).isoformat(timespec="seconds")
+    out = defaultdict(lambda: [0.0, 0])
+    try:
+        with open(path or USAGE_LOG, encoding="utf-8") as f:
+            for x in f:
+                if not x.strip():
+                    continue
+                ln = json.loads(x)
+                if str(ln.get("at", "")) >= since:
+                    out[ln.get("step") or "?"][0] += cost(ln)
+                    out[ln.get("step") or "?"][1] += 1
+    except (OSError, ValueError):
+        pass
+    return {k: (round(v[0], 2), v[1]) for k, v in out.items()}
+
+
+def settings_view() -> Dict:
+    """What the screen shows: each part, its steps, their possible models (with key, test note, recommended)."""
+    over, costs = _overrides(), costs_by_step()
+    keys = {m: bool(key_of(m)) for m in MODELS}
+    listed = {s for _, steps in PARTS for s in steps}
+
+    def step_view(step: str) -> Dict:
+        default = STEPS[step][0]
+        current = over.get(step) if accepts(step, over.get(step, "")) else default
+        return {"etape": step, "quoi": STEPS[step][1], "actuel": current, "recommande": default,
+                "verrou": len(choices(step)) == 1, "cout_30j": costs.get(step, (0.0, 0))[0],
+                "appels_30j": costs.get(step, (0.0, 0))[1],
+                "choix": [{"modele": m, "nom": MODELS[m]["nom"], "cle_ok": keys[m], "recommande": m == default,
+                           "note": "utilisé aujourd'hui" if m == default else TESTED.get((step, m), "non testé")}
+                          for m in choices(step)]}
+    parts = [("Adaptation et Idée", [s for s in STEPS if s not in listed])] + PARTS
+    return {"parties": [{"nom": n, "etapes": [step_view(s) for s in steps]} for n, steps in parts],
+            "transcription": {"actuel": transcription_model(), "recommande": TRANSCRIPTION[0],
+                              "choix": [{"modele": m, "nom": m, "note": TRANSCRIPTION_NOTES[m], "recommande": m == TRANSCRIPTION[0],
+                                         "cle_ok": keys[OPENAI] if m == "whisper-1" else True} for m in TRANSCRIPTION]}}

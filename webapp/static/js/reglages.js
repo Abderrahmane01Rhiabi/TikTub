@@ -371,3 +371,40 @@ function renderAdaptationChannel(card, ch, data){
   if (start) start.onchange = () => save({ settings: { music_start: parseFloat(start.value) || 0 } });
   if (start && audio) card.querySelector('.ad-take').onclick = () => save({ settings: { music_start: Math.round(audio.currentTime * 2) / 2 } });
 }
+
+// Réglages → Modèles d'IA: each step's model, chosen from the ones it may use
+function aiCost(e){ return e.appels_30j ? `${e.cout_30j.toFixed(2).replace('.', ',')} $ sur 30 jours (${e.appels_30j} appel${e.appels_30j > 1 ? 's' : ''})` : 'pas utilisé ces 30 jours'; }
+function aiOptions(choix, actuel){
+  return choix.map(c => `<option value="${esc(c.modele)}" ${c.modele === actuel ? 'selected' : ''} ${c.cle_ok || c.modele === actuel ? '' : 'disabled'}>`
+    + `${esc(c.nom)}${c.recommande ? ' ★' : ''}${c.cle_ok ? '' : ' (clé absente dans .env)'}</option>`).join('');
+}
+function aiRow(id, quoi, choix, actuel, verrou, cout){
+  const pick = choix.find(c => c.modele === actuel) || choix[0];
+  return `<div class="airow" data-id="${esc(id)}" style="display:flex;align-items:center;gap:12px;padding:8px 0;border-top:1px solid var(--border-soft);flex-wrap:wrap">
+    <span style="flex:1 1 220px;white-space:normal"><b>${esc(quoi.charAt(0).toUpperCase() + quoi.slice(1))}</b>
+      <span class="tiny"> · ${esc(cout)}</span></span>
+    <select class="f" style="flex:0 1 240px" ${verrou ? 'disabled title="Une seule possibilité pour cette étape"' : ''}>${aiOptions(choix, actuel)}</select>
+    <span class="tiny" style="flex:1 1 220px;white-space:normal">${verrou ? '🔒 ' : ''}${esc(pick.note)}</span>
+  </div>`;
+}
+async function loadAiModels(){
+  const d = await api('/api/ai-models'), box = document.getElementById('aiModelsView');
+  const t = d.transcription;
+  box.innerHTML = d.parties.map(p => `
+    <article class="chcard">
+      <div class="chcard-head"><div class="who"><div class="name">${esc(p.nom)}</div></div></div>
+      <div class="chcard-body">${p.etapes.map(e => aiRow(e.etape, e.quoi, e.choix, e.actuel, e.verrou, aiCost(e))).join('')}
+        ${p.nom === 'Import et Montage auto' ? aiRow('transcription', 'transcription (mode audio)', t.choix, t.actuel, false, 'titre, description et tags') : ''}</div>
+    </article>`).join('');
+  box.querySelectorAll('.airow select').forEach(sel => sel.onchange = async () => {
+    const etape = sel.closest('.airow').dataset.id;
+    try { await api('/api/ai-models', { method:'POST', body: JSON.stringify({ etape, modele: sel.value }) }); log('Modèle enregistré', 'success'); }
+    catch (e){ log(e.message, 'error'); }
+    loadAiModels();
+  });
+}
+document.getElementById('aiModelsResetBtn').onclick = async () => {
+  if (!confirm('Revenir aux modèles recommandés pour toutes les étapes ?')) return;
+  try { await api('/api/ai-models/reset', { method:'POST' }); loadAiModels(); }
+  catch (e){ log(e.message, 'error'); }
+};
