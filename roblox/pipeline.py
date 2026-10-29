@@ -2,7 +2,8 @@
 A Montage Roblox project: one long video -> one Short per chosen style and language.
 
     analysing    the video's facts and subtitles, the most replayed passages downloaded, their moments found,
-                 the plan written (which moment for which style, every text in every language)
+                 the plan written (which moment for which style, every text in every language); his voice
+                 replaced: each passage used split into his voice and the game's sounds, his lines written
     plan_review  the person reads and corrects the texts (nothing rendered or paid for yet but Gemini)
     rendering    every Short made (the told story's voice is the only ElevenLabs cost)
     review       the person watches them and sends the ones kept to Publication
@@ -99,6 +100,40 @@ def _catalogue(p: Dict) -> Dict[str, Dict]:
     return {m["id"]: m for m in p["catalogue"]}
 
 
+def styles_of_moments(made: Dict) -> Dict[str, List[str]]:
+    """Which styles show each moment."""
+    out: Dict[str, List[str]] = {}
+    for style, st in made.items():
+        for mid in [st["moment"]] if st.get("moment") else [x["moment"] for x in st.get("passages") or st.get("rangs") or []]:
+            if style not in out.setdefault(mid, []):
+                out[mid].append(style)
+    return out
+
+
+MARGIN = 1.5                                # his lines are read from a little before the moment to a little after
+
+
+def _his_voice(p: Dict, cat: List[Dict], made: Dict, meta: Dict, report: Report) -> Dict:
+    """Each passage the Shorts use split (his voice / the rest), and his lines in every moment where he is heard —
+    the told story covers him with its narrator: only its passages' game sounds are needed."""
+    by_id = {m["id"]: m for m in cat}
+    used = styles_of_moments(made)
+    files = sorted({by_id[mid]["fichier"] for mid in used})
+    parts = {}
+    for k, f in enumerate(files):
+        report(f"sa voix séparée des bruits du jeu ({k + 1}/{len(files)})", 0.86 + 0.08 * k / len(files))
+        parts[f] = voix.separate(f, os.path.join(project_dir(p["project_id"]), "voix", os.path.splitext(os.path.basename(f))[0]))
+    words, langs, lines = sources.words(meta.get("sous_titres")), [t["langue"] for t in p["targets"]], {}
+    talking = [mid for mid, sts in used.items() if sts != ["histoire"]]
+    for k, mid in enumerate(talking):
+        report(f"l'IA écoute ses répliques ({k + 1}/{len(talking)})", 0.94 + 0.05 * k / len(talking))
+        m = by_id[mid]
+        a, b = max(0.0, m["debut"] - MARGIN), min(m["fichier_duree"], m["fin"] + MARGIN)
+        said = [{**l, "a": l["a"] - m["t0"]} for l in render.dialogue_lines(words, m["t0"] + a, m["t0"] + b)]
+        lines[mid] = {"a": a, "b": b, "lignes": voix.write_lines(parts[m["fichier"]]["voix"], a, b, m.get("resume") or "", said, langs)}
+    return {"fichiers": parts, "repliques": lines}
+
+
 def run_analysis(pid: str, report: Optional[Report] = None) -> None:
     report = report or (lambda phase, f: None)
     p = load(pid)
@@ -123,9 +158,10 @@ def run_analysis(pid: str, report: Optional[Report] = None) -> None:
         made, dropped = plan.write(meta, cat, p["styles"], [t["langue"] for t in p["targets"]])
         if not made:
             raise PipelineError("Aucun style n'a trouvé de moment qui convienne. " + " ".join(dropped))
+        his = _his_voice(p, cat, made, meta, report) if p.get("voix_joueur") == "remplacer" else None
         p = load(pid)
         p.update(meta={k: meta[k] for k in ("titre", "chaine", "duree", "langue", "vues", "sous_titres")},
-                 catalogue=cat, plan=made, absents=dropped, status="plan_review", error=None, failed_step=None)
+                 catalogue=cat, plan=made, absents=dropped, voix=his, status="plan_review", error=None, failed_step=None)
         save(p)
     except Exception as e:
         fail(pid, "analysing", e)
@@ -171,6 +207,27 @@ def set_texts(pid: str, style: str, lang: str, edit: Dict) -> Dict:
     v = p["videos"].get(f"{style}_{lang}")
     if v and not v.get("video_id"):
         v["a_refaire"] = True
+    return save(p)
+
+
+def set_lines(pid: str, mid: str, lang: str, texts: List[str]) -> Dict:
+    """His lines in one language for one moment, corrected (one text per line, in order; an empty one is kept as
+    it was). The unsent Shorts showing that moment in that language are made again."""
+    p = load(pid)
+    _expect(p, "plan_review", "review")
+    moment = ((p.get("voix") or {}).get("repliques") or {}).get(mid)
+    if not moment:
+        raise PipelineError("Ce moment n'a pas de répliques à corriger.")
+    if lang not in {t["langue"] for t in p["targets"]}:
+        raise PipelineError("Langue absente de ce projet.")
+    for line, text in zip(moment["lignes"], texts or []):
+        text = " ".join(str(text or "").split())
+        if text:
+            line[lang] = text
+    for style in styles_of_moments(p["plan"]).get(mid, []):
+        v = p["videos"].get(f"{style}_{lang}")
+        if v and not v.get("video_id"):
+            v["a_refaire"] = True
     return save(p)
 
 

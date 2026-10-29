@@ -46,3 +46,14 @@ def test_the_voices_and_their_samples_through_the_api(client):
     s = client.get(f"/api/roblox/voix/{voix.DEFAULTS['fr']}/echantillon?langue=fr")
     assert s.status_code == 200 and s.headers["content-type"] == "audio/mpeg"
     assert client.get("/api/roblox/voix/nope/echantillon?langue=fr").status_code == 404
+
+
+def test_the_ai_writes_the_players_lines_at_their_place_in_the_file():
+    class G:
+        def _generate_content(self, parts, **kw):
+            assert "[laughs]" in parts[-1]["text"] and "1.2 s : on y va" in parts[-1]["text"]
+            return {"phrases": [{"a": 4.0, "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
+                                {"a": 0.5, "fr": "On y va !", "en": "Let's go!"}, {"a": "x"}, {"a": 99, "fr": "hors du passage"}]}
+    lines = voix.write_lines("v.wav", 20.0, 35.0, "il saute", [{"texte": "on y va", "a": 21.2}], ["fr", "en"], gemini=G())
+    assert lines == [{"a": 20.5, "fr": "On y va !", "en": "Let's go!"}, {"a": 24.0, "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"}]
+    assert voix.sans_balises("[laughs] Trop [shouts] fort !") == "Trop fort !"

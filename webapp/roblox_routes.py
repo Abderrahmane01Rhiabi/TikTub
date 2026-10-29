@@ -54,6 +54,7 @@ def _start(pid: str, step: str):
 def _serialize(p: Dict, full: bool = True) -> Dict:
     import progress
     from roblox import plan
+    from roblox import pipeline as rp
     job = progress.get(_job(p["project_id"])) or {}
     from roblox import voix
     out = {k: p.get(k) for k in ("project_id", "status", "url", "styles", "musique", "error", "failed_step", "created_at", "absents")}
@@ -68,6 +69,9 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
     if full:
         out["plan"] = p.get("plan") or {}
         out["moments"] = {m["id"]: m.get("resume") for m in p.get("catalogue") or []}
+        uses = rp.styles_of_moments(p.get("plan") or {})
+        out["repliques"] = {mid: {"lignes": r["lignes"], "styles": uses.get(mid, [])}
+                            for mid, r in ((p.get("voix") or {}).get("repliques") or {}).items()}
         out["videos"] = {k: {**{x: v.get(x) for x in ("style", "langue", "channel", "duree", "video_id", "a_refaire")},
                              "url": f"/api/roblox/{p['project_id']}/videos/{k}?v={int(os.path.getmtime(v['path'])) if os.path.exists(v['path']) else 0}"}
                          for k, v in (p.get("videos") or {}).items()}
@@ -141,6 +145,18 @@ class Textes(BaseModel):
 def edit_roblox_texts(pid: str, req: Textes):
     from roblox import pipeline as rp
     return _serialize(_call(rp.set_texts, pid, req.style, req.langue, req.edit))
+
+
+class Repliques(BaseModel):
+    moment: str
+    langue: str
+    lignes: List[str]
+
+
+@router.put("/api/roblox/{pid}/repliques")
+def edit_roblox_lines(pid: str, req: Repliques):
+    from roblox import pipeline as rp
+    return _serialize(_call(rp.set_lines, pid, req.moment, req.langue, req.lignes))
 
 
 @router.post("/api/roblox/{pid}/render")

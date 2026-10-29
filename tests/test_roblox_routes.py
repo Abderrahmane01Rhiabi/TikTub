@@ -28,6 +28,9 @@ def test_a_project_through_the_api(client, project, fakes, monkeypatch):
     assert p["voix_joueur"] == "remplacer"
     assert p["moments"] == {"w0#0": "r", "w600#0": "r"}
     assert [x["project_id"] for x in client.get("/api/roblox").json()] == [pid]
+    assert p["repliques"]["w0#0"]["lignes"][0]["fr"].startswith("[laughs]") and p["repliques"]["w0#0"]["styles"] == ["clip"]
+    r = client.put(f"/api/roblox/{pid}/repliques", json={"moment": "w0#0", "langue": "fr", "lignes": ["Beurk !"]})
+    assert r.status_code == 200 and r.json()["repliques"]["w0#0"]["lignes"][0]["fr"] == "Beurk !"
     r = client.put(f"/api/roblox/{pid}/textes", json={"style": "clip", "langue": "fr", "edit": {"titre": "Beurk"}})
     assert r.status_code == 200 and r.json()["plan"]["clip"]["titre"]["fr"] == "Beurk"
     p = client.post(f"/api/roblox/{pid}/render").json()

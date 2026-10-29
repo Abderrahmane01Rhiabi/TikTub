@@ -44,6 +44,17 @@ def fakes(project, monkeypatch):
         return 9.0
     monkeypatch.setattr(render, "make", make)
     monkeypatch.setattr(rp, "_thumbnail", lambda v: None)
+
+    def separate(src, work):
+        calls["separe"].append(src)
+        return {"voix": src + ".voix.wav", "reste": src + ".reste.wav"}
+
+    def write_lines(vocals, a, b, resume, dialogue, langs, gemini=None):
+        calls["repliques"].append((vocals, a, b))
+        return [{"a": a + 1.0, **{l: f"[laughs] {l} {a}" for l in langs}}]
+    calls.update(separe=[], repliques=[])
+    monkeypatch.setattr(voix, "separate", separate)
+    monkeypatch.setattr(voix, "write_lines", write_lines)
     return calls
 
 
@@ -89,6 +100,33 @@ def test_the_analysis_finds_the_moments_and_writes_the_texts(fakes, project):
     assert p["status"] == "plan_review" and set(p["plan"]) == {"clip", "devine"}
     assert p["absents"] == ["POV : pas de moment qui convienne dans cette vidéo."]
     assert p["meta"]["chaine"] == "Roblox Idol" and len(p["catalogue"]) == 2
+
+
+def test_the_players_voice_is_separated_and_his_lines_written_once_per_moment(fakes, project):
+    p = new(project)
+    rp.run_analysis(p["project_id"])
+    p = rp.load(p["project_id"])
+    assert sorted(fakes["separe"]) == sorted({m["fichier"] for m in p["catalogue"]})       # each passage used, once
+    r = p["voix"]["repliques"]
+    assert set(r) == {"w0#0", "w600#0"} and r["w0#0"]["a"] == 8.5 and r["w0#0"]["b"] == 23.5   # the moment, 1.5 s around
+    assert r["w0#0"]["lignes"] == [{"a": 9.5, "fr": "[laughs] fr 8.5", "en": "[laughs] en 8.5"}]
+    p2 = rp.create("https://y", ["clip"], [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"}], voix_joueur="originale")
+    fakes["separe"].clear()
+    rp.run_analysis(p2["project_id"])
+    assert fakes["separe"] == [] and not rp.load(p2["project_id"]).get("voix")           # his voice kept: nothing to do
+
+
+def test_his_lines_corrected_make_the_shorts_that_use_them_again(fakes, project):
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    rp.start_render(pid)
+    rp.run_render(pid)
+    p = rp.set_lines(pid, "w0#0", "fr", ["  [laughs]  Trop   fort ! "])
+    assert p["voix"]["repliques"]["w0#0"]["lignes"][0] == {"a": 9.5, "fr": "[laughs] Trop fort !", "en": "[laughs] en 8.5"}
+    assert p["videos"]["clip_fr"]["a_refaire"] and not p["videos"]["clip_en"].get("a_refaire")
+    assert not p["videos"]["devine_fr"].get("a_refaire")                                  # another moment
+    with pytest.raises(rp.PipelineError, match="moment"):
+        rp.set_lines(pid, "nope", "fr", ["x"])
 
 
 def test_a_failed_analysis_says_why(fakes, project, monkeypatch):

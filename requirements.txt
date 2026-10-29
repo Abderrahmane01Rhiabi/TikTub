@@ -34,6 +34,10 @@ elevenlabs>=2.66.0  # generative pipeline: script -> voice (TTS + word timestamp
 faster-whisper>=1.0.0  # word timings: generative captions (small model) and Montage auto (medium model)
 PicImageSearch==3.12.11  # Adaptation: reverse image search (Yandex) for the reference Short's shots.
                          # Pinned: it scrapes the engines' pages, a new release can change what parses.
+# Montage Roblox: the player's voice apart from the game's sounds (roblox/voix.py). Install torch's CPU build
+# FIRST (the default one carries CUDA, several GB):
+#   pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+demucs==4.0.1
 
 # Local web UI
 fastapi>=0.110.0

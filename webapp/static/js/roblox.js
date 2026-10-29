@@ -124,7 +124,7 @@ async function loadRbProject(){
     body = `<article class="chcard"><div class="chcard-body"><span class="pill warn">Erreur</span> ${esc(p.error || '')}</div>
       <div class="chcard-foot"><span></span><button class="btn primary" id="rbRetry" data-icon="refresh">Réessayer</button></div></article>`;
   } else {
-    body = (p.absents || []).map(a => `<div class="tiny" style="margin:4px 0">⚠️ ${esc(a)}</div>`).join('') + rbTextsHtml(p) + rbVideosHtml(p);
+    body = (p.absents || []).map(a => `<div class="tiny" style="margin:4px 0">⚠️ ${esc(a)}</div>`).join('') + rbLinesHtml(p) + rbTextsHtml(p) + rbVideosHtml(p);
   }
   stage.innerHTML = head + body;
   hydrateIcons(stage);
@@ -159,6 +159,27 @@ function rbTextsHtml(p){
   }).join('') + (['plan_review', 'review'].includes(p.status) ? `<div class="navbar"><span class="progress-text">${p.status === 'plan_review'
     ? 'Les vidéos ne sont pas encore faites.' : 'Une correction refait seulement la vidéo concernée.'}</span><span></span>
     <button class="btn primary" id="rbRender" data-icon="sparkle">${p.status === 'plan_review' ? 'Faire les vidéos' : 'Refaire les vidéos corrigées'}</button></div>` : '');
+}
+
+function rbLinesHtml(p){
+  const ids = Object.keys(p.repliques || {});
+  if (!ids.length || !['plan_review', 'review', 'done'].includes(p.status)) return '';
+  const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+  return `<div class="fact" style="margin:16px 0 4px"><b>Ses répliques, relues par la voix choisie</b></div>
+    <div class="tiny" style="margin-bottom:8px">Sa voix est remplacée : la voix choisie lit ces phrases à sa place. Les mots entre crochets
+      sont les émotions jouées par la voix ([laughs] = rire, [shouts] = cri, [excited] = excité…) : on peut les garder, les enlever ou en ajouter.</div>` +
+    ids.map(mid => {
+      const r = p.repliques[mid];
+      return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${esc(p.moments[mid] || mid)}</div>
+        <div class="meta" style="margin-left:0">${esc(r.styles.map(s => p.noms_styles[s]).join(' · '))}</div></div></div>
+        <div class="chcard-body">${!r.lignes.length ? '<div class="tiny">Il ne parle pas dans ce moment : seuls les bruits du jeu.</div>'
+        : p.cibles.map(c => `<div class="rb-lines-box" data-moment="${esc(mid)}" data-lang="${c.langue}" style="border-top:1px solid var(--border-soft);padding:10px 0">
+          <div class="tiny"><b>${esc(c.langue.toUpperCase())}</b>${c.nom_voix ? ` · voix ${esc(c.nom_voix)}` : ''}</div>
+          <div style="display:flex;flex-direction:column;gap:6px">${r.lignes.map(l =>
+            `<div style="display:flex;gap:8px;align-items:center"><span class="tiny" style="width:38px">${fmt(l.a)}</span>
+              <input class="f rb-line" value="${esc(l[c.langue] || '')}"></div>`).join('')}</div>
+          <button class="btn secondary small rb-save-lines" style="margin-top:6px">Enregistrer</button></div>`).join('')}</div></article>`;
+    }).join('');
 }
 
 function rbMomentsOf(p, st){
@@ -202,6 +223,14 @@ function wireRbProject(p){
     btn.disabled = true;
     try { await api(`/api/roblox/${p.project_id}/textes`, { method: 'PUT', body: JSON.stringify({ style: box.dataset.style, langue: box.dataset.lang, edit }) });
       log('Textes enregistrés', 'success'); loadRbProject(); }
+    catch (e){ log(e.message, 'error'); btn.disabled = false; }
+  });
+  stage.querySelectorAll('.rb-save-lines').forEach(btn => btn.onclick = async () => {
+    const box = btn.closest('.rb-lines-box');
+    const lignes = [...box.querySelectorAll('.rb-line')].map(x => x.value);
+    btn.disabled = true;
+    try { await api(`/api/roblox/${p.project_id}/repliques`, { method: 'PUT', body: JSON.stringify({ moment: box.dataset.moment, langue: box.dataset.lang, lignes }) });
+      log('Répliques enregistrées', 'success'); loadRbProject(); }
     catch (e){ log(e.message, 'error'); btn.disabled = false; }
   });
   const go = document.getElementById('rbRender');
