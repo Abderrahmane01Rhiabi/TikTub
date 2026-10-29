@@ -125,22 +125,29 @@ def _his_voice(p: Dict, cat: List[Dict], made: Dict, meta: Dict, report: Report)
     files = sorted({by_id[mid]["fichier"] for mid in used})
     parts = {}
     for k, f in enumerate(files):
-        report(f"sa voix séparée des bruits du jeu ({k + 1}/{len(files)})", 0.86 + 0.08 * k / len(files))
+        report(f"leurs voix séparées des bruits du jeu ({k + 1}/{len(files)})", 0.86 + 0.08 * k / len(files))
         parts[f] = voix.separate(f, os.path.join(project_dir(p["project_id"]), "voix", os.path.splitext(os.path.basename(f))[0]))
     words, langs, lines = sources.words(meta.get("sous_titres")), [t["langue"] for t in p["targets"]], {}
     talking = [mid for mid, sts in used.items() if sts != ["histoire"]]
-    players: Dict[str, str] = {}                     # the same person keeps the same number from moment to moment
+    # the same person keeps the same number from moment to moment: Gemini is told who was met, by name or, without
+    # one, by a line he said (e2e 2026-10-29: Melon, unnamed in the 1st moment, became a 3rd player in the next)
+    names: Dict[str, str] = {}
+    known: Dict[str, str] = {}
+    video = f"{meta.get('titre') or ''} ({meta.get('chaine') or ''})"
     for k, mid in enumerate(talking):
-        report(f"l'IA écoute ses répliques ({k + 1}/{len(talking)})", 0.94 + 0.05 * k / len(talking))
+        report(f"l'IA écoute leurs répliques ({k + 1}/{len(talking)})", 0.94 + 0.05 * k / len(talking))
         m = by_id[mid]
         a, b = max(0.0, m["debut"] - MARGIN), min(m["fichier_duree"], m["fin"] + MARGIN)
         said = [{**l, "a": l["a"] - m["t0"]} for l in render.dialogue_lines(words, m["t0"] + a, m["t0"] + b)]
-        got = voix.write_lines(parts[m["fichier"]]["voix"], a, b, m.get("resume") or "", said, langs, joueurs=players)
+        got = voix.write_lines(parts[m["fichier"]]["voix"], a, b, m.get("resume") or "", said, langs,
+                               joueurs=dict(known), video=video)
         for l in got:
-            if not players.get(l["qui"]):
-                players[l["qui"]] = l.get("nom") or ""
+            if l.get("nom") and not names.get(l["qui"]):
+                names[l["qui"]], known[l["qui"]] = l["nom"], l["nom"]
+            names.setdefault(l["qui"], "")
+            known.setdefault(l["qui"], f"sans pseudo, a dit « {l[langs[0]][:70]} »")
         lines[mid] = {"a": a, "b": b, "lignes": got}
-    return {"fichiers": parts, "repliques": lines, "joueurs": players}
+    return {"fichiers": parts, "repliques": lines, "joueurs": names}
 
 
 def run_analysis(pid: str, report: Optional[Report] = None) -> None:

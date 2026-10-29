@@ -54,11 +54,12 @@ def test_the_ai_writes_everyones_lines_at_their_place_and_says_who_speaks():
             prompt = parts[-1]["text"]
             assert "[laughs]" in prompt and "1.2 s : on y va" in prompt
             assert "CHANTEES" in prompt and "1 = Sunny" in prompt                    # songs ignored; the players already met
+            assert "Melon Sunny World" in prompt                                      # the channel's name tells their names
             return {"phrases": [{"a": 4.0, "qui": 2, "nom": "Melon", "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
                                 {"a": 0.5, "fr": "On y va !", "en": "Let's go!"}, {"a": "x"}, {"a": 99, "fr": "hors du passage"},
                                 {"a": 5.0, "qui": 9, "fr": "Un de trop", "en": "One too many"}]}
     lines = voix.write_lines("v.wav", 20.0, 35.0, "il saute", [{"texte": "on y va", "a": 21.2}], ["fr", "en"],
-                             gemini=G(), joueurs={"1": "Sunny"})
+                             gemini=G(), joueurs={"1": "Sunny"}, video="WATER BARRY (Melon Sunny World)")
     assert lines == [{"a": 20.5, "qui": "1", "nom": "", "fr": "On y va !", "en": "Let's go!"},
                      {"a": 24.0, "qui": "2", "nom": "Melon", "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
                      {"a": 25.0, "qui": "4", "nom": "", "fr": "Un de trop", "en": "One too many"}]       # 4 voices at most

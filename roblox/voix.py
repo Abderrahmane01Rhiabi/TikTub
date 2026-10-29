@@ -131,7 +131,7 @@ def separate(src: str, work: str) -> Dict[str, str]:
 
 MAX_PLAYERS = 4
 LINES_PROMPT = """Ecoute les voix de joueurs de Roblox qui commentent leur partie (leurs voix seules, sans le jeu). Il peut
-y avoir une seule personne ou plusieurs. Ce qui se passe : {resume}
+y avoir une seule personne ou plusieurs. La video : {video}. Ce qui se passe : {resume}
 Leurs repliques d'apres les sous-titres automatiques (coupees au hasard, parfois fausses), avec leurs instants :
 {lignes}
 Des voix de synthese (ElevenLabs v4) vont relire TOUTES les repliques de TOUTES les personnes qui parlent ; elles
@@ -142,21 +142,22 @@ Chaque phrase doit tenir dans le temps jusqu'a la suivante (environ 3 mots par s
 IGNORE les paroles CHANTEES (musique, chansons) et les voix d'effets sonores ou du jeu : seulement les personnes qui parlent.
 "a" = l'instant ou la phrase commence, en secondes depuis le debut de CET audio.
 "qui" = le numero de la personne qui parle : {joueurs} ; une nouvelle personne prend le numero suivant (4 au plus).
-"nom" = son pseudo s'il est dit ou visible, sinon "".
+"nom" = son pseudo s'il est dit, visible ou devinable (le nom de la chaine donne souvent ceux des joueurs), sinon "".
 Donne chaque phrase dans ces langues : {langues} (parle, comme un jeune gamer de cette langue, memes balises).
 Si personne ne parle, renvoie une liste vide.
 JSON uniquement : {{"phrases": [{{"a": s, "qui": n, "nom": "...", {schema}}}]}}"""
 
 
 def write_lines(vocals: str, a: float, b: float, resume: str, dialogue: List[Dict], langs: List[str],
-                gemini=None, joueurs: Optional[Dict[str, str]] = None) -> List[Dict]:
+                gemini=None, joueurs: Optional[Dict[str, str]] = None, video: str = "") -> List[Dict]:
     """Every line said between a and b (seconds of the passage), each language, and who says it:
     [{"a": seconds of the passage, "qui": "1".."4", "nom": pseudo or "", lang: text}]. joueurs: the players met in
-    the moments before ({"1": "Sunny"}), so that the same person keeps the same number (and voice)."""
+    the moments before ({"1": "Sunny", "2": "sans pseudo, a dit « … »"}), so that the same person keeps the same
+    number (and voice); video: its title and channel, which often name the players."""
     from roblox.plan import LANG_NAMES
     txt = "\n".join(f"{l['a'] - a:.1f} s : {l['texte']}" for l in dialogue) or "(aucun sous-titre)"
-    met = ", ".join(f"{k} = {n or 'sans pseudo'}" for k, n in sorted((joueurs or {}).items()))
-    prompt = LINES_PROMPT.format(resume=resume or "", lignes=txt, tags=", ".join(f"[{t}]" for t in TAGS),
+    met = ", ".join(f"{k} = {n}" for k, n in sorted((joueurs or {}).items()))
+    prompt = LINES_PROMPT.format(resume=resume or "", video=video or "?", lignes=txt, tags=", ".join(f"[{t}]" for t in TAGS),
                                  joueurs=f"deja rencontrees : {met}" if met else "1 = celle qui parle le plus (le commentateur principal)",
                                  langues=", ".join(f"{l} ({LANG_NAMES.get(l, l)})" for l in langs),
                                  schema=", ".join(f'"{l}": "..."' for l in langs))
