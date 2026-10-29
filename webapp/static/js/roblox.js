@@ -42,13 +42,21 @@ function chOptions(){
   return channels.map(c => `<option value="${esc(c.name)}">${esc(c.display_name || c.name)}</option>`).join('');
 }
 
-function rbVoiceOptions(lang){
+const RB_SECOND = { fr: 'Jrq4GqCKqYpigdQsZRkP', en: '9yzdeviXkFddZ4Oz8Mok' };   // Anatole, Lutz: the 2nd player's default
+
+function rbVoiceOptions(lang, selected){
   return ((rbVoices || {})[lang] || []).map(v =>
-    `<option value="${esc(v.voice_id)}">${v.meilleure ? '⭐ ' : ''}${esc(v.nom)} — ${esc(v.description)}</option>`).join('');
+    `<option value="${esc(v.voice_id)}" ${v.voice_id === selected ? 'selected' : ''}>${v.meilleure ? '⭐ ' : ''}${esc(v.nom)} — ${esc(v.description)}</option>`).join('');
+}
+
+function rbVoicePicker(lang, cls, selected, label){
+  return `<span style="display:flex;gap:6px;align-items:center">${label ? `<span class="tiny" style="width:64px">${esc(label)}</span>` : ''}
+    <select class="f rb-voice ${cls}" data-lang="${lang}" style="max-width:300px">${rbVoiceOptions(lang, selected)}</select>
+    <button type="button" class="btn ghost small rb-play" data-lang="${lang}" title="Écouter un extrait (gratuit)">▶</button></span>`;
 }
 
 function rbPlaySample(btn, lang){
-  const id = btn.parentElement.querySelector('.rb-voice').value;
+  const id = btn.parentElement.querySelector('select.rb-voice').value;
   const same = rbAudio && rbAudio.dataset.key === `${id}_${lang}` && !rbAudio.paused;
   if (rbAudio){ rbAudio.pause(); document.querySelectorAll('.rb-play').forEach(b => b.textContent = '▶'); }
   if (same) return;
@@ -71,13 +79,12 @@ async function renderNewRoblox(){
       <div style="display:flex;flex-direction:column;gap:6px">${RB_STYLES.map(([k, n, d]) =>
         `<label class="tiny" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" class="rb-style" value="${k}" checked>
           <b>${esc(n)}</b> — ${esc(d)}</label>`).join('')}</div>
-      <label class="f" style="margin-top:12px">3. Les langues, la chaîne et la voix de chacune (▶ pour écouter, ⭐ la meilleure)</label>
+      <label class="f" style="margin-top:12px">3. Les langues, la chaîne et les voix de chacune (▶ pour écouter, ⭐ la meilleure) : joueur 1 = celui qui parle le plus (et le narrateur de l'histoire), joueur 2 = l'autre s'ils sont deux</label>
       <div style="display:flex;flex-direction:column;gap:6px">${RB_LANGS.map(([k, n]) =>
         `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="tiny" style="display:flex;gap:8px;align-items:center;cursor:pointer;width:110px">
           <input type="checkbox" class="rb-lang" value="${k}" checked> ${esc(n)}</label>
           <select class="f rb-ch" data-lang="${k}" style="max-width:240px">${chOptions()}</select>
-          <span style="display:flex;gap:6px;align-items:center"><select class="f rb-voice" data-lang="${k}" style="max-width:320px">${rbVoiceOptions(k)}</select>
-            <button type="button" class="btn ghost small rb-play" data-lang="${k}" title="Écouter un extrait (gratuit)">▶</button></span></div>`).join('')}</div>
+          <span style="display:flex;flex-direction:column;gap:4px">${rbVoicePicker(k, 'rb-v1', '', 'Joueur 1')}${rbVoicePicker(k, 'rb-v2', RB_SECOND[k], 'Joueur 2')}</span></div>`).join('')}</div>
       <label class="f" style="margin-top:12px">4. La voix du joueur</label>
       <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbVoix" value="remplacer" checked> <span><b>Remplacer sa voix</b> par la voix choisie (recommandé) : ses répliques relues avec ses émotions, les bruits du jeu gardés</span></label>
       <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbVoix" value="originale"> Garder sa voix d'origine</label>
@@ -94,7 +101,8 @@ async function renderNewRoblox(){
     const styles = [...stage.querySelectorAll('.rb-style:checked')].map(x => x.value);
     const cibles = [...stage.querySelectorAll('.rb-lang:checked')].map(x => ({ langue: x.value,
       channel: stage.querySelector(`.rb-ch[data-lang="${x.value}"]`).value,
-      voix: (stage.querySelector(`.rb-voice[data-lang="${x.value}"]`) || {}).value || null }));
+      voix: (stage.querySelector(`.rb-v1[data-lang="${x.value}"]`) || {}).value || null,
+      voix_2: (stage.querySelector(`.rb-v2[data-lang="${x.value}"]`) || {}).value || null }));
     const musique = stage.querySelector('input[name="rbMusic"]:checked').value;
     const voix_joueur = stage.querySelector('input[name="rbVoix"]:checked').value;
     btn.disabled = true; btn.innerHTML = spin('Création…');
@@ -107,6 +115,7 @@ async function renderNewRoblox(){
 
 async function loadRbProject(){
   clearTimeout(rbPoll);
+  if (!rbVoices) { try { rbVoices = await api('/api/roblox/voix'); } catch (e){ rbVoices = {}; } }
   const p = await api(`/api/roblox/${rbCurrent}`);
   const stage = document.getElementById('rbStage');
   const head = `${rbStepsHtml(p.status)}
@@ -165,18 +174,28 @@ function rbLinesHtml(p){
   const ids = Object.keys(p.repliques || {});
   if (!ids.length || !['plan_review', 'review', 'done'].includes(p.status)) return '';
   const fmt = t => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
-  return `<div class="fact" style="margin:16px 0 4px"><b>Ses répliques, relues par la voix choisie</b></div>
-    <div class="tiny" style="margin-bottom:8px">Sa voix est remplacée : la voix choisie lit ces phrases à sa place. Les mots entre crochets
-      sont les émotions jouées par la voix ([laughs] = rire, [shouts] = cri, [excited] = excité…) : on peut les garder, les enlever ou en ajouter.</div>` +
+  const who = q => `Joueur ${q}${(p.joueurs || {})[q] ? ` (${(p.joueurs || {})[q]})` : ''}`;
+  const players = Object.keys(p.joueurs || {}).sort();
+  const voices = p.status === 'done' || !players.length ? '' : `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">Les voix des joueurs</div>
+      <div class="meta" style="margin-left:0">${players.length} personne${players.length > 1 ? 's parlent' : ' parle'} dans ces moments. ▶ pour écouter ; un changement refait seulement les vidéos où ce joueur parle.</div></div></div>
+    <div class="chcard-body">${p.cibles.map(c => `<div class="rb-voices-box" data-lang="${c.langue}" style="border-top:1px solid var(--border-soft);padding:10px 0">
+      <div class="tiny"><b>${esc(c.langue.toUpperCase())}</b></div>
+      <div style="display:flex;flex-direction:column;gap:6px">${players.map(q => `<div class="rb-voice-row" data-joueur="${q}" style="display:flex;gap:8px;align-items:center">
+        <span class="tiny" style="width:150px">${esc(who(q))}</span>${rbVoicePicker(c.langue, 'rb-vj', ((c.voix_joueurs || {})[q] || {}).voix, '')}
+        <button class="btn secondary small rb-save-voice">Enregistrer</button></div>`).join('')}</div></div>`).join('')}</div></article>`;
+  return `<div class="fact" style="margin:16px 0 4px"><b>Leurs répliques, relues par les voix choisies</b></div>
+    <div class="tiny" style="margin-bottom:8px">Leurs voix sont remplacées : les voix choisies lisent ces phrases à leur place. Les mots entre crochets
+      sont les émotions jouées par la voix ([laughs] = rire, [shouts] = cri, [excited] = excité…) : on peut les garder, les enlever ou en ajouter.</div>` + voices +
     ids.map(mid => {
       const r = p.repliques[mid];
       return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${esc(p.moments[mid] || mid)}</div>
         <div class="meta" style="margin-left:0">${esc(r.styles.map(s => p.noms_styles[s]).join(' · '))}</div></div></div>
-        <div class="chcard-body">${!r.lignes.length ? '<div class="tiny">Il ne parle pas dans ce moment : seuls les bruits du jeu.</div>'
+        <div class="chcard-body">${!r.lignes.length ? '<div class="tiny">Personne ne parle dans ce moment : seuls les bruits du jeu.</div>'
         : p.cibles.map(c => `<div class="rb-lines-box" data-moment="${esc(mid)}" data-lang="${c.langue}" style="border-top:1px solid var(--border-soft);padding:10px 0">
           <div class="tiny"><b>${esc(c.langue.toUpperCase())}</b>${c.nom_voix ? ` · voix ${esc(c.nom_voix)}` : ''}</div>
           <div style="display:flex;flex-direction:column;gap:6px">${r.lignes.map(l =>
             `<div style="display:flex;gap:8px;align-items:center"><span class="tiny" style="width:38px">${fmt(l.a)}</span>
+              <span class="tiny" style="width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(who(l.qui || '1'))}">${esc(who(l.qui || '1'))}</span>
               <input class="f rb-line" value="${esc(l[c.langue] || '')}"></div>`).join('')}</div>
           <button class="btn secondary small rb-save-lines" style="margin-top:6px">Enregistrer</button></div>`).join('')}</div></article>`;
     }).join('');
@@ -223,6 +242,15 @@ function wireRbProject(p){
     btn.disabled = true;
     try { await api(`/api/roblox/${p.project_id}/textes`, { method: 'PUT', body: JSON.stringify({ style: box.dataset.style, langue: box.dataset.lang, edit }) });
       log('Textes enregistrés', 'success'); loadRbProject(); }
+    catch (e){ log(e.message, 'error'); btn.disabled = false; }
+  });
+  stage.querySelectorAll('.rb-play').forEach(b => b.onclick = () => rbPlaySample(b, b.dataset.lang));
+  stage.querySelectorAll('.rb-save-voice').forEach(btn => btn.onclick = async () => {
+    const row = btn.closest('.rb-voice-row'), box = btn.closest('.rb-voices-box');
+    btn.disabled = true;
+    try { await api(`/api/roblox/${p.project_id}/voix`, { method: 'PUT', body: JSON.stringify({ langue: box.dataset.lang,
+        joueur: row.dataset.joueur, voix: row.querySelector('select.rb-voice').value }) });
+      log('Voix enregistrée', 'success'); loadRbProject(); }
     catch (e){ log(e.message, 'error'); btn.disabled = false; }
   });
   stage.querySelectorAll('.rb-save-lines').forEach(btn => btn.onclick = async () => {

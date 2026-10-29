@@ -56,6 +56,7 @@ def fakes(project, monkeypatch):
             ([{"a": a + 3.0, "qui": "2", "nom": "", **{l: f"{l} melon" for l in langs}}] if "w600" in vocals else [])
     def track(lines, lang, voice_id, a, b, work, ref_db):
         calls["lues"].append((lang, voice_id, [l["texte"] for l in lines]))
+        calls["voix_par_ligne"].append((lang, [(l["texte"], l.get("voice")) for l in lines]))
         name = f"{work}/{lang}_{a}_{abs(hash(tuple(l['texte'] for l in lines)))}.wav"            # named after its text, as the real one
         return name, [{"a": l["a"], "b": l["a"] + 1, "texte": l["texte"]} for l in lines]
 
@@ -63,7 +64,7 @@ def fakes(project, monkeypatch):
         calls["passages"].append((src, reste, voices))
         open(out, "w").write("x")
         return out
-    calls.update(separe=[], repliques=[], lues=[], passages=[])
+    calls.update(separe=[], repliques=[], lues=[], passages=[], voix_par_ligne=[])
     monkeypatch.setattr(voix, "track", track)
     monkeypatch.setattr(voix, "passage_audio", passage_audio)
     monkeypatch.setattr(voix, "mean_db", lambda path, a=None, b=None: -20.0)
@@ -96,8 +97,11 @@ def test_each_language_gets_the_voice_chosen_and_the_players_voice_can_be_kept(p
     anatole = voix.catalogue("fr")[1]["voice_id"]
     t = [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x", "voice_id": anatole},
          {"langue": "en", "channel": "chanB", "profile": {}, "music_dir": "x"}]
+    t[1]["voix_2"] = voix.catalogue("en")[2]["voice_id"]
     p = rp.create("https://y", ["clip"], t, voix_joueur="originale")
     assert [x["voice_id"] for x in p["targets"]] == [anatole, voix.DEFAULTS["en"]] and p["voix_joueur"] == "originale"
+    assert p["targets"][0]["voix_joueurs"] == {"1": anatole, "2": voix.DEFAULTS["fr"]}      # Anatole taken: Donny for the 2nd
+    assert p["targets"][1]["voix_joueurs"] == {"1": voix.DEFAULTS["en"], "2": voix.catalogue("en")[2]["voice_id"]}
     with pytest.raises(rp.PipelineError, match="voix"):
         rp.create("https://y", ["clip"], [{**t[1], "voice_id": anatole}])          # a French voice for English
     with pytest.raises(rp.PipelineError, match="voix du joueur"):
@@ -162,6 +166,24 @@ def test_his_voice_is_read_by_the_chosen_one_in_every_short(fakes, project):
     rp.start_render(pid)
     rp.run_render(pid)
     assert len(fakes["passages"]) == made + 1                                     # only the French passage of that moment
+
+
+def test_each_player_is_read_by_his_own_voice_which_can_be_changed(fakes, project):
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    rp.start_render(pid)
+    rp.run_render(pid)
+    fr = dict(next(v for l, v in fakes["voix_par_ligne"] if l == "fr" and len(v) == 2))
+    assert fr == {"[laughs] fr 8.5": voix.default_for("fr", "1", {}), "fr melon": voix.default_for("fr", "2", {})}
+    lea = next(v["voice_id"] for v in voix.catalogue("fr") if v["nom"] == "Lea")
+    p = rp.set_voice(pid, "fr", "2", lea)
+    assert p["targets"][0]["voix_joueurs"]["2"] == lea
+    assert p["videos"]["devine_fr"]["a_refaire"] and not p["videos"]["clip_fr"].get("a_refaire")   # only where Melon speaks
+    assert not p["videos"]["devine_en"].get("a_refaire")
+    p = rp.set_voice(pid, "fr", "1", lea)
+    assert p["targets"][0]["voice_id"] == lea and p["videos"]["clip_fr"]["a_refaire"]           # the 1st also tells the story
+    with pytest.raises(rp.PipelineError, match="voix"):
+        rp.set_voice(pid, "en", "1", lea)                                                     # a French voice for English
 
 
 def test_his_voice_kept_leaves_the_sources_as_they_are(fakes, project):

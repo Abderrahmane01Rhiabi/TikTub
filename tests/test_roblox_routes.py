@@ -31,6 +31,10 @@ def test_a_project_through_the_api(client, project, fakes, monkeypatch):
     assert p["repliques"]["w0#0"]["lignes"][0]["fr"].startswith("[laughs]") and p["repliques"]["w0#0"]["styles"] == ["clip"]
     r = client.put(f"/api/roblox/{pid}/repliques", json={"moment": "w0#0", "langue": "fr", "lignes": ["Beurk !"]})
     assert r.status_code == 200 and r.json()["repliques"]["w0#0"]["lignes"][0]["fr"] == "Beurk !"
+    assert p["joueurs"] == {"1": "Sunny", "2": ""} and p["cibles"][0]["voix_joueurs"]["1"]["nom"] == "Anatole"
+    lucas = next(v["voice_id"] for v in client.get("/api/roblox/voix").json()["fr"] if v["nom"] == "Lucas")
+    r = client.put(f"/api/roblox/{pid}/voix", json={"langue": "fr", "joueur": "2", "voix": lucas})
+    assert r.status_code == 200 and r.json()["cibles"][0]["voix_joueurs"]["2"]["nom"] == "Lucas"
     r = client.put(f"/api/roblox/{pid}/textes", json={"style": "clip", "langue": "fr", "edit": {"titre": "Beurk"}})
     assert r.status_code == 200 and r.json()["plan"]["clip"]["titre"]["fr"] == "Beurk"
     p = client.post(f"/api/roblox/{pid}/render").json()

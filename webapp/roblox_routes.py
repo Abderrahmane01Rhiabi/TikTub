@@ -62,8 +62,13 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
     out["titre"] = (p.get("meta") or {}).get("titre") or ""
     out["chaine_source"] = (p.get("meta") or {}).get("chaine") or ""
     names = {(lang, v["voice_id"]): v["nom"] for lang in voix.CATALOGUE for v in voix.catalogue(lang)}
+    players = (p.get("voix") or {}).get("joueurs") or {}
+    out["joueurs"] = players
     out["cibles"] = [{"langue": t["langue"], "channel": t["channel"], "voix": t.get("voice_id"),
-                      "nom_voix": names.get((t["langue"], t.get("voice_id")))} for t in p["targets"]]
+                      "nom_voix": names.get((t["langue"], t.get("voice_id"))),
+                      "voix_joueurs": {q: {"voix": v, "nom": names.get((t["langue"], v))}
+                                       for q in sorted(set(players) | {"1"}) for v in [rp.player_voice(t, q)]}}
+                     for t in p["targets"]]
     out["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
     out["noms_styles"] = {k: v[0] for k, v in plan.STYLES.items()}
     if full:
@@ -82,6 +87,7 @@ class Cible(BaseModel):
     langue: str
     channel: str
     voix: Optional[str] = None
+    voix_2: Optional[str] = None
 
 
 class RobloxCreate(BaseModel):
@@ -99,7 +105,7 @@ def create_roblox(req: RobloxCreate):
     for c in req.cibles:
         _main().checked_channel(c.channel)
         targets.append({"langue": c.langue, "channel": c.channel, "profile": _main().channel_manager.get_channel_profile(c.channel),
-                        "music_dir": _main().channel_manager.get_assets_dirs(c.channel)["music"], "voice_id": c.voix})
+                        "music_dir": _main().channel_manager.get_assets_dirs(c.channel)["music"], "voice_id": c.voix, "voix_2": c.voix_2})
     p = _call(rp.create, req.url, req.styles, targets, req.musique, req.voix_joueur)
     _start(p["project_id"], "analysing")
     return _serialize(p)
@@ -157,6 +163,18 @@ class Repliques(BaseModel):
 def edit_roblox_lines(pid: str, req: Repliques):
     from roblox import pipeline as rp
     return _serialize(_call(rp.set_lines, pid, req.moment, req.langue, req.lignes))
+
+
+class VoixJoueur(BaseModel):
+    langue: str
+    joueur: str
+    voix: str
+
+
+@router.put("/api/roblox/{pid}/voix")
+def edit_roblox_voice(pid: str, req: VoixJoueur):
+    from roblox import pipeline as rp
+    return _serialize(_call(rp.set_voice, pid, req.langue, req.joueur, req.voix))
 
 
 @router.post("/api/roblox/{pid}/render")

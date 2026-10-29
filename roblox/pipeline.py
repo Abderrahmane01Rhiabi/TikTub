@@ -87,7 +87,11 @@ def create(url: str, styles: List[str], targets: List[Dict], music: str = "origi
     for t in targets:
         s = settings.channel_settings(t.get("profile"))
         track = os.path.join(t["music_dir"], s["music_file"]) if s.get("music_file") and t.get("music_dir") else None
-        tg.append({"langue": t["langue"], "channel": t["channel"], "voice_id": voice_for(t["langue"], s, t.get("voice_id")),
+        first = voice_for(t["langue"], s, t.get("voice_id"))
+        players = {"1": first}
+        if voix.CATALOGUE.get(t["langue"]):       # the 2nd player's voice, chosen or the default one
+            players["2"] = voice_for(t["langue"], s, t.get("voix_2")) if t.get("voix_2") else voix.default_for(t["langue"], "2", players)
+        tg.append({"langue": t["langue"], "channel": t["channel"], "voice_id": first, "voix_joueurs": players,
                    "music_path": track if track and os.path.exists(track) else None})
     if music == "chaine" and not all(t["music_path"] for t in tg):
         raise PipelineError("Pour remplacer la musique, choisis d'abord une musique pour chaque chaîne (Réglages → Voix).")
@@ -215,6 +219,38 @@ def set_texts(pid: str, style: str, lang: str, edit: Dict) -> Dict:
     return save(p)
 
 
+def player_voice(t: Dict, qui: str) -> Optional[str]:
+    """The voice reading player qui in t's language (the 1st is also the told story's narrator)."""
+    players = t.get("voix_joueurs") or {"1": t.get("voice_id")}
+    if qui not in players:
+        players[qui] = voix.default_for(t["langue"], qui, players) or t.get("voice_id")
+    return players[qui]
+
+
+def set_voice(pid: str, lang: str, qui: str, voice_id: str) -> Dict:
+    """Another voice for one player in one language; the unsent Shorts where he speaks are made again."""
+    p = load(pid)
+    _expect(p, "plan_review", "review")
+    t = next((x for x in p["targets"] if x["langue"] == lang), None)
+    if not t:
+        raise PipelineError("Langue absente de ce projet.")
+    if not voix.known(lang, voice_id):
+        raise PipelineError("Cette voix n'est pas dans la liste des voix de cette langue.")
+    t.setdefault("voix_joueurs", {"1": t.get("voice_id")})[qui] = voice_id
+    if qui == "1":
+        t["voice_id"] = voice_id
+    uses = styles_of_moments(p["plan"])
+    styles = {s for mid, r in ((p.get("voix") or {}).get("repliques") or {}).items()
+              if any(l.get("qui", "1") == qui for l in r["lignes"]) for s in uses.get(mid, [])}
+    if qui == "1" and "histoire" in p["plan"]:
+        styles.add("histoire")
+    for style in styles:
+        v = p["videos"].get(f"{style}_{lang}")
+        if v and not v.get("video_id"):
+            v["a_refaire"] = True
+    return save(p)
+
+
 def set_lines(pid: str, mid: str, lang: str, texts: List[str]) -> Dict:
     """His lines in one language for one moment, corrected (one text per line, in order; an empty one is kept as
     it was). The unsent Shorts showing that moment in that language are made again."""
@@ -259,7 +295,7 @@ def _new_sound(p: Dict, t: Dict) -> tuple:
     captions = {}
     for mid, r in his["repliques"].items():
         m = cat[mid]
-        lines = [{"a": l["a"], "texte": l[lang]} for l in r["lignes"] if l.get(lang)]
+        lines = [{"a": l["a"], "texte": l[lang], "voice": player_voice(t, l.get("qui", "1"))} for l in r["lignes"] if l.get(lang)]
         captions[mid] = []
         if lines:
             ref = voix.mean_db(his["fichiers"][m["fichier"]]["voix"], r["a"], r["b"])

@@ -53,6 +53,8 @@ CATALOGUE = {
            ("bxiObU1YDrf7lrFAyV99", "Ashley", "femme jeune, énergique")],
 }
 DEFAULTS = {lang: voices[0][0] for lang, voices in CATALOGUE.items()}
+# the 2nd player's voice, as different as possible from the 1st: Anatole after Donny, Lutz (who laughs a lot) after Tyler
+SECOND = {"fr": "Jrq4GqCKqYpigdQsZRkP", "en": "9yzdeviXkFddZ4Oz8Mok"}
 
 
 def catalogue(lang: str) -> List[Dict]:
@@ -62,6 +64,17 @@ def catalogue(lang: str) -> List[Dict]:
 
 def known(lang: str, voice_id: str) -> bool:
     return any(v == voice_id for v, _, _ in CATALOGUE.get(lang, []))
+
+
+def default_for(lang: str, qui: str, taken: Dict[str, str]) -> Optional[str]:
+    """The voice given to player qui ("1", "2"…) when none was chosen: the best one for the 1st, SECOND for the 2nd,
+    then the next ones of the catalogue — never one another player already has."""
+    used = {v for k, v in taken.items() if k != qui}
+    wanted = {"1": [DEFAULTS.get(lang)], "2": [SECOND.get(lang)]}.get(qui, [])
+    for v in wanted + [v for v, _, _ in CATALOGUE.get(lang, [])]:
+        if v and v not in used:
+            return v
+    return DEFAULTS.get(lang)
 
 
 def lab_sample(voice_id: str, lang: str) -> str:
@@ -228,13 +241,15 @@ def _chunks(text: str, a: float, b: float) -> List[Dict]:
 
 
 def track(lines: List[Dict], lang: str, voice_id: str, a: float, b: float, work: str, ref_db: float):
-    """His lines [{"a": seconds of the passage, "texte"}] read by the voice, from a (the moment's start) to b — each
+    """The lines [{"a": seconds of the passage, "texte", "voice" (the player's, else voice_id)}] read, from a (the
+    moment's start) to b — each
     at its place, never over the one before, at his voice's level. Returns (wav, the captions in passage seconds)."""
     import hashlib
     placed, end, spans = [], a, []
     for k, l in enumerate(lines):
-        mp3 = speak(l["texte"], voice_id, lang, os.path.join(
-            work, f"{voice_id[:8]}_{lang}_{hashlib.sha1(l['texte'].encode()).hexdigest()[:12]}.mp3"))
+        who = l.get("voice") or voice_id
+        mp3 = speak(l["texte"], who, lang, os.path.join(
+            work, f"{who[:8]}_{lang}_{hashlib.sha1(l['texte'].encode()).hexdigest()[:12]}.mp3"))
         start = max(l["a"], end)
         slot = (lines[k + 1]["a"] if k + 1 < len(lines) else b) - start
         d = duration(mp3)

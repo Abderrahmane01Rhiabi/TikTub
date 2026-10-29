@@ -63,3 +63,13 @@ def test_the_ai_writes_everyones_lines_at_their_place_and_says_who_speaks():
                      {"a": 24.0, "qui": "2", "nom": "Melon", "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
                      {"a": 25.0, "qui": "4", "nom": "", "fr": "Un de trop", "en": "One too many"}]       # 4 voices at most
     assert voix.sans_balises("[laughs] Trop [shouts] fort !") == "Trop fort !"
+
+
+def test_each_player_gets_his_own_voice_by_default():
+    fr = {v["nom"]: v["voice_id"] for v in voix.catalogue("fr")}
+    en = {v["nom"]: v["voice_id"] for v in voix.catalogue("en")}
+    assert voix.default_for("fr", "1", {}) == fr["Donny"] and voix.default_for("fr", "2", {}) == fr["Anatole"]
+    assert voix.default_for("en", "1", {}) == en["Tyler"] and voix.default_for("en", "2", {}) == en["Lutz"]
+    third = voix.default_for("fr", "3", {"1": fr["Donny"], "2": fr["Anatole"]})
+    assert third not in (fr["Donny"], fr["Anatole"]) and voix.known("fr", third)
+    assert voix.default_for("fr", "2", {"1": fr["Anatole"]}) not in (fr["Anatole"],)          # never the same as another
