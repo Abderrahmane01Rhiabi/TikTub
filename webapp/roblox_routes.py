@@ -101,6 +101,24 @@ def list_roblox():
     return [_serialize(p, full=False) for p in db.list_roblox()]
 
 
+@router.get("/api/roblox/voix")                  # before /{pid}: "voix" is not a project
+def roblox_voices():
+    from roblox import voix
+    return {lang: voix.catalogue(lang) for lang in voix.CATALOGUE}
+
+
+@router.get("/api/roblox/voix/{voice_id}/echantillon")
+def roblox_voice_sample(voice_id: str, langue: str = "fr"):
+    from roblox import voix
+    try:
+        path = voix.sample(voice_id, langue)
+    except Exception:
+        path = None
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Pas d'extrait pour cette voix.")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
 @router.get("/api/roblox/{pid}")
 def get_roblox(pid: str):
     from roblox import pipeline as rp
