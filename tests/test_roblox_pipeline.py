@@ -161,11 +161,13 @@ def test_his_voice_is_read_by_the_chosen_one_in_every_short(fakes, project):
     assert ctx.lines["w0#0"][0]["texte"] == "[laughs] fr 8.5" and ctx.son_refait and ctx.voice_model == voix.MODEL
     reste = [r for _, r, _ in fakes["passages"]]
     assert all(r and r.endswith(".reste.wav") for r in reste)                     # the game's sounds kept
+    copies = [o for o in os.listdir(os.path.join(rp.project_dir(pid), "voix")) if o.endswith(".mp4")]
+    assert copies == []                                    # the passages remade for the render are not kept (~35 MB each)
     made = len(fakes["passages"])
     rp.set_lines(pid, "w0#0", "fr", ["Beurk !"])
     rp.start_render(pid)
     rp.run_render(pid)
-    assert len(fakes["passages"]) == made + 1                                     # only the French passage of that moment
+    assert len(fakes["passages"]) == made + 1                                     # only the passage of the Short made again
 
 
 def test_each_player_is_read_by_his_own_voice_which_can_be_changed(fakes, project):

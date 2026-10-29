@@ -281,9 +281,10 @@ def start_render(pid: str) -> Dict:
     return save(p)
 
 
-def _new_sound(p: Dict, t: Dict) -> tuple:
-    """His voice replaced, in t's language: each passage with its new sound (the game's sounds and his lines read
-    by t's voice) and those lines' captions. -> (catalogue with the new passages, {moment: captions})."""
+def _new_sound(p: Dict, t: Dict, styles: List[str]) -> tuple:
+    """Their voices replaced, in t's language: each passage the styles show with its new sound (the game's sounds and
+    the lines read by the players' voices) and those lines' captions. -> (catalogue with the new passages,
+    {moment: captions}). The passages are remade for each render and removed after it (~35 MB each)."""
     import hashlib
     import json
     cat, his = _catalogue(p), p.get("voix")
@@ -301,8 +302,11 @@ def _new_sound(p: Dict, t: Dict) -> tuple:
             ref = voix.mean_db(his["fichiers"][m["fichier"]]["voix"], r["a"], r["b"])
             path, captions[mid] = voix.track(lines, lang, t["voice_id"], r["a"], r["b"], os.path.join(work, "lu"), ref)
             tracks.setdefault(m["fichier"], []).append((path, r["a"]))
+    shown = {cat[mid]["fichier"] for mid, sts in styles_of_moments(p["plan"]).items() if set(sts) & set(styles)}
     files = {}
     for f, parts in his["fichiers"].items():
+        if f not in shown:
+            continue
         reste = None if p["musique"] == "chaine" else parts["reste"]
         key = hashlib.sha1(json.dumps([reste, tracks.get(f, [])]).encode()).hexdigest()[:10]
         out = os.path.join(work, f"{os.path.splitext(os.path.basename(f))[0]}_{lang}_{key}.mp4")
@@ -323,8 +327,8 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
         for k, (style, t) in enumerate(todo):
             lang, key = t["langue"], f"{style}_{t['langue']}"
             if lang not in sound:
-                report(f"sa voix lue par la voix choisie ({lang})", 0.05 + 0.9 * k / max(1, len(todo)))
-                sound[lang] = _new_sound(p, t)
+                report(f"leurs voix lues par les voix choisies ({lang})", 0.05 + 0.9 * k / max(1, len(todo)))
+                sound[lang] = _new_sound(p, t, [s for s, x in todo if x["langue"] == lang])
             moments_, captions = sound[lang]
             report(f"{plan.STYLES[style][0]} ({lang}) : montage", 0.05 + 0.9 * (k + 0.3) / max(1, len(todo)))
             cache = p["traductions"].setdefault(lang, {})
@@ -350,9 +354,18 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
         p = load(pid)
         p.update(status="review", error=None, failed_step=None)
         save(p)
+        _drop_passages(pid)
     except Exception as e:
         fail(pid, "rendering", e)
     report("terminé", 1.0)
+
+
+def _drop_passages(pid: str) -> None:
+    """The passages remade with their new sound are not kept: a render remakes them in seconds."""
+    work = os.path.join(project_dir(pid), "voix")
+    for name in os.listdir(work) if os.path.isdir(work) else []:
+        if name.endswith(".mp4"):
+            os.remove(os.path.join(work, name))
 
 
 def _thumbnail(video: str) -> Optional[str]:
