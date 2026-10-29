@@ -8,7 +8,7 @@ import pytest
 
 import db
 from roblox import pipeline as rp
-from roblox import plan, render, sources, moments
+from roblox import plan, render, sources, moments, voix
 
 T = {"fr": "Bonjour", "en": "Hello"}
 PUB = {"fr": {"titre": "Le pire petit déjeuner 🤢", "description": "Il goûte.", "tags": ["roblox", "brookhaven"]},
@@ -65,10 +65,25 @@ def test_a_project_needs_a_link_a_style_and_one_channel_per_language(project):
         rp.create("https://y", ["clip"], ok, "chaine")                     # no track chosen for the channel
 
 
+def test_each_language_gets_the_voice_chosen_and_the_players_voice_can_be_kept(project):
+    project.add_channel("chanA")
+    project.add_channel("chanB")
+    anatole = voix.catalogue("fr")[1]["voice_id"]
+    t = [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x", "voice_id": anatole},
+         {"langue": "en", "channel": "chanB", "profile": {}, "music_dir": "x"}]
+    p = rp.create("https://y", ["clip"], t, voix_joueur="originale")
+    assert [x["voice_id"] for x in p["targets"]] == [anatole, voix.DEFAULTS["en"]] and p["voix_joueur"] == "originale"
+    with pytest.raises(rp.PipelineError, match="voix"):
+        rp.create("https://y", ["clip"], [{**t[1], "voice_id": anatole}])          # a French voice for English
+    with pytest.raises(rp.PipelineError, match="voix du joueur"):
+        rp.create("https://y", ["clip"], t, voix_joueur="muette")
+
+
 def test_the_analysis_finds_the_moments_and_writes_the_texts(fakes, project):
     p = new(project)
     assert p["status"] == "analysing" and p["styles"] == ["clip", "pov", "devine"]
-    assert {t["langue"]: t["voice_id"] for t in p["targets"]} == rp.DEFAULT_VOICES      # no voice set: the lab's ones
+    assert {t["langue"]: t["voice_id"] for t in p["targets"]} == {"fr": voix.DEFAULTS["fr"], "en": voix.DEFAULTS["en"]}
+    assert p["voix_joueur"] == "remplacer"                                     # no choice made: Donny, Tyler, voice replaced
     rp.run_analysis(p["project_id"])
     p = rp.load(p["project_id"])
     assert p["status"] == "plan_review" and set(p["plan"]) == {"clip", "devine"}
@@ -92,7 +107,7 @@ def test_texts_corrected_then_every_short_made_then_sent_to_publication(fakes, p
     rp.run_render(pid)
     p = rp.load(pid)
     assert p["status"] == "review" and sorted(p["videos"]) == ["clip_en", "clip_fr", "devine_en", "devine_fr"]
-    assert ("clip", "fr", rp.DEFAULT_VOICES["fr"], None, {"fr": "Le pire p'tit déj", "en": "Hello"}) in fakes["render"]
+    assert ("clip", "fr", voix.DEFAULTS["fr"], None, {"fr": "Le pire p'tit déj", "en": "Hello"}) in fakes["render"]
     # a correction after the render: only that Short is made again
     rp.set_texts(pid, "devine", "en", {"question": "What happens next?"})
     rp.start_render(pid)

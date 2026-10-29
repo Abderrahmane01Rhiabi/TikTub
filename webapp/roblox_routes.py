@@ -4,7 +4,7 @@ Publication (roblox/pipeline.py). The analysis and the render run in the backgro
 import os
 import sys
 import threading
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
@@ -55,10 +55,14 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
     import progress
     from roblox import plan
     job = progress.get(_job(p["project_id"])) or {}
+    from roblox import voix
     out = {k: p.get(k) for k in ("project_id", "status", "url", "styles", "musique", "error", "failed_step", "created_at", "absents")}
+    out["voix_joueur"] = p.get("voix_joueur") or "originale"          # a project made before the choice kept it
     out["titre"] = (p.get("meta") or {}).get("titre") or ""
     out["chaine_source"] = (p.get("meta") or {}).get("chaine") or ""
-    out["cibles"] = [{"langue": t["langue"], "channel": t["channel"]} for t in p["targets"]]
+    names = {(lang, v["voice_id"]): v["nom"] for lang in voix.CATALOGUE for v in voix.catalogue(lang)}
+    out["cibles"] = [{"langue": t["langue"], "channel": t["channel"], "voix": t.get("voice_id"),
+                      "nom_voix": names.get((t["langue"], t.get("voice_id")))} for t in p["targets"]]
     out["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
     out["noms_styles"] = {k: v[0] for k, v in plan.STYLES.items()}
     if full:
@@ -73,6 +77,7 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
 class Cible(BaseModel):
     langue: str
     channel: str
+    voix: Optional[str] = None
 
 
 class RobloxCreate(BaseModel):
@@ -80,6 +85,7 @@ class RobloxCreate(BaseModel):
     styles: List[str]
     cibles: List[Cible]
     musique: str = "original"
+    voix_joueur: str = "remplacer"
 
 
 @router.post("/api/roblox")
@@ -89,8 +95,8 @@ def create_roblox(req: RobloxCreate):
     for c in req.cibles:
         _main().checked_channel(c.channel)
         targets.append({"langue": c.langue, "channel": c.channel, "profile": _main().channel_manager.get_channel_profile(c.channel),
-                        "music_dir": _main().channel_manager.get_assets_dirs(c.channel)["music"]})
-    p = _call(rp.create, req.url, req.styles, targets, req.musique)
+                        "music_dir": _main().channel_manager.get_assets_dirs(c.channel)["music"], "voice_id": c.voix})
+    p = _call(rp.create, req.url, req.styles, targets, req.musique, req.voix_joueur)
     _start(p["project_id"], "analysing")
     return _serialize(p)
 

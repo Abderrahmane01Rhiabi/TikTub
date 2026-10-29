@@ -18,12 +18,14 @@ def test_a_project_through_the_api(client, project, fakes, monkeypatch):
     project.add_channel("chanA")
     project.add_channel("chanB")
     body = {"url": "https://www.youtube.com/watch?v=NvGUWTH2U5Q", "styles": ["clip", "devine"],
-            "cibles": [{"langue": "fr", "channel": "chanA"}, {"langue": "en", "channel": "chanB"}]}
+            "cibles": [{"langue": "fr", "channel": "chanA", "voix": "Jrq4GqCKqYpigdQsZRkP"}, {"langue": "en", "channel": "chanB"}]}
     r = client.post("/api/roblox", json=body)
     assert r.status_code == 200
     pid = r.json()["project_id"]
     p = client.get(f"/api/roblox/{pid}").json()
     assert p["status"] == "plan_review" and p["titre"] == "FUNNY MOMENTS" and p["noms_styles"]["devine"] == "Devine la suite"
+    assert [(c["voix"], c["nom_voix"]) for c in p["cibles"]] == [("Jrq4GqCKqYpigdQsZRkP", "Anatole"), ("SA7eD52NRr8WAehitVt1", "Tyler")]
+    assert p["voix_joueur"] == "remplacer"
     assert p["moments"] == {"w0#0": "r", "w600#0": "r"}
     assert [x["project_id"] for x in client.get("/api/roblox").json()] == [pid]
     r = client.put(f"/api/roblox/{pid}/textes", json={"style": "clip", "langue": "fr", "edit": {"titre": "Beurk"}})

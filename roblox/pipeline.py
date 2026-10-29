@@ -20,13 +20,12 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 import db
-from roblox import moments, plan, render, sources
+from roblox import moments, plan, render, sources, voix
 
 Report = Callable[[str, float], None]
 LANGS = ("fr", "en", "ar", "es")
 MUSIC = ("original", "chaine")              # keep the original sound, or a track of the channel instead
-# measured in the lab (etude_roblox/montage): Kael for French, Liam (ElevenLabs default voices) for English
-DEFAULT_VOICES = {"fr": "yG4Uc56cLYQyZFnWaYv2", "en": "TX3LPaxmHKxFdv7VOQHJ"}
+PLAYER = ("remplacer", "originale")         # the player's voice replaced by the chosen one (etude_roblox/voix), or kept
 
 
 class PipelineError(RuntimeError):
@@ -59,16 +58,17 @@ def _expect(p: Dict, *statuses: str) -> None:
         raise PipelineError("Ce projet n'est pas à cette étape (" + p["status"] + ").")
 
 
-def voice_for(lang: str, channel_settings: Dict) -> Optional[str]:
-    """The channel's own voice when it speaks this language, else the voice measured for it in the lab."""
-    v = channel_settings.get("voice_id")
-    if v and (db.get_voice(v) or {}).get("language", lang).split("-")[0] == lang:
-        return v
-    return DEFAULT_VOICES.get(lang) or v
+def voice_for(lang: str, channel_settings: Dict, chosen: Optional[str] = None) -> Optional[str]:
+    """The voice chosen in the catalogue, else its best one; a language without a catalogue: the channel's voice."""
+    if chosen:
+        if not voix.known(lang, chosen):
+            raise PipelineError("Cette voix n'est pas dans la liste des voix de cette langue.")
+        return chosen
+    return voix.DEFAULTS.get(lang) or channel_settings.get("voice_id")
 
 
-def create(url: str, styles: List[str], targets: List[Dict], music: str = "original") -> Dict:
-    """targets: [{"langue", "channel", "profile", "music_dir"}] — one channel per language."""
+def create(url: str, styles: List[str], targets: List[Dict], music: str = "original", voix_joueur: str = "remplacer") -> Dict:
+    """targets: [{"langue", "channel", "profile", "music_dir", "voice_id" (optional)}] — one channel per language."""
     from adaptation import settings
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
@@ -80,17 +80,19 @@ def create(url: str, styles: List[str], targets: List[Dict], music: str = "origi
         raise PipelineError("Choisis une chaîne par langue (français, anglais…).")
     if music not in MUSIC:
         raise PipelineError("Musique inconnue.")
+    if voix_joueur not in PLAYER:
+        raise PipelineError("Choix inconnu pour la voix du joueur.")
     tg = []
     for t in targets:
         s = settings.channel_settings(t.get("profile"))
         track = os.path.join(t["music_dir"], s["music_file"]) if s.get("music_file") and t.get("music_dir") else None
-        tg.append({"langue": t["langue"], "channel": t["channel"], "voice_id": voice_for(t["langue"], s),
+        tg.append({"langue": t["langue"], "channel": t["channel"], "voice_id": voice_for(t["langue"], s, t.get("voice_id")),
                    "music_path": track if track and os.path.exists(track) else None})
     if music == "chaine" and not all(t["music_path"] for t in tg):
         raise PipelineError("Pour remplacer la musique, choisis d'abord une musique pour chaque chaîne (Réglages → Voix).")
     pid = "rb_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]
     return save({"project_id": pid, "status": "analysing", "url": url, "styles": styles, "targets": tg, "musique": music,
-                 "meta": None, "catalogue": [], "plan": {}, "absents": [], "traductions": {}, "videos": {}, "error": None})
+                 "voix_joueur": voix_joueur, "meta": None, "catalogue": [], "plan": {}, "absents": [], "traductions": {}, "videos": {}, "error": None})
 
 
 def _catalogue(p: Dict) -> Dict[str, Dict]:

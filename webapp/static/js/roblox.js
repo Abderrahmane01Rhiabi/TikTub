@@ -1,6 +1,6 @@
 // ---------- Montage Roblox : one long Roblox video → several Shorts ----------
 
-let rbCurrent = null, rbPoll = null;
+let rbCurrent = null, rbPoll = null, rbVoices = null, rbAudio = null;
 const RB_BUSY = ['analysing', 'rendering'];
 const RB_STATUS = { analysing: 'analyse…', plan_review: 'textes à relire', rendering: 'montage…', review: 'vidéos à regarder',
   done: 'terminé', error: 'erreur' };
@@ -42,8 +42,27 @@ function chOptions(){
   return channels.map(c => `<option value="${esc(c.name)}">${esc(c.display_name || c.name)}</option>`).join('');
 }
 
-function renderNewRoblox(){
+function rbVoiceOptions(lang){
+  return ((rbVoices || {})[lang] || []).map(v =>
+    `<option value="${esc(v.voice_id)}">${v.meilleure ? '⭐ ' : ''}${esc(v.nom)} — ${esc(v.description)}</option>`).join('');
+}
+
+function rbPlaySample(btn, lang){
+  const id = btn.parentElement.querySelector('.rb-voice').value;
+  const same = rbAudio && rbAudio.dataset.key === `${id}_${lang}` && !rbAudio.paused;
+  if (rbAudio){ rbAudio.pause(); document.querySelectorAll('.rb-play').forEach(b => b.textContent = '▶'); }
+  if (same) return;
+  rbAudio = new Audio(`/api/roblox/voix/${encodeURIComponent(id)}/echantillon?langue=${lang}`);
+  rbAudio.dataset.key = `${id}_${lang}`;
+  rbAudio.onended = () => { btn.textContent = '▶'; };
+  rbAudio.onerror = () => { btn.textContent = '▶'; log('Pas d\'extrait pour cette voix.', 'error'); };
+  btn.textContent = '⏸';
+  rbAudio.play().catch(() => { btn.textContent = '▶'; });
+}
+
+async function renderNewRoblox(){
   const stage = document.getElementById('rbStage');
+  if (!rbVoices) { try { rbVoices = await api('/api/roblox/voix'); } catch (e){ rbVoices = {}; } }
   stage.innerHTML = `${rbStepsHtml('new')}
     <article class="chcard"><div class="chcard-body">
       <label class="f">1. La vidéo Roblox longue (YouTube : une compilation, un live, un let's play…)</label>
@@ -52,27 +71,35 @@ function renderNewRoblox(){
       <div style="display:flex;flex-direction:column;gap:6px">${RB_STYLES.map(([k, n, d]) =>
         `<label class="tiny" style="display:flex;gap:8px;align-items:center;cursor:pointer"><input type="checkbox" class="rb-style" value="${k}" checked>
           <b>${esc(n)}</b> — ${esc(d)}</label>`).join('')}</div>
-      <label class="f" style="margin-top:12px">3. Les langues, et la chaîne de chacune</label>
+      <label class="f" style="margin-top:12px">3. Les langues, la chaîne et la voix de chacune (▶ pour écouter, ⭐ la meilleure)</label>
       <div style="display:flex;flex-direction:column;gap:6px">${RB_LANGS.map(([k, n]) =>
         `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap"><label class="tiny" style="display:flex;gap:8px;align-items:center;cursor:pointer;width:110px">
           <input type="checkbox" class="rb-lang" value="${k}" checked> ${esc(n)}</label>
-          <select class="f rb-ch" data-lang="${k}" style="max-width:280px">${chOptions()}</select></div>`).join('')}</div>
-      <label class="f" style="margin-top:12px">4. Le son</label>
-      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbMusic" value="original" checked> Garder le son d'origine (voix, bruitages et musique de la vidéo)</label>
-      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbMusic" value="chaine"> Remplacer par la musique de la chaîne (Réglages → Voix) : le son d'origine est coupé</label>
+          <select class="f rb-ch" data-lang="${k}" style="max-width:240px">${chOptions()}</select>
+          <span style="display:flex;gap:6px;align-items:center"><select class="f rb-voice" data-lang="${k}" style="max-width:320px">${rbVoiceOptions(k)}</select>
+            <button type="button" class="btn ghost small rb-play" data-lang="${k}" title="Écouter un extrait (gratuit)">▶</button></span></div>`).join('')}</div>
+      <label class="f" style="margin-top:12px">4. La voix du joueur</label>
+      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbVoix" value="remplacer" checked> <span><b>Remplacer sa voix</b> par la voix choisie (recommandé) : ses répliques relues avec ses émotions, les bruits du jeu gardés</span></label>
+      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbVoix" value="originale"> Garder sa voix d'origine</label>
+      <label class="f" style="margin-top:12px">5. La musique</label>
+      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbMusic" value="original" checked> Garder les bruits et la musique de la vidéo</label>
+      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbMusic" value="chaine"> Remplacer par la musique de la chaîne (Réglages → Voix) : les bruits du jeu sont coupés</label>
     </div>
     <div class="chcard-foot"><span class="note">L'analyse prend quelques minutes : seuls les passages les plus revus sont téléchargés, jamais toute la vidéo.</span>
       <button class="btn primary" id="rbGo" data-icon="sparkle">Analyser</button></div></article>`;
   hydrateIcons(stage);
+  stage.querySelectorAll('.rb-play').forEach(b => b.onclick = () => rbPlaySample(b, b.dataset.lang));
   document.getElementById('rbGo').onclick = async ev => {
     const btn = ev.currentTarget;
     const styles = [...stage.querySelectorAll('.rb-style:checked')].map(x => x.value);
     const cibles = [...stage.querySelectorAll('.rb-lang:checked')].map(x => ({ langue: x.value,
-      channel: stage.querySelector(`.rb-ch[data-lang="${x.value}"]`).value }));
+      channel: stage.querySelector(`.rb-ch[data-lang="${x.value}"]`).value,
+      voix: (stage.querySelector(`.rb-voice[data-lang="${x.value}"]`) || {}).value || null }));
     const musique = stage.querySelector('input[name="rbMusic"]:checked').value;
+    const voix_joueur = stage.querySelector('input[name="rbVoix"]:checked').value;
     btn.disabled = true; btn.innerHTML = spin('Création…');
     try {
-      const p = await api('/api/roblox', { method: 'POST', body: JSON.stringify({ url: document.getElementById('rbUrl').value, styles, cibles, musique }) });
+      const p = await api('/api/roblox', { method: 'POST', body: JSON.stringify({ url: document.getElementById('rbUrl').value, styles, cibles, musique, voix_joueur }) });
       rbCurrent = p.project_id; loadRobloxList();
     } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.innerHTML = 'Analyser'; }
   };
@@ -123,7 +150,7 @@ function rbTextsHtml(p){
         const list = s === 'histoire' ? st.passages.map((x, i) => rbField(`Phrase ${i + 1}`, `passages.${i}`, x.textes[L], true)).join('')
           : s === 'top3' ? st.rangs.map((x, i) => rbField(`#${x.rang}`, `labels.${i}`, x.label[L])).join('') : '';
         return `<div class="rb-lang-box" data-style="${s}" data-lang="${L}" style="border-top:1px solid var(--border-soft);padding:10px 0">
-          <div class="tiny"><b>${esc(L.toUpperCase())}</b> · ${esc((channels.find(x => x.name === c.channel) || {}).display_name || c.channel)}${sent(`${s}_${L}`) ? ' · envoyée ✓' : ''}</div>
+          <div class="tiny"><b>${esc(L.toUpperCase())}</b> · ${esc((channels.find(x => x.name === c.channel) || {}).display_name || c.channel)}${c.nom_voix ? ` · voix ${esc(c.nom_voix)}` : ''}${sent(`${s}_${L}`) ? ' · envoyée ✓' : ''}</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">${main}${list}</div>
           <div style="display:flex;gap:10px;flex-wrap:wrap">${rbField('Titre YouTube', 'pub.titre', pub.titre)}${rbField('Tags (séparés par des virgules)', 'pub.tags', (pub.tags || []).join(', '))}
             ${rbField('Description', 'pub.description', pub.description, true)}</div>
