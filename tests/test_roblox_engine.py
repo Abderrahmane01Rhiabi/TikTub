@@ -102,7 +102,8 @@ def test_each_style_renders_a_vertical_short(source, style, p, expected):
     w, h = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0", out],
                           capture_output=True, text=True).stdout.strip().split(",")
     assert (w, h) == ("1080", "1920")
-    ass = open(out[:-4] + ".ass", encoding="utf-8").read()
+    assert not (d / f"{style}.ass").exists()                                    # VLC would show it over the burnt-in text
+    ass = open(str(d / "sous_titres" / f"{style}.ass"), encoding="utf-8").read()
     if style == "clip":
         assert "[fr] Let's eat" in ass and "Bonjour" in ass                       # the line said, translated
     if style == "devine":
@@ -124,3 +125,59 @@ def test_two_lines_of_dialogue_never_show_at_once():
     words = [(w, 10 + 0.2 * k, 10 + 0.2 * k + 0.18) for k, w in enumerate("so hey Barry you have not no well gotta do it now".split())]
     lines = render.dialogue_lines(words, 0, 100)                     # a player who talks without a pause
     assert len(lines) >= 2 and all(a["b"] <= b["a"] for a, b in zip(lines, lines[1:]))
+
+
+# ---- his voice replaced (roblox/voix.py, the render side)
+
+def mean_volume(path):
+    from roblox import voix
+    return voix.mean_db(path)
+
+
+def fake_speak(text, voice_id, lang, out):
+    secs = 0.4 * len(text.split())
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"sine=frequency=300:duration={secs}", "-ac", "1", out], check=True)
+    return out
+
+
+def test_his_lines_are_read_at_their_place_and_shown_one_line_at_a_time(tmp_path, monkeypatch):
+    from roblox import voix
+    monkeypatch.setattr(voix, "speak", fake_speak)
+    lines = [{"a": 11.0, "texte": "[laughs] un deux trois quatre cinq six sept"}, {"a": 12.0, "texte": "huit neuf"}]
+    path, spans = voix.track(lines, "fr", "v", 10.0, 20.0, str(tmp_path), ref_db=-20.0)
+    assert abs(duration(path) - 10.0) < 0.2                                     # the moment's length, from its start
+    assert [x["texte"] for x in spans] == ["un deux trois quatre cinq", "six sept", "huit neuf"]   # tags never shown
+    assert spans[0]["a"] == 11.0 and all(x["b"] <= y["a"] + 1e-6 for x, y in zip(spans, spans[1:]))
+    assert spans[2]["a"] >= spans[1]["b"] - 1e-6                               # the 2nd waits for the 1st (sped up 1.2x at most)
+    assert abs(mean_volume(path) - (-20.0)) < 4                                 # at his voice's level
+
+
+def test_a_passage_keeps_its_picture_and_gets_the_new_sound(source, tmp_path, monkeypatch):
+    from roblox import voix
+    d, path = source
+    silent = str(tmp_path / "reste.wav")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "45", silent], check=True)
+    v = fake_speak("a b c", "v", "fr", str(tmp_path / "v.mp3"))
+    out = voix.passage_audio(path, silent, [(v, 20.0)], str(tmp_path / "p.mp4"))
+    assert abs(duration(out) - 45.0) < 0.3
+
+    def at(t):
+        seg = str(tmp_path / f"seg{t}.wav")
+        subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", str(t), "-t", "1", "-i", out, seg], check=True)
+        return mean_volume(seg)
+    assert at(5) < -80 and at(20) > -40                                          # his 440 Hz gone; the new line at its place
+    assert voix.mean_db(voix.passage_audio(path, None, [], str(tmp_path / "q.mp4"))) < -80   # no game sound asked
+
+
+def test_the_new_lines_are_the_captions_and_survive_the_channels_music(source):
+    d, path = source
+    ms = {"w0#0": {"id": "w0#0", "fichier": path, "fichier_duree": 45.0, "t0": 100.0, "debut": 10.0, "fin": 22.0, "chute": 18.0}}
+    spans = {"w0#0": [{"a": 11.0, "b": 12.0, "texte": "Trop fort"}, {"a": 30.0, "b": 31.0, "texte": "ailleurs"}]}
+    ctx = render.Context(ms, [("Let's", 112.0, 112.4)], "fr", "en", None, str(d), lambda l, x: l, lines=spans, son_refait=True)
+    music = str(d / "silence.mp3")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo", "-t", "3", music], check=True)
+    out = str(d / "clip_voix.mp4")
+    render.make("clip", {"moment": "w0#0", "titre": T}, ctx, out, music=music)
+    ass = open(str(d / "sous_titres" / "clip_voix.ass"), encoding="utf-8").read()
+    assert "Trop fort" in ass and "Let's" not in ass and "ailleurs" not in ass
+    assert mean_volume(out) > -40                       # its remade sound kept under the channel's music (a silence here)

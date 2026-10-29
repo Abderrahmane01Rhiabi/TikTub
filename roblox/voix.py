@@ -164,3 +164,103 @@ def write_lines(vocals: str, a: float, b: float, resume: str, dialogue: List[Dic
         if 0 <= t < b - a and all(texts.values()):
             out.append({"a": round(a + t, 2), **texts})
     return sorted(out, key=lambda x: x["a"])
+
+
+# ---------------------------------------------------------------- his lines read by the chosen voice
+
+MODEL = "eleven_v4"
+MAX_TEMPO = 1.2                              # a line that runs over the next one is sped up this much at most
+
+
+def speak(text: str, voice_id: str, lang: str, out: str) -> str:
+    """One line read with Eleven v4, its emotion tags played (kept: an unchanged line is never paid twice)."""
+    import requests
+    if os.path.exists(out):
+        return out
+    r = requests.post(f"{el.API}/v1/text-to-speech/{voice_id}", headers={"xi-api-key": el._key()}, timeout=120,
+                      params={"output_format": "mp3_44100_128"},
+                      json={"text": text, "model_id": MODEL, "language_code": lang.split("-")[0],
+                            "voice_settings": {"stability": 0.5, "similarity_boost": 0.8}})
+    if r.status_code != 200:
+        raise VoixError(f"ElevenLabs HTTP {r.status_code} : {r.text[:300]}")
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    with open(out, "wb") as f:
+        f.write(r.content)
+    return out
+
+
+def duration(path: str) -> float:
+    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+                       capture_output=True, text=True)
+    return float(r.stdout.strip())
+
+
+def mean_db(path: str, a: Optional[float] = None, b: Optional[float] = None) -> float:
+    cut = ["-ss", f"{a:.2f}", "-t", f"{b - a:.2f}"] if a is not None and b is not None else []
+    r = subprocess.run(["ffmpeg", "-nostdin", *cut, "-i", path, "-af", "volumedetect", "-f", "null", "-"], capture_output=True, text=True)
+    m = re.search(r"mean_volume: (-?[\d.]+|-inf) dB", r.stderr)
+    return -91.0 if not m or m.group(1) == "-inf" else float(m.group(1))
+
+
+def _chunks(text: str, a: float, b: float) -> List[Dict]:
+    """A line shown five words at a time over its span (time shared by length)."""
+    words = sans_balises(text).split()
+    parts = [" ".join(words[i:i + 5]) for i in range(0, len(words), 5)]
+    total, t, out = sum(len(x) for x in parts) or 1, a, []
+    for x in parts:
+        end = t + (b - a) * len(x) / total
+        out.append({"a": round(t, 3), "b": round(end, 3), "texte": x})
+        t = end
+    return out
+
+
+def track(lines: List[Dict], lang: str, voice_id: str, a: float, b: float, work: str, ref_db: float):
+    """His lines [{"a": seconds of the passage, "texte"}] read by the voice, from a (the moment's start) to b — each
+    at its place, never over the one before, at his voice's level. Returns (wav, the captions in passage seconds)."""
+    import hashlib
+    placed, end, spans = [], a, []
+    for k, l in enumerate(lines):
+        mp3 = speak(l["texte"], voice_id, lang, os.path.join(
+            work, f"{voice_id[:8]}_{lang}_{hashlib.sha1(l['texte'].encode()).hexdigest()[:12]}.mp3"))
+        start = max(l["a"], end)
+        slot = (lines[k + 1]["a"] if k + 1 < len(lines) else b) - start
+        d = duration(mp3)
+        tempo = min(MAX_TEMPO, max(1.0, d / max(0.3, slot)))
+        placed.append((mp3, start - a, tempo))
+        end = start + d / tempo
+        spans += _chunks(l["texte"], start, end)
+    total = max(b - a, end - a + 0.2)
+    key = hashlib.sha1(repr((placed, ref_db)).encode()).hexdigest()[:12]
+    out = os.path.join(work, f"piste_{voice_id[:8]}_{lang}_{key}.wav")
+    if not os.path.exists(out):
+        raw = out + ".brut.wav"
+        cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-t", f"{total:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+        for mp3, _, _ in placed:
+            cmd += ["-i", mp3]
+        f = "".join(f"[{i + 1}:a]aresample=44100,atempo={t:.3f},adelay={int(s * 1000)}:all=1[v{i}];" for i, (_, s, t) in enumerate(placed))
+        f += "[0:a]" + "".join(f"[v{i}]" for i in range(len(placed))) + f"amix=inputs={len(placed) + 1}:normalize=0:duration=first[o]"
+        _run(cmd + ["-filter_complex", f, "-map", "[o]", raw])
+        gain = max(-20.0, min(15.0, ref_db - mean_db(raw)))
+        _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", raw, "-af", f"volume={gain:.1f}dB,alimiter=limit=0.89:level=false", out])
+        os.remove(raw)
+    return out, spans
+
+
+def passage_audio(src: str, reste: Optional[str], voices: List, out: str) -> str:
+    """The passage with its picture untouched and a new sound: the game's sounds without his voice (or silence when
+    the channel's music replaces them) and each [(voice track, from)] at its place."""
+    cmd = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src]
+    if reste:
+        cmd += ["-i", reste]
+    else:
+        cmd += ["-f", "lavfi", "-t", f"{duration(src):.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+    f, mix = "[1:a]aresample=44100[r];", ["[r]"]
+    for k, (path, at) in enumerate(voices):
+        cmd += ["-i", path]
+        f += f"[{k + 2}:a]aresample=44100,adelay={int(at * 1000)}:all=1[v{k}];"
+        mix.append(f"[v{k}]")
+    f += "".join(mix) + f"amix=inputs={len(mix)}:normalize=0:duration=first,alimiter=limit=0.89:level=false[m]"
+    tmp = out + ".part.mp4"
+    _run(cmd + ["-filter_complex", f, "-map", "0:v", "-map", "[m]", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", tmp])
+    os.replace(tmp, out)
+    return out

@@ -240,6 +240,35 @@ def start_render(pid: str) -> Dict:
     return save(p)
 
 
+def _new_sound(p: Dict, t: Dict) -> tuple:
+    """His voice replaced, in t's language: each passage with its new sound (the game's sounds and his lines read
+    by t's voice) and those lines' captions. -> (catalogue with the new passages, {moment: captions})."""
+    import hashlib
+    import json
+    cat, his = _catalogue(p), p.get("voix")
+    if p.get("voix_joueur") != "remplacer" or not his:
+        return cat, {}
+    lang, work = t["langue"], os.path.join(project_dir(p["project_id"]), "voix")
+    os.makedirs(os.path.join(work, "lu"), exist_ok=True)
+    tracks: Dict[str, List] = {}
+    captions = {}
+    for mid, r in his["repliques"].items():
+        m = cat[mid]
+        lines = [{"a": l["a"], "texte": l[lang]} for l in r["lignes"] if l.get(lang)]
+        captions[mid] = []
+        if lines:
+            ref = voix.mean_db(his["fichiers"][m["fichier"]]["voix"], r["a"], r["b"])
+            path, captions[mid] = voix.track(lines, lang, t["voice_id"], r["a"], r["b"], os.path.join(work, "lu"), ref)
+            tracks.setdefault(m["fichier"], []).append((path, r["a"]))
+    files = {}
+    for f, parts in his["fichiers"].items():
+        reste = None if p["musique"] == "chaine" else parts["reste"]
+        key = hashlib.sha1(json.dumps([reste, tracks.get(f, [])]).encode()).hexdigest()[:10]
+        out = os.path.join(work, f"{os.path.splitext(os.path.basename(f))[0]}_{lang}_{key}.mp4")
+        files[f] = out if os.path.exists(out) else voix.passage_audio(f, reste, tracks.get(f, []), out)
+    return {k: {**m, "fichier": files.get(m["fichier"], m["fichier"])} for k, m in cat.items()}, captions
+
+
 def run_render(pid: str, report: Optional[Report] = None) -> None:
     """Every style x language not made yet (or whose texts changed), sent ones left alone."""
     report = report or (lambda phase, f: None)
@@ -249,9 +278,14 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
         out_dir = os.path.join(project_dir(pid), "out")
         todo = [(s, t) for s in p["styles"] if s in p["plan"] for t in p["targets"]
                 if not (p["videos"].get(f"{s}_{t['langue']}") or {}).get("path") or p["videos"][f"{s}_{t['langue']}"].get("a_refaire")]
+        sound = {}
         for k, (style, t) in enumerate(todo):
             lang, key = t["langue"], f"{style}_{t['langue']}"
-            report(f"{plan.STYLES[style][0]} ({lang}) : montage", 0.05 + 0.9 * k / max(1, len(todo)))
+            if lang not in sound:
+                report(f"sa voix lue par la voix choisie ({lang})", 0.05 + 0.9 * k / max(1, len(todo)))
+                sound[lang] = _new_sound(p, t)
+            moments_, captions = sound[lang]
+            report(f"{plan.STYLES[style][0]} ({lang}) : montage", 0.05 + 0.9 * (k + 0.3) / max(1, len(todo)))
             cache = p["traductions"].setdefault(lang, {})
 
             def translate(lines, to, cache=cache):
@@ -259,8 +293,10 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
                 for src, dst in zip(missing, plan.translate(missing, to)):
                     cache[src] = dst
                 return [cache.get(l, l) for l in lines]
-            ctx = render.Context(_catalogue(p), words, lang, (p["meta"] or {}).get("langue") or "en", t["voice_id"],
-                                 out_dir, translate)
+            replaced = p.get("voix_joueur") == "remplacer" and bool(p.get("voix"))
+            ctx = render.Context(moments_, words, lang, (p["meta"] or {}).get("langue") or "en", t["voice_id"],
+                                 out_dir, translate, lines=captions, son_refait=replaced,
+                                 voice_model=voix.MODEL if voix.known(lang, t["voice_id"]) else None)
             os.makedirs(out_dir, exist_ok=True)
             path = os.path.join(out_dir, f"{key}.mp4")
             music = t["music_path"] if p["musique"] == "chaine" else None

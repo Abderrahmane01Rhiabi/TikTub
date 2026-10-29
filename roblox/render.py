@@ -6,7 +6,8 @@ The five montage styles, rendered in one ffmpeg pass each (measured in etude_rob
     text     .ass captions in Montserrat (as the Montage auto): hook, POV line, the dialogue, the told story word
              by word (the word said in yellow), the top's numbers, the countdown
     sound    the original sound (or muted under a track of the channel), the ElevenLabs voice for the told story,
-             the sound effects of assets/sfx
+             the sound effects of assets/sfx; his voice replaced (roblox/voix.py): each passage comes with its new
+             sound already made, and his new lines are the captions
 
 Each extract is its own ffmpeg input, opened at its start: trimming far parts of one input kept every frame in
 between in memory (killed at 7.8 GB in the lab).
@@ -25,6 +26,7 @@ SFX = {k: os.path.join(HERE, "assets", "sfx", f) for k, f in {
 JAUNE, BLANC = "&H0000F2FF", "&H00FFFFFF"
 NOISE = {"h", "huh", "uh", "um", "hm", "ah", "oh"}
 VOICE_GAIN, ORIGINAL_UNDER_VOICE, MUSIC_LEVEL = 1.35, 0.10, 0.30     # the lab's "la musique est un peu forte" fixed
+NARRATOR_DB = -16.5          # every narrator brought to the French one's level (the English one was 7 dB lower)
 
 Segment = Dict
 Sound = Tuple[str, float, float]
@@ -111,7 +113,7 @@ def build(segments: List[Segment], ass_path: str, sounds: List[Sound], out: str,
         tail = f",tpad=stop_mode=clone:stop_duration={gel:.2f}" if gel else ""
         dark = ",eq=brightness=-0.18:saturation=0.55" if s.get("sombre") else ""
         g.append(f"[bb{k}][ff{k}]overlay=0:{FG_Y},setsar=1{tail}{dark}[v{k}]")
-        vol = 0.0 if music else s.get("vol", 1.0)
+        vol = 0.0 if music and not s.get("garde_son") else s.get("vol", 1.0)
         g.append(f"[{k}:a]asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo,volume={vol:.2f}"
                  + (f",apad=pad_dur={gel:.2f}" if gel else "") + f"[a{k}]")
         total += s["b"] - s["a"] + gel
@@ -144,10 +146,14 @@ class Context:
     """What a style needs: the moments (by id), the long video's words, the language, the voice, a translator."""
 
     def __init__(self, moments: Dict[str, Dict], words, lang: str, source_lang: str, voice_id: Optional[str], work: str,
-                 translate: Callable[[List[str], str], List[str]], synthesize: Optional[Callable] = None):
+                 translate: Callable[[List[str], str], List[str]], synthesize: Optional[Callable] = None,
+                 lines: Optional[Dict[str, List[Dict]]] = None, son_refait: bool = False, voice_model: Optional[str] = None):
+        """lines: his new lines per moment, [{a, b, texte}] in seconds of the passage (his voice replaced);
+        son_refait: the passages' sound is already the right one (kept even under the channel's music)."""
         self.moments, self.words, self.lang, self.source_lang = moments, words, lang, source_lang
         self.voice_id, self.work, self.translate = voice_id, work, translate
         self.synthesize = synthesize
+        self.lines, self.son_refait, self.voice_model = lines or {}, son_refait, voice_model
 
     def moment(self, mid: str) -> Dict:
         return self.moments[mid]
@@ -155,6 +161,11 @@ class Context:
 
 def _captions(ctx: Context, ass: Ass, m: Dict, a: float, b: float, offset: float) -> None:
     """The lines said in [a, b] (file times of moment m), in the Short's language, placed at offset + (t - a)."""
+    if m.get("id") in ctx.lines:                    # his voice replaced: the lines the new voice reads
+        for l in ctx.lines[m["id"]]:
+            if l["b"] > a and l["a"] < b:
+                ass.add("Cap", offset + max(l["a"], a) - a, offset + min(l["b"], b) - a, esc(l["texte"]))
+        return
     lines = dialogue_lines(ctx.words, m["t0"] + a, m["t0"] + b)
     texts = [l["texte"] for l in lines]
     if lines and ctx.lang != ctx.source_lang:
@@ -189,9 +200,13 @@ def pov(p: Dict, ctx: Context):
 def histoire(p: Dict, ctx: Context):
     from adaptation import voices
     mp3 = os.path.join(ctx.work, f"voix_histoire_{ctx.lang}.mp3")
-    v = (ctx.synthesize or voices.synthesize)([{"texte": x["textes"][ctx.lang]} for x in p["passages"]], ctx.voice_id, ctx.lang, mp3)
+    texts = [{"texte": x["textes"][ctx.lang]} for x in p["passages"]]
+    if ctx.synthesize:
+        v = ctx.synthesize(texts, ctx.voice_id, ctx.lang, mp3)
+    else:
+        v = voices.synthesize(texts, ctx.voice_id, ctx.lang, mp3, model=ctx.voice_model or voices.MODEL)
     spans = [(x["start"], x["end"]) for x in v["passages"]]
-    segs, ass, sounds, t = [], Ass(), [(mp3, 0.0, VOICE_GAIN)], 0.0
+    segs, ass, sounds, t = [], Ass(), [(mp3, 0.0, narrator_gain(mp3))], 0.0
     for k, x in enumerate(p["passages"]):
         m = ctx.moment(x["moment"])
         dur = (spans[k + 1][0] if k + 1 < len(spans) else v["duration"] + 0.6) - (spans[k][0] if k else 0.0)
@@ -208,6 +223,15 @@ def histoire(p: Dict, ctx: Context):
             nxt = chunk[j + 1]["start"] if j + 1 < len(chunk) else (words[i + 3]["start"] if i + 3 < len(words) else w["end"] + 0.4)
             ass.add("Mot", w["start"], nxt, " ".join(f"{{\\c{JAUNE}}}{esc(c['w'])}{{\\c{BLANC}}}" if c is w else esc(c["w"]) for c in chunk))
     return segs, ass, sounds
+
+
+def narrator_gain(mp3: str) -> float:
+    """VOICE_GAIN for a narrator at the French one's level, more or less for one read louder or softer."""
+    from roblox import voix
+    level = voix.mean_db(mp3)
+    if level < -80:
+        return VOICE_GAIN
+    return round(VOICE_GAIN * min(4.0, max(0.5, 10 ** ((NARRATOR_DB - level) / 20))), 3)
 
 
 def top3(p: Dict, ctx: Context):
@@ -255,5 +279,10 @@ MAKERS = {"clip": clip, "pov": pov, "histoire": histoire, "top3": top3, "devine"
 def make(style: str, p: Dict, ctx: Context, out: str, music: Optional[str] = None) -> float:
     """One Short: the style's extracts, texts and sounds, rendered to out. Returns its duration."""
     segs, ass, sounds = MAKERS[style](p, ctx)
-    path = ass.write(os.path.splitext(out)[0] + ".ass")
+    if ctx.son_refait:
+        for s in segs:
+            s["garde_son"] = True
+    subs = os.path.join(os.path.dirname(out) or ".", "sous_titres")         # not next to the video: VLC would show it
+    os.makedirs(subs, exist_ok=True)                                          # over the burnt-in text
+    path = ass.write(os.path.join(subs, os.path.splitext(os.path.basename(out))[0] + ".ass"))
     return build(segs, path, sounds, out, music)

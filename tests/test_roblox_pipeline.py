@@ -17,7 +17,7 @@ PUB = {"fr": {"titre": "Le pire petit déjeuner 🤢", "description": "Il goûte
 
 @pytest.fixture
 def fakes(project, monkeypatch):
-    calls = {"render": [], "translate": 0}
+    calls = {"render": [], "translate": 0, "ctx": []}
     monkeypatch.setattr(sources, "info", lambda url, work: {"titre": "FUNNY MOMENTS", "chaine": "Roblox Idol", "duree": 7200.0,
                                                            "langue": "en", "vues": 10, "heatmap": [], "chapitres": [], "sous_titres": None})
     monkeypatch.setattr(sources, "windows", lambda meta: [[0.0, 75.0], [600.0, 675.0]])
@@ -39,6 +39,7 @@ def fakes(project, monkeypatch):
     monkeypatch.setattr(plan, "write", write)
 
     def make(style, p, ctx, out, music=None):
+        calls["ctx"].append((style, ctx.lang, ctx))
         calls["render"].append((style, ctx.lang, ctx.voice_id, music, dict(p.get("titre") or p.get("question") or {})))
         open(out, "wb").write(b"\x00")
         return 9.0
@@ -52,7 +53,19 @@ def fakes(project, monkeypatch):
     def write_lines(vocals, a, b, resume, dialogue, langs, gemini=None):
         calls["repliques"].append((vocals, a, b))
         return [{"a": a + 1.0, **{l: f"[laughs] {l} {a}" for l in langs}}]
-    calls.update(separe=[], repliques=[])
+    def track(lines, lang, voice_id, a, b, work, ref_db):
+        calls["lues"].append((lang, voice_id, [l["texte"] for l in lines]))
+        name = f"{work}/{lang}_{a}_{abs(hash(tuple(l['texte'] for l in lines)))}.wav"            # named after its text, as the real one
+        return name, [{"a": l["a"], "b": l["a"] + 1, "texte": l["texte"]} for l in lines]
+
+    def passage_audio(src, reste, voices, out):
+        calls["passages"].append((src, reste, voices))
+        open(out, "w").write("x")
+        return out
+    calls.update(separe=[], repliques=[], lues=[], passages=[])
+    monkeypatch.setattr(voix, "track", track)
+    monkeypatch.setattr(voix, "passage_audio", passage_audio)
+    monkeypatch.setattr(voix, "mean_db", lambda path, a=None, b=None: -20.0)
     monkeypatch.setattr(voix, "separate", separate)
     monkeypatch.setattr(voix, "write_lines", write_lines)
     return calls
@@ -127,6 +140,34 @@ def test_his_lines_corrected_make_the_shorts_that_use_them_again(fakes, project)
     assert not p["videos"]["devine_fr"].get("a_refaire")                                  # another moment
     with pytest.raises(rp.PipelineError, match="moment"):
         rp.set_lines(pid, "nope", "fr", ["x"])
+
+
+def test_his_voice_is_read_by_the_chosen_one_in_every_short(fakes, project):
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    rp.start_render(pid)
+    rp.run_render(pid)
+    assert ("fr", voix.DEFAULTS["fr"], ["[laughs] fr 8.5"]) in fakes["lues"] and ("en", voix.DEFAULTS["en"], ["[laughs] en 8.5"]) in fakes["lues"]
+    style, lang, ctx = next(c for c in fakes["ctx"] if c[:2] == ("clip", "fr"))
+    assert ctx.moments["w0#0"]["fichier"].endswith(".mp4") and "voix" in ctx.moments["w0#0"]["fichier"]
+    assert ctx.lines["w0#0"][0]["texte"] == "[laughs] fr 8.5" and ctx.son_refait and ctx.voice_model == voix.MODEL
+    reste = [r for _, r, _ in fakes["passages"]]
+    assert all(r and r.endswith(".reste.wav") for r in reste)                     # the game's sounds kept
+    made = len(fakes["passages"])
+    rp.set_lines(pid, "w0#0", "fr", ["Beurk !"])
+    rp.start_render(pid)
+    rp.run_render(pid)
+    assert len(fakes["passages"]) == made + 1                                     # only the French passage of that moment
+
+
+def test_his_voice_kept_leaves_the_sources_as_they_are(fakes, project):
+    project.add_channel("chanA")
+    p = rp.create("https://y", ["clip"], [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"}], voix_joueur="originale")
+    rp.run_analysis(p["project_id"])
+    rp.start_render(p["project_id"])
+    rp.run_render(p["project_id"])
+    ctx = fakes["ctx"][-1][2]
+    assert fakes["passages"] == [] and not ctx.son_refait and ctx.lines == {} and ctx.moments["w0#0"]["fichier"].endswith("w0.mp4")
 
 
 def test_a_failed_analysis_says_why(fakes, project, monkeypatch):
