@@ -98,6 +98,7 @@ def sample(voice_id: str, lang: str) -> Optional[str]:
 DEMUCS = "htdemucs"
 TAGS = ["excited", "laughs", "laughing", "chuckles", "shouts", "frustrated", "surprised", "sarcastic", "sighs", "gasps"]
 TAG = re.compile(r"\[[^\]]*\]")
+CLOSING = re.compile(r"\[/[^\]]*\]")         # "[/excited]": Gemini closes them sometimes, v4 has no such tag
 
 
 class VoixError(RuntimeError):
@@ -183,7 +184,7 @@ def write_lines(vocals: str, a: float, b: float, resume: str, dialogue: List[Dic
             t = float(x["a"])
         except (KeyError, TypeError, ValueError):
             continue
-        texts = {l: " ".join(str(x.get(l) or "").split()) for l in langs}
+        texts = {l: " ".join(CLOSING.sub(" ", str(x.get(l) or "")).split()) for l in langs}
         try:
             who = min(MAX_PLAYERS, max(1, int(x.get("qui") or 1)))
         except (TypeError, ValueError):
