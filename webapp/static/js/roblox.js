@@ -192,7 +192,7 @@ function rbLinesHtml(p){
         <div class="meta" style="margin-left:0">${esc(r.styles.map(s => p.noms_styles[s]).join(' · '))}</div></div></div>
         <div class="chcard-body">${!r.lignes.length ? '<div class="tiny">Personne ne parle dans ce moment : seuls les bruits du jeu.</div>'
         : p.cibles.map(c => `<div class="rb-lines-box" data-moment="${esc(mid)}" data-lang="${c.langue}" style="border-top:1px solid var(--border-soft);padding:10px 0">
-          <div class="tiny"><b>${esc(c.langue.toUpperCase())}</b>${c.nom_voix ? ` · voix ${esc(c.nom_voix)}` : ''}</div>
+          <div class="tiny"><b>${esc(c.langue.toUpperCase())}</b></div>
           <div style="display:flex;flex-direction:column;gap:6px">${r.lignes.map(l =>
             `<div style="display:flex;gap:8px;align-items:center"><span class="tiny" style="width:38px">${fmt(l.a)}</span>
               <span class="tiny" style="width:110px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="${esc(who(l.qui || '1'))}">${esc(who(l.qui || '1'))}</span>
