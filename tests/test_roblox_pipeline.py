@@ -50,9 +50,10 @@ def fakes(project, monkeypatch):
         calls["separe"].append(src)
         return {"voix": src + ".voix.wav", "reste": src + ".reste.wav"}
 
-    def write_lines(vocals, a, b, resume, dialogue, langs, gemini=None):
-        calls["repliques"].append((vocals, a, b))
-        return [{"a": a + 1.0, **{l: f"[laughs] {l} {a}" for l in langs}}]
+    def write_lines(vocals, a, b, resume, dialogue, langs, gemini=None, joueurs=None):
+        calls["repliques"].append((vocals, a, b, dict(joueurs or {})))
+        return [{"a": a + 1.0, "qui": "1", "nom": "Sunny", **{l: f"[laughs] {l} {a}" for l in langs}}] + \
+            ([{"a": a + 3.0, "qui": "2", "nom": "", **{l: f"{l} melon" for l in langs}}] if "w600" in vocals else [])
     def track(lines, lang, voice_id, a, b, work, ref_db):
         calls["lues"].append((lang, voice_id, [l["texte"] for l in lines]))
         name = f"{work}/{lang}_{a}_{abs(hash(tuple(l['texte'] for l in lines)))}.wav"            # named after its text, as the real one
@@ -122,7 +123,9 @@ def test_the_players_voice_is_separated_and_his_lines_written_once_per_moment(fa
     assert sorted(fakes["separe"]) == sorted({m["fichier"] for m in p["catalogue"]})       # each passage used, once
     r = p["voix"]["repliques"]
     assert set(r) == {"w0#0", "w600#0"} and r["w0#0"]["a"] == 8.5 and r["w0#0"]["b"] == 23.5   # the moment, 1.5 s around
-    assert r["w0#0"]["lignes"] == [{"a": 9.5, "fr": "[laughs] fr 8.5", "en": "[laughs] en 8.5"}]
+    assert r["w0#0"]["lignes"] == [{"a": 9.5, "qui": "1", "nom": "Sunny", "fr": "[laughs] fr 8.5", "en": "[laughs] en 8.5"}]
+    assert p["voix"]["joueurs"] == {"1": "Sunny", "2": ""}
+    assert [j for *_, j in fakes["repliques"]] == [{}, {"1": "Sunny"}]                   # the 2nd moment knows Sunny
     p2 = rp.create("https://y", ["clip"], [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"}], voix_joueur="originale")
     fakes["separe"].clear()
     rp.run_analysis(p2["project_id"])
@@ -135,7 +138,8 @@ def test_his_lines_corrected_make_the_shorts_that_use_them_again(fakes, project)
     rp.start_render(pid)
     rp.run_render(pid)
     p = rp.set_lines(pid, "w0#0", "fr", ["  [laughs]  Trop   fort ! "])
-    assert p["voix"]["repliques"]["w0#0"]["lignes"][0] == {"a": 9.5, "fr": "[laughs] Trop fort !", "en": "[laughs] en 8.5"}
+    assert p["voix"]["repliques"]["w0#0"]["lignes"][0] == {"a": 9.5, "qui": "1", "nom": "Sunny", "fr": "[laughs] Trop fort !",
+                                                           "en": "[laughs] en 8.5"}
     assert p["videos"]["clip_fr"]["a_refaire"] and not p["videos"]["clip_en"].get("a_refaire")
     assert not p["videos"]["devine_fr"].get("a_refaire")                                  # another moment
     with pytest.raises(rp.PipelineError, match="moment"):

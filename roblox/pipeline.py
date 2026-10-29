@@ -125,13 +125,18 @@ def _his_voice(p: Dict, cat: List[Dict], made: Dict, meta: Dict, report: Report)
         parts[f] = voix.separate(f, os.path.join(project_dir(p["project_id"]), "voix", os.path.splitext(os.path.basename(f))[0]))
     words, langs, lines = sources.words(meta.get("sous_titres")), [t["langue"] for t in p["targets"]], {}
     talking = [mid for mid, sts in used.items() if sts != ["histoire"]]
+    players: Dict[str, str] = {}                     # the same person keeps the same number from moment to moment
     for k, mid in enumerate(talking):
         report(f"l'IA écoute ses répliques ({k + 1}/{len(talking)})", 0.94 + 0.05 * k / len(talking))
         m = by_id[mid]
         a, b = max(0.0, m["debut"] - MARGIN), min(m["fichier_duree"], m["fin"] + MARGIN)
         said = [{**l, "a": l["a"] - m["t0"]} for l in render.dialogue_lines(words, m["t0"] + a, m["t0"] + b)]
-        lines[mid] = {"a": a, "b": b, "lignes": voix.write_lines(parts[m["fichier"]]["voix"], a, b, m.get("resume") or "", said, langs)}
-    return {"fichiers": parts, "repliques": lines}
+        got = voix.write_lines(parts[m["fichier"]]["voix"], a, b, m.get("resume") or "", said, langs, joueurs=players)
+        for l in got:
+            if not players.get(l["qui"]):
+                players[l["qui"]] = l.get("nom") or ""
+        lines[mid] = {"a": a, "b": b, "lignes": got}
+    return {"fichiers": parts, "repliques": lines, "joueurs": players}
 
 
 def run_analysis(pid: str, report: Optional[Report] = None) -> None:

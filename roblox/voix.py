@@ -7,8 +7,9 @@ POV (assets/roblox_voix/<id>_<lang>.mp3), else ElevenLabs' free preview, kept wi
 Replacing the player's voice (measured in the lab):
     separate     Demucs splits each passage into his voice and the rest (the game's sounds and music) — ~110 s
                  for a 75-s passage on the processor; the Voice Changer on his voice glitched when he laughed
-    write_lines  Gemini listens to his voice and writes his lines whole (the automatic subtitles are cut and
-                 wrong), in each language, with the emotions where he laughs or shouts ([laughs], [shouts]…)
+    write_lines  Gemini listens to the voices and writes every line whole (the automatic subtitles are cut and
+                 wrong), in each language, with the emotions where they laugh or shout ([laughs], [shouts]…), and
+                 who says it: often two players talk (e2e 2026-10-29: Melon's lines had been left out)
     the render   reads them with the chosen voice (render.py), over the rest
 """
 
@@ -115,27 +116,35 @@ def separate(src: str, work: str) -> Dict[str, str]:
     return out
 
 
-LINES_PROMPT = """Ecoute la voix d'un joueur de Roblox qui commente sa partie (sa voix seule, sans le jeu). Ce qui se
-passe : {resume}
-Ses repliques d'apres les sous-titres automatiques (coupees au hasard, parfois fausses), avec leurs instants :
+MAX_PLAYERS = 4
+LINES_PROMPT = """Ecoute les voix de joueurs de Roblox qui commentent leur partie (leurs voix seules, sans le jeu). Il peut
+y avoir une seule personne ou plusieurs. Ce qui se passe : {resume}
+Leurs repliques d'apres les sous-titres automatiques (coupees au hasard, parfois fausses), avec leurs instants :
 {lignes}
-Une voix de synthese (ElevenLabs v4) va relire ses repliques ; elle comprend des balises d'emotion entre crochets :
-{tags}.
-Ecris ses phrases ENTIERES (corrige les mots mal reconnus d'apres ce que tu entends), avec son energie de jeune
-streamer : place les balises exactement la ou il rit, crie, s'enerve ou s'etonne. Pas plus de 2 balises par phrase.
+Des voix de synthese (ElevenLabs v4) vont relire TOUTES les repliques de TOUTES les personnes qui parlent ; elles
+comprennent des balises d'emotion entre crochets : {tags}.
+Ecris leurs phrases ENTIERES (corrige les mots mal reconnus d'apres ce que tu entends), avec leur energie de jeunes
+streamers : place les balises exactement la ou ils rient, crient, s'enervent ou s'etonnent. Pas plus de 2 balises par phrase.
 Chaque phrase doit tenir dans le temps jusqu'a la suivante (environ 3 mots par seconde maximum).
-"a" = l'instant ou il commence la phrase, en secondes depuis le debut de CET audio.
+IGNORE les paroles CHANTEES (musique, chansons) et les voix d'effets sonores ou du jeu : seulement les personnes qui parlent.
+"a" = l'instant ou la phrase commence, en secondes depuis le debut de CET audio.
+"qui" = le numero de la personne qui parle : {joueurs} ; une nouvelle personne prend le numero suivant (4 au plus).
+"nom" = son pseudo s'il est dit ou visible, sinon "".
 Donne chaque phrase dans ces langues : {langues} (parle, comme un jeune gamer de cette langue, memes balises).
-S'il ne dit rien, renvoie une liste vide.
-JSON uniquement : {{"phrases": [{{"a": s, {schema}}}]}}"""
+Si personne ne parle, renvoie une liste vide.
+JSON uniquement : {{"phrases": [{{"a": s, "qui": n, "nom": "...", {schema}}}]}}"""
 
 
 def write_lines(vocals: str, a: float, b: float, resume: str, dialogue: List[Dict], langs: List[str],
-                gemini=None) -> List[Dict]:
-    """His lines between a and b (seconds of the passage), each language: [{"a": seconds of the passage, lang: text}]."""
+                gemini=None, joueurs: Optional[Dict[str, str]] = None) -> List[Dict]:
+    """Every line said between a and b (seconds of the passage), each language, and who says it:
+    [{"a": seconds of the passage, "qui": "1".."4", "nom": pseudo or "", lang: text}]. joueurs: the players met in
+    the moments before ({"1": "Sunny"}), so that the same person keeps the same number (and voice)."""
     from roblox.plan import LANG_NAMES
     txt = "\n".join(f"{l['a'] - a:.1f} s : {l['texte']}" for l in dialogue) or "(aucun sous-titre)"
+    met = ", ".join(f"{k} = {n or 'sans pseudo'}" for k, n in sorted((joueurs or {}).items()))
     prompt = LINES_PROMPT.format(resume=resume or "", lignes=txt, tags=", ".join(f"[{t}]" for t in TAGS),
+                                 joueurs=f"deja rencontrees : {met}" if met else "1 = celle qui parle le plus (le commentateur principal)",
                                  langues=", ".join(f"{l} ({LANG_NAMES.get(l, l)})" for l in langs),
                                  schema=", ".join(f'"{l}": "..."' for l in langs))
     if gemini is not None:
@@ -161,8 +170,12 @@ def write_lines(vocals: str, a: float, b: float, resume: str, dialogue: List[Dic
         except (KeyError, TypeError, ValueError):
             continue
         texts = {l: " ".join(str(x.get(l) or "").split()) for l in langs}
+        try:
+            who = min(MAX_PLAYERS, max(1, int(x.get("qui") or 1)))
+        except (TypeError, ValueError):
+            who = 1
         if 0 <= t < b - a and all(texts.values()):
-            out.append({"a": round(a + t, 2), **texts})
+            out.append({"a": round(a + t, 2), "qui": str(who), "nom": " ".join(str(x.get("nom") or "").split()), **texts})
     return sorted(out, key=lambda x: x["a"])
 
 

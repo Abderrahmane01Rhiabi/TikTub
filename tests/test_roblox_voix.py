@@ -48,12 +48,18 @@ def test_the_voices_and_their_samples_through_the_api(client):
     assert client.get("/api/roblox/voix/nope/echantillon?langue=fr").status_code == 404
 
 
-def test_the_ai_writes_the_players_lines_at_their_place_in_the_file():
+def test_the_ai_writes_everyones_lines_at_their_place_and_says_who_speaks():
     class G:
         def _generate_content(self, parts, **kw):
-            assert "[laughs]" in parts[-1]["text"] and "1.2 s : on y va" in parts[-1]["text"]
-            return {"phrases": [{"a": 4.0, "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
-                                {"a": 0.5, "fr": "On y va !", "en": "Let's go!"}, {"a": "x"}, {"a": 99, "fr": "hors du passage"}]}
-    lines = voix.write_lines("v.wav", 20.0, 35.0, "il saute", [{"texte": "on y va", "a": 21.2}], ["fr", "en"], gemini=G())
-    assert lines == [{"a": 20.5, "fr": "On y va !", "en": "Let's go!"}, {"a": 24.0, "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"}]
+            prompt = parts[-1]["text"]
+            assert "[laughs]" in prompt and "1.2 s : on y va" in prompt
+            assert "CHANTEES" in prompt and "1 = Sunny" in prompt                    # songs ignored; the players already met
+            return {"phrases": [{"a": 4.0, "qui": 2, "nom": "Melon", "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
+                                {"a": 0.5, "fr": "On y va !", "en": "Let's go!"}, {"a": "x"}, {"a": 99, "fr": "hors du passage"},
+                                {"a": 5.0, "qui": 9, "fr": "Un de trop", "en": "One too many"}]}
+    lines = voix.write_lines("v.wav", 20.0, 35.0, "il saute", [{"texte": "on y va", "a": 21.2}], ["fr", "en"],
+                             gemini=G(), joueurs={"1": "Sunny"})
+    assert lines == [{"a": 20.5, "qui": "1", "nom": "", "fr": "On y va !", "en": "Let's go!"},
+                     {"a": 24.0, "qui": "2", "nom": "Melon", "fr": "[laughs] Trop fort !", "en": "[laughs] So good!"},
+                     {"a": 25.0, "qui": "4", "nom": "", "fr": "Un de trop", "en": "One too many"}]       # 4 voices at most
     assert voix.sans_balises("[laughs] Trop [shouts] fort !") == "Trop fort !"
