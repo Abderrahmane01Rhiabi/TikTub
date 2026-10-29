@@ -26,6 +26,7 @@ SFX = {k: os.path.join(HERE, "assets", "sfx", f) for k, f in {
 JAUNE, BLANC = "&H0000F2FF", "&H00FFFFFF"
 NOISE = {"h", "huh", "uh", "um", "hm", "ah", "oh"}
 VOICE_GAIN, ORIGINAL_UNDER_VOICE, MUSIC_LEVEL = 1.35, 0.10, 0.30     # the lab's "la musique est un peu forte" fixed
+SETUP = 5.0                  # « Devine la suite »: seconds seen at least before the frozen question
 NARRATOR_DB = -16.5          # every narrator brought to the French one's level (the English one was 7 dB lower)
 
 Segment = Dict
@@ -255,7 +256,10 @@ def top3(p: Dict, ctx: Context):
 def devine(p: Dict, ctx: Context):
     m = ctx.moment(p["moment"])
     stop = m["debut"] + p["arret"]
-    start, fin, gel = max(m["debut"], stop - 9.0), min(m["fin"], max(m["chute"], stop) + 2.5), 3.0
+    # what happens before the question: the moment from its start, 9 s at most — and 5 s at least, taken from before
+    # the moment if needed (e2e 2026-10-29: stopped 2.2 s in, the question came before anything was understood)
+    start = max(0.0, min(max(m["debut"], stop - 9.0), stop - SETUP))
+    fin, gel = min(m["fin"], max(m["chute"], stop) + 2.5), 3.0
     x = m.get("action_x")
     segs = [{"fichier": m["fichier"], "a": start, "b": stop, "x": x},
             {"fichier": m["fichier"], "a": stop, "b": stop + 1 / FPS, "x": x, "gel": gel, "sombre": True, "vol": 0.0},

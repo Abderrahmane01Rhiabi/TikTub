@@ -181,3 +181,14 @@ def test_the_new_lines_are_the_captions_and_survive_the_channels_music(source):
     ass = open(str(d / "sous_titres" / "clip_voix.ass"), encoding="utf-8").read()
     assert "Trop fort" in ass and "Let's" not in ass and "ailleurs" not in ass
     assert mean_volume(out) > -40                       # its remade sound kept under the channel's music (a silence here)
+
+
+def test_guess_the_next_shows_at_least_five_seconds_before_the_question(source):
+    d, path = source
+    ms = {"w0#0": {"id": "w0#0", "fichier": path, "fichier_duree": 45.0, "t0": 0.0, "debut": 10.0, "fin": 22.0, "chute": 18.0}}
+    ctx = render.Context(ms, [], "fr", "fr", None, str(d), lambda l, x: l)
+    segs, ass, _ = render.devine({"moment": "w0#0", "arret": 2.0, "question": T, "final": T}, ctx)
+    assert segs[0]["a"] == 7.0 and segs[0]["b"] == 12.0                 # stopped 2 s in: 3 s taken from before the moment
+    segs, _, _ = render.devine({"moment": "w0#0", "arret": 2.0, "question": T, "final": T},
+                               render.Context({"w0#0": {**ms["w0#0"], "debut": 1.0}}, [], "fr", "fr", None, str(d), lambda l, x: l))
+    assert segs[0]["a"] == 0.0                                            # never before the file's start
