@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 import db
-from roblox import identite, moments, nettoyage, plan, render, sources, voix
+from roblox import identite, moments, nettoyage, plan, render, sources, stock, voix
 
 Report = Callable[[str, float], None]
 LANGS = ("fr", "en", "ar", "es")
@@ -69,7 +69,7 @@ def voice_for(lang: str, channel_settings: Dict, chosen: Optional[str] = None) -
 
 
 def create(url: str, styles: List[str], targets: List[Dict], music: str = "original", voix_joueur: str = "remplacer",
-           identite: bool = False) -> Dict:
+           identite: bool = False, suite: bool = False) -> Dict:
     """targets: [{"langue", "channel", "profile", "music_dir", "voice_id" (optional)}] — one channel per language."""
     from adaptation import settings
     url = (url or "").strip()
@@ -97,8 +97,22 @@ def create(url: str, styles: List[str], targets: List[Dict], music: str = "origi
     if music == "chaine" and not all(t["music_path"] for t in tg):
         raise PipelineError("Pour remplacer la musique, choisis d'abord une musique pour chaque chaîne (Réglages → Voix).")
     pid = "rb_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]
+    os.makedirs(project_dir(pid), exist_ok=True)
     return save({"project_id": pid, "status": "analysing", "url": url, "styles": styles, "targets": tg, "musique": music,
-                 "voix_joueur": voix_joueur, "identite": bool(identite), "meta": None, "catalogue": [], "plan": {}, "absents": [], "traductions": {}, "videos": {}, "error": None})
+                 "voix_joueur": voix_joueur, "identite": bool(identite), "suite": bool(suite), "meta": None, "catalogue": [],
+                 "plan": {}, "absents": [], "traductions": {}, "videos": {}, "error": None})
+
+
+def suite(pid: str) -> Dict:
+    """« Chercher d'autres moments »: a new project on the same video, with the same choices, which takes only
+    passages no project of this video used yet (roblox/stock.py)."""
+    p = load(pid)
+    targets = [{"langue": t["langue"], "channel": t["channel"], "voice_id": t.get("voice_id"),
+                "voix_2": (t.get("voix_joueurs") or {}).get("2"), "music_dir": os.path.dirname(t["music_path"]) if t.get("music_path") else None,
+                "profile": {"adaptation": {"music_file": os.path.basename(t["music_path"])}} if t.get("music_path") else {}}
+               for t in p["targets"]]
+    return create(p["url"], p["styles"], targets, p.get("musique") or "original", p.get("voix_joueur") or "originale",
+                  bool(p.get("identite")), suite=True)
 
 
 def _catalogue(p: Dict) -> Dict[str, Dict]:
@@ -118,16 +132,30 @@ def styles_of_moments(made: Dict) -> Dict[str, List[str]]:
 MARGIN = 1.5                                # his lines are read from a little before the moment to a little after
 
 
-def _his_voice(p: Dict, cat: List[Dict], made: Dict, meta: Dict, report: Report) -> Dict:
+def _separated(rec: Dict, f: str) -> Dict[str, str]:
+    """The passage's voices apart from the game, done once for every project of the video (kept in the stock)."""
+    pas = next((x for x in rec["passages"].values() if x.get("fichier") == f), None)
+    parts = (pas or {}).get("separe")
+    if parts and all(stock.exists(x) for x in parts.values()):
+        return parts
+    parts = voix.separate(f, os.path.join(stock.folder(rec), "voix", os.path.splitext(os.path.basename(f))[0]))
+    if pas is not None:
+        pas["separe"] = parts
+        stock.save(rec)
+    return parts
+
+
+def _his_voice(p: Dict, cat: List[Dict], made: Dict, meta: Dict, report: Report, rec: Optional[Dict] = None) -> Dict:
     """Each passage the Shorts use split (his voice / the rest), and his lines in every moment where he is heard —
     the told story covers him with its narrator: only its passages' game sounds are needed."""
     by_id = {m["id"]: m for m in cat}
     used = styles_of_moments(made)
     files = sorted({by_id[mid]["fichier"] for mid in used})
+    rec = rec or stock.load(p["url"])
     parts = {}
     for k, f in enumerate(files):
         report(f"leurs voix séparées des bruits du jeu ({k + 1}/{len(files)})", 0.86 + 0.08 * k / len(files))
-        parts[f] = voix.separate(f, os.path.join(project_dir(p["project_id"]), "voix", os.path.splitext(os.path.basename(f))[0]))
+        parts[f] = _separated(rec, f)
     words, langs, lines = sources.words(meta.get("sous_titres")), [t["langue"] for t in p["targets"]], {}
     talking = [mid for mid, sts in used.items() if sts != ["histoire"]]
     # the same person keeps the same number from moment to moment: Gemini is told who was met, by name or, without
@@ -155,28 +183,46 @@ def run_analysis(pid: str, report: Optional[Report] = None) -> None:
     report = report or (lambda phase, f: None)
     p = load(pid)
     try:
-        work = project_dir(pid)
+        rec = stock.load(p["url"])
         report("lecture de la vidéo", 0.03)
-        meta = sources.info(p["url"], work)
-        wins = sources.windows(meta)
+        meta = rec.get("meta")
+        if not meta or (meta.get("sous_titres") and not os.path.exists(meta["sous_titres"])):
+            meta = sources.info(p["url"], stock.folder(rec))
+            rec["meta"] = {k: meta.get(k) for k in ("titre", "chaine", "duree", "langue", "vues", "heatmap", "chapitres", "sous_titres")}
+        wins = sources.windows(meta, exclude=stock.used(rec)) if p.get("suite") else sources.windows(meta)
         if not wins:
-            raise PipelineError("Vidéo vide ou sans durée.")
+            raise PipelineError("Plus aucun passage neuf dans cette vidéo : tout a déjà été regardé." if p.get("suite")
+                                else "Vidéo vide ou sans durée.")
         cat = []
         for k, (a, b) in enumerate(wins):
-            report(f"passage {k + 1}/{len(wins)} : téléchargement", 0.05 + 0.75 * k / len(wins))
-            path = sources.download(p["url"], os.path.join(work, "src"), [[a, b]])[0]
-            dur = render_duration(path)
-            report(f"passage {k + 1}/{len(wins)} : l'IA cherche les moments", 0.05 + 0.75 * (k + 0.5) / len(wins))
-            for i, m in enumerate(moments.find(path, dur)):
-                cat.append({**m, "id": f"w{int(a)}#{i}", "fichier": path, "fichier_duree": dur, "t0": a})
+            pas = stock.passage(rec, a, b)
+            pas.setdefault("rang", len(rec["passages"]))
+            if not stock.exists(pas.get("fichier")):
+                report(f"passage {k + 1}/{len(wins)} : téléchargement", 0.05 + 0.75 * k / len(wins))
+                pas["fichier"] = sources.download(p["url"], os.path.join(stock.folder(rec), "src"), [[a, b]])[0]
+                pas["duree"] = render_duration(pas["fichier"])
+            if not pas.get("moments"):                      # nothing found before: asked again (a retry must retry)
+                report(f"passage {k + 1}/{len(wins)} : l'IA cherche les moments", 0.05 + 0.75 * (k + 0.5) / len(wins))
+                pas["moments"] = moments.find(pas["fichier"], pas["duree"])
+            stock.touch(rec)
+            stock.save(rec)                                 # kept at once: a later failure does not lose it
+            for i, m in enumerate(pas["moments"]):
+                cat.append({**m, "id": f"w{int(a)}#{i}", "fichier": pas["fichier"], "fichier_duree": pas["duree"],
+                            "t0": a, "fenetre": [a, b]})
+        fresh = [m for m in cat if m["id"] not in set(rec.get("publies") or [])]
+        cat = fresh or cat                                  # never a published moment again, unless nothing else is left
         if not cat:
             raise PipelineError("Aucun moment exploitable trouvé dans cette vidéo.")
         report("l'IA écrit les textes de chaque style", 0.85)
         made, dropped = plan.write(meta, cat, p["styles"], [t["langue"] for t in p["targets"]])
         if not made:
             raise PipelineError("Aucun style n'a trouvé de moment qui convienne. " + " ".join(dropped))
-        his = _his_voice(p, cat, made, meta, report) if p.get("voix_joueur") == "remplacer" else None
-        creator = _creators_elements(cat, made, report) if p.get("identite") else None
+        his = _his_voice(p, cat, made, meta, report, rec) if p.get("voix_joueur") == "remplacer" else None
+        creator = _creators_elements(cat, made, report, rec) if p.get("identite") else None
+        rec = stock.load(p["url"])
+        rec["projets"] = sorted(set(rec.get("projets") or []) | {pid})
+        stock.touch(rec)
+        stock.save(rec)
         p = load(pid)
         p.update(meta={k: meta[k] for k in ("titre", "chaine", "duree", "langue", "vues", "sous_titres")},
                  catalogue=cat, plan=made, absents=dropped, voix=his, createur=creator, status="plan_review", error=None,
@@ -291,7 +337,7 @@ def start_render(pid: str) -> Dict:
     return save(p)
 
 
-def _creators_elements(cat: List[Dict], made: Dict, report: Report) -> Dict:
+def _creators_elements(cat: List[Dict], made: Dict, report: Report, rec: Optional[Dict] = None) -> Dict:
     """What the creator added in each moment the Shorts show (roblox/identite.detect), per passage file, and the
     seconds of each file the Shorts use (where names are read at the cleaning)."""
     by_id = {m["id"]: m for m in cat}
@@ -303,8 +349,30 @@ def _creators_elements(cat: List[Dict], made: Dict, report: Report) -> Dict:
         m = by_id[mid]
         a, b = max(0.0, m["debut"] - 1.0), min(m["fichier_duree"], m["fin"] + 1.0)
         spans.setdefault(m["fichier"], []).append([a, b])
-        elements.setdefault(m["fichier"], []).extend(identite.detect(m["fichier"], a, b))
+        pas = next((x for x in (rec or {}).get("passages", {}).values() if x.get("fichier") == m["fichier"]), None)
+        seen = (pas or {}).setdefault("createur", {}) if pas is not None else {}
+        if mid not in seen:                                 # what Gemini saw in a moment: never asked twice
+            seen[mid] = identite.detect(m["fichier"], a, b)
+            if rec is not None:
+                stock.save(rec)
+        elements.setdefault(m["fichier"], []).extend(seen[mid])
     return {"elements": elements, "spans": spans}
+
+
+def _ensure_passages(p: Dict, report: Report) -> None:
+    """The passages removed by the 30-day cleanup downloaded again, the very same seconds (their moments, kept in the
+    video's record, are not looked for again)."""
+    missing = sorted({(m["fichier"], tuple(m.get("fenetre") or (m["t0"], m["t0"] + m["fichier_duree"])))
+                      for m in p["catalogue"] if not os.path.exists(m["fichier"])})
+    for k, (f, (a, b)) in enumerate(missing):
+        report(f"passage {k + 1}/{len(missing)} téléchargé à nouveau", 0.01)
+        got = sources.download(p["url"], os.path.dirname(f), [[a, b]])[0]
+        if os.path.normpath(got) != os.path.normpath(f) and os.path.exists(got):
+            os.replace(got, f)
+    if missing:
+        rec = stock.load(p["url"])
+        stock.touch(rec)
+        stock.save(rec)
 
 
 def _cleaned(pid: str, report: Report) -> Dict[str, Dict]:
@@ -318,10 +386,17 @@ def _cleaned(pid: str, report: Report) -> Dict[str, Dict]:
         if f in done and os.path.exists(done[f]["fichier"]):
             continue
         report(f"le créateur caché, passage {k + 1}/{len(files)} (carte graphique)", 0.02 + 0.03 * k / max(1, len(files)))
+        import hashlib
+        import json
         name = os.path.splitext(os.path.basename(f))[0]
-        work = os.path.join(project_dir(pid), "propre")
-        r = nettoyage.clean(f, creator["elements"][f], creator.get("spans", {}).get(f) or [], os.path.join(work, f"{name}.mp4"),
-                            os.path.join(work, f"travail_{name}"))
+        key = hashlib.sha1(json.dumps([creator["elements"][f], creator.get("spans", {}).get(f)], sort_keys=True).encode()).hexdigest()[:10]
+        work = os.path.join(stock.folder(stock.load(p["url"])), "propre")       # shared: the same cleaning is done once
+        out = os.path.join(work, f"{name}_{key}.mp4")
+        if stock.exists(out):
+            r = {"fichier": out, "keep": nettoyage.keep_for(creator["elements"][f]), "pseudos": []}
+        else:
+            r = nettoyage.clean(f, creator["elements"][f], creator.get("spans", {}).get(f) or [], out,
+                                os.path.join(work, f"travail_{name}"))
         done[f] = {"fichier": r["fichier"], "keep": r["keep"], "pseudos": r.get("pseudos", [])}
         fresh = load(pid)
         fresh["createur"]["propres"] = done
@@ -353,9 +428,12 @@ def _new_sound(p: Dict, t: Dict, styles: List[str], video: Optional[Dict[str, Di
             tracks.setdefault(m["fichier"], []).append((path, r["a"]))
     shown = {cat[mid]["fichier"] for mid, sts in styles_of_moments(p["plan"]).items() if set(sts) & set(styles)}
     files = {}
+    rec = stock.load(p["url"])
     for f, parts in his["fichiers"].items():
         if f not in shown:
             continue
+        if not stock.exists(parts.get("reste")):           # removed by the 30-day cleanup: apart again
+            parts = _separated(rec, f)
         reste = None if p["musique"] == "chaine" else parts["reste"]
         key = hashlib.sha1(json.dumps([picture(f), reste, tracks.get(f, [])]).encode()).hexdigest()[:10]
         out = os.path.join(work, f"{os.path.splitext(os.path.basename(f))[0]}_{lang}_{key}.mp4")
@@ -387,6 +465,7 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
         out_dir = os.path.join(project_dir(pid), "out")
         todo = [(s, t) for s in p["styles"] if s in p["plan"] for t in p["targets"]
                 if not (p["videos"].get(f"{s}_{t['langue']}") or {}).get("path") or p["videos"][f"{s}_{t['langue']}"].get("a_refaire")]
+        _ensure_passages(p, report)
         cleaned = _cleaned(pid, report) if p.get("identite") and todo else {}
         sound = {}
         for k, (style, t) in enumerate(todo):
@@ -495,6 +574,11 @@ def send(pid: str, keys: List[str]) -> Dict:
             rec["thumbnail_path"] = thumb
         db.upsert_video(vid, rec)
         v["video_id"] = vid
+        rec = stock.load(p["url"])                          # its moments: never made into a Short again
+        shown = [mid for mid, sts in styles_of_moments(p.get("plan") or {}).items() if v["style"] in sts]
+        rec["publies"] = sorted(set(rec.get("publies") or []) | set(shown))
+        stock.touch(rec)
+        stock.save(rec)
     if all(v.get("video_id") for v in p["videos"].values()):
         p["status"] = "done"
     return save(p)

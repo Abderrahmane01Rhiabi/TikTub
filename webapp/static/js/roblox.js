@@ -125,7 +125,12 @@ async function loadRbProject(){
   const stage = document.getElementById('rbStage');
   const head = `${rbStepsHtml(p.status)}
     <div class="toolbar"><div class="fact">${esc(p.titre || p.url)}${p.chaine_source ? ` · <span class="tiny">${esc(p.chaine_source)}</span>` : ''}${p.identite ? ' · <span class="pill">identité de la chaîne</span>' : ''}</div>
-      <button class="btn ghost small" id="rbDel" title="Supprimer le projet">Supprimer</button></div>`;
+      ${['review', 'done', 'plan_review'].includes(p.status) ? `<button class="btn secondary small" id="rbSuite" data-icon="sparkle"
+        title="Un nouveau projet sur la même vidéo, avec des passages jamais utilisés (les moments déjà publiés ne reviennent jamais)">Chercher d'autres moments</button>` : ''}
+      <button class="btn ghost small" id="rbDel" title="Supprimer le projet">Supprimer</button></div>
+    ${p.video && p.video.passages ? `<div class="tiny" style="margin:-4px 0 8px">Cette vidéo : ${p.video.passages} passage${p.video.passages > 1 ? 's' : ''} déjà regardé${p.video.passages > 1 ? 's' : ''}
+      ${p.video.duree ? `sur ${Math.round(p.video.duree / 60)} min` : ''} · ${p.video.projets} projet${p.video.projets > 1 ? 's' : ''}
+      · ${p.video.publies} moment${p.video.publies > 1 ? 's' : ''} publié${p.video.publies > 1 ? 's' : ''}${p.suite ? ' · <span class="pill">autres moments</span>' : ''}</div>` : ''}`;
   let body = '';
   if (RB_BUSY.includes(p.status)){
     const pct = Math.round(((p.progress && p.progress.fraction) || 0) * 100);
@@ -233,6 +238,13 @@ function wireRbProject(p){
     if (!confirm('Supprimer ce projet ? Les vidéos déjà envoyées en Publication restent.')) return;
     try { await api(`/api/roblox/${p.project_id}`, { method: 'DELETE' }); rbCurrent = ''; loadRobloxList(); }
     catch (e){ log(e.message, 'error'); }
+  };
+  const more = document.getElementById('rbSuite');
+  if (more) more.onclick = async () => {
+    more.disabled = true;
+    try { const n = await api(`/api/roblox/${p.project_id}/suite`, { method: 'POST' });
+      log('Nouveau projet lancé avec d\'autres passages de la vidéo', 'success'); rbCurrent = n.project_id; loadRobloxList(); }
+    catch (e){ log(e.message, 'error'); more.disabled = false; }
   };
   const retry = document.getElementById('rbRetry');
   if (retry) retry.onclick = async () => { try { await api(`/api/roblox/${p.project_id}/retry`, { method: 'POST' }); loadRbProject(); } catch (e){ log(e.message, 'error'); } };

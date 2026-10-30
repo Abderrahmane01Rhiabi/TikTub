@@ -395,12 +395,17 @@ def _duration(path: str) -> float:
     return float(r.stdout.strip() or 0)
 
 
+def keep_for(elements: List[Dict]) -> float:
+    """The top of the picture kept: KEEP when the creator's captions are at the bottom, else all of it."""
+    return KEEP if any(e["type"] == "sous_titres_incrustes" and e["cadre"][1] >= 0.6 for e in elements) else 1.0
+
+
 def clean(src: str, elements: List[Dict], spans: List[List[float]], out: str, work: str,
           reader=None, predictor=None) -> Dict:
     """The passage src with the creator's elements hidden -> {"fichier", "keep", "pseudos"}; spans: the seconds the
     Shorts use (names are read only there). Nothing to hide: the passage itself."""
     os.makedirs(work, exist_ok=True)
-    keep = KEEP if any(e["type"] == "sous_titres_incrustes" and e["cadre"][1] >= 0.6 for e in elements) else 1.0
+    keep = keep_for(elements)
     masks: Dict[int, np.ndarray] = {}
     for e in elements:                                                # rectangles by nature, or captions up in the picture
         if e["type"] in ("webcam", "logo"):

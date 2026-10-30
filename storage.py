@@ -94,6 +94,14 @@ def _roblox_items(root: str, rows: Dict) -> List[Dict]:
     out = []
     for pid in os.listdir(root):
         path = os.path.join(root, pid)
+        if pid == "videos":                       # the shared stock of the long videos (roblox/stock.py)
+            from roblox import stock
+            for key in os.listdir(path):
+                rec = _db.get_roblox_video(key)
+                sub = os.path.join(path, key)
+                out.append({"path": sub, "video_id": None, "category": "orphans" if not rec or stock.stale(rec) else "in_use",
+                            "size": _size(sub), "age": _age(sub) if not rec else time.time() - (rec.get("utilise_le") or 0)})
+            continue
         project = _db.get_roblox(pid)
         if not project:
             category = "orphans"

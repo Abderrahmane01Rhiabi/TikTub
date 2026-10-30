@@ -40,22 +40,26 @@ def info(url: str, work: str) -> Dict:
             "sous_titres": subs[0] if subs else None}
 
 
-def windows(meta: Dict, n: int = WINDOWS, size: float = WINDOW_S) -> List[List[float]]:
+def windows(meta: Dict, n: int = WINDOWS, size: float = WINDOW_S, exclude: Optional[List[List[float]]] = None) -> List[List[float]]:
     """The passages to look at: around the most replayed points; without the graph, the chapters' starts, else
-    spread evenly. Never overlapping, inside the video."""
+    spread evenly — then, for more, every part of the video not looked at yet. Never overlapping each other nor
+    `exclude` (the passages earlier projects used), inside the video."""
     dur = meta.get("duree") or 0.0
+    taken = [list(w) for w in exclude or []]
     if dur <= size * 1.2:
-        return [[0.0, round(dur, 1)]]
+        return [] if taken else [[0.0, round(dur, 1)]]
     if meta.get("heatmap"):
         centres = [(p["start_time"] + p["end_time"]) / 2 for p in sorted(meta["heatmap"], key=lambda p: -p["value"])]
     elif meta.get("chapitres"):
         centres = [c["start_time"] + size / 2 for c in meta["chapitres"]]
     else:
         centres = [dur * (k + 0.5) / n for k in range(n)]
+    if exclude is not None:                      # more: then whatever part was never looked at, the gaps included
+        centres += [size / 2 + k * size / 5 for k in range(int(dur * 5 // size) + 1)]
     out = []
     for c in centres:
-        a = min(max(0.0, c - size / 2), dur - size)
-        if all(a + size <= x or a >= y for x, y in out):
+        a = round(min(max(0.0, c - size / 2), dur - size), 1)
+        if all(a + size <= x or a >= y for x, y in out + taken):
             out.append([round(a, 1), round(a + size, 1)])
         if len(out) == n:
             break
