@@ -119,6 +119,15 @@ CREATE TABLE IF NOT EXISTS adaptations (
     data TEXT NOT NULL
 );
 
+-- Montage Roblox projects: one long Roblox video -> several Shorts (styles x languages), see roblox/pipeline.py.
+CREATE TABLE IF NOT EXISTS roblox_projects (
+    project_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS voices (
     voice_id TEXT PRIMARY KEY,
     name TEXT,
@@ -558,5 +567,47 @@ def delete_adaptation(project_id: str, db_path: str = DB_PATH) -> bool:
     try:
         with conn:
             return conn.execute("DELETE FROM adaptations WHERE project_id = ?", (project_id,)).rowcount > 0
+    finally:
+        conn.close()
+
+
+def save_roblox(project: Dict, db_path: str = DB_PATH) -> Dict:
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    project = {**project, "updated_at": now}
+    project.setdefault("created_at", now)
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO roblox_projects (project_id, status, created_at, updated_at, data) "
+                         "VALUES (?, ?, ?, ?, ?)", (project["project_id"], project["status"], project["created_at"],
+                                                    now, json.dumps(project, ensure_ascii=False)))
+    finally:
+        conn.close()
+    return project
+
+
+def get_roblox(project_id: str, db_path: str = DB_PATH) -> Optional[Dict]:
+    conn = get_connection(db_path)
+    try:
+        r = conn.execute("SELECT data FROM roblox_projects WHERE project_id = ?", (project_id,)).fetchone()
+        return json.loads(r["data"]) if r else None
+    finally:
+        conn.close()
+
+
+def list_roblox(db_path: str = DB_PATH) -> List[Dict]:
+    conn = get_connection(db_path)
+    try:
+        return [json.loads(r["data"]) for r in conn.execute("SELECT data FROM roblox_projects ORDER BY created_at DESC")]
+    finally:
+        conn.close()
+
+
+def delete_roblox(project_id: str, db_path: str = DB_PATH) -> bool:
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            return conn.execute("DELETE FROM roblox_projects WHERE project_id = ?", (project_id,)).rowcount > 0
     finally:
         conn.close()

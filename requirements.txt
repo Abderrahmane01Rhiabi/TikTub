@@ -34,6 +34,14 @@ elevenlabs>=2.66.0  # generative pipeline: script -> voice (TTS + word timestamp
 faster-whisper>=1.0.0  # word timings: generative captions (small model) and Montage auto (medium model)
 PicImageSearch==3.12.11  # Adaptation: reverse image search (Yandex) for the reference Short's shots.
                          # Pinned: it scrapes the engines' pages, a new release can change what parses.
+# Montage Roblox: the player's voice apart from the game's sounds (roblox/voix.py), the creator's elements hidden
+# (roblox/nettoyage.py: SAM 2, EasyOCR). Install torch's CUDA build FIRST (the graphics card: ~30 times faster):
+#   pip install "torch==2.5.1+cu124" "torchvision==0.20.1+cu124" "torchaudio==2.5.1+cu124" --index-url https://download.pytorch.org/whl/cu124
+# (no graphics card: the same versions with +cpu and .../whl/cpu — it works, slowly)
+demucs==4.0.1
+sam2==1.1.0              # install with SAM2_BUILD_CUDA=0 (no compiled extension needed)
+easyocr==1.7.2
+opencv-python>=4.8
 
 # Local web UI
 fastapi>=0.110.0

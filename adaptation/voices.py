@@ -66,7 +66,7 @@ def download_preview(url: str, path: str) -> Optional[str]:
     return path
 
 
-def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str) -> Dict:
+def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str, model: str = MODEL) -> Dict:
     """Narrates every passage['texte'] in one take (natural flow between
     sentences) and returns the word timings and each passage's span:
     {"words": [{w, start, end}], "passages": [{..., start, end, words: [i]}], "duration": s}."""
@@ -77,9 +77,11 @@ def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str
         spans.append((len(text), len(text) + len(p["texte"])))
         text += p["texte"]
     r = requests.post(f"{API}/v1/text-to-speech/{voice_id}/with-timestamps", headers={"xi-api-key": _key()},
-                      timeout=300, json={"text": text, "model_id": MODEL, "language_code": lang_code.split("-")[0],
+                      timeout=300, json={"text": text, "model_id": model, "language_code": lang_code.split("-")[0],
                                          "voice_settings": {"stability": 0.5, "similarity_boost": 0.8,
                                                             "style": 0.15, "speed": 1.0}})
+    if r.status_code != 200 and model != MODEL and 400 <= r.status_code < 500:     # a newer model refused: the usual one
+        return synthesize(passages, voice_id, lang_code, out_mp3)
     if r.status_code != 200:
         raise VoiceError(f"ElevenLabs HTTP {r.status_code} : {r.text[:300]}")
     d = r.json()
