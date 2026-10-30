@@ -30,7 +30,9 @@ HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MODEL = os.path.join(HERE, "modeles", "sam2.1_hiera_large.pt")
 MODEL_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/sam2.1_hiera_large.pt"
 CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
-FPS, SW, SH = 30, 960, 540                       # SAM and the mask: 30 images/s at half size
+FPS, SW, SH = 30, 960, 540                       # the mask: 30 images/s at half size
+SAM_FPS = 15                                     # SAM follows at 15 images/s, each shape kept for the image after
+                                                 # too (30/s took ~2.5 min a passage; TWIN covers the rest)
 KEEP = 0.80                                      # the top of the picture kept when the creator's captions are below
 SCENERY, MIN_PX, NEAR, TWIN = 0.30, 60, 8, 4
 GROW_AV, GROW_TXT = 7, 3
@@ -203,7 +205,7 @@ def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndar
         sticker = e["type"] != "avatar"
         d0, d1 = max(0.0, e["debut"] - 0.6), e["fin"] + 1.0
         fdir = os.path.join(work, f"objet{k}")
-        n = _frames(src, d0, d1, fdir, FPS, SW, SH)
+        n = _frames(src, d0, d1, fdir, SAM_FPS, SW, SH)
         if not n:
             continue
         x0, y0, x1, y1 = _grown(e["cadre"], side=0.02, top=0.0 if sticker else 0.07)   # higher: a head stuck out above
@@ -213,7 +215,7 @@ def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndar
         prompts = ([(1, box, [[cx, (by0 + by1) / 2]])] if sticker else
                    [(1, box, [[cx, by0 + 0.62 * (by1 - by0)]]),
                     (2, np.array([bx0, by0, bx1, by0 + 0.5 * (by1 - by0)], np.float32), [[cx, by0 + 0.22 * (by1 - by0)]])])
-        keys = sorted({min(n - 1, max(0, round((t - d0) * FPS))) for t in (e["debut"] + 0.25, (e["debut"] + e["fin"]) / 2, e["fin"] - 0.25)})
+        keys = sorted({min(n - 1, max(0, round((t - d0) * SAM_FPS))) for t in (e["debut"] + 0.25, (e["debut"] + e["fin"]) / 2, e["fin"] - 0.25)})
         got: Dict[int, np.ndarray] = {}
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch.bfloat16, enabled=cuda):
             st = pred.init_state(video_path=fdir, offload_video_to_cpu=True)
@@ -252,7 +254,7 @@ def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndar
         for idx in range(n):
             m = filled.get(idx)
             if m is None:
-                if not (e["debut"] <= d0 + idx / FPS <= e["fin"]):
+                if not (e["debut"] <= d0 + idx / SAM_FPS <= e["fin"]):
                     continue
                 near = [j for j in filled if abs(j - idx) <= NEAR]
                 if not near:
@@ -261,8 +263,9 @@ def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndar
             if not sticker:
                 m = with_sticker_parts(m, os.path.join(fdir, f"{idx:05d}.jpg"))
             m = cv2.dilate(whole(m).astype(np.uint8), _kernel(GROW_AV)) > 0
-            i = round(d0 * FPS) + idx
-            allm[i] = allm[i] | m if i in allm else m
+            first = round((d0 + idx / SAM_FPS) * FPS)
+            for i in range(first, first + FPS // SAM_FPS):                # the images of the mask this one stands for
+                allm[i] = allm[i] | m if i in allm else m
         shutil.rmtree(fdir)
     if cuda:
         torch.cuda.empty_cache()
@@ -347,10 +350,15 @@ def clean(src: str, elements: List[Dict], spans: List[List[float]], out: str, wo
     _write_mask(masks, _duration(src), mask)
     h = int(1080 * keep) // 2 * 2
     tmp = out + ".part.mp4"
-    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src, "-i", mask, "-filter_complex",
-          "[0:v]scale=1920:1080,split[o][c];[c]gblur=sigma=45:steps=3,eq=saturation=0.12:brightness=-0.04,format=yuva420p[b];"
-          f"[1:v]scale=1920:1080,format=gray[m];[b][m]alphamerge[bm];[o][bm]overlay=eof_action=pass,crop=1920:{h}:0:0[v]",
-          "-map", "[v]", "-map", "0:a?", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "copy", tmp])
+    # the blur made at half size (4 times less work, the same blur to the eye: it took ~2.5 min a passage at full size)
+    graph = ("[0:v]scale=1920:1080,split[o][c];[c]scale=960:540,gblur=sigma=22:steps=3,eq=saturation=0.12:brightness=-0.04,"
+             "scale=1920:1080,format=yuva420p[b];"
+             f"[1:v]scale=1920:1080,format=gray[m];[b][m]alphamerge[bm];[o][bm]overlay=eof_action=pass,crop=1920:{h}:0:0[v]")
+    base = ["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src, "-i", mask, "-filter_complex", graph, "-map", "[v]", "-map", "0:a?"]
+    try:                                                              # encoded by the graphics card when there is one
+        _run(base + ["-c:v", "h264_nvenc", "-preset", "p5", "-cq", "19", "-c:a", "copy", tmp])
+    except NettoyageError:
+        _run(base + ["-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-c:a", "copy", tmp])
     os.replace(tmp, out)
     os.remove(mask)
     return {"fichier": out, "keep": keep, "pseudos": hidden}
