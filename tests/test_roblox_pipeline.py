@@ -17,22 +17,34 @@ PUB = {"fr": {"titre": "Le pire petit déjeuner 🤢", "description": "Il goûte
 
 @pytest.fixture
 def fakes(project, monkeypatch):
-    calls = {"render": [], "translate": 0, "ctx": []}
+    calls = {"render": [], "translate": 0, "ctx": [], "fenetres": [], "telecharges": [], "moments": []}
     monkeypatch.setattr(sources, "info", lambda url, work: {"titre": "FUNNY MOMENTS", "chaine": "Roblox Idol", "duree": 7200.0,
                                                            "langue": "en", "vues": 10, "heatmap": [], "chapitres": [], "sous_titres": None})
-    monkeypatch.setattr(sources, "windows", lambda meta: [[0.0, 75.0], [600.0, 675.0]])
+    def windows(meta, n=6, size=75, exclude=None):
+        calls["fenetres"].append([list(w) for w in exclude or []])
+        free = [w for w in ([[0.0, 75.0], [600.0, 675.0]], [[1200.0, 1275.0], [1800.0, 1875.0]], [])
+                if not any(a < y and x < b for a, b in w for x, y in exclude or [])]
+        return free[0] if free else []
+    monkeypatch.setattr(sources, "windows", windows)
 
     def download(url, work, wins):
+        calls["telecharges"].append(wins[0][0])
         os.makedirs(work, exist_ok=True)
         path = os.path.join(work, f"w{int(wins[0][0])}.mp4")
         open(path, "w").write("x")
         return [path]
     monkeypatch.setattr(sources, "download", download)
     monkeypatch.setattr(rp, "render_duration", lambda path: 75.0)
-    monkeypatch.setattr(moments, "find", lambda path, dur: [{"debut": 10.0, "fin": 22.0, "chute": 18.0, "resume": "r"}])
+    def find(path, dur):
+        calls["moments"].append(path)
+        return [{"debut": 10.0, "fin": 22.0, "chute": 18.0, "resume": "r"}]
+    monkeypatch.setattr(moments, "find", find)
 
     def write(meta, cat, styles, langs):
-        assert [m["id"] for m in cat] == ["w0#0", "w600#0"] and cat[1]["t0"] == 600.0
+        ids = [m["id"] for m in cat]
+        if ids != ["w0#0", "w600#0"]:                                 # a later project: what is left of the video
+            return ({"clip": {"moment": ids[0], "titre": dict(T), "publication": json.loads(json.dumps(PUB))}}, [])
+        assert cat[1]["t0"] == 600.0
         return ({"clip": {"moment": "w0#0", "titre": dict(T), "publication": json.loads(json.dumps(PUB))},
                  "devine": {"moment": "w600#0", "arret": 7.0, "question": dict(T), "final": dict(T), "publication": json.loads(json.dumps(PUB))}},
                 ["POV : pas de moment qui convienne dans cette vidéo."])
@@ -48,6 +60,8 @@ def fakes(project, monkeypatch):
 
     def separate(src, work):
         calls["separe"].append(src)
+        for f in (src + ".voix.wav", src + ".reste.wav"):
+            open(f, "w").write("x")
         return {"voix": src + ".voix.wav", "reste": src + ".reste.wav"}
 
     def write_lines(vocals, a, b, resume, dialogue, langs, gemini=None, joueurs=None, video=""):
@@ -318,3 +332,53 @@ def test_a_project_folder_is_kept_by_the_storage_cleanup_while_the_project_lives
     assert cat()[os.path.normpath(f"temp/roblox/{pid}")] == "in_use"
     db.delete_roblox(pid)
     assert cat()[os.path.normpath(f"temp/roblox/{pid}")] == "orphans"
+
+
+
+def test_a_second_project_on_the_same_video_reuses_everything(fakes, project):
+    first = new(project)["project_id"]
+    rp.run_analysis(first)
+    rp.start_render(first)
+    rp.run_render(first)
+    assert fakes["telecharges"] == [0.0, 600.0] and len(fakes["moments"]) == 2
+    separated = list(fakes["separe"])
+    second = rp.create("https://www.youtube.com/watch?v=NvGUWTH2U5Q", ["clip", "pov", "devine"],
+                       [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"},
+                        {"langue": "en", "channel": "chanB", "profile": {}, "music_dir": "x"}])["project_id"]
+    rp.run_analysis(second)
+    p = rp.load(second)
+    assert p["status"] == "plan_review" and fakes["telecharges"] == [0.0, 600.0] and len(fakes["moments"]) == 2
+    assert fakes["separe"] == separated                                                              # already apart: no Demucs
+    assert all("videos" in m["fichier"] for m in p["catalogue"])                                    # the shared stock
+
+
+def test_more_moments_come_from_passages_never_used_and_published_ones_are_left_out(fakes, project):
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    rp.start_render(pid)
+    rp.run_render(pid)
+    rp.send(pid, ["clip_fr"])                                                     # w0#0 is out
+    from roblox import stock
+    assert stock.load("https://www.youtube.com/watch?v=NvGUWTH2U5Q")["publies"] == ["w0#0"]
+    more = rp.suite(pid)
+    assert more["suite"] and more["url"] == rp.load(pid)["url"] and more["styles"] == rp.load(pid)["styles"]
+    rp.run_analysis(more["project_id"])
+    p = rp.load(more["project_id"])
+    assert fakes["fenetres"][-1] == [[0.0, 75.0], [600.0, 675.0]] and fakes["telecharges"][-2:] == [1200.0, 1800.0]
+    assert {m["id"] for m in p["catalogue"]} == {"w1200#0", "w1800#0"} and p["status"] == "plan_review"
+    again = rp.create("https://www.youtube.com/watch?v=NvGUWTH2U5Q", ["clip"],
+                      [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"}])["project_id"]
+    rp.run_analysis(again)
+    assert "w0#0" not in {m["id"] for m in rp.load(again)["catalogue"]}             # never a published moment again
+
+
+def test_a_passage_removed_by_the_cleanup_is_downloaded_again_for_the_render(fakes, project):
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    for m in rp.load(pid)["catalogue"]:
+        if os.path.exists(m["fichier"]):
+            os.remove(m["fichier"])
+    rp.start_render(pid)
+    rp.run_render(pid)
+    assert rp.load(pid)["status"] == "review" and fakes["telecharges"] == [0.0, 600.0, 0.0, 600.0]
+    assert len(fakes["moments"]) == 2                                             # its moments were not looked for again

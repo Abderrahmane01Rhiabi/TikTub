@@ -102,3 +102,15 @@ def test_a_background_step_that_breaks_never_leaves_the_project_stuck(client, pr
         time.sleep(0.1)
     p = rp.load(pid)
     assert p["status"] == "error" and "arrêt brutal" in p["error"] and p["failed_step"] == "analysing"
+
+
+
+def test_more_moments_through_the_api(client, project, fakes, monkeypatch):
+    inline(monkeypatch)
+    project.add_channel("chanA")
+    pid = client.post("/api/roblox", json={"url": "https://y.com/v", "styles": ["clip"],
+                                           "cibles": [{"langue": "fr", "channel": "chanA"}]}).json()["project_id"]
+    r = client.post(f"/api/roblox/{pid}/suite")
+    assert r.status_code == 200 and r.json()["project_id"] != pid and r.json()["suite"] is True
+    p = client.get(f"/api/roblox/{pid}").json()
+    assert p["video"]["passages"] == 4 and p["video"]["projets"] == 2

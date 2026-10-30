@@ -60,6 +60,7 @@ def _start(pid: str, step: str):
 
 
 def _serialize(p: Dict, full: bool = True) -> Dict:
+    import db
     import progress
     from roblox import plan
     from roblox import pipeline as rp
@@ -68,6 +69,7 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
     out = {k: p.get(k) for k in ("project_id", "status", "url", "styles", "musique", "error", "failed_step", "created_at", "absents")}
     out["voix_joueur"] = p.get("voix_joueur") or "originale"          # a project made before the choice kept it
     out["identite"] = bool(p.get("identite"))
+    out["suite"] = bool(p.get("suite"))
     out["titre"] = (p.get("meta") or {}).get("titre") or ""
     out["chaine_source"] = (p.get("meta") or {}).get("chaine") or ""
     names = {(lang, v["voice_id"]): v["nom"] for lang in voix.CATALOGUE for v in voix.catalogue(lang)}
@@ -81,6 +83,10 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
     out["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
     out["noms_styles"] = {k: v[0] for k, v in plan.STYLES.items()}
     if full:
+        from roblox import stock
+        rec = db.get_roblox_video(stock.video_key(p["url"])) or {}
+        out["video"] = {"passages": len(rec.get("passages") or {}), "projets": len(rec.get("projets") or []),
+                        "publies": len(rec.get("publies") or []), "duree": (rec.get("meta") or {}).get("duree")}
         out["plan"] = p.get("plan") or {}
         out["moments"] = {m["id"]: m.get("resume") for m in p.get("catalogue") or []}
         uses = rp.styles_of_moments(p.get("plan") or {})
@@ -206,6 +212,15 @@ def retry_roblox(pid: str):
     p.update(status=step, error=None)
     rp.save(p)
     _start(pid, step)
+    return _serialize(p)
+
+
+@router.post("/api/roblox/{pid}/suite")
+def more_roblox_moments(pid: str):
+    """« Chercher d'autres moments »: a new project on the same video, only with passages never used."""
+    from roblox import pipeline as rp
+    p = _call(rp.suite, pid)
+    _start(p["project_id"], "analysing")
     return _serialize(p)
 
 
