@@ -8,7 +8,7 @@ import pytest
 
 import db
 from roblox import pipeline as rp
-from roblox import plan, render, sources, moments, voix
+from roblox import identite, nettoyage, plan, render, sources, moments, voix
 
 T = {"fr": "Bonjour", "en": "Hello"}
 PUB = {"fr": {"titre": "Le pire petit déjeuner 🤢", "description": "Il goûte.", "tags": ["roblox", "brookhaven"]},
@@ -69,6 +69,19 @@ def fakes(project, monkeypatch):
     monkeypatch.setattr(voix, "track", track)
     monkeypatch.setattr(voix, "passage_audio", passage_audio)
     monkeypatch.setattr(voix, "mean_db", lambda path, a=None, b=None: -20.0)
+
+    def detect(src, a, b, gemini=None):
+        calls["vus"].append((src, a, b))
+        return [{"type": "avatar", "debut": a + 1, "fin": a + 2, "cadre": [0.6, 0.4, 1.0, 1.0], "pose": "rire"}]
+
+    def clean(src, elements, spans, out, work, reader=None, predictor=None):
+        calls["nettoyes"].append((src, len(elements), spans))
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        open(out, "w").write("x")
+        return {"fichier": out, "keep": 0.8, "pseudos": []}
+    calls.update(vus=[], nettoyes=[])
+    monkeypatch.setattr(identite, "detect", detect)
+    monkeypatch.setattr(nettoyage, "clean", clean)
     monkeypatch.setattr(voix, "separate", separate)
     monkeypatch.setattr(voix, "write_lines", write_lines)
     return calls
@@ -187,6 +200,36 @@ def test_each_player_is_read_by_his_own_voice_which_can_be_changed(fakes, projec
     assert p["targets"][0]["voice_id"] == lea and p["videos"]["clip_fr"]["a_refaire"]           # the 1st also tells the story
     with pytest.raises(rp.PipelineError, match="voix"):
         rp.set_voice(pid, "en", "1", lea)                                                     # a French voice for English
+
+
+def test_the_channels_identity_hides_the_creator_once_then_every_short_is_made_on_the_clean_passages(fakes, project):
+    project.add_channel("chanA")
+    project.add_channel("chanB")
+    t = [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"}, {"langue": "en", "channel": "chanB", "profile": {}, "music_dir": "x"}]
+    p = rp.create("https://y", ["clip", "devine"], t, voix_joueur="originale", identite=True)
+    assert p["identite"]
+    rp.run_analysis(p["project_id"])
+    p = rp.load(p["project_id"])
+    assert sorted(f.rsplit("/", 1)[-1] for f, _, _ in fakes["vus"]) == ["w0.mp4", "w600.mp4"]          # each moment shown
+    assert set(p["createur"]["elements"]) == {m["fichier"] for m in p["catalogue"]}
+    rp.start_render(p["project_id"])
+    rp.run_render(p["project_id"])
+    assert len(fakes["nettoyes"]) == 2 and all(spans for _, _, spans in fakes["nettoyes"])         # once per passage, 2 languages
+    style, lang, ctx = next(c for c in fakes["ctx"] if c[:2] == ("clip", "fr"))
+    clean = ctx.moments["w0#0"]["fichier"]
+    assert "propre" in clean and ctx.identite["keep"][clean] == 0.8 and ctx.identite["apparitions"][clean][0]["pose"] == "rire"
+    rp.set_texts(p["project_id"], "clip", "fr", {"titre": "Autre"})
+    rp.start_render(p["project_id"])
+    rp.run_render(p["project_id"])
+    assert len(fakes["nettoyes"]) == 2                                                    # kept: never hidden twice
+
+
+def test_without_the_identity_nothing_is_detected_nor_cleaned(fakes, project):
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    rp.start_render(pid)
+    rp.run_render(pid)
+    assert fakes["vus"] == [] and fakes["nettoyes"] == [] and all(c[2].identite is None for c in fakes["ctx"])
 
 
 def test_his_voice_kept_leaves_the_sources_as_they_are(fakes, project):

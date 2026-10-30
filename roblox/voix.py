@@ -125,7 +125,9 @@ def separate(src: str, work: str) -> Dict[str, str]:
     os.makedirs(work, exist_ok=True)
     wav = os.path.join(work, "passage.wav")
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", src, "-vn", "-ac", "2", "-ar", "44100", wav])
-    _run([sys.executable, "-m", "demucs", "--two-stems", "vocals", "-n", DEMUCS, "-d", "cpu", "-o", work, wav])
+    import torch
+    device = "cuda" if torch.cuda.is_available() else "cpu"          # the graphics card: seconds instead of ~2 min
+    _run([sys.executable, "-m", "demucs", "--two-stems", "vocals", "-n", DEMUCS, "-d", device, "-o", work, wav])
     os.remove(wav)
     return out
 

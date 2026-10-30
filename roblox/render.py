@@ -157,13 +157,16 @@ class Context:
 
     def __init__(self, moments: Dict[str, Dict], words, lang: str, source_lang: str, voice_id: Optional[str], work: str,
                  translate: Callable[[List[str], str], List[str]], synthesize: Optional[Callable] = None,
-                 lines: Optional[Dict[str, List[Dict]]] = None, son_refait: bool = False, voice_model: Optional[str] = None):
+                 lines: Optional[Dict[str, List[Dict]]] = None, son_refait: bool = False, voice_model: Optional[str] = None,
+                 identite: Optional[Dict] = None):
         """lines: his new lines per moment, [{a, b, texte}] in seconds of the passage (his voice replaced);
-        son_refait: the passages' sound is already the right one (kept even under the channel's music)."""
+        son_refait: the passages' sound is already the right one (kept even under the channel's music);
+        identite: the channel's look (roblox/identite.py) — {"apparitions", "emotions", "keep"} per file of the Short."""
         self.moments, self.words, self.lang, self.source_lang = moments, words, lang, source_lang
         self.voice_id, self.work, self.translate = voice_id, work, translate
         self.synthesize = synthesize
         self.lines, self.son_refait, self.voice_model = lines or {}, son_refait, voice_model
+        self.identite = identite
 
     def moment(self, mid: str) -> Dict:
         return self.moments[mid]
@@ -292,10 +295,20 @@ MAKERS = {"clip": clip, "pov": pov, "histoire": histoire, "top3": top3, "devine"
 def make(style: str, p: Dict, ctx: Context, out: str, music: Optional[str] = None) -> float:
     """One Short: the style's extracts, texts and sounds, rendered to out. Returns its duration."""
     segs, ass, sounds = MAKERS[style](p, ctx)
+    if ctx.identite is not None:
+        ass.theme = "identite"
     if ctx.son_refait:
         for s in segs:
             s["garde_son"] = True
     subs = os.path.join(os.path.dirname(out) or ".", "sous_titres")         # not next to the video: VLC would show it
     os.makedirs(subs, exist_ok=True)                                          # over the burnt-in text
     path = ass.write(os.path.join(subs, os.path.splitext(os.path.basename(out))[0] + ".ass"))
-    return build(segs, path, sounds, out, music)
+    duration = build(segs, path, sounds, out, music)
+    if ctx.identite is not None:                       # our mascot and the punchline's flash, on top
+        from roblox import identite
+        punch = [at for f, at, _ in sounds if f == SFX["boom"]]
+        evs = identite.events(segs, ctx.identite.get("apparitions") or {}, ctx.identite.get("emotions") or {}, punch,
+                              keep=ctx.identite.get("keep"))
+        if evs or punch:
+            identite.overlay(out, evs, punch, out)
+    return duration

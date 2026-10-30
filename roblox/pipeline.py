@@ -21,7 +21,7 @@ from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 import db
-from roblox import moments, plan, render, sources, voix
+from roblox import identite, moments, nettoyage, plan, render, sources, voix
 
 Report = Callable[[str, float], None]
 LANGS = ("fr", "en", "ar", "es")
@@ -68,7 +68,8 @@ def voice_for(lang: str, channel_settings: Dict, chosen: Optional[str] = None) -
     return voix.DEFAULTS.get(lang) or channel_settings.get("voice_id")
 
 
-def create(url: str, styles: List[str], targets: List[Dict], music: str = "original", voix_joueur: str = "remplacer") -> Dict:
+def create(url: str, styles: List[str], targets: List[Dict], music: str = "original", voix_joueur: str = "remplacer",
+           identite: bool = False) -> Dict:
     """targets: [{"langue", "channel", "profile", "music_dir", "voice_id" (optional)}] — one channel per language."""
     from adaptation import settings
     url = (url or "").strip()
@@ -97,7 +98,7 @@ def create(url: str, styles: List[str], targets: List[Dict], music: str = "origi
         raise PipelineError("Pour remplacer la musique, choisis d'abord une musique pour chaque chaîne (Réglages → Voix).")
     pid = "rb_" + datetime.now().strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:4]
     return save({"project_id": pid, "status": "analysing", "url": url, "styles": styles, "targets": tg, "musique": music,
-                 "voix_joueur": voix_joueur, "meta": None, "catalogue": [], "plan": {}, "absents": [], "traductions": {}, "videos": {}, "error": None})
+                 "voix_joueur": voix_joueur, "identite": bool(identite), "meta": None, "catalogue": [], "plan": {}, "absents": [], "traductions": {}, "videos": {}, "error": None})
 
 
 def _catalogue(p: Dict) -> Dict[str, Dict]:
@@ -175,9 +176,11 @@ def run_analysis(pid: str, report: Optional[Report] = None) -> None:
         if not made:
             raise PipelineError("Aucun style n'a trouvé de moment qui convienne. " + " ".join(dropped))
         his = _his_voice(p, cat, made, meta, report) if p.get("voix_joueur") == "remplacer" else None
+        creator = _creators_elements(cat, made, report) if p.get("identite") else None
         p = load(pid)
         p.update(meta={k: meta[k] for k in ("titre", "chaine", "duree", "langue", "vues", "sous_titres")},
-                 catalogue=cat, plan=made, absents=dropped, voix=his, status="plan_review", error=None, failed_step=None)
+                 catalogue=cat, plan=made, absents=dropped, voix=his, createur=creator, status="plan_review", error=None,
+                 failed_step=None)
         save(p)
     except Exception as e:
         fail(pid, "analysing", e)
@@ -288,15 +291,54 @@ def start_render(pid: str) -> Dict:
     return save(p)
 
 
-def _new_sound(p: Dict, t: Dict, styles: List[str]) -> tuple:
+def _creators_elements(cat: List[Dict], made: Dict, report: Report) -> Dict:
+    """What the creator added in each moment the Shorts show (roblox/identite.detect), per passage file, and the
+    seconds of each file the Shorts use (where names are read at the cleaning)."""
+    by_id = {m["id"]: m for m in cat}
+    used = [mid for mid in styles_of_moments(made) if mid in by_id]
+    elements: Dict[str, List[Dict]] = {}
+    spans: Dict[str, List[List[float]]] = {}
+    for k, mid in enumerate(used):
+        report(f"l'IA repère ce que le créateur a ajouté ({k + 1}/{len(used)})", 0.995)
+        m = by_id[mid]
+        a, b = max(0.0, m["debut"] - 1.0), min(m["fichier_duree"], m["fin"] + 1.0)
+        spans.setdefault(m["fichier"], []).append([a, b])
+        elements.setdefault(m["fichier"], []).extend(identite.detect(m["fichier"], a, b))
+    return {"elements": elements, "spans": spans}
+
+
+def _cleaned(pid: str, report: Report) -> Dict[str, Dict]:
+    """Each passage with the creator's elements hidden (roblox/nettoyage.clean), once: kept for every language and
+    every render after. -> {original file: {"fichier", "keep"}}"""
+    p = load(pid)
+    creator = p.get("createur") or {}
+    done = dict(creator.get("propres") or {})
+    files = sorted(creator.get("elements") or {})
+    for k, f in enumerate(files):
+        if f in done and os.path.exists(done[f]["fichier"]):
+            continue
+        report(f"le créateur caché, passage {k + 1}/{len(files)} (carte graphique)", 0.02 + 0.03 * k / max(1, len(files)))
+        name = os.path.splitext(os.path.basename(f))[0]
+        work = os.path.join(project_dir(pid), "propre")
+        r = nettoyage.clean(f, creator["elements"][f], creator.get("spans", {}).get(f) or [], os.path.join(work, f"{name}.mp4"),
+                            os.path.join(work, f"travail_{name}"))
+        done[f] = {"fichier": r["fichier"], "keep": r["keep"], "pseudos": r.get("pseudos", [])}
+        fresh = load(pid)
+        fresh["createur"]["propres"] = done
+        save(fresh)
+    return done
+
+
+def _new_sound(p: Dict, t: Dict, styles: List[str], video: Optional[Dict[str, Dict]] = None) -> tuple:
     """Their voices replaced, in t's language: each passage the styles show with its new sound (the game's sounds and
     the lines read by the players' voices) and those lines' captions. -> (catalogue with the new passages,
     {moment: captions}). The passages are remade for each render and removed after it (~35 MB each)."""
     import hashlib
     import json
     cat, his = _catalogue(p), p.get("voix")
+    picture = lambda f: (video or {}).get(f, {}).get("fichier", f)          # the cleaned passage, when there is one
     if p.get("voix_joueur") != "remplacer" or not his:
-        return cat, {}
+        return {k: {**m, "fichier": picture(m["fichier"])} for k, m in cat.items()}, {}
     lang, work = t["langue"], os.path.join(project_dir(p["project_id"]), "voix")
     os.makedirs(os.path.join(work, "lu"), exist_ok=True)
     tracks: Dict[str, List] = {}
@@ -315,10 +357,25 @@ def _new_sound(p: Dict, t: Dict, styles: List[str]) -> tuple:
         if f not in shown:
             continue
         reste = None if p["musique"] == "chaine" else parts["reste"]
-        key = hashlib.sha1(json.dumps([reste, tracks.get(f, [])]).encode()).hexdigest()[:10]
+        key = hashlib.sha1(json.dumps([picture(f), reste, tracks.get(f, [])]).encode()).hexdigest()[:10]
         out = os.path.join(work, f"{os.path.splitext(os.path.basename(f))[0]}_{lang}_{key}.mp4")
-        files[f] = out if os.path.exists(out) else voix.passage_audio(f, reste, tracks.get(f, []), out)
-    return {k: {**m, "fichier": files.get(m["fichier"], m["fichier"])} for k, m in cat.items()}, captions
+        files[f] = out if os.path.exists(out) else voix.passage_audio(picture(f), reste, tracks.get(f, []), out)
+    return {k: {**m, "fichier": files.get(m["fichier"], picture(m["fichier"]))} for k, m in cat.items()}, captions
+
+
+def _identity(p: Dict, lang: str, moments_: Dict[str, Dict], cleaned: Dict[str, Dict]) -> Optional[Dict]:
+    """What render.make needs for the channel's look, keyed by the files the Short is made of."""
+    if not p.get("identite"):
+        return None
+    cat = _catalogue(p)
+    final = {cat[mid]["fichier"]: m["fichier"] for mid, m in moments_.items() if mid in cat}
+    feelings: Dict[str, List] = {}
+    for mid, r in ((p.get("voix") or {}).get("repliques") or {}).items():
+        lines = [{"a": l["a"], "texte": l.get(lang) or ""} for l in r["lignes"]]
+        feelings.setdefault(final.get(cat[mid]["fichier"], cat[mid]["fichier"]), []).extend(identite.emotions_of(lines))
+    elements = (p.get("createur") or {}).get("elements") or {}
+    return {"apparitions": {final.get(f, f): els for f, els in elements.items()}, "emotions": feelings,
+            "keep": {final.get(f, f): (cleaned.get(f) or {}).get("keep", 1.0) for f in elements}}
 
 
 def run_render(pid: str, report: Optional[Report] = None) -> None:
@@ -330,12 +387,13 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
         out_dir = os.path.join(project_dir(pid), "out")
         todo = [(s, t) for s in p["styles"] if s in p["plan"] for t in p["targets"]
                 if not (p["videos"].get(f"{s}_{t['langue']}") or {}).get("path") or p["videos"][f"{s}_{t['langue']}"].get("a_refaire")]
+        cleaned = _cleaned(pid, report) if p.get("identite") and todo else {}
         sound = {}
         for k, (style, t) in enumerate(todo):
             lang, key = t["langue"], f"{style}_{t['langue']}"
             if lang not in sound:
                 report(f"leurs voix lues par les voix choisies ({lang})", 0.05 + 0.9 * k / max(1, len(todo)))
-                sound[lang] = _new_sound(p, t, [s for s, x in todo if x["langue"] == lang])
+                sound[lang] = _new_sound(p, t, [s for s, x in todo if x["langue"] == lang], cleaned)
             moments_, captions = sound[lang]
             report(f"{plan.STYLES[style][0]} ({lang}) : montage", 0.05 + 0.9 * (k + 0.3) / max(1, len(todo)))
             cache = p["traductions"].setdefault(lang, {})
@@ -348,7 +406,8 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
             replaced = p.get("voix_joueur") == "remplacer" and bool(p.get("voix"))
             ctx = render.Context(moments_, words, lang, (p["meta"] or {}).get("langue") or "en", t["voice_id"],
                                  out_dir, translate, lines=captions, son_refait=replaced,
-                                 voice_model=voix.MODEL if voix.known(lang, t["voice_id"]) else None)
+                                 voice_model=voix.MODEL if voix.known(lang, t["voice_id"]) else None,
+                                 identite=_identity(p, lang, moments_, cleaned))
             os.makedirs(out_dir, exist_ok=True)
             path = os.path.join(out_dir, f"{key}.mp4")
             music = t["music_path"] if p["musique"] == "chaine" else None

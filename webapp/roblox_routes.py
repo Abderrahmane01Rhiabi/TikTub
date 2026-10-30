@@ -59,6 +59,7 @@ def _serialize(p: Dict, full: bool = True) -> Dict:
     from roblox import voix
     out = {k: p.get(k) for k in ("project_id", "status", "url", "styles", "musique", "error", "failed_step", "created_at", "absents")}
     out["voix_joueur"] = p.get("voix_joueur") or "originale"          # a project made before the choice kept it
+    out["identite"] = bool(p.get("identite"))
     out["titre"] = (p.get("meta") or {}).get("titre") or ""
     out["chaine_source"] = (p.get("meta") or {}).get("chaine") or ""
     names = {(lang, v["voice_id"]): v["nom"] for lang in voix.CATALOGUE for v in voix.catalogue(lang)}
@@ -96,6 +97,7 @@ class RobloxCreate(BaseModel):
     cibles: List[Cible]
     musique: str = "original"
     voix_joueur: str = "remplacer"
+    identite: bool = False
 
 
 @router.post("/api/roblox")
@@ -106,7 +108,7 @@ def create_roblox(req: RobloxCreate):
         _main().checked_channel(c.channel)
         targets.append({"langue": c.langue, "channel": c.channel, "profile": _main().channel_manager.get_channel_profile(c.channel),
                         "music_dir": _main().channel_manager.get_assets_dirs(c.channel)["music"], "voice_id": c.voix, "voix_2": c.voix_2})
-    p = _call(rp.create, req.url, req.styles, targets, req.musique, req.voix_joueur)
+    p = _call(rp.create, req.url, req.styles, targets, req.musique, req.voix_joueur, req.identite)
     _start(p["project_id"], "analysing")
     return _serialize(p)
 

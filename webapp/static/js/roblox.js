@@ -91,6 +91,10 @@ async function renderNewRoblox(){
       <label class="f" style="margin-top:12px">5. La musique</label>
       <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbMusic" value="original" checked> Garder les bruits et la musique de la vidéo</label>
       <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="radio" name="rbMusic" value="chaine"> Remplacer par la musique de la chaîne (Réglages → Voix) : les bruits du jeu sont coupés</label>
+      <label class="f" style="margin-top:12px">6. L'identité de la chaîne</label>
+      <label class="tiny" style="display:flex;gap:8px;cursor:pointer"><input type="checkbox" id="rbIdentite" checked> <span><b>Notre mascotte et nos couleurs</b> :
+        ce que le créateur a ajouté (ses avatars, sa webcam, ses sous-titres, les pseudos) est caché à sa forme, notre mascotte prend la place de ses avatars,
+        les textes passent à nos couleurs. Utilise la carte graphique (quelques minutes de plus par vidéo).</span></label>
     </div>
     <div class="chcard-foot"><span class="note">L'analyse prend quelques minutes : seuls les passages les plus revus sont téléchargés, jamais toute la vidéo.</span>
       <button class="btn primary" id="rbGo" data-icon="sparkle">Analyser</button></div></article>`;
@@ -105,9 +109,10 @@ async function renderNewRoblox(){
       voix_2: (stage.querySelector(`.rb-v2[data-lang="${x.value}"]`) || {}).value || null }));
     const musique = stage.querySelector('input[name="rbMusic"]:checked').value;
     const voix_joueur = stage.querySelector('input[name="rbVoix"]:checked').value;
+    const identite = document.getElementById('rbIdentite').checked;
     btn.disabled = true; btn.innerHTML = spin('Création…');
     try {
-      const p = await api('/api/roblox', { method: 'POST', body: JSON.stringify({ url: document.getElementById('rbUrl').value, styles, cibles, musique, voix_joueur }) });
+      const p = await api('/api/roblox', { method: 'POST', body: JSON.stringify({ url: document.getElementById('rbUrl').value, styles, cibles, musique, voix_joueur, identite }) });
       rbCurrent = p.project_id; loadRobloxList();
     } catch (e){ log(e.message, 'error'); btn.disabled = false; btn.innerHTML = 'Analyser'; }
   };
@@ -119,7 +124,7 @@ async function loadRbProject(){
   const p = await api(`/api/roblox/${rbCurrent}`);
   const stage = document.getElementById('rbStage');
   const head = `${rbStepsHtml(p.status)}
-    <div class="toolbar"><div class="fact">${esc(p.titre || p.url)}${p.chaine_source ? ` · <span class="tiny">${esc(p.chaine_source)}</span>` : ''}</div>
+    <div class="toolbar"><div class="fact">${esc(p.titre || p.url)}${p.chaine_source ? ` · <span class="tiny">${esc(p.chaine_source)}</span>` : ''}${p.identite ? ' · <span class="pill">identité de la chaîne</span>' : ''}</div>
       <button class="btn ghost small" id="rbDel" title="Supprimer le projet">Supprimer</button></div>`;
   let body = '';
   if (RB_BUSY.includes(p.status)){

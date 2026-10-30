@@ -192,3 +192,19 @@ def test_guess_the_next_shows_at_least_five_seconds_before_the_question(source):
     segs, _, _ = render.devine({"moment": "w0#0", "arret": 2.0, "question": T, "final": T},
                                render.Context({"w0#0": {**ms["w0#0"], "debut": 1.0}}, [], "fr", "fr", None, str(d), lambda l, x: l))
     assert segs[0]["a"] == 0.0                                            # never before the file's start
+
+
+def test_a_short_in_the_channels_look_gets_its_texts_and_our_mascot(source):
+    d, path = source
+    ms = {"w0#0": {"id": "w0#0", "fichier": path, "fichier_duree": 45.0, "t0": 0.0, "debut": 10.0, "fin": 22.0, "chute": 18.0}}
+    look = {"apparitions": {path: [{"type": "avatar", "debut": 12.0, "fin": 15.0, "cadre": [0.7, 0.4, 1.0, 1.0], "pose": "pleure"}]},
+            "emotions": {}, "keep": {path: 1.0}}
+    ctx = render.Context(ms, [], "fr", "fr", None, str(d), lambda l, x: l, identite=look)
+    out = str(d / "clip_identite.mp4")
+    assert render.make("clip", {"moment": "w0#0", "titre": T}, ctx, out) == 10.0 and abs(duration(out) - 10.0) < 0.3
+    assert "Lilita One" in open(str(d / "sous_titres" / "clip_identite.ass"), encoding="utf-8").read()
+    png = str(d / "m.png")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-ss", "3.0", "-i", out, "-frames:v", "1", png], check=True)
+    from PIL import Image
+    r, g, b = Image.open(png).convert("RGB").getpixel((900, 1250))
+    assert b > r + 30 and b > g + 30                                            # the purple hoodie where his avatar was
