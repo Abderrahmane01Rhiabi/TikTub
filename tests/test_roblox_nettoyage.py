@@ -85,3 +85,53 @@ def test_the_models_are_loaded_once(monkeypatch):
     monkeypatch.setattr(nettoyage, "_load_sam", lambda: made.append("sam") or object())
     monkeypatch.setattr(nettoyage, "_load_ocr", lambda: made.append("ocr") or object())
     assert nettoyage.sam() is nettoyage.sam() and nettoyage.ocr() is nettoyage.ocr() and made == ["sam", "ocr"]
+
+
+def growing_webcam(path):
+    """A 2-s 1920x1080 video: a textured scenery, a framed 'webcam' that the creator zooms from 400 to 760 px wide."""
+    rng = np.random.default_rng(0)
+    scenery = (rng.integers(60, 120, (1080, 1920, 3))).astype(np.uint8)
+    cam = np.zeros((200, 300, 3), np.uint8)
+    cam[:, :] = (200, 40, 40)                                                  # a blue frame (BGR) around…
+    cam[12:-12, 12:-12] = rng.integers(0, 255, (176, 276, 3))                  # …a face-like noise
+    import cv2
+    p = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", "1920x1080", "-r", "30",
+                          "-i", "-", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", path], stdin=subprocess.PIPE)
+    boxes = []
+    for i in range(60):
+        w = 400 if i < 30 else min(760, 400 + (i - 30) * 30)                   # the zoom starts at 1 s
+        h = w * 2 // 3
+        img = scenery.copy()
+        img[40:40 + h, 40:40 + w] = cv2.resize(cam, (w, h), interpolation=cv2.INTER_NEAREST)
+        boxes.append((40, 40, 40 + w, 40 + h))
+        p.stdin.write(img.tobytes())
+    p.stdin.close()
+    p.wait()
+    return boxes
+
+
+def test_a_webcam_the_creator_zooms_stays_hidden(tmp_path):
+    path = str(tmp_path / "cam.mp4")
+    boxes = growing_webcam(path)
+    e = {"type": "webcam", "debut": 0.0, "fin": 2.0, "cadre": [40 / 1920, 40 / 1080, 440 / 1920, 307 / 1080]}   # seen small
+    masks = nettoyage.follow_box(path, e)
+    x0, y0, x1, y1 = boxes[-1]
+    last = masks[max(masks)]
+    sw, sh = nettoyage.SW / 1920, nettoyage.SH / 1080
+    inside = last[int(y0 * sh) + 4:int(y1 * sh) - 4, int(x0 * sw) + 4:int(x1 * sw) - 4]
+    assert inside.mean() > 0.97                                                 # the zoomed webcam: covered
+    assert last[int(600 * sh):, int(1000 * sw):].mean() == 0                    # the game: not
+
+
+def test_a_name_missed_during_a_flash_stays_hidden(passage, tmp_path):
+    seen = {"n": 0}
+
+    class Reader:                                     # the name read 10 times a second, but not for 1.4 s (a red flash)
+        def readtext(self, jpg):
+            seen["n"] += 1
+            if 6 <= seen["n"] <= 19:
+                return []
+            return [([[1500, 80], [1700, 80], [1700, 130], [1500, 130]], "bigman_melon", 0.9)]
+    masks, hidden = nettoyage.names(Reader(), passage, [[0.0, 3.0]], str(tmp_path / "w"))
+    assert hidden == ["bigman_melon"]
+    assert all(i in masks and masks[i].any() for i in range(round(0.3 * nettoyage.FPS), round(2.5 * nettoyage.FPS)))

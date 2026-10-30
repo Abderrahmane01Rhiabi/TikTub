@@ -8,7 +8,8 @@ bizarre") — and the result must be good WITHOUT our mascot (checked on clean-o
                         refused), a lost shape is carried on along its motion until it leaves the picture, the parts
                         in the avatar's sticker style (white outline, bright colours) that touch it are added (an arm
                         swung out at once), each shape also hidden 4 images around it
-    webcam, logo        their box (they are rectangles; SAM on a webcam over a plain floor took the floor)
+    webcam, logo        their box, followed image by image when the creator moves or zooms it (they are rectangles:
+                        SAM on a webcam over a plain floor took the floor)
     names               EasyOCR reads every image (10/s) and hides what is a player's name — a word with "_" or
                         letters and digits, or a name Gemini saw — never the game's own sentences
     captions            the creator's captions at the bottom: the bottom band cut (the top KEEP of the picture kept)
@@ -272,6 +273,60 @@ def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndar
     return allm
 
 
+def follow_box(src: str, e: Dict) -> Dict[int, np.ndarray]:
+    """{image at FPS: mask} of a rectangle (a webcam, a logo) followed while the creator moves or zooms it: each image,
+    the last look of the box is searched around it at slightly smaller to bigger sizes (its first box alone let a
+    zoomed webcam out for ~1 s). The first box stays hidden too."""
+    cv2 = _cv2()
+    d0, d1 = max(0.0, e["debut"]), e["fin"] + 0.3
+    p = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{d0}", "-t", f"{d1 - d0}", "-i", src, "-vf",
+                        f"fps={FPS},scale={SW}:{SH},format=gray", "-f", "rawvideo", "-"], capture_output=True)
+    frames = np.frombuffer(p.stdout, np.uint8)
+    n = frames.size // (SW * SH)
+    frames = frames[:n * SW * SH].reshape(n, SH, SW)
+    x0, y0, x1, y1 = _grown(e["cadre"], side=0.01, top=0.01)
+    box = [int(x0 * SW), int(y0 * SH), int(x1 * SW), int(y1 * SH)]
+    first = _box_mask([x0, y0, x1, y1])
+    out: Dict[int, np.ndarray] = {}
+    original = frames[0][box[1]:box[3], box[0]:box[2]] if n else None
+    template = original
+    for k in range(n):
+        img = frames[k]
+        if k and template is not None and template.size:
+            w, h = box[2] - box[0], box[3] - box[1]
+            best = None
+            sx0, sy0 = max(0, box[0] - w // 4), max(0, box[1] - h // 4)
+            sx1, sy1 = min(SW, box[2] + int(w * 0.5)), min(SH, box[3] + int(h * 0.5))
+            area = img[sy0:sy1, sx0:sx1]
+            # its last look AND its first one: the last alone drifted off a zoom after ~10 images
+            for look in (template, original):
+                for scale in (0.9, 0.95, 1.0, 1.03, 1.06, 1.1, 1.15, 1.2):
+                    tw, th = max(8, int(w * scale)), max(8, int(h * scale))
+                    if area.shape[0] < th or area.shape[1] < tw:
+                        continue
+                    r = cv2.matchTemplate(area, cv2.resize(look, (tw, th)), cv2.TM_CCOEFF_NORMED)
+                    _, score, _, (px, py) = cv2.minMaxLoc(r)
+                    if best is None or score > best[0]:
+                        best = (score, [sx0 + px, sy0 + py, sx0 + px + tw, sy0 + py + th])
+            moved = best and best[0] > 0.5 and max(abs(a - b) for a, b in zip(best[1], box)) > 2
+            if best and best[0] > 0.5:
+                box = best[1]
+                template = img[box[1]:box[3], box[0]:box[2]]
+            margin = int(0.08 * max(box[2] - box[0], box[3] - box[1])) if moved else 4   # its blurred edge, while it moves
+        else:
+            margin = 4
+        m = first.copy()
+        m[max(0, box[1] - margin):box[3] + margin, max(0, box[0] - margin):box[2] + margin] = True
+        out[round(d0 * FPS) + k] = m
+    # the creator's effect tilts and bounces it: each image also hides where it was 0.2 s around (its blue frame showed)
+    keys = sorted(out)
+    return {i: np.logical_or.reduce([out[j] for j in keys if abs(j - i) <= BOX_TWIN]) for i in keys}
+
+
+BOX_TWIN = 6                                     # images (0.2 s) around a moving webcam also hidden
+GAP = 2.0                                        # a name read before and after a gap this short stays hidden in it
+
+
 def names(reader, src: str, spans: List[List[float]], work: str):
     """({image at FPS: mask} of every player name read in the spans, the names hidden). Two passes: what is a name,
     then what looks like one already read (OCR misreads: "CKIEMANERO")."""
@@ -289,17 +344,35 @@ def names(reader, src: str, spans: List[List[float]], work: str):
     is_name = lambda t: looks_like_name(t) or (len(norm(t)) >= 5 and len(t.split()) <= 2 and any(
         norm(t) in k or difflib.SequenceMatcher(None, norm(t), k).ratio() >= 0.7 for k in seen))
     hidden = set()
-    for t, res in reads:
-        boxes = [pts for pts, text, _ in res if is_name(text) and not hidden.add(text)]
-        if not boxes:
-            continue
+    seen_at: Dict[str, List] = {}                 # each name: [(t, polygon)] — to bridge the images the OCR missed
+
+    def polygon_mask(polys):
         im = Image.new("L", (SW, SH), 0)
         d = ImageDraw.Draw(im)
-        for pts in boxes:
+        for pts in polys:
             d.polygon([(x * SW / 1920, y * SH / 1080) for x, y in pts], fill=255)
-        m = cv2.dilate(np.asarray(im), _kernel(GROW_TXT)) > 0
-        for i in range(round((t - OCR_HOLD) * FPS), round((t + OCR_HOLD) * FPS) + 1):
+        return cv2.dilate(np.asarray(im), _kernel(GROW_TXT)) > 0
+
+    def add(i0, i1, m):
+        for i in range(i0, i1 + 1):
             out[i] = out[i] | m if i in out else m
+    for t, res in reads:
+        boxes = []
+        for pts, text, _ in res:
+            if is_name(text):
+                hidden.add(text)
+                boxes.append(pts)
+                seen_at.setdefault(norm(text), []).append((t, pts))
+        if boxes:
+            add(round((t - OCR_HOLD) * FPS), round((t + OCR_HOLD) * FPS), polygon_mask(boxes))
+    # a red flash, a fast turn: the OCR misses a name for a moment — read just before and just after, at about the
+    # same place, it stays hidden in between (ROCKIEMANERO was readable for 2 images of the POV)
+    for spots in seen_at.values():
+        spots.sort(key=lambda s: s[0])
+        for (ta, pa), (tb, pb) in zip(spots, spots[1:]):
+            ca, cb = np.mean(pa, axis=0), np.mean(pb, axis=0)
+            if OCR_HOLD * 2 < tb - ta <= GAP and np.abs(ca - cb).max() < 0.15 * 1920:
+                add(round(ta * FPS), round(tb * FPS), polygon_mask([pa, pb]))
     return out, sorted(hidden)
 
 
@@ -330,7 +403,10 @@ def clean(src: str, elements: List[Dict], spans: List[List[float]], out: str, wo
     keep = KEEP if any(e["type"] == "sous_titres_incrustes" and e["cadre"][1] >= 0.6 for e in elements) else 1.0
     masks: Dict[int, np.ndarray] = {}
     for e in elements:                                                # rectangles by nature, or captions up in the picture
-        if e["type"] in ("webcam", "logo") or (e["type"] == "sous_titres_incrustes" and e["cadre"][1] < 0.6):
+        if e["type"] in ("webcam", "logo"):
+            for i, m in follow_box(src, e).items():                 # followed: the creator zooms or moves them
+                masks[i] = masks[i] | m if i in masks else m
+        elif e["type"] == "sous_titres_incrustes" and e["cadre"][1] < 0.6:
             m = _box_mask(_grown(e["cadre"], side=0.01, top=0.01))
             for i in range(round(e["debut"] * FPS), round(e["fin"] * FPS) + 1):
                 masks[i] = masks[i] | m if i in masks else m
