@@ -270,8 +270,15 @@ def test_texts_corrected_then_every_short_made_then_sent_to_publication(fakes, p
     assert v["status"] == "ready_for_upload" and v["source"] == "roblox" and v["channel"] == "chanA"
     assert v["ai_data"]["title"] == "Le pire petit déjeuner 🤢" and v["ai_data"]["tags"] == ["roblox", "drôle"]
     assert "Images : Roblox Idol — https://www.youtube.com/watch?v=NvGUWTH2U5Q" in v["ai_data"]["description"]
-    assert os.path.exists(v["video_path"]) and v["recette"] == {"type": "roblox", "style": "clip", "langue": "fr",
-                                                               "source": "https://www.youtube.com/watch?v=NvGUWTH2U5Q"}
+    rec = v["recette"]
+    assert os.path.exists(v["video_path"]) and rec["type"] == "roblox" and rec["version"] == 1
+    assert rec["structure"]["duree_s"] == 9.0 and rec["voix"]["id"] == voix.DEFAULTS["fr"] and rec["voix"]["nom"] == "Donny"
+    assert rec["style"] == {"visuel": "classique", "recette": "roblox:clip"}
+    d = rec["details"]
+    assert d["style"] == "clip" and d["langue"] == "fr" and d["source"] == "https://www.youtube.com/watch?v=NvGUWTH2U5Q"
+    assert d["chaine_source"] == "Roblox Idol" and d["identite"] is False and d["voix_joueur"] == "remplacer"
+    assert d["moments"] == [{"id": "w0#0", "type": None, "drole": None, "resume": "r"}]
+    assert d["voix_joueurs"]["1"] == {"id": voix.DEFAULTS["fr"], "nom": "Donny"}
     assert db.get_video(f"chanB_{pid}_devine_en")["ai_data"]["title"] == "The worst breakfast 🤢"
     assert p["status"] == "review"                                   # two still to send
     assert rp.send(pid, ["clip_en", "devine_fr"])["status"] == "done"

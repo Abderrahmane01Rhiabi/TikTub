@@ -55,9 +55,14 @@ DIMENSIONS = [
     ("arrows", "Flèches et cercles"),
     ("slowmo", "Ralenti"),
     ("sfx", "Effets sonores"),
+    ("roblox_style", "Style de Short Roblox"),
+    ("roblox_source", "Créateur d'origine (Roblox)"),
+    ("roblox_voice", "Voix des joueurs (Roblox)"),
+    ("roblox_moment", "Genre de moment (Roblox)"),
 ]
 
-TYPE_LABELS = {"adaptation": "Adaptation", "generation": "Génération", "montage": "Montage auto", "import": "Import"}
+TYPE_LABELS = {"adaptation": "Adaptation", "generation": "Génération", "montage": "Montage auto", "import": "Import",
+               "roblox": "Montage Roblox"}
 
 
 def _bucket(x: Optional[float], edges: List[float], labels: List[str]) -> Optional[str]:
@@ -93,6 +98,12 @@ def recipe_attrs(rec: Optional[Dict]) -> Dict[str, Optional[str]]:
                    else "sans ralenti")
         if "effets_sonores" in d:          # recipes made before the sound effects existed say nothing
             out["sfx"] = "avec effets sonores" if d["effets_sonores"] else "sans effets sonores"
+    if rec.get("type") == "roblox":
+        from roblox.plan import STYLES
+        kinds = [m.get("type") for m in d.get("moments") or [] if m.get("type")]
+        out.update(roblox_style=(STYLES.get(d.get("style")) or [d.get("style")])[0], roblox_source=d.get("chaine_source"),
+                   roblox_voice="voix remplacée" if d.get("voix_joueur") == "remplacer" else "voix d'origine",
+                   roblox_moment=max(set(kinds), key=kinds.count) if kinds else None)
     return out
 
 

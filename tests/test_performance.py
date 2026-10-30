@@ -343,3 +343,16 @@ def test_the_worst_shot_is_looked_for_after_the_hook():
     steep_hook = [[r / 100, 2.0 - (r / 100) * 5 if r <= 10 else 1.5 - (r / 100) * (0.2 if r < 75 else 1), 0.5] for r in range(1, 101)]
     out = performance.curve_by_shot(steep_hook, shots, 20)
     assert out["plans"][0]["perte_par_s"] > out["plans"][2]["perte_par_s"] and out["pire"] == 2
+
+
+
+def test_a_roblox_shorts_recipe_is_compared_like_the_others():
+    import performance
+    rec = {"type": "roblox", "structure": {"duree_s": 17.0}, "voix": {"id": "v1", "nom": "Donny"},
+           "style": {"visuel": "identité de la chaîne", "recette": "roblox:clip"},
+           "details": {"style": "clip", "identite": True, "chaine_source": "Melon Sunny World", "voix_joueur": "remplacer",
+                       "moments": [{"id": "w0#0", "type": "gag", "drole": 4}]}}
+    a = performance.recipe_attrs(rec)
+    assert a["video_type"] == "Montage Roblox" and a["duration"] == "moins de 20 s" and a["visual_style"] == "identité de la chaîne"
+    assert a["roblox_style"] == "Clip sous-titré" and a["roblox_source"] == "Melon Sunny World"
+    assert a["roblox_voice"] == "voix remplacée" and a["roblox_moment"] == "gag"

@@ -440,6 +440,29 @@ def _thumbnail(video: str) -> Optional[str]:
     return out if r.returncode == 0 and os.path.exists(out) else None
 
 
+def recipe(p: Dict, key: str, v: Dict) -> Dict:
+    """The Short's recipe, in recette.py's shape so the Dashboard compares it with the rest: its length, its voice,
+    its look, and what only a Roblox Short has — the creator, the moments shown (their kind, how funny the AI found
+    them), the players' voices, whether the channel's identity was on."""
+    t = next((x for x in p["targets"] if x["langue"] == v["langue"]), {})
+    names = {x["voice_id"]: x["nom"] for x in voix.catalogue(v["langue"])}
+    cat = _catalogue(p)
+    shown = [mid for mid, sts in styles_of_moments(p.get("plan") or {}).items() if v["style"] in sts and mid in cat]
+    replaced = p.get("voix_joueur") == "remplacer" and bool(p.get("voix"))
+    look = "identité de la chaîne" if p.get("identite") else "classique"
+    return {"version": 1, "type": "roblox",
+            "structure": {"duree_s": v.get("duree"), "plans": len(shown) or None},
+            "voix": {"id": t.get("voice_id"), "nom": names.get(t.get("voice_id"))} if replaced or v["style"] == "histoire"
+            else {"id": "son d'origine"},
+            "style": {"visuel": look, "recette": f"roblox:{v['style']}"},
+            "details": {"style": v["style"], "langue": v["langue"], "source": p["url"],
+                        "chaine_source": (p.get("meta") or {}).get("chaine"), "identite": bool(p.get("identite")),
+                        "voix_joueur": p.get("voix_joueur") or "originale",
+                        "voix_joueurs": {q: {"id": vid, "nom": names.get(vid)} for q, vid in (t.get("voix_joueurs") or {}).items()},
+                        "moments": [{"id": mid, "type": cat[mid].get("type"), "drole": cat[mid].get("drole"),
+                                     "resume": cat[mid].get("resume")} for mid in shown]}}
+
+
 def send(pid: str, keys: List[str]) -> Dict:
     """The chosen Shorts to Publication, like an Adaptation's: ready_for_upload, with their texts and the credit."""
     p = load(pid)
@@ -466,7 +489,7 @@ def send(pid: str, keys: List[str]) -> Dict:
                "original_title": pub["titre"], "video_path": dest, "added_at": now, "updated_at": now,
                "ai_data": {"optimized_title": pub["titre"], "title": pub["titre"], "description": desc,
                            "description_suggestions": [desc], "tags": pub["tags"]},
-               "recette": {"type": "roblox", "style": v["style"], "langue": v["langue"], "source": p["url"]}}
+               "recette": recipe(p, key, v)}
         thumb = _thumbnail(dest)
         if thumb:
             rec["thumbnail_path"] = thumb
