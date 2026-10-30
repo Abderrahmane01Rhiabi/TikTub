@@ -46,8 +46,16 @@ def _start(pid: str, step: str):
             with usage_context(projet=pid):              # each AI call noted with its project
                 rp.RUNNERS[step](pid, report)
             progress.finish(key)
-        except Exception as e:
-            progress.finish(key, error=str(e))
+        except BaseException as e:                      # anything — a step once ended silently, its project "en cours"
+            import traceback
+            traceback.print_exc()
+            progress.finish(key, error=str(e) or type(e).__name__)
+            try:
+                p = rp.load(pid)
+                if p["status"] == step:
+                    rp.fail(pid, step, RuntimeError(f"{type(e).__name__} : {e}"))
+            except Exception:
+                traceback.print_exc()
     threading.Thread(target=run, daemon=True).start()
 
 

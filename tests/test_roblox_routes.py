@@ -83,3 +83,22 @@ def test_the_screen_is_in_the_app():
     assert 'data-space="roblox"' in html and 'id="robloxScreen"' in html and "/static/js/roblox.js" in html
     assert "openRoblox()" in core and "robloxScreen" in core
     assert "async function loadRbProject" in js and js.count("esc(") > 20
+
+
+def test_a_background_step_that_breaks_never_leaves_the_project_stuck(client, project, fakes, monkeypatch):
+    import time
+    import webapp.roblox_routes as rr
+    from roblox import pipeline as rp
+    project.add_channel("chanA")
+    pid = rp.create("https://y", ["clip"], [{"langue": "fr", "channel": "chanA", "profile": {}, "music_dir": "x"}])["project_id"]
+
+    def broken(pid, report=None):
+        raise SystemExit("arrêt brutal")                    # not an Exception: it used to end the thread silently
+    monkeypatch.setitem(rp.RUNNERS, "analysing", broken)
+    rr._start(pid, "analysing")
+    for _ in range(50):
+        if rp.load(pid)["status"] == "error":
+            break
+        time.sleep(0.1)
+    p = rp.load(pid)
+    assert p["status"] == "error" and "arrêt brutal" in p["error"] and p["failed_step"] == "analysing"

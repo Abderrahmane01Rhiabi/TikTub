@@ -77,3 +77,11 @@ def test_nothing_found_leaves_the_passage_as_it_is(passage, tmp_path):
             return []
     r = nettoyage.clean(passage, [], [[0.0, 4.0]], str(tmp_path / "propre.mp4"), str(tmp_path / "travail"), reader=Reader())
     assert r["fichier"] == passage and r["keep"] == 1.0
+
+
+def test_the_models_are_loaded_once(monkeypatch):
+    made = []
+    monkeypatch.setattr(nettoyage, "_MODELS", {})
+    monkeypatch.setattr(nettoyage, "_load_sam", lambda: made.append("sam") or object())
+    monkeypatch.setattr(nettoyage, "_load_ocr", lambda: made.append("ocr") or object())
+    assert nettoyage.sam() is nettoyage.sam() and nettoyage.ocr() is nettoyage.ocr() and made == ["sam", "ocr"]

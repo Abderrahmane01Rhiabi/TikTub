@@ -159,8 +159,10 @@ def _device() -> str:
     return "cuda" if torch.cuda.is_available() else "cpu"
 
 
-def sam():
-    """SAM 2.1 large, on the graphics card if there is one (downloaded once)."""
+_MODELS: Dict[str, object] = {}                 # loaded once: reloading them for every passage filled the card's 6 GB
+
+
+def _load_sam():
     if not os.path.exists(MODEL):
         import requests
         os.makedirs(os.path.dirname(MODEL), exist_ok=True)
@@ -174,9 +176,22 @@ def sam():
     return build_sam2_video_predictor(CONFIG, MODEL, device=_device())
 
 
-def ocr():
+def _load_ocr():
     import easyocr
     return easyocr.Reader(["en"], gpu=_device() == "cuda", verbose=False)
+
+
+def sam():
+    """SAM 2.1 large, on the graphics card if there is one (downloaded once, loaded once)."""
+    if "sam" not in _MODELS:
+        _MODELS["sam"] = _load_sam()
+    return _MODELS["sam"]
+
+
+def ocr():
+    if "ocr" not in _MODELS:
+        _MODELS["ocr"] = _load_ocr()
+    return _MODELS["ocr"]
 
 
 def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndarray]:
