@@ -134,3 +134,6 @@ archive/
 
 # sound effects added in Réglages → Effets sonores (backed up by the app)
 sfx_perso/
+
+# the channel mascot of the Roblox Shorts (roblox/identite.py)
+!assets/roblox_mascotte/*.png

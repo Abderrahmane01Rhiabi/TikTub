@@ -49,12 +49,15 @@ def esc(s) -> str:
 
 
 class Ass:
+    """theme "identite": the channel's look (roblox/identite.py) — Lilita One, white on a dark purple outline, the
+    highlighted words orange instead of yellow."""
     STYLES = [("Titre", 82, BLANC, 8, 70, 215), ("Pov", 84, BLANC, 8, 70, 200), ("Cap", 74, BLANC, 8, 60, 1395),
               ("Mot", 98, BLANC, 8, 50, 1390), ("Rang", 230, JAUNE, 8, 40, 300), ("Label", 76, JAUNE, 8, 60, 1395),
               ("Gros", 460, JAUNE, 5, 0, 0), ("Question", 86, JAUNE, 8, 70, 215), ("Final", 84, JAUNE, 8, 70, 1395)]
 
-    def __init__(self):
+    def __init__(self, theme: Optional[str] = None):
         self.events: List[str] = []
+        self.theme = theme
 
     def add(self, style: str, a: float, b: float, text: str) -> None:
         if b > a and text:
@@ -65,12 +68,18 @@ class Ass:
                 "[V4+ Styles]", "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
                 "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
                 "MarginR, MarginV, Encoding"]
+        from roblox import identite
+        own = self.theme == "identite"
+        font, line = (identite.FONT, identite.VIOLET) if own else ("Montserrat SemiBold", "&H00000000")
+        tint = (lambda c: identite.ORANGE if c == JAUNE else c) if own else (lambda c: c)
         for name, size, col, al, ml, mv in self.STYLES:
-            head.append(f"Style: {name},Montserrat SemiBold,{size},{col},{col},&H00000000,&H90000000,1,0,0,0,100,100,0,0,1,"
-                        f"{9 if size > 150 else 7},3,{al},{ml},{ml},{mv},1")
+            size = round(size * 1.12) if own else size                     # Lilita One is narrower than Montserrat
+            head.append(f"Style: {name},{font},{size},{tint(col)},{tint(col)},{line},&H90000000,{0 if own else 1},0,0,0,100,100,"
+                        f"{1 if own else 0},0,1,{9 if size > 150 else 7},{5 if own else 3},{al},{ml},{ml},{mv},1")
+        events = [e.replace(JAUNE, identite.ORANGE) for e in self.events] if own else self.events
         with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(head + ["", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
-                                      "Effect, Text"] + self.events) + "\n")
+                                      "Effect, Text"] + events) + "\n")
         return path
 
 
