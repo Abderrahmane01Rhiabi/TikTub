@@ -66,3 +66,13 @@ def test_the_mascot_really_appears_in_the_video(tmp_path):
     im = Image.open(frame).convert("RGB")
     r, g, b = im.getpixel((300, 1200))
     assert (r, g, b) != im.getpixel((900, 200)) and b > r                    # the purple hoodie, on the grey
+
+
+def test_two_avatars_at_once_get_one_mascot_the_bigger_ones_place():
+    segs = [{"fichier": "w0.mp4", "a": 0.0, "b": 10.0, "x": 0.5}]
+    apps = {"w0.mp4": [{"type": "avatar", "debut": 1.0, "fin": 4.0, "cadre": [0.0, 0.7, 0.2, 1.0], "pose": "fier"},     # small
+                       {"type": "avatar", "debut": 2.0, "fin": 5.0, "cadre": [0.6, 0.3, 1.0, 1.0], "pose": "choque"},   # big
+                       {"type": "avatar", "debut": 7.0, "fin": 8.0, "cadre": [0.0, 0.5, 0.3, 1.0], "pose": "rire"}]}
+    covers = [e for e in identite.events(segs, apps, {}, []) if e["couvre"]]
+    assert [e["pose"] for e in covers] == ["choque", "rire"] and covers[0]["droite"]       # the jet-ski: one, not two
+    assert covers[0]["t0"] == 0.85 and covers[0]["t1"] == 5.15                             # it covers both their times

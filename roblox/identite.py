@@ -156,8 +156,19 @@ def events(segs: List[Dict], apps: Dict[str, List[Dict]], emotions: Dict[str, Li
                 if x1 - x0 < 20:
                     continue                                    # outside what the Short shows
                 covers.append((t0, t1, e, x0, x1, y0))
+    # two avatars on screen at once (Melon and Sunny on the jet-ski): one mascot, at the bigger one's place, for as long
+    # as either is there — two of the same character side by side looked odd; the smaller one stays hidden by the cleaning
+    size = lambda c: (c[4] - c[3]) * (FG_Y + FG_H - c[5])
+    merged = []
+    for c in sorted(covers, key=lambda c: c[0]):
+        if merged and c[0] < merged[-1][1]:
+            prev = merged[-1]
+            big = c if size(c) > size(prev) else prev
+            merged[-1] = (min(prev[0], c[0]), max(prev[1], c[1])) + big[2:]
+        else:
+            merged.append(c)
     last = None
-    for t0, t1, e, x0, x1, y0 in sorted(covers, key=lambda c: c[0]):
+    for t0, t1, e, x0, x1, y0 in merged:
         pose = ALT.get(e["pose"], e["pose"]) if last and last["couvre"] and last["pose"] == e["pose"] else e["pose"]
         ratio = _ratio(pose)
         h = min(620.0, max(420.0, bottom - y0, (x1 - x0) * 0.95 / ratio))     # about the avatar's size, never the game
