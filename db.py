@@ -128,6 +128,13 @@ CREATE TABLE IF NOT EXISTS roblox_projects (
     data TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS roblox_videos (
+    video_id TEXT PRIMARY KEY,
+    url TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    data TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS voices (
     voice_id TEXT PRIMARY KEY,
     name TEXT,
@@ -600,6 +607,39 @@ def list_roblox(db_path: str = DB_PATH) -> List[Dict]:
     conn = get_connection(db_path)
     try:
         return [json.loads(r["data"]) for r in conn.execute("SELECT data FROM roblox_projects ORDER BY created_at DESC")]
+    finally:
+        conn.close()
+
+
+def save_roblox_video(video: Dict, db_path: str = DB_PATH) -> Dict:
+    """The record of one long video the Roblox projects used (roblox/stock.py): its passages, moments, what was
+    published — kept for good."""
+    from datetime import datetime
+    now = datetime.now().isoformat()
+    video = {**video, "updated_at": now}
+    conn = get_connection(db_path)
+    try:
+        with conn:
+            conn.execute("INSERT OR REPLACE INTO roblox_videos (video_id, url, updated_at, data) VALUES (?, ?, ?, ?)",
+                         (video["video_id"], video["url"], now, json.dumps(video, ensure_ascii=False)))
+    finally:
+        conn.close()
+    return video
+
+
+def get_roblox_video(video_id: str, db_path: str = DB_PATH) -> Optional[Dict]:
+    conn = get_connection(db_path)
+    try:
+        r = conn.execute("SELECT data FROM roblox_videos WHERE video_id = ?", (video_id,)).fetchone()
+        return json.loads(r["data"]) if r else None
+    finally:
+        conn.close()
+
+
+def list_roblox_videos(db_path: str = DB_PATH) -> List[Dict]:
+    conn = get_connection(db_path)
+    try:
+        return [json.loads(r["data"]) for r in conn.execute("SELECT data FROM roblox_videos")]
     finally:
         conn.close()
 
