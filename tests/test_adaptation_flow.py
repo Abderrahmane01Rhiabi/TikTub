@@ -57,8 +57,9 @@ def fakes(monkeypatch):
     monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: json.loads(json.dumps(SCRIPT)))
     monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "corrections": ["fin complète"]})
 
-    def synth(passages, voice_id, lang, out):
+    def synth(passages, voice_id, lang, out, model=voices.MODEL):
         calls["synth"] += 1
+        calls["model"] = model                     # the channel's choice, else the usual one
         return {"words": [], "passages": passages, "duration": 5.0}
     monkeypatch.setattr(voices, "synthesize", synth)
 
@@ -110,7 +111,7 @@ def test_full_project_from_link_to_publication(project, fakes):
     ap.start_voices(p["project_id"])
     ap.run_voices(p["project_id"])
     p = ap.load(p["project_id"])
-    assert p["status"] == "preview_review" and fakes["synth"] == 2
+    assert p["status"] == "preview_review" and fakes["synth"] == 2 and fakes["model"] == "eleven_multilingual_v2"
 
     ap.validate_preview(p["project_id"], "chanA")
     ap.start_render(p["project_id"])

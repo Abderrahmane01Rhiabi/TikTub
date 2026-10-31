@@ -297,7 +297,50 @@ async function loadVoiceSettings(){
     };
   });
   await loadAdaptationChannels();
+  await loadSongs();
 }
+
+// the shared songs (assets/musiques), any channel's; the smart music picks among them
+async function loadSongs(data){
+  const box = document.getElementById('songList');
+  const d = data || await api('/api/musiques');
+  box.innerHTML = d.musiques.length ? `<article class="chcard"><div class="chcard-body" style="gap:0">${d.musiques.map(m => {
+      const a = m.analyse;
+      return `<div class="vrow" data-song="${esc(m.fichier)}" style="grid-template-columns:2fr 2fr 1.5fr auto">
+        <div><b>${esc((a && a.titre) || m.fichier)}</b></div>
+        <div class="tiny">${a ? `${esc(a.humeur || '')}${a.montees && a.montees.length ? ` · montées à ${a.montees.map(fmtSec).join(', ')}` : ''}` : 'pas encore écoutée…'}</div>
+        <audio controls preload="none" src="${m.url}"></audio>
+        <button class="btn ghost small s-del" title="Retirer cette musique">✕</button></div>`;
+    }).join('')}</div></article>` : emptyState('Aucune musique commune', 'Ajoute une chanson par son lien ou un fichier audio.', 'mic');
+  box.querySelectorAll('.s-del').forEach(b => b.onclick = async () => {
+    const name = b.closest('.vrow').dataset.song;
+    if (!confirm(`Retirer « ${name} » des musiques communes ?`)) return;
+    try { loadSongs(await api(`/api/musiques/${encodeURIComponent(name)}`, { method:'DELETE' })); } catch (e){ log(e.message, 'error'); }
+  });
+}
+document.getElementById('songLinkBtn').addEventListener('click', async () => {
+  const url = document.getElementById('songLink').value.trim(), btn = document.getElementById('songLinkBtn');
+  if (!url) return;
+  btn.disabled = true; btn.innerHTML = spin('Téléchargement…');
+  try { loadSongs(await api('/api/musiques/lien', { method:'POST', body: JSON.stringify({ url }) }));
+        document.getElementById('songLink').value = ''; toast('Ajoutée : l\'IA l\'écoute en arrière-plan', 'success'); }
+  catch (e){ log(e.message, 'error'); }
+  finally { btn.disabled = false; btn.innerHTML = 'Ajouter'; hydrateIcons(btn); }
+});
+document.getElementById('songFile').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('file', file);
+  document.getElementById('songNote').textContent = 'Envoi…';
+  try {
+    const res = await fetch('/api/musiques/fichier', { method: 'POST', body: form });
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || 'Envoi impossible');
+    loadSongs(d); document.getElementById('songNote').textContent = 'Ajoutée : l\'IA l\'écoute en arrière-plan';
+  } catch (err){ log(err.message, 'error'); document.getElementById('songNote').textContent = ''; }
+  e.target.value = '';
+});
 
 document.getElementById('voiceAddBtn').addEventListener('click', async () => {
   const ids = document.getElementById('voiceIds').value.split(/[\s,;]+/).map(x => x.trim()).filter(Boolean);
@@ -336,6 +379,10 @@ function renderAdaptationChannel(card, ch, data){
         `<option value="${v.voice_id}" ${v.voice_id === s.voice_id ? 'selected' : ''}>${esc(voiceLabel(v))}</option>`).join('')}</select>
       ${voice && voice.has_preview ? `<audio controls preload="none" src="${voice.preview_url}" style="width:100%;height:32px"></audio>` :
         (data.voices.length ? '' : `<div class="tiny">Aucune voix dans cette langue : ajoute-en ci-dessus.</div>`)}
+      <label class="f" style="margin-top:6px">Modèle de voix (ElevenLabs)</label>
+      <select class="f ad-model"><option value="" ${s.voice_model ? '' : 'selected'}>Selon le mode (Adaptation : multilingual v2 · Reprise et Roblox : v4)</option>
+        ${(data.voice_models || []).map(m => `<option value="${m}" ${m === s.voice_model ? 'selected' : ''}>${m}</option>`).join('')}</select>
+      <div class="tiny">v4 : la plus naturelle dans nos essais · flash v2.5 : rapide et moins chère, plus simple. Changeable aussi par projet, à l'aperçu d'une Reprise.</div>
     </div>
     <div class="chcard-body">
       <label class="f">Musique de fond</label>
@@ -362,6 +409,7 @@ function renderAdaptationChannel(card, ch, data){
   };
   card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
   card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
+  card.querySelector('.ad-model').onchange = e => save({ settings: { voice_model: e.target.value || null } });
   card.querySelector('.ad-music').onchange = e => save({ settings: { music_file: e.target.value || null } });
   const styleSel = card.querySelector('.ad-style');
   if (styleSel) styleSel.onchange = e => save({ settings: { style: e.target.value } });

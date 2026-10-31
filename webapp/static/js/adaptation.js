@@ -1,12 +1,14 @@
 // ---------- Adaptation : project by project ----------
 
 let adCurrent = null, adPoll = null, adProject = null;
-const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering'];
+const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering', 'cleaning'];
 const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'searching', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STATUS = { analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
+const AD_STEPS_REPRISE = [['Short', ['analysing', 'cleaning', 'cleaning_review']], ['Script', ['scripting', 'script_review']],
+                          ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
+const AD_STATUS = { cleaning: 'nettoyage (carte graphique)…', cleaning_review: 'nettoyage à vérifier', analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
   script_review: 'scripts à relire', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
@@ -38,7 +40,7 @@ async function loadAdaptationList(){
 document.getElementById('adNewBtn').addEventListener('click', () => { adCurrent = ''; clearTimeout(adPoll); loadAdaptationList(); });
 
 function adStepsHtml(status, mode, idea){
-  const steps = (mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS).map(([l, sts], i) => [i === 0 && idea ? 'Idée' : l, sts]);
+  const steps = (mode === 'reprise' ? AD_STEPS_REPRISE : mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS).map(([l, sts], i) => [i === 0 && idea ? 'Idée' : l, sts]);
   const at = steps.findIndex(([, sts]) => sts.includes(status));
   return `<div class="ad-steps">${steps.map(([l], i) =>
     `<div class="ad-step ${i < at || status === 'done' ? 'done' : i === at ? 'active' : ''}"><div class="bar"></div><div class="lbl">${i + 1} · ${l}</div></div>`).join('')}</div>`;
@@ -67,7 +69,10 @@ async function renderNewAdaptation(){
             <span class="tiny">écrire le meilleur script (rétention) avec l'image voulue de chaque phrase, puis l'app cherche ces images plan par plan</span></label>
           <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="sources"> <b>Sources d'abord</b>
             <span class="tiny">tu as déjà les vidéos, ou tu préfères les choisir d'abord : le script est écrit avec les clips trouvés</span></label>
+          <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="reprise"> <b>Reprise</b> <span class="pill wait">nouveau</span>
+            <span class="tiny">le Short vertical d'un ami : on garde ses images, on efface ses textes, logos et autocollants, puis ton texte, ta voix et tes sous-titres</span></label>
         </div>
+        <div id="adSonBox" style="display:none">${rpSoundPicker('notre_musique', 16)}</div>
         <label class="switch" id="adVersionsBox" style="color:var(--text);margin-top:4px"><input type="checkbox" id="adVersions" checked>
           <b>Une version différente par chaîne</b> <span class="tiny">chaque chaîne a son angle, son accroche et sa fin (sinon : la même vidéo traduite) ; en « Sources d'abord », avec les mêmes clips</span></label>
         <div id="adSrcBox" style="display:none"><label class="f" style="margin-top:6px">Facultatif : les vidéos d'origine des clips, une par ligne. Laisse vide si tu ne les as pas : l'app te dira quoi chercher et te proposera des vidéos.</label>
@@ -86,7 +91,8 @@ async function renderNewAdaptation(){
   hydrateIcons(stage);
   document.getElementById('adToVoices').onclick = () => goTo(13);
   const syncVersions = () => {
-    document.getElementById('adVersionsBox').style.display = stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
+    const reprise = (stage.querySelector('input[name="adMode"]:checked') || {}).value === 'reprise';   // one script, every language
+    document.getElementById('adVersionsBox').style.display = !reprise && stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';
   };
   stage.querySelectorAll('.ad-target').forEach(x => x.addEventListener('change', syncVersions));
   syncVersions();
@@ -96,6 +102,9 @@ async function renderNewAdaptation(){
     document.getElementById('adRefBox').style.display = mode === 'idee' ? 'none' : '';
     document.getElementById('adIdeaBox').style.display = mode === 'idee' ? '' : 'none';
     document.getElementById('adCreate').lastChild.textContent = mode === 'idee' ? ' Chercher les faits →' : ' Analyser →';
+    document.getElementById('adSonBox').style.display = mode === 'reprise' ? '' : 'none';
+    document.getElementById('adRefBox').querySelector('label').textContent = mode === 'reprise'
+      ? '1. Le Short vertical de ton ami (YouTube, TikTok…)' : '1. Le Short viral modèle (YouTube, TikTok…)';
     syncVersions();
   });
   document.getElementById('adCreate').onclick = async ev => {
@@ -105,7 +114,8 @@ async function renderNewAdaptation(){
                    idea: mode === 'idee' ? document.getElementById('adIdea').value.trim() : '',
                    versions: document.getElementById('adVersions').checked,
                    source_urls: mode === 'sources' ? document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean) : [],
-                   channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value) };
+                   channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value),
+                   ...(mode === 'reprise' ? rpSoundOf(document.getElementById('adSonBox')) : {}) };
     btn.disabled = true;
     try { const p = await api('/api/adaptations', { method:'POST', body: JSON.stringify(body) }); adCurrent = p.project_id; loadAdaptationList(); }
     catch (e){ log(e.message, 'error'); btn.disabled = false; }
@@ -121,15 +131,15 @@ async function loadAdProject(){
   adProject = p;
   if (statusMoved) api('/api/adaptations').then(renderAdChips).catch(() => {});   // keep the project chips' status current
   if (changed){
-    const toneSel = p.ton_chaine
+    const toneSel = p.mode === 'reprise' ? '' : p.ton_chaine
       ? `<span class="tiny" title="Réglé pour la chaîne dans Réglages → Voix : même musique et même style à chaque vidéo">Ton : ${esc((p.tons.find(o => o.ton === p.ton_chaine) || {}).label || p.ton_chaine)} (celui de la chaîne)</span>`
       : p.reference && !AD_BUSY.includes(p.status)
       ? `<label class="tiny" title="Le ton règle la musique, la quantité d'effets et les sons (au prochain aperçu)" style="display:flex;gap:6px;align-items:center">Ton
           <select class="f" id="adTone" style="width:auto;padding:4px 8px;font-size:12px">${p.ton ? '' : '<option value="">à deviner</option>'}
           ${(p.tons || []).map(o => `<option value="${o.ton}" ${o.ton === p.ton ? 'selected' : ''}>${esc(o.label)}</option>`).join('')}</select></label>` : '';
     const head = `<div class="toolbar"><span class="fact">${icon('globe', 14)} ${esc(p.subject || p.idee || p.reference_url)}</span>${toneSel}<span class="spacer"></span>
-      ${p.idee ? `<span class="tiny" title="${esc(p.idee)}">💡 Idée d'abord</span>` : `<a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">Short modèle ↗</a>`}
-      ${!AD_BUSY.includes(p.status) && p.reference ? '<button class="btn ghost small" id="adNewVersion" data-icon="globe" title="La même vidéo pour une autre chaîne, avec un nouvel angle">Nouvelle version pour une autre chaîne</button>' : ''}
+      ${p.idee ? `<span class="tiny" title="${esc(p.idee)}">💡 Idée d'abord</span>` : `<a class="tiny" href="${esc(p.reference_url)}" target="_blank" rel="noopener">${p.mode === 'reprise' ? 'Short repris' : 'Short modèle'} ↗</a>`}
+      ${!AD_BUSY.includes(p.status) && p.reference && p.mode !== 'reprise' ? '<button class="btn ghost small" id="adNewVersion" data-icon="globe" title="La même vidéo pour une autre chaîne, avec un nouvel angle">Nouvelle version pour une autre chaîne</button>' : ''}
       ${AD_BUSY.includes(p.status) ? '' : '<button class="btn ghost small" id="adDelete" data-icon="trash">Supprimer</button>'}</div>
       <div id="adNewVersionBox"></div>
       ${(p.group_members || []).length > 1 ? `<div class="ad-versions"><span class="tiny">Versions de ce Short :</span>${p.group_members.map(m =>
@@ -179,6 +189,7 @@ async function loadAdProject(){
     const body = document.getElementById('adBody');
     if (AD_BUSY.includes(p.status)) body.innerHTML = adBusyHtml(p);
     else if (p.status === 'error') renderAdError(body, p);
+    else if (p.mode === 'reprise' && renderReprise(body, p)) { /* reprise.js */ }
     else if (p.status === 'sources_search') renderAdSearch(body, p);
     else if (p.status === 'plan_review') renderAdPlan(body, p);
     else if (p.status === 'images_review') renderAdImages(body, p);
@@ -201,7 +212,7 @@ function adBusyHtml(p){
 function renderAdError(body, p){
   body.innerHTML = `<div class="errbox">${esc(p.error || 'Erreur')}</div>
     <div class="ad-row"><button class="btn primary small" id="adRetry" data-icon="refresh">Réessayer cette étape</button>
-      ${['voicing', 'rendering'].includes(p.failed_step) ? '<button class="btn ghost small" id="adErrBack" data-icon="eye">← Revenir au script</button>' : ''}</div>`;
+      ${['voicing', 'rendering'].includes(p.failed_step) && p.mode !== 'reprise' ? '<button class="btn ghost small" id="adErrBack" data-icon="eye">← Revenir au script</button>' : ''}</div>`;
   hydrateIcons(body);
   const errBack = document.getElementById('adErrBack');
   if (errBack) errBack.onclick = async () => {

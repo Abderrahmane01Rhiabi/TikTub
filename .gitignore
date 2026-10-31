@@ -140,3 +140,6 @@ sfx_perso/
 
 # big AI models downloaded once (roblox/nettoyage.py: SAM 2.1 large)
 modeles/
+
+# Musiques communes (chansons ajoutées par lien ou fichier : pas dans git)
+assets/musiques/

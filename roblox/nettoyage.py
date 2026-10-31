@@ -197,8 +197,12 @@ def ocr():
     return _MODELS["ocr"]
 
 
-def shapes(pred, src: str, elements: List[Dict], work: str) -> Dict[int, np.ndarray]:
-    """{image of the passage at FPS: mask} of the avatars and stickers, followed by SAM."""
+def shapes(pred, src: str, elements: List[Dict], work: str, size=None, fps: int = 0) -> Dict[int, np.ndarray]:
+    """{image of the passage at FPS: mask} of the avatars and stickers, followed by SAM. size (w, h) / fps: another
+    picture than a Roblox passage's (a vertical Short, adaptation/reprise), given here and not set on the module (a
+    Roblox montage may run at the same time)."""
+    SW, SH = size or (globals()["SW"], globals()["SH"])
+    FPS = fps or globals()["FPS"]
     import torch
     cuda = _device() == "cuda"
     allm: Dict[int, np.ndarray] = {}
