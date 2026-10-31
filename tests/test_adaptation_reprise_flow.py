@@ -176,3 +176,10 @@ def test_the_screen_gets_the_reprise(fakes, client):
     assert r["original_url"].endswith("/reprise/video/original") and r["propre_url"].endswith("/reprise/video/propre")
     assert [t["son"] for t in s["targets"]] == ["intelligente", "notre_musique"]
     assert client.get(f"/api/adaptations/{p['project_id']}/reprise/video/nimporte").status_code == 404
+
+
+def test_the_page_loads_the_reprise_screen(client):
+    page = client.get("/").text
+    assert "/static/js/reprise.js" in page and page.index("adaptation.js") < page.index("reprise.js")
+    js = client.get("/static/js/reprise.js").text
+    assert "function renderReprise" in js and "reprise/cleaning/approve" in js
