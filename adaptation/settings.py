@@ -21,7 +21,11 @@ PREVIEWS_DIR = "assets/voices"
 
 # "ton": a fixed tone keeps every video of the channel alike (same effects, same sounds, its own music — a
 # channel's identity, the person's choice for his channels); None: the subject's tone, said by the analysis
-DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique", "ton": None}
+DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique", "ton": None,
+            "voice_model": None}
+# the ElevenLabs models a person may choose (Réglages, the project's Aperçu); None: each mode's own (Adaptation
+# eleven_multilingual_v2, Reprise and Roblox eleven_v4)
+VOICE_MODELS = ("eleven_v4", "eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5")
 
 
 def preview_path(voice_id: str) -> str:
@@ -81,6 +85,8 @@ def channel_settings(profile: Optional[Dict]) -> Dict:
         out["style"] = raw["style"]
     from adaptation import tone
     out["ton"] = tone.valid(raw.get("ton"))
+    if raw.get("voice_model") in VOICE_MODELS:
+        out["voice_model"] = raw["voice_model"]
     return out
 
 
@@ -105,6 +111,8 @@ def clean_update(update: Dict) -> Dict:
     if "ton" in update:
         from adaptation import tone
         out["ton"] = tone.valid(update["ton"])        # None: the subject's tone
+    if "voice_model" in update:
+        out["voice_model"] = update["voice_model"] if update["voice_model"] in VOICE_MODELS else None
     return out
 
 

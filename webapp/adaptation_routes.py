@@ -106,7 +106,7 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
     from adaptation import pipeline as ap
     key = _adaptation_job(pid)
     progress.start(key, kind="adaptation", phase=step)
-    runner = ap.RUNNERS[step]
+    runner = ap.runner_for(pid, step)
 
     def run():
         try:
@@ -175,9 +175,12 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "angle": t.get("angle"), "accords": t.get("accords"),
             "preview_url": _main().video_media_url({"video_path": prev["path"]}) if prev.get("path") and os.path.exists(prev["path"]) else None,
             "checks": prev.get("checks"), "final_checks": fin.get("checks"),
-            "duration": (prev.get("summary") or {}).get("duration"),
+            "duration": (prev.get("summary") or {}).get("duration") or prev.get("duree"),
+            "voice_model": t.get("voice_model"),
         })
     base["targets"] = targets
+    if p.get("mode") == "reprise":
+        base["reprise"] = _serialize_reprise(p, targets)
     if full:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s",
@@ -198,6 +201,31 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         base["picks"] = p.get("picks")
         base["suggestions"] = p.get("suggestions")
     return base
+
+
+def _serialize_reprise(p: dict, targets: list) -> dict:
+    from adaptation import reprise_pipeline as rp, settings as st
+    r = p.get("reprise") or {}
+    pid = p["project_id"]
+    for out, t in zip(targets, p.get("targets") or []):
+        out["son"] = rp.son_for(p, t)
+        out["voice_model_used"] = rp.model_for(t)
+    sc = r.get("script") or {}
+    mus = r.get("musique") or {}
+    return {
+        "son": r.get("son"), "volume_db": r.get("volume_db"), "sons": ["sa_musique", "notre_musique", "intelligente", "sans_musique"],
+        "smart_channels": list(rp.SMART_CHANNELS), "voice_models": list(st.VOICE_MODELS),
+        "elements": [{"index": i, **{k: e.get(k) for k in ("type", "description", "action", "raison", "debut", "fin")}}
+                     for i, e in enumerate(r.get("elements") or [])],
+        "original_url": f"/api/adaptations/{pid}/reprise/video/original" if r.get("video") else None,
+        "propre_url": f"/api/adaptations/{pid}/reprise/video/propre" if r.get("clean") else None,
+        "nettoyage": r.get("nettoyage"),
+        "script": {"genre": sc.get("genre"), "reordonne": sc.get("reordonne"), "pourquoi": sc.get("pourquoi"),
+                   "titre": sc.get("titre"), "parties": sc.get("parties") or []} if sc else None,
+        "musique": {k: mus.get(k) for k in ("titre", "partie", "comment", "pourquoi_chanson", "pourquoi_partie", "attention")}
+        if mus else None,
+        "credit": rp.credit(p) if r.get("video") else "",
+    }
 
 
 def _adaptation_or_404(pid: str) -> dict:
@@ -226,6 +254,8 @@ class AdaptationCreate(BaseModel):
     channels: list
     mode: str = "sources"
     versions: bool = False
+    son: str = "notre_musique"          # Reprise: sa_musique | notre_musique | intelligente | sans_musique
+    volume_db: Optional[float] = None   # Reprise: the music this many dB under the voice
 
 
 @router.post("/api/adaptations")
@@ -236,7 +266,8 @@ def create_adaptation(req: AdaptationCreate):
     targets = [{"channel": ch, "profile": _main().channel_manager.get_channel_profile(ch),
                 "music_dir": _main().channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
     mode = "script" if req.mode == "idee" else req.mode
-    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, mode, req.versions, None, None, req.idea)
+    p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, mode, req.versions, None, None, req.idea,
+                         req.son, req.volume_db)
     _start_adaptation_step(p["project_id"], "analysing")
     return _serialize_adaptation(p)
 
@@ -729,14 +760,19 @@ def start_adaptation_voices(pid: str):
 
 
 class AdaptationVoice(BaseModel):
-    voice_id: str
+    voice_id: str = ""
+    model: Optional[str] = None         # Reprise: the ElevenLabs model (adaptation/settings.VOICE_MODELS)
 
 
 @router.patch("/api/adaptations/{pid}/targets/{channel}/voice")
 def change_adaptation_voice(pid: str, channel: TargetChannel, req: AdaptationVoice):
     from adaptation import pipeline as ap
-    _adaptation_or_404(pid)
-    p = _adaptation_call(ap.change_voice, pid, channel, req.voice_id)
+    p = _adaptation_or_404(pid)
+    if p.get("mode") == "reprise":
+        from adaptation import reprise_pipeline as rp
+        p = _adaptation_call(rp.change_voice, pid, channel, req.voice_id or None, req.model)
+    else:
+        p = _adaptation_call(ap.change_voice, pid, channel, req.voice_id)
     _start_adaptation_step(pid, "voicing", only=channel)
     return _serialize_adaptation(p)
 
@@ -776,3 +812,80 @@ def retry_adaptation(pid: str):
     step = _adaptation_call(ap.retry, pid)
     _start_adaptation_step(pid, step)
     return _serialize_adaptation(_adaptation_or_404(pid))
+
+
+# ---------------------------------------------------------------------------
+# Reprise (a friend's Short taken again): the cleaning review, its script, its sound
+# ---------------------------------------------------------------------------
+
+def _reprise_or_404(pid: str) -> dict:
+    p = _adaptation_or_404(pid)
+    if p.get("mode") != "reprise":
+        raise HTTPException(status_code=400, detail="Ce projet n'est pas une Reprise.")
+    return p
+
+
+class RepriseElement(BaseModel):
+    action: str                         # garder | cacher
+
+
+@router.post("/api/adaptations/{pid}/reprise/elements/{index}")
+def reprise_element(pid: str, index: int, req: RepriseElement):
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(rp.set_element, pid, index, req.action))
+
+
+@router.post("/api/adaptations/{pid}/reprise/clean-again")
+def reprise_clean_again(pid: str):
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    p = _adaptation_call(rp.clean_again, pid)
+    _start_adaptation_step(pid, "cleaning")
+    return _serialize_adaptation(p)
+
+
+@router.post("/api/adaptations/{pid}/reprise/cleaning/approve")
+def reprise_approve_cleaning(pid: str):
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    p = _adaptation_call(rp.approve_cleaning, pid)
+    _start_adaptation_step(pid, "scripting")
+    return _serialize_adaptation(p)
+
+
+class RepriseScript(BaseModel):
+    texts: list                         # one text per part, in this channel's language
+    title: Optional[str] = None
+
+
+@router.put("/api/adaptations/{pid}/targets/{channel}/reprise-script")
+def reprise_edit_script(pid: str, channel: TargetChannel, req: RepriseScript):
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(rp.edit_script, pid, channel, req.texts, req.title))
+
+
+class RepriseSound(BaseModel):
+    son: str
+    volume_db: Optional[float] = None
+
+
+@router.patch("/api/adaptations/{pid}/reprise/son")
+def reprise_sound(pid: str, req: RepriseSound):
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    p = _adaptation_call(rp.change_sound, pid, req.son, req.volume_db)
+    _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
+
+
+@router.get("/api/adaptations/{pid}/reprise/video/{which}")
+def reprise_video(pid: str, which: str):
+    """The Short as downloaded ("original") or cleaned ("propre"), to compare them."""
+    r = _reprise_or_404(pid).get("reprise") or {}
+    path = {"original": r.get("video"), "propre": r.get("clean")}.get(which)
+    if not path or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Vidéo pas encore prête.")
+    return FileResponse(path, media_type="video/mp4")
+

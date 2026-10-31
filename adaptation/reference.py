@@ -67,4 +67,23 @@ def analyse(url: str, gemini=None) -> Dict:
     if not isinstance(r, dict) or "error" in r or r.get("parsing_error") or not r.get("plans"):
         from gemini_ai_generator import plain_error
         raise ReferenceError(plain_error(r) or f"Analyse du Short modèle inutilisable : {str(r)[:200]}")
+    return plans_in_seconds(r)
+
+
+def plans_in_seconds(r: Dict) -> Dict:
+    """The plans' times read back as seconds when Gemini wrote minutes and seconds as one number past the first
+    minute (a 122 s Short's plans ran to "162.2" = 1:62.2): its own "duree_s" was right, the times past it are
+    read again (adaptation/reprise.as_seconds); left as they are when they can't be read either way."""
+    try:
+        length = float(r.get("duree_s") or 0)
+        plans = r.get("plans") or []
+        flat = [float(p[k]) for p in plans for k in ("debut", "fin")]
+    except (TypeError, ValueError, KeyError):
+        return r
+    if not length or not flat or max(flat) <= length * 1.02:
+        return r
+    from adaptation.reprise import as_seconds
+    fixed = as_seconds(flat, length)
+    if fixed:
+        r["plans"] = [{**p, "debut": fixed[2 * i], "fin": fixed[2 * i + 1]} for i, p in enumerate(plans)]
     return r

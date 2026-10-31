@@ -310,6 +310,38 @@ def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[fl
     return path
 
 
+# a vertical Short in its best picture up to 1080 on its SHORT side ("res"): VIDEO_FORMAT's height<=1080 took a
+# 1080x1920 Short as 608x1080; H.264 first (an AV1 one came, slower to decode), mp4 / m4a for a plain merge
+SHORT_SORT = ["res:1080", "vcodec:h264", "ext:mp4:m4a"]
+
+
+def download_short(url: str, dest_dir: str, name: str) -> str:
+    """A whole vertical Short (Reprise: its own images are kept), in its best quality up to 1080x1920."""
+    if local_path(url):
+        return _cut_local(url, dest_dir, name, None)
+    os.makedirs(dest_dir, exist_ok=True)
+    opts = ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), format="bv*+ba/b", format_sort=SHORT_SORT,
+                      merge_output_format="mp4", noplaylist=True)
+    got = _fetch(url, opts)
+    if not os.path.exists(got["path"]) or not has_picture(got["path"]):
+        raise SourceError(f"Vidéo sans image après téléchargement ({url}).")
+    _write_meta(got["path"], url, got["info"])
+    return got["path"]
+
+
+def download_thumbnail(url: str, dest_dir: str, name: str) -> Optional[str]:
+    """The video's thumbnail picture (no video), or None."""
+    import glob
+    os.makedirs(dest_dir, exist_ok=True)
+    try:
+        _fetch_once(url, ytdlp_opts(outtmpl=os.path.join(dest_dir, name + ".%(ext)s"), skip_download=True,
+                                    writethumbnail=True, noplaylist=True))
+    except Exception:
+        pass
+    got = [p for p in glob.glob(os.path.join(dest_dir, name + ".*")) if p.lower().endswith((".jpg", ".jpeg", ".png", ".webp"))]
+    return got[0] if got else None
+
+
 def _download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None,
               fmt: str = VIDEO_FORMAT) -> str:
     os.makedirs(dest_dir, exist_ok=True)

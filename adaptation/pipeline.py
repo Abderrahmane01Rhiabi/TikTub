@@ -40,7 +40,7 @@ import db
 from gemini_ai_generator import in_context, usage_context   # which project each AI call is for
 from adaptation import annotate, checks, effects, finder, langs, reference, render, script, settings, sources, storyboard, tone, voices
 
-BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering"}
+BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering", "cleaning"}
 Report = Callable[[str, float], None]
 
 
@@ -77,7 +77,7 @@ def _expect(p: Dict, *statuses: str):
 
 # ---------------------------------------------------------------- creation
 
-MODES = ("sources", "script")
+MODES = ("sources", "script", "reprise")      # reprise: a friend's Short taken again (adaptation/reprise_pipeline.py)
 
 
 def _new_pid() -> str:
@@ -86,7 +86,7 @@ def _new_pid() -> str:
 
 def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
            versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None,
-           idea: Optional[str] = None) -> Dict:
+           idea: Optional[str] = None, son: str = "notre_musique", volume_db: Optional[float] = None) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
     mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
     versions (script mode, several channels): one project per channel, a group — the reference
@@ -99,8 +99,8 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         mode, reference_url = "script", ""
     if mode not in MODES:
         raise PipelineError("Mode inconnu.")
-    if mode == "script":
-        urls = []                       # the footage is searched for the script, plan by plan
+    if mode in ("script", "reprise"):
+        urls = []                       # the footage is searched for the script, plan by plan / his own images
     if not idea and not reference_url.strip():
         raise PipelineError("Il faut le lien du Short modèle, ou ton idée.")
     if idea and len(idea) < 8:
@@ -116,7 +116,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         t = {"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
              "music_path": music if music and os.path.exists(music) else None,
              "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
-             "validated": False, "video_id": None}
+             "validated": False, "video_id": None, "voice_model": s["voice_model"]}
         own = (style_of or {}).get(c["channel"])
         if own:                         # "Refaire ce style": the winning video's voice, music and look
             if own.get("voice_id"):
@@ -132,6 +132,10 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
             "credits": "", "credits_auto": "", "error": None, "failed_step": None, "remake_of": remake_of}
     if idea:
         base["idee"] = idea
+    if mode == "reprise":
+        from adaptation import musique, reprise_pipeline
+        return save(reprise_pipeline.new_project({**base, "project_id": _new_pid()}, targets, son,
+                                                 musique.GAP if volume_db is None else volume_db))
     if mode == "sources" and versions and len(targets) > 1:
         base["versions"] = True         # one project, the same clips, an angle per channel at the script step
     if mode == "script" and versions and len(targets) > 1:
@@ -1901,6 +1905,9 @@ def approve_script(pid: str, channel: str, force: bool = False) -> Dict:
     """force: the person watched the clips and keeps them, the warnings stay
     shown but no longer block. Only what would break the render still does."""
     p = load(pid)
+    rp = _reprise(p)
+    if rp:
+        return rp.approve_script(pid, channel)
     _expect(p, "script_review")
     t = target(p, channel)
     ps = (t["script"] or {}).get("passages") or []
@@ -2190,6 +2197,9 @@ def run_voices(pid: str, report: Optional[Report] = None, only: Optional[str] = 
 
 def start_voices(pid: str) -> Dict:
     p = load(pid)
+    rp = _reprise(p)
+    if rp:
+        return rp.start_voices(pid)
     _expect(p, "script_review")
     missing = [t["channel"] for t in p["targets"] if not t["approved"]]
     if missing:
@@ -2200,6 +2210,9 @@ def start_voices(pid: str) -> Dict:
 
 def change_voice(pid: str, channel: str, voice_id: str) -> Dict:
     p = load(pid)
+    rp = _reprise(p)
+    if rp:
+        return rp.change_voice(pid, channel, voice_id)
     _expect(p, "preview_review")
     if not db.get_voice(voice_id):
         raise PipelineError("Cette voix n'est pas dans la bibliothèque (Réglages → Voix).")
@@ -2211,6 +2224,9 @@ def change_voice(pid: str, channel: str, voice_id: str) -> Dict:
 
 def validate_preview(pid: str, channel: str) -> Dict:
     p = load(pid)
+    rp = _reprise(p)
+    if rp:
+        return rp.validate_preview(pid, channel)
     _expect(p, "preview_review")
     t = target(p, channel)
     if not (t.get("preview") or {}).get("checks", {}).get("ok"):
@@ -2255,6 +2271,9 @@ def publication_record(p: Dict, t: Dict, path: str) -> Dict:
 
 def start_render(pid: str) -> Dict:
     p = load(pid)
+    rp = _reprise(p)
+    if rp:
+        return rp.start_render(pid)
     _expect(p, "preview_review")
     if not any(t["validated"] for t in p["targets"]):
         raise PipelineError("Valide au moins un aperçu avant le rendu final.")
@@ -2296,6 +2315,19 @@ def run_final(pid: str, report: Optional[Report] = None):
 
 RUNNERS = {"analysing": run_analysis, "searching": run_images, "fetching": run_fetch, "scripting": run_scripts,
            "voicing": run_voices, "rendering": run_final}
+
+
+def _reprise(p: Dict):
+    """The Reprise's own steps when the project is one (else None)."""
+    if p.get("mode") == "reprise":
+        from adaptation import reprise_pipeline
+        return reprise_pipeline
+    return None
+
+
+def runner_for(pid: str, step: str) -> Callable:
+    rp = _reprise(load(pid))
+    return (rp.RUNNERS if rp else RUNNERS)[step]
 
 
 def retry(pid: str) -> str:
