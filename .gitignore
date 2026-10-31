@@ -143,3 +143,6 @@ modeles/
 
 # Musiques communes (chansons ajoutées par lien ou fichier : pas dans git)
 assets/musiques/
+
+# Vidéos prêtes à publier plus tard (Reprise) : pas dans git
+a_publier/
