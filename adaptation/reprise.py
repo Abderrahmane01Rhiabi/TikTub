@@ -8,7 +8,7 @@ The cleaning, tested on 7 Shorts (captions in any colour, numbers, stickers, fol
                  cut the answer), its stickers placed again on a still image (precise there), and for each drawing
                  « garder » or « cacher » with its reason (a red X saying "don't", an arrow, a circle: kept; a like /
                  follow sticker, a logo: hidden). Texts, names, buttons are always hidden. The person may change it.
-    every image  EasyOCR (half size, the image before OR'd in), his text colours (learned from what the OCR reads:
+    every image  EasyOCR in his text's places only (half size, the image before OR'd in), his text colours (learned from what the OCR reads:
                  coloured letters in a black or white outline, white letters in black; only thin strokes in his
                  captions' places — not a strawberry), the exact shape of each drawing / logo to hide followed by
                  SAM 2 (roblox/nettoyage.shapes: no rectangle), names / numbers: their box; inpainted (TELEA), a big
@@ -145,6 +145,23 @@ def read_elements(answer: Optional[Dict], size, length: float) -> Optional[List[
     return out
 
 
+def placed(src: str, e: Dict, size, g, t: Optional[float] = None) -> Dict:
+    """The element's box looked for again on a still image, where Gemini is precise (on the moving video it put a
+    button too high, a watermark at 3 % of the height instead of 13 %, a title at 70 % instead of 60 % — and the
+    OCR now erases only inside these boxes). A caption keeps both boxes joined: its words change over its span."""
+    t = e["debut"] + (e["fin"] - e["debut"]) * 0.4 if t is None else t
+    r = g._generate_content([{"inline_data": {"mime_type": "image/jpeg", "data": _jpg(src, t)}},
+                             {"text": RELOCATE.format(desc=e.get("description") or e["type"])}],
+                            max_tokens=800, timeout=60, temperature=0.0) or {}
+    box = None if r.get("absent") else box_of(r.get("cadre"), size)
+    if not box:
+        return e
+    if e.get("type") == "sous_titres":
+        old = e["cadre"]
+        box = [min(old[0], box[0]), min(old[1], box[1]), max(old[2], box[2]), max(old[3], box[3])]
+    return {**e, "cadre": box}
+
+
 def find_elements(src: str, gemini=None) -> List[Dict]:
     """What the creator added, its drawings placed again and each one's « garder » / « cacher » (see the header)."""
     from adaptation.sources import _gemini, gemini_file
@@ -164,14 +181,7 @@ def find_elements(src: str, gemini=None) -> List[Dict]:
     out = []
     for e in els:
         t = e["debut"] + (e["fin"] - e["debut"]) * 0.4
-        # on the moving video it put a button too high, a watermark at 3 % of the height instead of 13 %
-        if e.get("type") in ("autocollant", "numero", "logo", "pseudo"):
-            r = g._generate_content([{"inline_data": {"mime_type": "image/jpeg", "data": _jpg(src, t)}},
-                                     {"text": RELOCATE.format(desc=e.get("description") or e["type"])}],
-                                    max_tokens=800, timeout=60, temperature=0.0) or {}
-            box = None if r.get("absent") else box_of(r.get("cadre"), size)
-            if box:
-                e = {**e, "cadre": box}
+        e = placed(src, e, size, g, t)
         if e.get("type") == "autocollant":
             r = g._generate_content([{"inline_data": {"mime_type": "image/jpeg", "data": _jpg(src, t)}},
                                      {"text": DECIDE.format(desc=e.get("description") or "un autocollant")}],
@@ -371,6 +381,24 @@ def _inpaint(img: np.ndarray, mask: np.ndarray, kern) -> np.ndarray:
     return img
 
 
+def read_in(reader, img: np.ndarray, zones: np.ndarray, scale: int, sure: float) -> np.ndarray:
+    """What the OCR reads in his text's places only (at least half of a word inside them) -> a mask at full size.
+    Not elsewhere: it read and erased what was FILMED — "KENYA" on the runners' shirts, their bibs, the race clock
+    (the 8th Short) — which Gemini had rightly left out of its list."""
+    cv2 = _cv2()
+    out = np.zeros(zones.shape, np.uint8)
+    if not zones.any():
+        return out
+    for pts, _, conf in reader.readtext(img):
+        if conf < sure:
+            continue
+        m = np.zeros(zones.shape, np.uint8)
+        cv2.fillPoly(m, [(np.array(pts) * scale).astype(np.int32)], 255)
+        if (m.astype(bool) & zones).sum() > 0.5 * (m > 0).sum():
+            out |= m
+    return out
+
+
 def clean(src: str, elements: List[Dict], out: str, work: str, reader=None,
           progress: Optional[Callable[[float], None]] = None) -> Dict:
     """src with what the creator added erased (the elements « cacher » only) -> out; {"images", "relues"}."""
@@ -394,13 +422,10 @@ def clean(src: str, elements: List[Dict], out: str, work: str, reader=None,
     for img in _frames(src, w, h):
         t = k / fps
         small = cv2.resize(img, (w // 2, h // 2))
-        read = np.zeros((h, w), np.uint8)
-        for pts, _, conf in reader.readtext(small):
-            if conf >= 0.2:
-                cv2.fillPoly(read, [(np.array(pts) * 2).astype(np.int32)], 255)
+        zones = zones_at(hide, t, w, h)
+        read = read_in(reader, small, zones, 2, 0.2)
         mask = read if last is None else cv2.bitwise_or(read, last)
         last = read
-        zones = zones_at(hide, t, w, h)
         if hues and zones.any():
             mask = cv2.bitwise_or(mask, colour_mask(img, hues, zones))
         if k in sam:
@@ -441,12 +466,10 @@ def recheck(path: str, src: str, info: Dict, reader, hide: List[Dict],
             progress(0.8 + 0.15 * k / total)
         if not zones.any():
             continue
-        for pts, _, conf in reader.readtext(img):
-            m = np.zeros((h, w), np.uint8)
-            cv2.fillPoly(m, [np.array(pts).astype(np.int32)], 255)
-            if conf >= 0.3 and (m & zones).sum() > 0.5 * m.sum():
-                for j in range(k - HOLD, k + HOLD + 1):
-                    left[j] = left.get(j, np.zeros((h, w), np.uint8)) | m
+        m = read_in(reader, img, zones > 0, 1, 0.3)
+        if m.any():
+            for j in range(k - HOLD, k + HOLD + 1):
+                left[j] = left.get(j, np.zeros((h, w), np.uint8)) | m
     if not left:
         return 0
     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))

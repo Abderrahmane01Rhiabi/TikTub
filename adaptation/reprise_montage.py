@@ -25,7 +25,8 @@ from adaptation import langs
 W, H, FPS = 1080, 1920, 30
 SPEED = (0.8, 1.35)
 NAMES = {"fr": "francais", "ar": "arabe standard moderne (sans voyelles)", "en": "anglais"}
-WPS = {"fr": 2.6, "ar": 2.2, "en": 2.8}         # words a second at most, to fit a part's images
+WPS = {"fr": (2.2, 2.6), "ar": (1.8, 2.2), "en": (2.4, 2.8)}   # words a second, to FILL a part's images: at most
+# only, the French of the 8th Short said 47 s of images in 29 s (its images cut)
 
 
 class MontageError(RuntimeError):
@@ -46,7 +47,8 @@ SCRIPT = """Voici un YouTube Short, plan par plan, avec ce qu'on voit et ce qui 
 IMPORTANT : tout ce que le createur a ecrit sur l'image (sous-titres, numeros 1-2-3, autocollants) est EFFACE puis
 refait par nous : les numeros incrustes n'empechent donc PAS de permuter des points.
 On garde EXACTEMENT ces images mais on refait le texte pour nos chaines, en {langues}, avec nos propres mots (pas une
-traduction mot a mot) et les memes faits (rien d'invente).
+traduction mot a mot) et les memes faits (rien d'invente). Le francais est ecrit CORRECTEMENT, avec tous ses accents
+(é, è, à, ç, ô... : "choqué", "Indonésien", "ému"), meme si cette consigne est ecrite sans accents.
 1. Dis si c'est un "top" (une liste de points independants : des objets, des faits, des lieux) ou une "histoire" (une
    suite d'evenements ou chaque etape decoule de la precedente).
 2. Decoupe en parties : une accroche, chaque point (ou etape) avec ses plans, une chute.
@@ -54,7 +56,8 @@ traduction mot a mot) et les memes faits (rien d'invente).
    a la fin ; les points sont RENUMEROTES et la phrase de chaque point commence par son nouveau numero. Une histoire :
    garde l'ordre, PAS de numero (role "etape", numero null, pas de "1." dans le texte).
 4. Ecris le texte de chaque partie : une accroche percutante, une phrase par point ou etape, et une chute qui invite a
-   commenter. Chaque texte doit tenir dans la duree de ses images ({vitesses}).
+   commenter. Chaque texte doit REMPLIR la duree de ses images sans la depasser ({vitesses}) : un texte trop court
+   coupe ses images (on ne les accelere que jusqu'a x1,35), un texte trop long les ralentit.
 JSON uniquement : {{"genre": "top" | "histoire", "reordonne": true/false, "pourquoi": "une phrase",
  "titre": {{{cles}}},
  "parties": [{{"role": "accroche|point|etape|chute", "numero": null ou n, "plans": [indices des plans d'origine],
@@ -88,7 +91,8 @@ def write_script(analyse: Dict, codes: List[str], gemini=None) -> Dict:
     lines = "\n".join(f"{i}. {p['debut']:.1f}-{p['fin']:.1f} s ({p['fin'] - p['debut']:.1f} s) [{p.get('role')}] on voit : "
                       f"{p.get('visuel')} | dit : {p.get('paroles')}" for i, p in enumerate(plans))
     prompt = SCRIPT.format(plans=lines, langues=", ".join(f"{NAMES.get(c, c)} (cle \"{c}\")" for c in codes),
-                           vitesses="; ".join(f"{NAMES.get(c, c)} : {WPS.get(c, 2.5)} mots par seconde au plus" for c in codes),
+                           vitesses="; ".join(f"{NAMES.get(c, c)} : entre {WPS.get(c, (2.0, 2.5))[0]} et "
+                                              f"{WPS.get(c, (2.0, 2.5))[1]} mots par seconde" for c in codes),
                            cles=", ".join(f'"{c}": "..."' for c in codes))
     for _ in range(3):
         r = check_script(g._generate_content([{"text": prompt}], max_tokens=8000, timeout=180, temperature=0.6),
@@ -142,8 +146,22 @@ def glued(words: List[Dict]) -> List[Dict]:
     return out
 
 
+CAPTION_Y = 0.755                                # our captions' middle, as a fraction of the height, by default
+
+
+def caption_y(elements: List[Dict]) -> float:
+    """Where our captions go: on the band his bottom captions were erased from (a blur showed under ours when his sat
+    lower), else CAPTION_Y. Vertical fractions are kept by the 9:16 crop (scaled on the height, cut at the sides)."""
+    low = [e["cadre"] for e in elements if e.get("type") == "sous_titres" and e.get("action", "cacher") == "cacher"
+           and (e["cadre"][1] + e["cadre"][3]) / 2 > 0.5]
+    if not low:
+        return CAPTION_Y
+    mids = sorted((c[1] + c[3]) / 2 for c in low)
+    return round(min(0.86, max(0.6, mids[len(mids) // 2])), 3)
+
+
 def captions(path: str, words: List[Dict], starts: List[float], numbers: List[Optional[int]], code: str,
-             total: float) -> str:
+             total: float, y: float = CAPTION_Y) -> str:
     """Our captions where the creator's were (~72 % down), 3 words at a time, the word said in yellow; our numbers
     big at the start of each point of a top."""
     L = langs.lang(code)
@@ -153,7 +171,8 @@ def captions(path: str, words: List[Dict], starts: List[float], numbers: List[Op
     head = ["[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 0", "", "[V4+ Styles]",
             "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, "
             "StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Mot,{font},92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,8,3,2,60,60,470,{enc}",
+            f"Style: Mot,{font},92,&H00FFFFFF,&H00FFFFFF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,8,3,2,60,60,"
+            f"{int(H * (1 - y) - 50)},{enc}",                  # its bottom margin: the line's middle at y
             f"Style: Num,{font},300,&H0000E5FF,&H0000E5FF,&H00000000,&H90000000,0,0,0,0,100,100,0,0,1,12,4,8,40,40,330,{enc}",
             "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     words = glued(words)
@@ -182,7 +201,7 @@ def part_lengths(v: Dict) -> List[float]:
 
 
 def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3: str, bed: Optional[str],
-           out: str, work: str) -> str:
+           out: str, work: str, y: float = CAPTION_Y) -> str:
     """The Reprise video in one language: clean's images in the script's order at the voice's pace, our captions,
     the voice over the bed (None: no music) -> out."""
     from adaptation.musique import VOICE_LUFS, lufs
@@ -211,7 +230,7 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     lst = os.path.join(work, "parties.txt")
     open(lst, "w").write("".join(f"file '{os.path.abspath(f)}'\n" for f in files))
     numbers = [p.get("numero") if script.get("genre") == "top" and p.get("role") == "point" else None for p in parts]
-    ass = captions(os.path.join(work, f"textes_{code}.ass"), v["words"], starts_of(v), numbers, code, total)
+    ass = captions(os.path.join(work, f"textes_{code}.ass"), v["words"], starts_of(v), numbers, code, total, y)
     gain = 10 ** ((VOICE_LUFS - lufs(mp3)) / 20)
     inputs = ["-f", "concat", "-safe", "0", "-i", lst, "-i", mp3]
     g = [f"[0:v]tpad=stop_mode=clone:stop_duration=1,trim=0:{total:.3f},setpts=PTS-STARTPTS,"

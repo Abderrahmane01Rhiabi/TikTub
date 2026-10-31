@@ -165,3 +165,37 @@ def test_gemini_minutes_and_seconds_run_together_are_read_back():
     assert [p["fin"] for p in rm.fit_plans(plans, 122.6)] == [56.7, 60.7, 122.2]
     with pytest.raises(rm.MontageError):
         rm.fit_plans([{"debut": 0, "fin": 70}, {"debut": 70, "fin": 130}], 100)
+
+
+def test_the_ocr_erases_only_in_his_text_places():
+    class Reader:                                   # a caption in his place, "KENYA" on a shirt elsewhere
+        def readtext(self, img):
+            return [([[10, 10], [50, 10], [50, 20], [10, 20]], "LOOK", 0.9),
+                    ([[60, 60], [90, 60], [90, 70], [60, 70]], "KENYA", 0.95)]
+    zones = np.zeros((100, 100), bool)
+    zones[5:25, 5:55] = True
+    m = reprise.read_in(Reader(), np.zeros((100, 100, 3), np.uint8), zones, 1, 0.2)
+    assert m[15, 30] and not m[65, 75]
+    assert not reprise.read_in(Reader(), np.zeros((100, 100, 3), np.uint8), np.zeros((100, 100), bool), 1, 0.2).any()
+
+
+def test_our_captions_go_where_his_were_erased(tmp_path):
+    els = [{"type": "sous_titres", "cadre": [0.1, 0.72, 0.9, 0.83], "action": "cacher"},
+           {"type": "sous_titres", "cadre": [0.1, 0.73, 0.9, 0.84], "action": "cacher"},
+           {"type": "sous_titres", "cadre": [0.2, 0.12, 0.8, 0.19], "action": "cacher"}]     # a title up: not ours
+    assert rm.caption_y(els) == pytest.approx(0.78, abs=0.01)
+    assert rm.caption_y([]) == rm.CAPTION_Y
+    words = [{"w": "un", "start": 0.0, "end": 0.5}]
+    ass = open(rm.captions(str(tmp_path / "a.ass"), words, [0.0], [None], "fr", 1.0, 0.78), encoding="utf-8").read()
+    assert f",60,60,{int(1920 * 0.22 - 50)}," in ass
+
+
+def test_the_script_asks_for_accents_and_a_text_that_fills_its_images():
+    seen = {}
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            seen["prompt"] = parts[0]["text"]
+            return {"genre": "histoire", "parties": [{"role": "accroche", "plans": [0], "fr": "Ému."}], "titre": {"fr": "T"}}
+    rm.write_script({"plans": [{"debut": 0, "fin": 3, "role": "accroche", "visuel": "x", "paroles": "y"}]}, ["fr"], G())
+    assert "accents" in seen["prompt"] and "entre 2.2 et 2.6 mots par seconde" in seen["prompt"]

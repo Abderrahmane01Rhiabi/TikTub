@@ -180,6 +180,7 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
         report("écriture du script", 0.1)
         ref = {**(p.get("reference") or {}), "plans": p["reprise"]["plans"]}
         p["reprise"]["script"] = rm.write_script(ref, _codes(p))
+        p["reprise"]["musique"] = None               # its parts may differ: the song's rise placed again
         for t in p["targets"]:
             t.update(approved=False, validated=False, voice=None, preview=None)
         p.update(status="script_review", error=None, failed_step=None)
@@ -292,7 +293,8 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
     out = os.path.join(work, f"reprise_{t['channel']}.mp4")
     import render_slot
     with render_slot.SLOT:
-        rm.render(r["clean"], r["plans"], r["script"], code, timings, v["mp3"], bed, out, os.path.join(work, "parties"))
+        rm.render(r["clean"], r["plans"], r["script"], code, timings, v["mp3"], bed, out, os.path.join(work, "parties"),
+                  rm.caption_y(r["elements"]))
     made = reprise.probe(out)
     ok = abs(made["duree"] - (timings["duration"] + 0.8)) < 1.0
     return {"path": out, "son": son_for(p, t), "duree": round(made["duree"], 1),

@@ -51,7 +51,7 @@ def fakes(monkeypatch, tmp_path):
         return v
     monkeypatch.setattr(rm, "voice", voice)
 
-    def render(clean, plans, script, code, v, mp3, bed, out, work):
+    def render(clean, plans, script, code, v, mp3, bed, out, work, y=rm.CAPTION_Y):
         calls["renders"].append((code, bed and os.path.basename(bed)))
         open(out, "wb").write(b"x")
         return out
