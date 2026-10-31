@@ -9,6 +9,7 @@ never copied at import: _main().
 """
 
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -16,6 +17,7 @@ import tempfile
 import threading
 from pathlib import Path
 from typing import Annotated, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
@@ -51,6 +53,7 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
         if music_dir.exists() else []
     from adaptation.render import STYLES
     return {"settings": s, "music_files": music, "voices": [_main()._serialize_voice(v) for v in ad.voices_for(s["language"])],
+            "voice_models": list(ad.VOICE_MODELS),
             "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
 
 
@@ -888,4 +891,99 @@ def reprise_video(pid: str, which: str):
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Vidéo pas encore prête.")
     return FileResponse(path, media_type="video/mp4")
+
+
+# ---------------------------------------------------------------------------
+# The shared songs (assets/musiques): any channel may use them; the smart music picks among them
+# ---------------------------------------------------------------------------
+
+def _song_path(name: str) -> str:
+    from adaptation import musique, reprise_pipeline as rp
+    name = os.path.basename(name)
+    path = os.path.join(rp.SHARED_MUSIC, name)
+    if not name.lower().endswith(musique.EXTENSIONS) or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Musique introuvable.")
+    return path
+
+
+def _analyse_song_later(path: str):
+    """Gemini listens to a new song once (its mood, its strongest moment); the rises are measured."""
+    from adaptation import musique
+
+    def run():
+        try:
+            from gemini_ai_generator import usage_context
+            with usage_context(projet="musiques"):
+                musique.listen(path)
+        except Exception as e:                  # shown as « pas encore écoutée »; tried again at its first use
+            print(f"Musique {os.path.basename(path)} : écoute impossible ({e})")
+    threading.Thread(target=run, daemon=True).start()
+
+
+@router.get("/api/musiques")
+def list_songs():
+    from adaptation import musique, reprise_pipeline as rp
+    out = []
+    for path in musique.songs_of(rp.SHARED_MUSIC):
+        cache = musique._cache(path)
+        a = json.load(open(cache, encoding="utf-8")) if os.path.exists(cache) else None
+        name = os.path.basename(path)
+        out.append({"fichier": name, "url": f"/api/musiques/{quote(name)}/audio",
+                    "analyse": {k: a.get(k) for k in ("titre", "humeur", "convient_a", "moment_fort", "montees", "duree")} if a else None})
+    return {"musiques": out, "chaines_intelligentes": list(rp.SMART_CHANNELS)}
+
+
+@router.get("/api/musiques/{name}/audio")
+def song_audio(name: str):
+    return FileResponse(_song_path(name))
+
+
+class SongLink(BaseModel):
+    url: str
+
+
+@router.post("/api/musiques/lien")
+def add_song_link(req: SongLink):
+    """A song from a link (YouTube…): its sound only, as mp3, then listened to once."""
+    import glob
+    from adaptation import reprise_pipeline as rp, sources
+    os.makedirs(rp.SHARED_MUSIC, exist_ok=True)
+    before = set(glob.glob(os.path.join(rp.SHARED_MUSIC, "*.mp3")))
+    opts = sources.ytdlp_opts(outtmpl=os.path.join(rp.SHARED_MUSIC, "%(title)s [%(id)s].%(ext)s"), format="bestaudio/best",
+                              noplaylist=True, postprocessors=[{"key": "FFmpegExtractAudio", "preferredcodec": "mp3",
+                                                                "preferredquality": "2"}])
+    try:
+        sources._fetch_once(req.url.strip(), opts)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:300])
+    new = sorted(set(glob.glob(os.path.join(rp.SHARED_MUSIC, "*.mp3"))) - before)
+    if not new:
+        raise HTTPException(status_code=400, detail="Pas de son récupéré depuis ce lien (déjà dans la liste ?).")
+    for path in new:
+        _analyse_song_later(path)
+    return list_songs()
+
+
+@router.post("/api/musiques/fichier")
+async def add_song_file(file: UploadFile = File(...)):
+    from adaptation import musique, reprise_pipeline as rp
+    name = os.path.basename(file.filename or "")
+    if not name.lower().endswith(musique.EXTENSIONS):
+        raise HTTPException(status_code=400, detail="Un fichier audio : " + ", ".join(musique.EXTENSIONS))
+    os.makedirs(rp.SHARED_MUSIC, exist_ok=True)
+    path = os.path.join(rp.SHARED_MUSIC, name)
+    with open(path, "wb") as f:
+        f.write(await file.read())
+    _analyse_song_later(path)
+    return list_songs()
+
+
+@router.delete("/api/musiques/{name}")
+def delete_song(name: str):
+    from adaptation import musique
+    path = _song_path(name)
+    os.remove(path)
+    if os.path.exists(musique._cache(path)):
+        os.remove(musique._cache(path))
+    return list_songs()
 

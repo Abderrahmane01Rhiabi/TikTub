@@ -183,3 +183,25 @@ def test_the_page_loads_the_reprise_screen(client):
     assert "/static/js/reprise.js" in page and page.index("adaptation.js") < page.index("reprise.js")
     js = client.get("/static/js/reprise.js").text
     assert "function renderReprise" in js and "reprise/cleaning/approve" in js
+
+
+def test_the_shared_songs_and_the_voice_model_in_reglages(client, monkeypatch, tmp_path):
+    from adaptation import reprise_pipeline as rp
+    monkeypatch.setattr(rp, "SHARED_MUSIC", str(tmp_path / "musiques"))
+    os.makedirs(rp.SHARED_MUSIC)
+    open(os.path.join(rp.SHARED_MUSIC, "Past Lives [iNa1n6Gch7E].mp3"), "wb").write(b"x")
+    os.makedirs(os.path.join(rp.SHARED_MUSIC, ".analyses"))
+    json.dump({"titre": "Past Lives", "humeur": "onirique", "montees": [15.6, 47.4]},
+              open(os.path.join(rp.SHARED_MUSIC, ".analyses", "Past Lives [iNa1n6Gch7E].mp3.json"), "w"))
+    d = client.get("/api/musiques").json()
+    assert d["chaines_intelligentes"] == ["cestpourca", "lihadha_alsabab"]
+    assert d["musiques"][0]["analyse"]["montees"] == [15.6, 47.4]
+    assert client.get(d["musiques"][0]["url"]).status_code == 200
+    assert client.get("/api/musiques/..%2F..%2Fconfig.yaml/audio").status_code == 404     # never outside the list
+    started = []
+    import webapp.adaptation_routes as routes
+    monkeypatch.setattr(routes, "_analyse_song_later", lambda path: started.append(os.path.basename(path)))
+    r = client.post("/api/musiques/fichier", files={"file": ("ma chanson.mp3", b"y", "audio/mpeg")})
+    assert r.status_code == 200 and started == ["ma chanson.mp3"] and len(r.json()["musiques"]) == 2
+    assert client.post("/api/musiques/fichier", files={"file": ("x.exe", b"y")}).status_code == 400
+    assert len(client.delete("/api/musiques/ma%20chanson.mp3").json()["musiques"]) == 1
