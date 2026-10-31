@@ -224,7 +224,7 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
         "propre_url": f"/api/adaptations/{pid}/reprise/video/propre" if r.get("clean") else None,
         "nettoyage": r.get("nettoyage"),
         "script": {"genre": sc.get("genre"), "reordonne": sc.get("reordonne"), "pourquoi": sc.get("pourquoi"),
-                   "titre": sc.get("titre"), "parties": sc.get("parties") or []} if sc else None,
+                   "titre": sc.get("titre"), "youtube": sc.get("youtube") or {}, "parties": sc.get("parties") or []} if sc else None,
         "musique": {k: mus.get(k) for k in ("titre", "partie", "comment", "pourquoi_chanson", "pourquoi_partie", "attention")}
         if mus else None,
         "credit": rp.credit(p) if r.get("video") else "",
@@ -859,14 +859,15 @@ def reprise_approve_cleaning(pid: str):
 
 class RepriseScript(BaseModel):
     texts: list                         # one text per part, in this channel's language
-    title: Optional[str] = None
+    title: Optional[str] = None         # the thumbnail's
+    youtube: Optional[dict] = None      # {"titre", "description", "tags"}
 
 
 @router.put("/api/adaptations/{pid}/targets/{channel}/reprise-script")
 def reprise_edit_script(pid: str, channel: TargetChannel, req: RepriseScript):
     from adaptation import reprise_pipeline as rp
     _reprise_or_404(pid)
-    return _serialize_adaptation(_adaptation_call(rp.edit_script, pid, channel, req.texts, req.title))
+    return _serialize_adaptation(_adaptation_call(rp.edit_script, pid, channel, req.texts, req.title, req.youtube))
 
 
 class RepriseSound(BaseModel):

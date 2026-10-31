@@ -190,8 +190,10 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
     report("terminé", 1.0)
 
 
-def edit_script(pid: str, channel: str, texts: List[str], title: Optional[str] = None) -> Dict:
-    """The person's texts for this channel's language, part by part (and its title)."""
+def edit_script(pid: str, channel: str, texts: List[str], title: Optional[str] = None,
+                youtube: Optional[Dict] = None) -> Dict:
+    """The person's texts for this channel's language, part by part, its thumbnail title and its YouTube title,
+    description and tags."""
     ap = _ap()
     p = ap.load(pid)
     ap._expect(p, "script_review")
@@ -204,6 +206,9 @@ def edit_script(pid: str, channel: str, texts: List[str], title: Optional[str] =
         part[code] = " ".join(x.split())
     if title is not None and title.strip():
         p["reprise"]["script"]["titre"][code] = title.strip()
+    if youtube:
+        sc = p["reprise"]["script"]
+        sc.setdefault("youtube", {})[code] = rm.youtube_of(youtube, sc["titre"].get(code) or "")
     for o in p["targets"]:                           # every channel of this language reads it again
         if langs.lang(o["language"])["code"] == code:
             o["approved"] = False
@@ -366,7 +371,8 @@ def validate_preview(pid: str, channel: str) -> Dict:
 # ---------------------------------------------------------------- final -> Publication
 
 def credit(p: Dict) -> str:
-    """The friend whose images these are: the account of the Short's page."""
+    """The friend whose images these are: the account of the Short's page (shown on the screen; not written in the
+    description — the person took that line out of the first ones)."""
     meta = (p["reprise"].get("video") or "") + ".meta.json"
     try:
         m = json.load(open(meta, encoding="utf-8"))
@@ -377,12 +383,13 @@ def credit(p: Dict) -> str:
 
 def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     code = langs.lang(t["language"])["code"]
-    title = (p["reprise"]["script"].get("titre") or {}).get(code) or ""
-    who = credit(p)
-    desc = f"{title}\n\n{langs.lang(code)['credit_label']} {who}".strip() if who else title
+    sc = p["reprise"]["script"]
+    yt = (sc.get("youtube") or {}).get(code) or rm.youtube_of(None, (sc.get("titre") or {}).get(code) or "")
+    title, desc = yt["titre"], yt["description"]
     vid = f"{t['channel']}_{p['project_id']}"
     now = datetime.now().isoformat()
-    ai = {"optimized_title": title, "title": title, "description_suggestions": [desc], "description": desc, "tags": []}
+    ai = {"optimized_title": title, "title": title, "description_suggestions": [desc], "description": desc,
+          "tags": yt["tags"]}
     return {"video_id": vid, "batch_id": p["project_id"], "channel": t["channel"], "url": p["reference_url"],
             "status": "ready_for_upload", "priority": "normal", "source": "adaptation",
             "adaptation_project": p["project_id"], "original_title": title, "video_path": path, "ai_data": ai,

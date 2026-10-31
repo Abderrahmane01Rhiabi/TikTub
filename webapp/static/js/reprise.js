@@ -107,13 +107,16 @@ function rpScript(body, p){
     ? `Un <b>top</b> : ${sc.reordonne ? 'les points ont été <b>réordonnés</b>' : 'l\'ordre est gardé'} — ${esc(sc.pourquoi || '')}`
     : `Une <b>histoire</b> : l'ordre est gardé, sans numéros — ${esc(sc.pourquoi || '')}`;
   body.innerHTML = `<div class="tiny">${intro}</div>` + p.targets.map(t => {
-    const code = t.language.split('-')[0];
+    const code = t.language.split('-')[0], yt = (sc.youtube || {})[code] || {};
     return `<article class="chcard rp-sc" data-channel="${t.channel}" data-code="${code}">
       <div class="chcard-head"><div class="who"><div class="name"><span class="dot" style="background:${channelColor(t.channel)}"></span>
         ${esc(rpChannelName(t.channel))} · ${esc(t.language_label)}</div></div>
         ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
       <div class="chcard-body" ${t.rtl ? 'dir="rtl"' : ''}>
-        <label class="f">Titre</label><input class="f rp-title" value="${esc((sc.titre || {})[code] || '')}">
+        <label class="f">Titre YouTube</label><input class="f rp-yt-title" maxlength="100" value="${esc(yt.titre || '')}">
+        <label class="f">Description</label><textarea class="f rp-yt-desc" rows="3">${esc(yt.description || '')}</textarea>
+        <label class="f">Tags <span class="tiny">(séparés par des virgules)</span></label><input class="f rp-yt-tags" value="${esc((yt.tags || []).join(', '))}">
+        <label class="f">Titre de la miniature <span class="tiny">(court)</span></label><input class="f rp-title" value="${esc((sc.titre || {})[code] || '')}">
         ${sc.parties.map((x, i) => `<label class="f" style="margin-top:6px">${role(x)} <span class="tiny">(plans ${x.plans.map(k => k + 1).join(', ')})</span></label>
           <textarea class="f rp-text" rows="2">${esc(x[code] || '')}</textarea>`).join('')}
       </div>
@@ -126,7 +129,9 @@ function rpScript(body, p){
   body.querySelectorAll('.rp-sc').forEach(card => {
     const ch = card.dataset.channel;
     card.querySelector('.rp-save').onclick = () => rpPost(`/api/adaptations/${p.project_id}/targets/${ch}/reprise-script`, 'PUT',
-      { texts: [...card.querySelectorAll('.rp-text')].map(x => x.value), title: card.querySelector('.rp-title').value });
+      { texts: [...card.querySelectorAll('.rp-text')].map(x => x.value), title: card.querySelector('.rp-title').value,
+        youtube: { titre: card.querySelector('.rp-yt-title').value, description: card.querySelector('.rp-yt-desc').value,
+                   tags: card.querySelector('.rp-yt-tags').value.split(',').map(x => x.trim()).filter(Boolean) } });
     card.querySelector('.rp-approve').onclick = () => rpPost(`/api/adaptations/${p.project_id}/targets/${ch}/approve`, 'POST');
   });
   document.getElementById('rpVoices').onclick = () => rpPost(`/api/adaptations/${p.project_id}/voices`, 'POST');

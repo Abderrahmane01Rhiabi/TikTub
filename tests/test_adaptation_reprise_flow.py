@@ -11,6 +11,8 @@ import db
 from adaptation import musique, pipeline as ap, reprise, reprise_montage as rm, reprise_pipeline as rp
 
 SCRIPT = {"genre": "histoire", "reordonne": False, "pourquoi": "une suite", "titre": {"fr": "Le cochon", "ar": "الخنزير"},
+          "youtube": {"fr": {"titre": "Ce cochon a survécu 🐷", "description": "Une histoire vraie. #shorts #cochon",
+                             "tags": ["cochon", "sauvetage"]}, "ar": {"titre": "خنزير", "description": "قصة", "tags": ["خنزير"]}},
           "parties": [{"role": "accroche", "numero": None, "plans": [0], "fr": "Ce porcelet !", "ar": "هذا"},
                       {"role": "etape", "numero": None, "plans": [1], "fr": "Il grandit.", "ar": "كبر"}]}
 
@@ -99,7 +101,8 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     rp.approve_cleaning(pid)
     ap.runner_for(pid, "scripting")(pid)
     assert ap.load(pid)["status"] == "script_review"
-    rp.edit_script(pid, "cestpourca", ["Ce petit cochon !", "Il a bien grandi."], "Le porcelet")
+    rp.edit_script(pid, "cestpourca", ["Ce petit cochon !", "Il a bien grandi."], "Le porcelet",
+                   {"titre": "Ce porcelet a tout changé 🐷", "description": "Une histoire vraie. #shorts", "tags": ["#cochon", "ferme"]})
     with pytest.raises(ap.PipelineError):
         ap.start_voices(pid)                                                 # not every language approved yet
     ap.approve_script(pid, "cestpourca")
@@ -125,8 +128,9 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     p = ap.load(pid)
     assert p["status"] == "preview_review"                                   # the Arabic one still waits
     rec = db.get_video(f"cestpourca_{pid}")
-    assert rec["status"] == "ready_for_upload" and rec["original_title"] == "Le porcelet"
-    assert "@monami" in rec["ai_data"]["description"]                        # the friend credited
+    assert rec["status"] == "ready_for_upload" and rec["original_title"] == "Ce porcelet a tout changé 🐷"
+    assert rec["ai_data"]["description"] == "Une histoire vraie. #shorts"      # no credit line (taken out by hand)
+    assert rec["ai_data"]["tags"] == ["cochon", "ferme"]
     assert rec["recette"]["mode"] == "reprise" and rec["recette"]["son"] == "sa_musique"
 
 

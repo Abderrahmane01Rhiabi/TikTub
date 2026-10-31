@@ -199,3 +199,16 @@ def test_the_script_asks_for_accents_and_a_text_that_fills_its_images():
             return {"genre": "histoire", "parties": [{"role": "accroche", "plans": [0], "fr": "Ému."}], "titre": {"fr": "T"}}
     rm.write_script({"plans": [{"debut": 0, "fin": 3, "role": "accroche", "visuel": "x", "paroles": "y"}]}, ["fr"], G())
     assert "accents" in seen["prompt"] and "entre 2.2 et 2.6 mots par seconde" in seen["prompt"]
+    assert "\"tags\" (8 a 12)" in seen["prompt"] and '"fr": {"titre": "", "description": "", "tags": [""]}' in seen["prompt"]
+
+
+def test_each_language_gets_its_youtube_title_description_and_tags():
+    r = rm.check_script({"genre": "top", "titre": {"fr": "Claviers"},
+                         "youtube": {"fr": {"titre": "x" * 120, "description": "Des claviers fous. #shorts",
+                                            "tags": ["#clavier"] + [f"t{i}" for i in range(20)]}},
+                         "parties": [{"role": "point", "numero": 1, "plans": [0], "fr": "Numéro un."}]}, 1, ["fr"])
+    yt = r["youtube"]["fr"]
+    assert len(yt["titre"]) == 100 and yt["tags"][0] == "clavier" and len(yt["tags"]) == 15
+    old = rm.check_script({"genre": "top", "titre": {"fr": "Claviers"},                  # no "youtube": the short title
+                           "parties": [{"role": "point", "plans": [0], "fr": "Un."}]}, 1, ["fr"])
+    assert old["youtube"]["fr"] == {"titre": "Claviers", "description": "Claviers", "tags": []}

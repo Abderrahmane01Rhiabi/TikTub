@@ -55,11 +55,14 @@ traduction mot a mot) et les memes faits (rien d'invente). Le francais est ecrit
 3. Un top : propose un NOUVEL ORDRE si c'est logique (le plus fort en premier) ; l'accroche reste au debut et la chute
    a la fin ; les points sont RENUMEROTES et la phrase de chaque point commence par son nouveau numero. Une histoire :
    garde l'ordre, PAS de numero (role "etape", numero null, pas de "1." dans le texte).
-4. Ecris le texte de chaque partie : une accroche percutante, une phrase par point ou etape, et une chute qui invite a
+4. Pour chaque langue, la publication YouTube, comme nos autres Shorts : "youtube" = {{"titre" (100 caracteres max,
+   avec 1-2 emojis, qui donne envie de regarder), "description" (2-3 phrases + 3 a 5 hashtags dont #shorts),
+   "tags" (8 a 12)}} ; et "titre" = un titre COURT pour la miniature (6 mots au plus, sans emoji).
+5. Ecris le texte de chaque partie : une accroche percutante, une phrase par point ou etape, et une chute qui invite a
    commenter. Chaque texte doit REMPLIR la duree de ses images sans la depasser ({vitesses}) : un texte trop court
    coupe ses images (on ne les accelere que jusqu'a x1,35), un texte trop long les ralentit.
 JSON uniquement : {{"genre": "top" | "histoire", "reordonne": true/false, "pourquoi": "une phrase",
- "titre": {{{cles}}},
+ "titre": {{{cles}}}, "youtube": {{{cles_youtube}}},
  "parties": [{{"role": "accroche|point|etape|chute", "numero": null ou n, "plans": [indices des plans d'origine],
               {cles}}}]}}"""
 
@@ -80,8 +83,19 @@ def check_script(r, n_plans: int, codes: List[str]) -> Optional[Dict]:
         parts = [{**p, "numero": None, "role": "etape" if p.get("role") == "point" else p.get("role"),
                   **{c: re.sub(r"^\s*\d+\s*[.)\-:]\s*", "", p[c]) for c in codes}} for p in parts]
     titre = r.get("titre") if isinstance(r.get("titre"), dict) else {}
-    return {**r, "genre": "histoire" if story else "top", "parties": parts,
-            "titre": {c: (titre.get(c) or "").strip() for c in codes}}
+    titre = {c: (titre.get(c) or "").strip() for c in codes}
+    yt = r.get("youtube") if isinstance(r.get("youtube"), dict) else {}
+    return {**r, "genre": "histoire" if story else "top", "parties": parts, "titre": titre,
+            "youtube": {c: youtube_of(yt.get(c), titre[c]) for c in codes}}
+
+
+def youtube_of(y, short: str) -> Dict:
+    """A language's YouTube title (100 characters at most), description and tags (15 at most) — the short
+    thumbnail title when Gemini gave none (the first Reprises had only it: no tags, the title as description)."""
+    y = y if isinstance(y, dict) else {}
+    tags = [str(t).strip().lstrip("#") for t in y.get("tags") or [] if str(t).strip()]
+    title = str(y.get("titre") or short).strip()[:100]
+    return {"titre": title, "description": str(y.get("description") or title).strip(), "tags": tags[:15]}
 
 
 def write_script(analyse: Dict, codes: List[str], gemini=None) -> Dict:
@@ -93,7 +107,8 @@ def write_script(analyse: Dict, codes: List[str], gemini=None) -> Dict:
     prompt = SCRIPT.format(plans=lines, langues=", ".join(f"{NAMES.get(c, c)} (cle \"{c}\")" for c in codes),
                            vitesses="; ".join(f"{NAMES.get(c, c)} : entre {WPS.get(c, (2.0, 2.5))[0]} et "
                                               f"{WPS.get(c, (2.0, 2.5))[1]} mots par seconde" for c in codes),
-                           cles=", ".join(f'"{c}": "..."' for c in codes))
+                           cles=", ".join(f'"{c}": "..."' for c in codes),
+                           cles_youtube=", ".join(f'"{c}": {{"titre": "", "description": "", "tags": [""]}}' for c in codes))
     for _ in range(3):
         r = check_script(g._generate_content([{"text": prompt}], max_tokens=8000, timeout=180, temperature=0.6),
                          len(plans), codes)
