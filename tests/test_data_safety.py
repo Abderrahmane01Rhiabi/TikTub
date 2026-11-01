@@ -131,3 +131,28 @@ def test_reconnecting_a_channel_saves_its_google_account_email(project, monkeypa
     yu.complete_oauth_flow("s2", "http://localhost/api/oauth/callback?state=s2&code=x")
     assert ChannelManager().get_channel_profile("chanA")["google_account_email"] == "cube.head@gmail.com"
     assert set(yu.EMAIL_SCOPES) <= {"openid", "https://www.googleapis.com/auth/userinfo.email"}
+
+
+def test_a_brand_account_technical_address_is_not_kept(project, monkeypatch):
+    import youtube_uploader as yu
+    from channel_manager import ChannelManager
+    project.add_channel("chanB")
+    m = ChannelManager()
+    profile = m.get_channel_profile("chanB")
+    profile["google_account_email"] = "owner@gmail.com"
+    m.save_channel_profile("chanB", profile)
+
+    class Flow:
+        def fetch_token(self, authorization_response):
+            pass
+
+        class credentials:
+            token = "t"
+
+            @staticmethod
+            def to_json():
+                return '{"refresh_token": "NEW"}'
+    monkeypatch.setattr(yu, "account_email", lambda creds: "chanb-785561@pages.plusgoogle.com")
+    yu._pending_oauth_flows["s3"] = (Flow(), "chanB")
+    yu.complete_oauth_flow("s3", "http://localhost/api/oauth/callback?state=s3&code=x")
+    assert ChannelManager().get_channel_profile("chanB")["google_account_email"] == "owner@gmail.com"

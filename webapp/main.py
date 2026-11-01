@@ -655,6 +655,11 @@ def update_channel_profile(channel_name: ChannelName, update: ProfileUpdate):
     for key, value in update.dict(exclude_unset=True).items():
         profile[key] = value
     channel_manager.save_channel_profile(channel_name, profile)
+    if update.display_name:                  # the cards' title comes from channel_config.json: renamed there too
+        config = channel_manager.get_config()
+        if channel_name in config:
+            config[channel_name]["display_name"] = update.display_name
+            channel_manager.save_config(config)
     return profile
 
 

@@ -144,12 +144,14 @@ def complete_oauth_flow(state: str, authorization_response_url: str) -> str:
 
     if channel_name.startswith(NEW_CHANNEL_PREFIX):
         _new_channel_tokens[channel_name] = flow.credentials.to_json()
-        _new_channel_emails[channel_name] = email
+        _new_channel_emails[channel_name] = '' if email.endswith('@pages.plusgoogle.com') else email
         return channel_name
 
     token_path = get_token_path(channel_name)
     os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
     write_file_atomic(token_path, flow.credentials.to_json())
+    if email.endswith('@pages.plusgoogle.com'):      # a Brand Account's technical address, not the person's:
+        email = ''                                   # the one already written stays (Cube Head FR)
     if email and MULTI_CHANNEL_SUPPORT:
         manager = ChannelManager()
         profile = manager.get_channel_profile(channel_name)
