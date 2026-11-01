@@ -105,7 +105,8 @@ class FakeFlow:
 
     @classmethod
     def from_client_config(cls, client_config, scopes, redirect_uri):
-        assert len(scopes) == 4                                    # the same 4 scopes as "Connexion"
+        import youtube_uploader as yu                              # the same scopes as "Connexion": YouTube's
+        assert scopes == yu.SCOPES + yu.EMAIL_SCOPES               # 4, and the account's e-mail
         return cls(client_config, redirect_uri)
 
     def authorization_url(self, **kw):

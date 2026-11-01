@@ -109,3 +109,25 @@ def test_a_date_moved_while_a_screen_completes_the_schedule_is_kept(client, proj
     import json
     saved = {e["video_id"]: e for e in json.load(open("upload_schedule.json"))["schedule"]}
     assert saved["p1"]["scheduled_time"] == "2030-01-09 18:00:00" and "late" in saved
+
+
+def test_reconnecting_a_channel_saves_its_google_account_email(project, monkeypatch):
+    import youtube_uploader as yu
+    from channel_manager import ChannelManager
+    project.add_channel("chanA")
+
+    class Flow:
+        def fetch_token(self, authorization_response):
+            pass
+
+        class credentials:
+            token = "t"
+
+            @staticmethod
+            def to_json():
+                return '{"refresh_token": "NEW"}'
+    monkeypatch.setattr(yu, "account_email", lambda creds: "cube.head@gmail.com")
+    yu._pending_oauth_flows["s2"] = (Flow(), "chanA")
+    yu.complete_oauth_flow("s2", "http://localhost/api/oauth/callback?state=s2&code=x")
+    assert ChannelManager().get_channel_profile("chanA")["google_account_email"] == "cube.head@gmail.com"
+    assert set(yu.EMAIL_SCOPES) <= {"openid", "https://www.googleapis.com/auth/userinfo.email"}

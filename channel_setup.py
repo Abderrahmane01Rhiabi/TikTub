@@ -294,7 +294,8 @@ def create_channel(manager, draft: Dict, name: str, display_name: str, language:
                              "youtube_custom_url": youtube.get("custom_url")})
         manager.save_config(config)
         profile = manager.get_channel_profile(name)
-        profile.update({"language_hint": language, "generation_mode": False})
+        profile.update({"language_hint": language, "generation_mode": False,
+                        "google_account_email": draft.get("email") or ""})
         manager.save_channel_profile(name, profile)
     except Exception:
         shutil.rmtree(folder, ignore_errors=True)            # only what was just created

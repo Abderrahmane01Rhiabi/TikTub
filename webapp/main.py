@@ -728,7 +728,7 @@ def connect_start(channel_name: ChannelName, request: Request):
 @app.get("/api/oauth/callback")
 def oauth_callback(request: Request):
     from html import escape
-    from youtube_uploader import complete_oauth_flow, pop_oauth_target, take_new_channel_token, NEW_CHANNEL_PREFIX
+    from youtube_uploader import complete_oauth_flow, pop_oauth_target, take_new_channel_token, take_new_channel_email, NEW_CHANNEL_PREFIX
     import channel_setup
 
     state = request.query_params.get("state")
@@ -743,6 +743,7 @@ def oauth_callback(request: Request):
             if not draft:
                 raise RuntimeError("Ajout de chaîne expiré — recommence depuis « Ajouter une chaîne ».")
             channel_setup.identify(channel_manager, draft, take_new_channel_token(target))
+            draft["email"] = take_new_channel_email(target)
             if draft["error"]:
                 raise RuntimeError(draft["error"])
             body = (f"<p>Chaîne YouTube « {escape(draft['youtube']['title'] or '')} » trouvée ✅ — "

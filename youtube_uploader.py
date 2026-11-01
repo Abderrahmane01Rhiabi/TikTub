@@ -12,6 +12,8 @@ from typing import List, Dict
 # libraries document this env var for precisely that situation. Must be set
 # before any Flow/InstalledAppFlow does its token exchange.
 os.environ.setdefault('OAUTHLIB_INSECURE_TRANSPORT', '1')
+# Google answers the e-mail scope as "openid … userinfo.email" in its own words: not an error
+os.environ.setdefault('OAUTHLIB_RELAX_TOKEN_SCOPE', '1')
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -45,6 +47,9 @@ SCOPES = [
     'https://www.googleapis.com/auth/youtube.force-ssl',
     'https://www.googleapis.com/auth/yt-analytics.readonly',
 ]
+# asked only when connecting (never when a saved token is loaded): the Google account's address, shown on the
+# channel's card — the Cube Head channels had none, their tokens could not read it
+EMAIL_SCOPES = ['openid', 'https://www.googleapis.com/auth/userinfo.email']
 CREDENTIALS_FILE = 'credentials.json'  # Fallback for single-channel
 TOKEN_FILE = 'token.json'              # Fallback for single-channel
 STATUS_DB = 'database/videos_status.json'
@@ -105,6 +110,7 @@ _pending_oauth_flows = {}  # state -> (Flow, channel_name)
 # the user confirms — never written under channels/ before that.
 NEW_CHANNEL_PREFIX = "nouvelle-chaine:"
 _new_channel_tokens = {}  # NEW_CHANNEL_PREFIX + draft id -> token JSON
+_new_channel_emails = {}  # NEW_CHANNEL_PREFIX + draft id -> the Google account's e-mail
 
 
 def start_oauth_flow(channel_name: str, redirect_uri: str, client_config: Dict = None) -> str:
@@ -112,12 +118,12 @@ def start_oauth_flow(channel_name: str, redirect_uri: str, client_config: Dict =
     client_config: the OAuth client JSON itself, for a channel being added
     (its credentials.json doesn't exist yet)."""
     if client_config is not None:
-        flow = Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=redirect_uri)
+        flow = Flow.from_client_config(client_config, scopes=SCOPES + EMAIL_SCOPES, redirect_uri=redirect_uri)
     else:
         credentials_path = get_credentials_path(channel_name)
         if not os.path.exists(credentials_path):
             raise FileNotFoundError(f"No credentials.json for channel '{channel_name}': {credentials_path}")
-        flow = Flow.from_client_secrets_file(credentials_path, scopes=SCOPES, redirect_uri=redirect_uri)
+        flow = Flow.from_client_secrets_file(credentials_path, scopes=SCOPES + EMAIL_SCOPES, redirect_uri=redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type='offline', prompt='consent', include_granted_scopes='true'
     )
@@ -134,16 +140,34 @@ def complete_oauth_flow(state: str, authorization_response_url: str) -> str:
 
     flow, channel_name = entry
     flow.fetch_token(authorization_response=authorization_response_url)
+    email = account_email(flow.credentials)
 
     if channel_name.startswith(NEW_CHANNEL_PREFIX):
         _new_channel_tokens[channel_name] = flow.credentials.to_json()
+        _new_channel_emails[channel_name] = email
         return channel_name
 
     token_path = get_token_path(channel_name)
     os.makedirs(os.path.dirname(token_path) or ".", exist_ok=True)
     write_file_atomic(token_path, flow.credentials.to_json())
+    if email and MULTI_CHANNEL_SUPPORT:
+        manager = ChannelManager()
+        profile = manager.get_channel_profile(channel_name)
+        profile["google_account_email"] = email
+        manager.save_channel_profile(channel_name, profile)
 
     return channel_name
+
+
+def account_email(creds) -> str:
+    """The Google account's e-mail behind fresh credentials (EMAIL_SCOPES), or "" — never blocks a connection."""
+    try:
+        import requests
+        r = requests.get('https://openidconnect.googleapis.com/v1/userinfo',
+                         headers={'Authorization': f'Bearer {creds.token}'}, timeout=15)
+        return (r.json().get('email') or '') if r.ok else ''
+    except Exception:
+        return ''
 
 
 def pop_oauth_target(state: str):
@@ -163,6 +187,10 @@ def forget_new_channel(target: str):
 
 def take_new_channel_token(target: str):
     return _new_channel_tokens.pop(target, None)
+
+
+def take_new_channel_email(target: str) -> str:
+    return _new_channel_emails.pop(target, '') or ''
 
 
 def _channel_identity(creds) -> Dict:
