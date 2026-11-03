@@ -820,6 +820,28 @@ def _picture_box(segs: List[Dict], clips: Dict[str, Dict], work_dir: str, previe
     return box
 
 
+def _library_captions(style_id: str, params: Optional[Dict], passages: List[Dict], words: List[Dict], segs: List[Dict],
+                      lang_code: str, work_dir: str):
+    """A style of the shared library on the picture box: the words at their OUTPUT times (pauses tightened), the
+    passages' key words as the strong ones -> (Built, number of caption lines)."""
+    from captions import render as caption_render, styles as caption_lib
+    out_words, keys = [], []
+    for p in passages:
+        keys += [str(k) for k in p.get("mots_cles") or []]
+        for i in p["words"]:
+            w = words[i]
+            a, b = out_time(segs, w["start"]), out_time(segs, w["end"])
+            if a is not None and b is not None and b > a:
+                out_words.append((w["w"], a, b))
+    zone = (BOX_X, BOX_Y, BOX_W, BOX_H)
+    ctx = caption_render.context(lang_code, zone, out_words, keys or None)
+    box_video = os.path.join(work_dir, "box.mp4")
+    if "faces" in caption_lib.get(style_id).needs and os.path.exists(box_video):
+        ctx.faces = caption_render.faces(box_video, zone, fit="stretch")
+    built = caption_render.build(style_id, out_words, ctx, params)
+    return built, sum(1 for line in built.ass.splitlines() if line.startswith("Dialogue"))
+
+
 def render(*args, **kw) -> Dict:
     """One render at a time, previews included (two at once ran out of memory;
     a preview beside a final render could too): see render_slot.py."""
@@ -831,8 +853,10 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
            out_path: str, work_dir: str, credit: str = "", music: Optional[Tuple[str, float]] = None,
            preview: bool = False, progress_cb=None, annotations: Optional[List[Dict]] = None,
            style: Optional[str] = None, effects: Optional[List[Optional[Dict]]] = None,
-           beats: Optional[List[float]] = None, sound_rules: Optional[Dict] = None) -> Dict:
-    """sound_rules: the subject's tone's (adaptation.tone). annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
+           beats: Optional[List[float]] = None, sound_rules: Optional[Dict] = None,
+           captions: Optional[Dict] = None) -> Dict:
+    """captions: the channel's choice in Réglages → Sous-titres ({"style", "params"}): a style of the shared library
+    (captions/) instead of the look's own captions; None or no style: the look's. sound_rules: the subject's tone's (adaptation.tone). annotations: arrows/circles prepared by annotate.prepare (frames + start time), laid on the
     picture box under the banners and captions.
     passages: [{clip, bandeau, mots_cles, start, end, words: [word indices]}] with narration
     times; words: [{w, start, end}]; clips: id -> {src, start, end, impact, w, h, crop?,
@@ -846,7 +870,13 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     credit_file = credit_png(credit, os.path.join(work_dir, "credit.png"), lang)
     corners = corners_png(os.path.join(work_dir, "corners.png"))
     ass = os.path.join(work_dir, "captions.ass")
-    n_caps = captions_ass(passages, words, segs, ass, lang, look)
+    lib_style = (captions or {}).get("style")
+    from captions import styles as caption_lib
+    if lib_style and not (caption_lib.get(lib_style) and "adaptation" in caption_lib.get(lib_style).spaces):
+        lib_style = None                                  # unknown, or not one the Adaptation can draw: the look's own
+    built, n_caps = None, 0
+    if not lib_style:
+        n_caps = captions_ass(passages, words, segs, ass, lang, look)
 
     inputs: List[str] = []
     g: List[str] = []
@@ -859,6 +889,9 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     part = lambda a, b: (lambda f: progress_cb(a + (b - a) * f)) if progress_cb else None
     notes: Dict[int, Dict] = {}
     bi = add_input("-i", _picture_box(segs, clips, work_dir, preview, part(0.0, 0.5), notes))
+    if lib_style:                       # after the picture box: « Évite le visage » reads its faces
+        built, n_caps = _library_captions(lib_style, (captions or {}).get("params"), passages, words, segs, lang_code,
+                                          work_dir)
     g.append(f"[{bi}:v]setpts=PTS-STARTPTS,fps={FPS}[box]")
     box = "box"
     look_ = style_of(style)
@@ -934,6 +967,14 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
                  f"afade=t=in:d=0.4,volume='{level}':eval=frame,"
                  f"afade=t=out:st={max(0.0, total - 0.15):.3f}:d=0.15[mus]")
         mix.append("[mus]")
+    if built and built.extras.get("sounds"):           # the library style's own sound (« Clic »), mixed with the rest
+        for j, (path, at, vol) in enumerate(built.extras["sounds"]):
+            if at is None or not os.path.exists(path):
+                continue
+            si = add_input("-i", path)
+            g.append(f"[{si}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={vol:.2f},"
+                     f"adelay={int(at * 1000)}:all=1[cs{j}]")
+            mix.append(f"[cs{j}]")
     g.append("".join(mix) + f"amix=inputs={len(mix)}:duration=first:normalize=0,alimiter=limit=0.95,"
              f"aresample=48000,apad,atrim=0:{total:.3f}[aout]")
 
@@ -959,7 +1000,15 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
         g.append(f"[{cur}][{b}:v]overlay=0:{BANNER_Y}:shortest=1:enable='between(t,{a:.3f},{e - 0.001:.3f})'[q{s['k']}]")
         cur = f"q{s['k']}"
     final = ",scale=540:960" if preview else ""
-    g.append(f"[{cur}]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex{final},format=yuv420p[vout]")
+    if built:
+        from captions import render as caption_render
+        import dataclasses
+        quiet = dataclasses.replace(built, extras={k: v for k, v in built.extras.items() if k != "sounds"})
+        cap_f, cap_v, _ = caption_render.filters(quiet, cur, add_input, os.path.join(work_dir, "captions_lib"), (W, H), fps=FPS)
+        g += cap_f
+        g.append(f"[{cap_v}]null{final},format=yuv420p[vout]")
+    else:
+        g.append(f"[{cur}]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex{final},format=yuv420p[vout]")
 
     enc = ["-preset", "ultrafast", "-crf", "28"] if preview else ["-preset", "medium", "-crf", "19"]
     tmp = out_path + ".part.mp4"
@@ -970,7 +1019,7 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     os.replace(tmp, out_path)
     bpm = round(60 / (beats[1] - beats[0])) if beats and len(beats) > 1 else None
     on_beat = lambda s: bool(beats and s["k"] > 0 and min(abs(s["out"] - b) for b in beats) < 0.02)
-    recipe = {"style": style or "classique", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
+    recipe = {"style": style or "classique", "sous_titres": lib_style or "adaptation", "fin_en_boucle": bool(first and os.path.exists(first) and total > 3),
               "musique_niveau": "constant sous la voix, monte à la fin" if music and music[0] else None,
               "musique_gain": music_info.get("gain"), "silence_avant_choc": music_info.get("silence_avant_choc"),
               "tempo_musique": bpm,

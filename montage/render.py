@@ -379,8 +379,13 @@ def render(video_path: str, words: Words, plan: Dict, settings: Dict, out_path: 
             burned.append((float(t["debut_s"]), float(t["fin_s"])))
         except (KeyError, TypeError, ValueError):
             pass
-    keys = keywords if settings.get("caption_style") == "accent" else ()
-    n_caps = captions_ass(words, edit, stem + ".ass", rec, burned, keys)
+    style = settings.get("caption_style")
+    library = style not in ("cascade", "accent")
+    if library:                 # a style of the shared library (captions/): drawn in the box, after the picture is built
+        n_caps = 0
+    else:
+        keys = keywords if style == "accent" else ()
+        n_caps = captions_ass(words, edit, stem + ".ass", rec, burned, keys)
 
     total = edit.total
     inputs = ["-i", video_path, "-loop", "1", "-i", overlay]
@@ -444,8 +449,40 @@ def render(video_path: str, words: Words, plan: Dict, settings: Dict, out_path: 
     g.append(f"[bg][{cur}]overlay={bx}:{by}:shortest=1[c1]")
     g.append("[c1][1:v]overlay=0:0:shortest=1[c2]")
     final = "scale=540:960," if preview else ""
-    g.append(f"[c2]subtitles='{_filter_path(stem + '.ass')}':fontsdir='{_filter_path(FONTS_DIR)}',{final}"
-             f"format=yuv420p[outv]")
+    if library:
+        from captions import render as captions
+        out_words, strong = [], []
+        hidden = [r for r in (edit.noir, edit.drones) if r]
+        for idx, (w, a, b) in enumerate(words):
+            if any(s0 - 0.1 <= a <= e0 + 0.1 for s0, e0 in burned) and not any(s0 <= a <= e0 for s0, e0 in hidden):
+                continue                                        # the clip already shows its own text there
+            oa, ob = edit.to_out(a), edit.to_out(b)
+            if oa is not None and ob is not None and ob > oa:
+                out_words.append((w, oa, ob))
+                if idx in set(keywords):
+                    strong.append(w)
+        zone = (bx, by, bw, bh)
+        ctx = captions.context(settings.get("captions_lang") or "en", zone, out_words, strong or None,
+                               settings.get("captions_channel"))
+        from captions import styles as caption_lib
+        if "faces" in caption_lib.get(style).needs:
+            ctx.faces = captions.faces(video_path, zone, time_map=edit.to_out, until=total)
+        built = captions.build(style, out_words, ctx, settings.get("caption_params"))
+        n_caps = sum(1 for line in built.ass.splitlines() if line.startswith("Dialogue"))
+
+        def add_input(*args) -> int:
+            inputs.extend(args)
+            return len([x for x in inputs if x == "-i"]) - 1
+        cap_f, cap_v, cap_audio = captions.filters(built, "c2", add_input, os.path.join(work, "captions"), (W, H), fps=FPS)
+        g += cap_f
+        g.append(f"[{cap_v}]{final}format=yuv420p[outv]")
+        if cap_audio:
+            g.append(f"{audio_out}{''.join(cap_audio)}amix=inputs={1 + len(cap_audio)}:duration=first:normalize=0[capmix]")
+            audio_out = "[capmix]"
+    else:
+        # ass + complex shaping: an Arabic word joined and complete (subtitles= drew its final forms as boxes)
+        g.append(f"[c2]ass='{_filter_path(stem + '.ass')}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex,{final}"
+                 f"format=yuv420p[outv]")
 
     enc = (["-preset", "ultrafast", "-crf", "30", "-c:a", "aac", "-b:a", "96k"] if preview else
            ["-preset", "medium", "-crf", "20", "-c:a", "aac", "-b:a", "160k"])

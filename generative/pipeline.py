@@ -306,6 +306,18 @@ class GenerativePipeline:
         )
         return _db.get_video(video_id)
 
+    def _caption_settings(self, video: Dict) -> Dict:
+        """For a style of the shared library (captions/): the channel's language and colour, and its settings when the
+        channel chose that same style in Réglages → Sous-titres."""
+        from captions import render as captions, styles as caption_lib
+        style = video.get("caption_style")
+        if not caption_lib.get(style) or style in caption_lib.STYLES and caption_lib.get(style).native == "generation":
+            return {}
+        profile = self.channel_manager.get_channel_profile(video["channel"]) or {}
+        choice = captions.channel_choice(video["channel"])
+        return {"captions_lang": (profile.get("language_hint") or "fr").split("-")[0], "captions_channel": video["channel"],
+                "caption_params": choice["params"] if choice["style"] == style else {}}
+
     def assemble(self, video_id: str, progress_cb=None) -> str:
         """Composite the final video from the already-generated narration —
         local/free, no ElevenLabs call. The only method that writes the
@@ -336,7 +348,7 @@ class GenerativePipeline:
                     caption_style=video.get("caption_style", "karaoke"),
                     caption_color=video.get("caption_color"),
                     border_image_path=self.channel_manager.get_background_path(video["channel"]),
-                    progress_cb=progress_cb,
+                    progress_cb=progress_cb, **self._caption_settings(video),
                 )
         except Exception as e:
             self.url_manager.update_video_status(video_id, "rendering_failed", render_error=str(e))

@@ -216,9 +216,10 @@ def part_lengths(v: Dict) -> List[float]:
 
 
 def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3: str, bed: Optional[str],
-           out: str, work: str, y: float = CAPTION_Y) -> str:
+           out: str, work: str, y: float = CAPTION_Y, captions: Optional[Dict] = None) -> str:
     """The Reprise video in one language: clean's images in the script's order at the voice's pace, our captions,
-    the voice over the bed (None: no music) -> out."""
+    the voice over the bed (None: no music) -> out. captions: the channel's choice in Réglages → Sous-titres — a style
+    of the shared library draws the words (our numbers stay ours); none: our usual captions."""
     from adaptation.musique import VOICE_LUFS, lufs
     os.makedirs(work, exist_ok=True)
     parts = script["parties"]
@@ -245,14 +246,37 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     lst = os.path.join(work, "parties.txt")
     open(lst, "w").write("".join(f"file '{os.path.abspath(f)}'\n" for f in files))
     numbers = [p.get("numero") if script.get("genre") == "top" and p.get("role") == "point" else None for p in parts]
-    ass = captions(os.path.join(work, f"textes_{code}.ass"), v["words"], starts_of(v), numbers, code, total, y)
+    from captions import render as caption_render, styles as caption_lib
+    lib_style = (captions or {}).get("style")
+    if lib_style and not (caption_lib.get(lib_style) and "reprise" in caption_lib.get(lib_style).spaces):
+        lib_style = None
+    # our numbers always; our word captions only without a library style
+    ass = globals()["captions"](os.path.join(work, f"textes_{code}.ass"), [] if lib_style else v["words"], starts_of(v),
+                                numbers, code, total, y)
     gain = 10 ** ((VOICE_LUFS - lufs(mp3)) / 20)
     inputs = ["-f", "concat", "-safe", "0", "-i", lst, "-i", mp3]
+
+    def add_input(*args) -> int:
+        inputs.extend(args)
+        return sum(1 for x in inputs if x == "-i") - 1
     g = [f"[0:v]tpad=stop_mode=clone:stop_duration=1,trim=0:{total:.3f},setpts=PTS-STARTPTS,"
-         f"ass='{os.path.abspath(ass)}':fontsdir='{langs.FONTS_DIR}':shaping=complex,format=yuv420p[vout]"]
+         f"ass='{os.path.abspath(ass)}':fontsdir='{langs.FONTS_DIR}':shaping=complex[v0]"]
+    extra_audio = []
+    if lib_style:
+        out_words = [(w["w"], w["start"], w["end"]) for w in glued(v["words"])]
+        ctx = caption_render.context(code, (0, 0, W, H), out_words, None)
+        built = caption_render.build(lib_style, out_words, ctx, (captions or {}).get("params"))
+        cap_f, cap_v, extra_audio = caption_render.filters(built, "v0", add_input, os.path.join(work, "captions_lib"), (W, H), fps=FPS)
+        g += cap_f + [f"[{cap_v}]format=yuv420p[vout]"]
+    else:
+        g.append("[v0]format=yuv420p[vout]")
+    mixed = "".join(extra_audio)
     if bed:
-        inputs += ["-i", bed]
-        g.append(f"[1:a]volume={gain:.4f}[vo];[vo][2:a]amix=inputs=2:normalize=0:duration=longest,"
+        bi = add_input("-i", bed)
+        g.append(f"[1:a]volume={gain:.4f}[vo];[vo][{bi}:a]{mixed}amix=inputs={2 + len(extra_audio)}:normalize=0:duration=longest,"
+                 f"atrim=0:{total:.3f},alimiter=limit=0.95[aout]")
+    elif extra_audio:
+        g.append(f"[1:a]volume={gain:.4f},apad[vo];[vo]{mixed}amix=inputs={1 + len(extra_audio)}:normalize=0:duration=first,"
                  f"atrim=0:{total:.3f},alimiter=limit=0.95[aout]")
     else:
         g.append(f"[1:a]volume={gain:.4f},apad,atrim=0:{total:.3f},alimiter=limit=0.95[aout]")

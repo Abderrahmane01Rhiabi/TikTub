@@ -238,3 +238,17 @@ def test_library_lists_how_many_times_each_shot_served(client):
     shot = next(c for c in data["clips"] if c["id"] == 0)
     assert shot["uses"] == 2 and shot["uses_by_channel"] == {"chanA": 1, "chanB": 1}
     assert data["healthy_size"] == 30 and data["videos_without_repeat"] == 10
+
+
+@pytest.mark.parametrize("style", ["signature", "fusion_difference", "clic"])
+def test_a_montage_with_a_caption_library_style(tmp_path, style):
+    clip, song = tmp_path / "clip.mp4", tmp_path / "song.wav"
+    _lavfi(clip, ["-f", "lavfi", "-i", "testsrc=size=360x640:rate=30", "-f", "lavfi",
+                  "-i", "sine=frequency=300"], 10, ["-c:v", "libx264", "-c:a", "aac", "-shortest"])
+    _lavfi(song, ["-f", "lavfi", "-i", "sine=frequency=500"], 60)
+    r = render.render(str(clip), WORDS, plan(), {**recipes.DEFAULT_SETTINGS, "caption_style": style, "captions_lang": "en"},
+                      str(tmp_path / "out.mp4"), [], keywords=[3], music_path=str(song), preview=True)
+    probe = json.loads(subprocess.check_output(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type:format=duration", "-of", "json", str(tmp_path / "out.mp4")]))
+    assert r["captions"] > 0 and float(probe["format"]["duration"]) == pytest.approx(10.0, abs=0.1)
+    assert any(s["codec_type"] == "audio" for s in probe["streams"])

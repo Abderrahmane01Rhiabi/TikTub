@@ -95,6 +95,10 @@ def _render(video: Dict, profile: Dict, music_dir: Optional[str], out_path: str,
         raise RuntimeError("Pas de plan de montage : relance l'analyse.")
     settings = recipes.resolve_settings(profile, video)
     channel = video.get("channel", "default")
+    settings.update(captions_lang=((profile or {}).get("language_hint") or "en").split("-")[0], captions_channel=channel)
+    raw = (profile or {}).get("sous_titres") or {}          # the channel's settings of that library style, if it chose it
+    if raw.get("style") == settings.get("caption_style"):
+        settings["caption_params"] = raw.get("params") or {}
     return render.render(
         video["raw_video_path"], [tuple(w) for w in m.get("words") or []], m["plan"], settings, out_path,
         broll_paths=_broll_files(m, channel, video["video_id"]), keywords=m.get("keywords") or [], hook=m.get("hook"),

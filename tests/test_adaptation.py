@@ -711,3 +711,23 @@ def test_a_channel_style_colours_its_banners_and_captions(tmp_path):
     assert settings.clean_update({"style": "neon"}) == {"style": "neon"} and settings.clean_update({"style": "x"}) == {}
     render.style_preview("clair", lang("ar"), str(tmp_path / "p.jpg"))
     assert (tmp_path / "p.jpg").exists()
+
+
+@pytest.mark.parametrize("style", ["clic", "evite_visage"])
+def test_a_render_with_a_caption_library_style(tmp_path, style):
+    """The channel chose a style of the shared library (Réglages → Sous-titres): drawn on the box, its sound mixed,
+    the picture and the voice still together."""
+    square = tmp_path / "square.mp4"
+    _lavfi(square, ["-f", "lavfi", "-i", "testsrc=size=480x456:rate=30", "-f", "lavfi", "-i", "sine=frequency=200"],
+           5, ["-c:v", "libx264", "-c:a", "aac", "-shortest"])
+    voice = tmp_path / "voice.wav"
+    _lavfi(voice, ["-f", "lavfi", "-i", "anoisesrc=color=pink:seed=1:duration=3:sample_rate=44100"], 3)
+    words = [{"w": w, "start": i * 0.6, "end": i * 0.6 + 0.5} for i, w in enumerate("le grand prix final".split())]
+    clips = {"A": {**clip(src=str(square)), "w": 480, "h": 456, "audio_ok": True}}
+    passages = [passage("A", 0.0, 3.0, words=[0, 1, 2, 3])]
+    passages[0]["mots_cles"] = ["prix"]
+    r = render.render(passages, words, clips, str(voice), "fr", str(tmp_path / "out.mp4"), str(tmp_path / "w"),
+                      preview=True, captions={"style": style, "params": {}})
+    assert r["captions"] > 0 and r["recette"]["sous_titres"] == style
+    v = checks.verify(str(tmp_path / "out.mp4"), str(voice), passages)
+    assert abs(v["measures"]["video_s"] - v["measures"]["audio_s"]) <= 0.15

@@ -86,10 +86,16 @@ def render_video(narration_mp3: str, words: WordTimings, bg_video_path: str, bg_
     failure there (or TIKTUB_RENDERER=moviepy) falls back to the moviepy
     path below, so the faster renderer can never break a creation."""
     from generative import ffmpeg_composer
+    from captions import styles as caption_lib
     style = kwargs.get("caption_style", "karaoke")
+    if style not in ffmpeg_composer.ASS_STYLES and caption_lib.get(style):
+        # a style of the shared library: ffmpeg only (moviepy can't draw it), so a failure is a failure
+        return ffmpeg_composer.render_video_ffmpeg(narration_mp3, words, bg_video_path, bg_music_path, out_path, **kwargs)
+    library_only = {k: kwargs.pop(k) for k in ("caption_params", "captions_lang", "captions_channel") if k in kwargs}
     if style in ffmpeg_composer.ASS_STYLES and os.environ.get("TIKTUB_RENDERER", "").lower() != "moviepy":
         try:
-            return ffmpeg_composer.render_video_ffmpeg(narration_mp3, words, bg_video_path, bg_music_path, out_path, **kwargs)
+            return ffmpeg_composer.render_video_ffmpeg(narration_mp3, words, bg_video_path, bg_music_path, out_path,
+                                                       **kwargs, **library_only)
         except Exception as e:
             print(f"⚠️ Rendu ffmpeg impossible ({e}) — repli sur moviepy")
     return render_video_moviepy(narration_mp3, words, bg_video_path, bg_music_path, out_path, **kwargs)

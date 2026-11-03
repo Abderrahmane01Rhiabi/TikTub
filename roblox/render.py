@@ -129,7 +129,7 @@ def build(segments: List[Segment], ass_path: str, sounds: List[Sound], out: str,
         total += s["b"] - s["a"] + gel
     n = len(segments)
     g.append("".join(f"[v{k}][a{k}]" for k in range(n)) + f"concat=n={n}:v=1:a=1[cv][ca]")
-    g.append(f"[cv]subtitles='{ass_path}':fontsdir='{FONTS}',format=yuv420p[outv]")
+    g.append(f"[cv]ass='{ass_path}':fontsdir='{FONTS}':shaping=complex,format=yuv420p[outv]")   # complex: Arabic joined
     mix = ["[ca]"]
     extra = ([(music, 0.0, MUSIC_LEVEL)] if music else []) + list(sounds)
     for j, (f, at, vol) in enumerate(extra):

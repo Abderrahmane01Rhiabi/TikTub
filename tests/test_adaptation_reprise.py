@@ -212,3 +212,27 @@ def test_each_language_gets_its_youtube_title_description_and_tags():
     old = rm.check_script({"genre": "top", "titre": {"fr": "Claviers"},                  # no "youtube": the short title
                            "parties": [{"role": "point", "plans": [0], "fr": "Un."}]}, 1, ["fr"])
     assert old["youtube"]["fr"] == {"titre": "Claviers", "description": "Claviers", "tags": []}
+
+
+@pytest.mark.parametrize("style", [None, "clic"])
+def test_a_reprise_render_with_or_without_a_caption_library_style(tmp_path, style):
+    """The channel's style from Réglages → Sous-titres draws the words; the top's numbers stay ours either way."""
+    import json
+    import subprocess
+    clean, voice = tmp_path / "clean.mp4", tmp_path / "voice.mp3"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=360x640:rate=30", "-t", "8",
+                    "-c:v", "libx264", str(clean)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "anoisesrc=color=pink:seed=3:duration=4:sample_rate=44100",
+                    str(voice)], check=True)
+    plans = [{"debut": 0.0, "fin": 3.0}, {"debut": 3.0, "fin": 6.0}]
+    script = {"genre": "top", "parties": [{"plans": [0], "role": "accroche"}, {"plans": [1], "role": "point", "numero": 1}]}
+    words = [{"w": w, "start": i * 0.5, "end": i * 0.5 + 0.4} for i, w in enumerate("le grand prix de la course final".split())]
+    v = {"duration": 4.0, "passages": [{"start": 0.0}, {"start": 2.0}], "words": words}
+    out = tmp_path / "out.mp4"
+    rm.render(str(clean), plans, script, "fr", v, str(voice), None, str(out), str(tmp_path / "w"),
+              captions={"style": style, "params": {}} if style else None)
+    info = json.loads(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type:format=duration",
+                                               "-of", "json", str(out)]))
+    assert float(info["format"]["duration"]) == pytest.approx(4.8, abs=0.2)
+    numbers = (tmp_path / "w" / "textes_fr.ass").read_text(encoding="utf-8")
+    assert "#1" in numbers and (("Mot,,0" in numbers) == (style is None))      # our words only without a library style

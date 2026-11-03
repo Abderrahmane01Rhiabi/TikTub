@@ -382,13 +382,18 @@ def render_video_ffmpeg(
     narration_mp3: str, words: WordTimings, bg_video_path: str, bg_music_path: str, out_path: str,
     music_volume: float = 0.15, size=(1080, 1920), caption_style: str = "karaoke", caption_color: str = None,
     frame_mode: str = "fill", rounded_corners: bool = False, border_image_path: str = None,
-    progress_cb: Optional[Callable[[float], None]] = None,
+    progress_cb: Optional[Callable[[float], None]] = None, caption_params: Optional[dict] = None,
+    captions_lang: str = "fr", captions_channel: Optional[str] = None,
 ) -> str:
     """music_volume is kept for signature compatibility with the moviepy
-    path; the ffmpeg path uses MUSIC_LEVEL + ducking instead."""
+    path; the ffmpeg path uses MUSIC_LEVEL + ducking instead. caption_style:
+    one of BUILDERS, or a style of the shared library (captions/), drawn on
+    the video's box with the channel's colour; caption_params its settings."""
     from video_processor import compute_frame_scale, get_video_dimensions, rounded_corner_mask, ROUNDED_CORNER_RADIUS_RATIO
+    from captions import render as captions, styles as caption_lib
 
-    if caption_style not in BUILDERS:
+    library = caption_style not in BUILDERS and caption_lib.get(caption_style) is not None
+    if caption_style not in BUILDERS and not library:
         raise ValueError(f"caption style {caption_style!r} not supported by the ffmpeg composer")
     if not words:
         raise ValueError("no word timings")
@@ -406,8 +411,9 @@ def render_video_ffmpeg(
     work = tempfile.mkdtemp(prefix="ffcompose-")
     try:
         ass_path = os.path.join(work, "captions.ass")
-        with open(ass_path, "w", encoding="utf-8") as fh:
-            fh.write(build_ass(words, size, caption_style, caption_color))
+        if not library:
+            with open(ass_path, "w", encoding="utf-8") as fh:
+                fh.write(build_ass(words, size, caption_style, caption_color))
         # libass reads ONE fonts dir: gather the caption fonts in it
         fonts_dir = os.path.join(work, "fonts")
         os.makedirs(fonts_dir)
@@ -419,6 +425,10 @@ def render_video_ffmpeg(
         copies = music_copies_needed(music_dur, total)
         inputs = ["-stream_loop", "-1", "-i", bg_video_path,   # 0: background video, looped
                   "-i", narration_mp3]                          # 1: narration
+
+        def add_input(*args) -> int:
+            inputs.extend(args)
+            return sum(1 for x in inputs if x == "-i") - 1
         music_inputs = []
         for n in range(copies):
             music_inputs.append(2 + n)
@@ -444,9 +454,25 @@ def render_video_ffmpeg(
             next_input += 1
         else:
             filters.append(f"color=c=black:s={tw}x{th}:r=25,format=yuv420p[base]")
-        filters.append(
-            f"[base][vid]overlay=(W-w)/2:(H-h)/2:shortest=0:eof_action=repeat,"
-            f"subtitles='{_escape_filter_path(ass_path)}':fontsdir='{_escape_filter_path(fonts_dir)}',format=yuv420p[v]")
+        filters.append("[base][vid]overlay=(W-w)/2:(H-h)/2:shortest=0:eof_action=repeat[ov]")
+        cap_audio = []
+        if library:
+            # the shared library: drawn on the video's box, the channel's colour, its extras (blend, a click...)
+            zone = ((tw - min(sw, tw)) // 2, (th - min(sh, th)) // 2, min(sw, tw), min(sh, th))
+            ctx = captions.context(captions_lang, zone, words, None, captions_channel)
+            if "faces" in caption_lib.get(caption_style).needs:
+                ctx.faces = captions.faces(bg_video_path, zone, until=total)
+            params = dict(caption_params or {})
+            if caption_color and "accent" not in params:
+                params["accent"] = caption_color
+            built = captions.build(caption_style, [tuple(w) for w in words], ctx, params)
+            cap_f, cap_v, cap_audio = captions.filters(built, "ov", add_input, os.path.join(work, "lib"), size, fps=25)
+            filters += cap_f
+            filters.append(f"[{cap_v}]format=yuv420p[v]")
+        else:
+            # ass + complex shaping: Arabic letters joined, their final forms drawn (subtitles= showed boxes)
+            filters.append(f"[ov]ass='{_escape_filter_path(ass_path)}':fontsdir='{_escape_filter_path(fonts_dir)}':"
+                           f"shaping=complex,format=yuv420p[v]")
 
         # Narration is mono: convert to stereo the way moviepy does when it
         # reads it (a raw mono mix came out 3 dB louder than the moviepy render).
@@ -456,7 +482,7 @@ def render_video_ffmpeg(
         d = DUCK
         filters.append(f"[mus][key]sidechaincompress=threshold={d['threshold']}:ratio={d['ratio']}:"
                        f"attack={d['attack']}:release={d['release']}[ducked]")
-        filters.append("[nar][ducked]amix=inputs=2:duration=first:normalize=0[a]")
+        filters.append(f"[nar][ducked]{''.join(cap_audio)}amix=inputs={2 + len(cap_audio)}:duration=first:normalize=0[a]")
 
         cmd = [ffmpeg_exe(), "-y", "-hide_banner", "-loglevel", "error", "-nostats", "-progress", "pipe:1",
                *inputs, "-filter_complex", ";".join(filters), "-map", "[v]", "-map", "[a]",

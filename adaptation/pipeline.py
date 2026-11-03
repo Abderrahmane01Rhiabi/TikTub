@@ -1925,6 +1925,12 @@ def approve_script(pid: str, channel: str, force: bool = False) -> Dict:
 
 # ---------------------------------------------------------------- 3. voice + preview
 
+def _captions_of(t: Dict) -> Dict:
+    """The channel's choice in Réglages → Sous-titres (a style of the shared library, or none: the look's own)."""
+    from captions import render as caption_render
+    return caption_render.channel_choice(t["channel"])
+
+
 def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset: float) -> Dict:
     base = os.path.join(project_dir(p["project_id"]), t["channel"])
     voice_mp3 = os.path.join(base, "voice.mp3")
@@ -1948,7 +1954,8 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
                       music=(t["music_path"], t["music_start"]) if t.get("music_path") else None, preview=preview,
                       progress_cb=lambda f: report(f"{'aperçu' if preview else 'rendu'} {t['channel']}",
                                                    offset + share * (0.3 + 0.6 * f)), annotations=anns,
-                      style=_style_of(t), effects=fx, beats=beats, sound_rules=tone.sound_rules(_tone(p, t)))
+                      style=_style_of(t), effects=fx, beats=beats, sound_rules=tone.sound_rules(_tone(p, t)),
+                      captions=_captions_of(t))
     t["style"] = _style_of(t)           # the look really used (the channel's may have changed since the project began)
     r["recette"] = _recipe(p, t, r.get("recette") or {})
     c = checks.verify(out, voice_mp3, t["voice"]["passages"], [x["start"] for x in r.get("segments") or []] or None)

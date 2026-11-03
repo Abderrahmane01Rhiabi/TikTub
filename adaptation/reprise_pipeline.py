@@ -298,8 +298,9 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
     out = os.path.join(work, f"reprise_{t['channel']}.mp4")
     import render_slot
     with render_slot.SLOT:
+        from captions import render as caption_render          # the channel's style in Réglages → Sous-titres, if any
         rm.render(r["clean"], r["plans"], r["script"], code, timings, v["mp3"], bed, out, os.path.join(work, "parties"),
-                  rm.caption_y(r["elements"]))
+                  rm.caption_y(r["elements"]), captions=caption_render.channel_choice(t["channel"]))
     made = reprise.probe(out)
     ok = abs(made["duree"] - (timings["duration"] + 0.8)) < 1.0
     return {"path": out, "son": son_for(p, t), "duree": round(made["duree"], 1),

@@ -45,6 +45,15 @@ DEFAULT_SETTINGS = {
 }
 
 
+def caption_style_ok(value) -> bool:
+    """The recipe's own caption styles, or one of the shared library's that the Montage auto can use."""
+    if value in CAPTION_STYLES:
+        return True
+    from captions import styles as caption_lib
+    st = caption_lib.get(value) if isinstance(value, str) else None
+    return bool(st and "montage" in st.spaces)
+
+
 def clean_settings(raw: Optional[Dict]) -> Dict:
     """Keep only known keys with valid values — a hand-edited profile.json or
     an old override never reaches the renderer as garbage."""
@@ -54,7 +63,7 @@ def clean_settings(raw: Optional[Dict]) -> Dict:
             continue
         if key == "recipe" and value not in RECIPES:
             continue
-        if key == "caption_style" and value not in CAPTION_STYLES:
+        if key == "caption_style" and not caption_style_ok(value):
             continue
         if key == "volume" and value not in VOLUMES:
             continue
