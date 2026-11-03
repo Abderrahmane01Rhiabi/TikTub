@@ -36,7 +36,8 @@ REJECTED = {"rejected"}
 #   usage          – Gemini cost log (gemini_ai_generator.USAGE_LOG)
 #   music_info     – track analysis cache (adaptation/pipeline)
 #   style_previews – style preview images (webapp/adaptation_routes)
-PROTECTED_TEMP_DIRS = {"usage", "music_info", "style_previews"}
+#   caption_fonts, caption_previews – the caption library's fonts folder and gallery previews (captions/)
+PROTECTED_TEMP_DIRS = {"usage", "music_info", "style_previews", "caption_fonts", "caption_previews"}
 
 
 def _size(path: str) -> int:
