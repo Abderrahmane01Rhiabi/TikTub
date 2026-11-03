@@ -431,7 +431,8 @@ def serialize_montage(video: dict) -> dict:
         profile = {}
     out = {"edit_mode": recipes.edit_mode(profile, video),
            "montage_overrides": video.get("montage_overrides") or {},
-           "montage_settings": recipes.resolve_settings(profile, video)}
+           "montage_settings": recipes.resolve_settings(profile, video),
+           "caption_library": _library_styles("montage")}
     m = video.get("montage")
     if m:
         preview = m.get("preview_path")
@@ -1324,6 +1325,13 @@ def replan_video_montage(video_id: str):
     return {"started": True}
 
 
+def _library_styles(space: str) -> list:
+    """The shared caption library's styles a space can use, besides its own (captions/)."""
+    from captions import styles as caption_lib
+    return [{"id": s.id, "label": s.label, "group": s.group, "arabic": s.arabic}
+            for s in caption_lib.for_space(space) if s.native != space]
+
+
 def _montage_channel_payload(channel_name: str) -> dict:
     from montage import recipes
     profile = channel_manager.get_channel_profile(channel_name)
@@ -1332,7 +1340,8 @@ def _montage_channel_payload(channel_name: str) -> dict:
         if music_dir.exists() else []
     return {"settings": recipes.channel_settings(profile), "music_files": music,
             "recipes": {k: r["label"] for k, r in recipes.RECIPES.items()},
-            "caption_styles": list(recipes.CAPTION_STYLES), "volumes": list(recipes.VOLUMES)}
+            "caption_styles": list(recipes.CAPTION_STYLES), "volumes": list(recipes.VOLUMES),
+            "library_styles": _library_styles("montage")}
 
 
 MUSIC_EXTENSIONS = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac"}
@@ -1562,6 +1571,9 @@ app.include_router(_adaptation_router)
 # Montage Roblox: one long video -> several Shorts (webapp/roblox_routes.py)
 from webapp.roblox_routes import router as _roblox_router  # noqa: E402
 app.include_router(_roblox_router)
+# The caption library: catalogue, gallery previews, each channel's choice (webapp/captions_routes.py)
+from webapp.captions_routes import router as _captions_router  # noqa: E402
+app.include_router(_captions_router)
 
 
 @app.post("/api/batches/{batch_id}/process")

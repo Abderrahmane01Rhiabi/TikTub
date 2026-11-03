@@ -33,6 +33,7 @@
     <button class="step" data-i="12" data-space="settings">Drones</button>
     <button class="step" data-i="13" data-space="settings">Voix</button>
     <button class="step" data-i="14" data-space="settings">Effets sonores</button>
+    <button class="step" data-i="16" data-space="settings">Sous-titres</button>
     <button class="step" data-i="15" data-space="settings">Modèles d'IA</button>
     <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
     <button class="step" data-i="9" data-space="settings">Stockage</button>
@@ -164,7 +165,7 @@
     <dialog id="addChannelDialog"></dialog>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 9</span>
+      <span class="progress-text">Réglages · 1 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -180,7 +181,7 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 9</span>
+      <span class="progress-text">Réglages · 2 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -198,7 +199,7 @@
     <div class="stack" id="backupList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 8 sur 9</span>
+      <span class="progress-text">Réglages · 9 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -214,7 +215,7 @@
     <div class="stack" id="storageView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 9 sur 9</span>
+      <span class="progress-text">Réglages · 10 sur 10</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -299,7 +300,7 @@
     <div class="grid-3" id="montageSettingsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 9</span>
+      <span class="progress-text">Réglages · 3 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -323,7 +324,7 @@
     <div id="brollGrid" class="broll-grid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 4 sur 9</span>
+      <span class="progress-text">Réglages · 4 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -355,7 +356,7 @@
     <div class="stack" id="songList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 5 sur 9</span>
+      <span class="progress-text">Réglages · 5 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -383,7 +384,35 @@
     <div class="stack" id="sfxList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 6 sur 9</span>
+      <span class="progress-text">Réglages · 6 sur 10</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+
+  <!-- Screen 16 : the caption library — gallery + each channel's style (Réglages) -->
+  <section class="screen" data-idx="16">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Sous-titres</h1>
+        <p class="sub">Tous les styles de sous-titres de l'app, à voir bouger. Puis, pour chaque chaîne, son style et ses réglages : ils servent à l'Adaptation et à la Reprise (le Montage auto et la Génération ont aussi tous ces styles dans leur propre choix).</p>
+      </div>
+    </div>
+    <div class="toolbar">
+      <div class="seg" id="capLangSeg">
+        <button class="seg-opt active" data-l="fr">Français</button>
+        <button class="seg-opt" data-l="ar">Arabe</button>
+        <button class="seg-opt" data-l="en">Anglais</button>
+      </div>
+      <span class="spacer"></span>
+      <select class="f" id="capGroupSel" style="width:auto"></select>
+    </div>
+    <div class="cap-gallery" id="capGallery"></div>
+    <h2 class="h1" style="font-size:16px;margin-top:10px">Chaque chaîne</h2>
+    <div class="grid-3" id="capChannels"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 7 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -400,7 +429,7 @@
     <div class="stack" id="aiModelsView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 7 sur 9</span>
+      <span class="progress-text">Réglages · 8 sur 10</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -492,6 +521,7 @@ const PAGE_BUILD = '__TIKTUB_BUILD__';
 <script src="/static/js/import.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/ajout_chaine.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/reglages.js?v=__TIKTUB_BUILD__"></script>
+<script src="/static/js/sous_titres.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/adaptation.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/reprise.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/roblox.js?v=__TIKTUB_BUILD__"></script>

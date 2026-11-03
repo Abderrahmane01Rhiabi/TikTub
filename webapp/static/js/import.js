@@ -457,7 +457,10 @@ function montageStyleHtml(v){
   const s = v.montage_settings || {};
   const custom = Object.keys(v.montage_overrides || {}).length;
   return `<div class="mstyle">
-    <div class="mstyle-row"><span>Sous-titres</span>${segHtml('ms-cap', MONTAGE_CAPTION_LABELS, s.caption_style)}</div>
+    <div class="mstyle-row"><span>Sous-titres</span>${segHtml('ms-cap', MONTAGE_CAPTION_LABELS, s.caption_style)}
+      ${(v.caption_library || []).length ? `<select class="f ms-libcap" style="width:auto;max-width:180px;font-size:12px">
+        <option value="">Autre style…</option>${v.caption_library.map(x =>
+          `<option value="${esc(x.id)}" ${x.id === s.caption_style ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>` : ''}</div>
     <div class="mstyle-row"><span>Musique</span>${segHtml('ms-vol', MONTAGE_VOLUME_LABELS, s.volume)}
       <span class="tiny">${s.music_file ? `${esc(s.music_file)} · à ${fmtSec(s.music_entry)}` : 'aucune (Réglages → Montage)'}</span></div>
     ${custom ? '<div class="mstyle-row"><span></span><button class="btn ghost small ms-reset">↺ Revenir au style de la chaîne</button></div>' : ''}
@@ -469,6 +472,8 @@ function wireMontageStyle(root, v, onChange){
     catch (e){ log(e.message, 'error'); }
   };
   wireSeg(root, 'ms-cap', val => patch({ overrides: { ...(v.montage_overrides || {}), caption_style: val } }));
+  const lib = root.querySelector('.ms-libcap');           // a style of the shared caption library
+  if (lib) lib.onchange = () => { if (lib.value) patch({ overrides: { ...(v.montage_overrides || {}), caption_style: lib.value } }); };
   wireSeg(root, 'ms-vol', val => patch({ overrides: { ...(v.montage_overrides || {}), volume: val } }));
   const reset = root.querySelector('.ms-reset');
   if (reset) reset.onclick = () => patch({ overrides: {} });

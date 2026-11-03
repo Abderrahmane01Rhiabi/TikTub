@@ -7,6 +7,7 @@ const generationScreen = document.getElementById('generationScreen');
 let genChannel = null;
 let genAssets = { backgrounds: [], music: [] };
 let genVoices = [];         // the library's French voices (Réglages → Voix)
+let genLibStyles = [];      // the shared caption library's styles (captions/), beside the Génération's own
 const DRONES_CHOICE = '__drones__';   // generative.pipeline.DRONES_CHOICE
 let genBatchId = null;      // the batch currently shown, or null = show the "how many videos" starter
 let genBatchPollTimer = null;
@@ -19,6 +20,13 @@ const MAX_BATCH_COUNT = 20;
 const CAPTION_COLOR_STYLES = new Set(['karaoke', 'bounce', 'typewriter']);
 const CAPTION_STYLE_DEFAULT_COLOR = { karaoke: '#ffe000', bounce: '#6d8dfd', typewriter: '#ffe000' };
 function spin(text){ return `<span class="spinner"></span> ${esc(text)}`; }
+// a library style's default accent colour ('' when it has none), undefined when it isn't a library style
+function libAccent(styleId){
+  const st = genLibStyles.find(s => s.id === styleId);
+  if (!st) return undefined;
+  const p = (st.params || []).find(x => x.name === 'accent');
+  return p ? p.default : '';
+}
 
 document.getElementById('genBackBtn').addEventListener('click', startNewBatch);
 
@@ -72,6 +80,8 @@ async function loadGeneration(channelName){
     ]);
     genAssets = assets;
     genVoices = voices.voices || [];
+    try { genLibStyles = ((await api('/api/captions/styles?space=generation&lang=fr')).styles || []).filter(s => !s.native); }
+    catch (e){ genLibStyles = []; }
     if (videos.length){
       // Some draft(s) from before a page reload/channel switch are still
       // mid-flow — resume that batch's view (pollBatchProgress re-fetches
@@ -380,12 +390,15 @@ function cardBodyHtml(v, i){
               <option value="bounce">★ Spring / Bounce</option>
               <option value="typewriter">★ Typewriter</option>
               <option value="minimal">★ Minimaliste / Cinéma</option>
+              ${genLibStyles.length ? `<optgroup label="Bibliothèque de sous-titres">${genLibStyles.map(s =>
+                `<option value="${esc(s.id)}">${s.number ? `${s.number} · ` : ''}${esc(s.label)}</option>`).join('')}</optgroup>` : ''}
             </select>
           </div>
           <div data-role="caption-color-row" style="display:none;align-items:center;gap:8px">
             <label class="f" style="margin:0">Couleur</label>
             <input type="color" data-role="caption-color" value="${CAPTION_STYLE_DEFAULT_COLOR.karaoke}" style="width:40px;height:28px;padding:2px;background:var(--panel2);border:1px solid var(--border);border-radius:6px;cursor:pointer">
           </div>
+          <video data-role="caption-anim" muted loop autoplay playsinline style="display:none;width:100%;max-width:200px;border-radius:10px;background:#000"></video>
           <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--muted)">
             <input type="checkbox" data-role="rounded"> Coins arrondis
           </label>
@@ -500,7 +513,7 @@ function wireCardEvents(card, v, batchId){
     const frameMode = card.querySelector('[data-role="frame"]').value;
     const rounded = card.querySelector('[data-role="rounded"]').checked;
     const captionStyle = card.querySelector('[data-role="caption-style"]').value;
-    const captionColor = CAPTION_COLOR_STYLES.has(captionStyle)
+    const captionColor = CAPTION_COLOR_STYLES.has(captionStyle) || libAccent(captionStyle)
       ? card.querySelector('[data-role="caption-color"]').value
       : null;
     if (!bg || !mu){ if (note) note.textContent = 'Choisis un fond vidéo ET une musique.'; return; }
@@ -553,15 +566,27 @@ function wireCardEvents(card, v, batchId){
       img.classList.remove('loaded');
       img.onload = () => { spinner.style.display = 'none'; img.classList.add('loaded'); };
       img.onerror = () => { spinner.style.display = 'none'; };
+      const lib = libAccent(captionSelect.value) !== undefined;
       const colorParam = CAPTION_COLOR_STYLES.has(captionSelect.value) ? `&caption_color=${encodeURIComponent(colorInput.value)}` : '';
-      img.src = `/api/channels/${genChannel}/asset_frame_preview?bg_video_filename=${encodeURIComponent(bg)}&frame_mode=${frameSelect.value}&rounded_corners=${roundedCheck.checked}&caption_style=${captionSelect.value}${colorParam}&t=${Date.now()}`;
+      // a library style: the still shows the décor alone, its animated preview plays beside it
+      const styleParam = lib ? '' : `&caption_style=${captionSelect.value}${colorParam}`;
+      img.src = `/api/channels/${genChannel}/asset_frame_preview?bg_video_filename=${encodeURIComponent(bg)}&frame_mode=${frameSelect.value}&rounded_corners=${roundedCheck.checked}${styleParam}&t=${Date.now()}`;
+      const anim = card.querySelector('[data-role="caption-anim"]');
+      if (anim){
+        anim.style.display = lib ? '' : 'none';
+        if (lib){
+          const params = libAccent(captionSelect.value) ? `&params=${encodeURIComponent(JSON.stringify({ accent: colorInput.value }))}` : '';
+          anim.src = `/api/captions/preview/${encodeURIComponent(captionSelect.value)}?lang=fr&channel=${encodeURIComponent(genChannel)}${params}`;
+        }
+      }
     };
     const updateColorVisibility = () => {
-      const customizable = CAPTION_COLOR_STYLES.has(captionSelect.value);
+      const accent = libAccent(captionSelect.value);
+      const customizable = CAPTION_COLOR_STYLES.has(captionSelect.value) || !!accent;
       // style.display, not the `hidden` attribute: the row's inline
       // display:flex overrode `hidden`, so the picker never disappeared
       colorRow.style.display = customizable ? 'flex' : 'none';
-      if (customizable) colorInput.value = CAPTION_STYLE_DEFAULT_COLOR[captionSelect.value];
+      if (customizable) colorInput.value = CAPTION_STYLE_DEFAULT_COLOR[captionSelect.value] || accent;
     };
     captionSelect.addEventListener('change', updateColorVisibility);
     [bgSelect, frameSelect, roundedCheck, captionSelect, colorInput].forEach(el => el.addEventListener('change', updatePreview));
@@ -581,7 +606,7 @@ function wireCardEvents(card, v, batchId){
       if (preset.caption_style) captionSelect.value = preset.caption_style;
     }
     updateColorVisibility();
-    if (preset && preset.caption_color && CAPTION_COLOR_STYLES.has(captionSelect.value)) colorInput.value = preset.caption_color;
+    if (preset && preset.caption_color && (CAPTION_COLOR_STYLES.has(captionSelect.value) || libAccent(captionSelect.value))) colorInput.value = preset.caption_color;
     updatePreview();
   }
 

@@ -23,6 +23,10 @@ function renderMontageSettingsCard(card, ch, data){
       <label class="f">Sous-titres</label>
       <div class="capstyle-pick">${Object.entries(MONTAGE_CAPTION_LABELS).map(([k, l]) =>
         `<button class="${k === s.caption_style ? 'active' : ''}" data-v="${k}">${capSampleHtml(k)}<span>${l}${k === 'accent' ? ' — mots-clés en jaune' : ' — tout en blanc'}</span></button>`).join('')}</div>
+      ${(data.library_styles || []).length ? `<div class="ad-row" style="margin-top:6px"><span class="tiny">Autre style</span>
+        <select class="f ms-libstyle" style="width:auto"><option value="">— Cascade / Accent ci-dessus —</option>
+        ${data.library_styles.map(x => `<option value="${esc(x.id)}" ${x.id === s.caption_style ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>
+        <span class="tiny">(bibliothèque, aperçu dans Réglages → Sous-titres)</span></div>` : ''}
     </div>
     <div class="chcard-body">
       <label class="f">Musique de fond</label>
@@ -62,6 +66,8 @@ function renderMontageSettingsCard(card, ch, data){
   card.querySelector('.ms-default').onchange = e => save({ default_mode: e.target.checked ? 'montage' : 'simple' });
   card.querySelector('.ms-hook').onchange = e => save({ hook: e.target.checked });
   card.querySelectorAll('.capstyle-pick button').forEach(b => b.onclick = () => save({ caption_style: b.dataset.v }));
+  const libSel = card.querySelector('.ms-libstyle');
+  if (libSel) libSel.onchange = () => save({ caption_style: libSel.value || 'accent' });
   wireSeg(card, 'ms-vol', v => save({ volume: v }));
   card.querySelector('.ms-music').onchange = e => save({ music_file: e.target.value || null });
   const fileInput = card.querySelector('.ms-file');
