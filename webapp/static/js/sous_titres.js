@@ -68,6 +68,18 @@ function capParamInput(p, value){
     `<option value="${esc(c.value)}" ${c.value === v ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select>`;
 }
 
+// the settings by section, in the order they first appear (Texte, Contour et ombre, Placement, Fond, Animation, Son…)
+function capSections(params){
+  const out = [];
+  params.forEach(p => {
+    const sec = p.section || 'Style';
+    let entry = out.find(([s]) => s === sec);
+    if (!entry){ entry = [sec, []]; out.push(entry); }
+    entry[1].push(p);
+  });
+  return out;
+}
+
 function capReadParams(card){
   const out = {};
   card.querySelectorAll('.cap-p').forEach(el => {
@@ -94,10 +106,12 @@ function renderCapChannelCard(card, ch, d){
       <div class="meta" style="margin-left:0">${esc(d.language)} · couleur de la chaîne <span class="dot" style="background:${esc(d.colour)}"></span></div></div></div>
     <div class="chcard-body">
       <label class="f">Style de sous-titres (Adaptation, Reprise)</label>
+      <div class="tiny" style="margin-bottom:4px">Position « Auto » : chaque groupe de mots va là où il ne cache ni un visage ni les détails de l'image (en Reprise : là où étaient ses sous-titres). « Lisibilité auto » renforce le contour sur un fond clair.</div>
       <select class="f cap-style"><option value="">Celui de l'espace (style visuel de l'Adaptation, jaune mot par mot en Reprise)</option>
         ${allowed.map(s => `<option value="${esc(s.id)}" ${s.id === d.style ? 'selected' : ''}>${s.number ? `${s.number} · ` : ''}${esc(s.label)} — ${esc(s.group)}</option>`).join('')}</select>
-      ${st ? `<div class="stack cap-params" style="gap:6px;margin-top:6px">${st.params.map(p =>
-        `<div><label class="f" style="margin:0">${esc(p.label)}</label>${capParamInput(p, d.params[p.name])}</div>`).join('')}</div>
+      ${st ? `<div class="stack cap-params" style="gap:4px;margin-top:6px">${capSections(st.params).map(([sec, ps], i) =>
+        `<details ${i === 0 ? 'open' : ''}><summary class="tiny" style="cursor:pointer;font-weight:600;margin:4px 0">${esc(sec)}</summary>
+          <div class="stack" style="gap:6px">${ps.map(p => `<div><label class="f" style="margin:0">${esc(p.label)}</label>${capParamInput(p, d.params[p.name])}</div>`).join('')}</div></details>`).join('')}</div>
         <div class="cap-video" style="max-width:240px"></div>` : ''}
     </div>
     <div class="chcard-foot">${st ? '<button class="btn secondary small cap-chprev" data-icon="play">Aperçu avec ces réglages</button>' : ''}

@@ -42,8 +42,9 @@ def test_every_style_builds_in_every_language(style_id, lang):
 
 def test_settings_are_cleaned_never_trusted():
     p = S.STYLES["hierarchie"].clean({"grand": 999, "petit": "abc", "couleur": "red", "position": "nowhere", "x": 1})
-    assert p["grand"] == 200 and p["petit"] == 80 and p["couleur"] == "#ffffff" and p["position"] == "bas" and "x" not in p
-    assert S.STYLES["surligneur"].clean({"contour": "true"})["contour"] is True
+    assert p["grand"] == 200 and p["petit"] == 80 and p["couleur"] == "#ffffff" and p["position"] == "auto" and "x" not in p
+    assert S.STYLES["surligneur"].clean({"contour_seul": "true"})["contour_seul"] is True
+    assert S.STYLES["surligneur"].clean({"contour": 99})["contour"] == 10
 
 
 def test_an_arabic_line_is_laid_out_right_to_left_with_the_real_shaping():
@@ -224,3 +225,88 @@ def test_the_preview_route(client):
     assert r.status_code == 200 and r.headers["content-type"] == "video/mp4"
     assert client.get("/api/captions/preview/nope").status_code == 404
     assert client.get("/api/captions/preview/rebond?params={bad").status_code == 400
+
+
+# ---------------------------------------------------------------- smart placement, legibility, common settings
+
+def fake_scene(zone, busy_rows=None, bright=False, seconds=6):
+    """A Scene of flat frames; busy_rows (canvas y0, y1): a checkerboard there (lots of details); bright: white."""
+    from captions.core import Scene
+    zx, zy, zw, zh = zone
+    h, w = zh // 4, zw // 4
+    img = np.full((h, w), 235.0 if bright else 40.0, np.float32)
+    if busy_rows:
+        r0, r1 = (busy_rows[0] - zy) // 4, (busy_rows[1] - zy) // 4
+        img[r0:r1] = (np.indices((r1 - r0, w)).sum(axis=0) % 2) * 255.0
+    return Scene([(t / 3, img) for t in range(seconds * 3)], zone, 4)
+
+
+def positions(built):
+    import re
+    return [int(m) for m in re.findall(r"\\pos\(\d+,(\d+)\)", "\n".join(l for l in built.ass.splitlines() if l.startswith("Dialogue")))]
+
+
+def test_auto_leaves_a_busy_band_and_keeps_its_place():
+    words, ctx = ctx_for("fr")
+    ctx.scene = fake_scene(ctx.zone, busy_rows=(ctx.y("bas") - 80, ctx.y("bas") + 80))
+    ys = set(positions(R.build("resserre", words, ctx)))
+    assert ctx.y("bas") not in ys and len(ys) == 1                 # never on the busy band, always the same band
+
+
+def test_auto_without_any_picture_uses_the_preferred_band():
+    words, ctx = ctx_for("fr")
+    assert set(positions(R.build("resserre", words, ctx))) == {ctx.y("bas")}
+    assert set(positions(R.build("resserre", words, ctx, {"preferee": "haut"}))) == {ctx.y("haut")}
+
+
+def test_a_fixed_position_its_offset_and_the_reprise_anchor():
+    words, ctx = ctx_for("fr")
+    x, y, w, h = ctx.zone
+    assert set(positions(R.build("resserre", words, ctx, {"position": "milieu", "decalage": 10}))) == {ctx.y("milieu") + h // 10}
+    ctx.anchor_y = 1449
+    assert set(positions(R.build("resserre", words, ctx))) == {1449}
+
+
+def test_readability_thickens_the_outline_over_a_bright_picture():
+    words, ctx = ctx_for("fr")
+    ctx.scene = fake_scene(ctx.zone, bright=True)
+    built = R.build("resserre", words, ctx, {"position": "bas"})
+    assert "\\bord3" in built.ass and "\\p1" in built.ass         # very bright: a soft block too
+    assert "\\bord3" not in R.build("resserre", words, ctx, {"position": "bas", "lisibilite": False}).ass
+
+
+def test_the_common_settings_reach_the_style_line_and_the_events():
+    words, ctx = ctx_for("fr")
+    built = R.build("pop", words, ctx, {"police": "lilita", "contour": 6, "contour_couleur": "#ff0000", "ombre": 4,
+                                        "fond": "bloc", "fond_opacite": 100, "animation": "aucune"})
+    style_line = next(l for l in built.ass.splitlines() if l.startswith("Style: Pop"))
+    assert "Lilita One" in style_line and ",6,4,5," in style_line and "&H000000FF" in style_line
+    assert "\\1a&H00&" in built.ass and "\\t(" not in built.ass  # opaque box, no animation
+    ar = R.build("pop", *ctx_for("ar")[:1], ctx_for("ar")[1], {"police": "lilita"})
+    assert "Tajawal" in next(l for l in ar.ass.splitlines() if l.startswith("Style: Pop"))
+
+
+def test_the_scene_of_a_real_video(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-t", "2", str(clip)], check=True)
+    sc = R.scene(str(clip), (87, 507, 906, 906))
+    assert sc and len(sc.frames) == 6
+    busy, luma = sc.band(0, 2, 507 + 453)
+    assert 0 < busy <= 1 and 0 < luma < 255
+    looped = R.scene(str(clip), (87, 507, 906, 906), until=5.0)
+    assert looped.frames[-1][0] > 4.0                               # a short background loops
+
+
+def test_analyse_looks_only_when_the_style_needs_it(tmp_path, monkeypatch):
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-t", "1", str(clip)], check=True)
+    monkeypatch.setattr(R, "faces", lambda *a, **k: [(0.1, (1, 2, 3, 4))])
+    words, ctx = ctx_for("fr")
+    R.analyse(ctx, "hierarchie", {}, str(clip))
+    assert ctx.faces and ctx.scene                                  # « Auto » avoiding faces: both
+    words, ctx = ctx_for("fr")
+    R.analyse(ctx, "hierarchie", {"position": "bas", "lisibilite": False}, str(clip))
+    assert not ctx.faces and ctx.scene is None
+    words, ctx = ctx_for("fr")
+    R.analyse(ctx, "karaoke", {}, str(clip))
+    assert ctx.scene is None                                        # the spaces' own styles: nothing to look at

@@ -265,6 +265,7 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     if lib_style:
         out_words = [(w["w"], w["start"], w["end"]) for w in glued(v["words"])]
         ctx = caption_render.context(code, (0, 0, W, H), out_words, None)
+        ctx.anchor_y = int(H * y)          # « Auto »: where his captions were erased, as our own captions go
         built = caption_render.build(lib_style, out_words, ctx, (captions or {}).get("params"))
         cap_f, cap_v, extra_audio = caption_render.filters(built, "v0", add_input, os.path.join(work, "captions_lib"), (W, H), fps=FPS)
         g += cap_f + [f"[{cap_v}]format=yuv420p[vout]"]

@@ -824,7 +824,7 @@ def _library_captions(style_id: str, params: Optional[Dict], passages: List[Dict
                       lang_code: str, work_dir: str):
     """A style of the shared library on the picture box: the words at their OUTPUT times (pauses tightened), the
     passages' key words as the strong ones -> (Built, number of caption lines)."""
-    from captions import render as caption_render, styles as caption_lib
+    from captions import render as caption_render
     out_words, keys = [], []
     for p in passages:
         keys += [str(k) for k in p.get("mots_cles") or []]
@@ -835,9 +835,7 @@ def _library_captions(style_id: str, params: Optional[Dict], passages: List[Dict
                 out_words.append((w["w"], a, b))
     zone = (BOX_X, BOX_Y, BOX_W, BOX_H)
     ctx = caption_render.context(lang_code, zone, out_words, keys or None)
-    box_video = os.path.join(work_dir, "box.mp4")
-    if "faces" in caption_lib.get(style_id).needs and os.path.exists(box_video):
-        ctx.faces = caption_render.faces(box_video, zone, fit="stretch")
+    caption_render.analyse(ctx, style_id, params, os.path.join(work_dir, "box.mp4"), fit="stretch")   # the box, as shown
     built = caption_render.build(style_id, out_words, ctx, params)
     return built, sum(1 for line in built.ass.splitlines() if line.startswith("Dialogue"))
 

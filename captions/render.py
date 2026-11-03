@@ -15,7 +15,7 @@ from captions.core import FPS, H, ROOT, W, Ctx, Words, fonts_dir, header, rgb, s
 YUNET = os.path.join(ROOT, "modeles", "face_detection_yunet_2023mar.onnx")
 YUNET_URL = "https://github.com/opencv/opencv_zoo/raw/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx"
 EMOJI_FONT = "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf"
-PREVIEW_VERSION = 1                     # bump: every cached gallery preview is made again
+PREVIEW_VERSION = 2                     # bump: every cached gallery preview is made again
 
 
 class CaptionError(Exception):
@@ -43,7 +43,11 @@ def build(style_id: str, words: Words, ctx: Ctx, params: Optional[Dict] = None) 
     if not words:
         return Built(style_id, header([]), {}, st.needs)
     p = st.clean(params)
-    styles_, events_, extras = st.build(words, ctx, p)
+    token = S.SPEED.set(S.SPEED_OF.get(p.get("animation", "normale"), 1.0))
+    try:
+        styles_, events_, extras = st.build(words, ctx, p)
+    finally:
+        S.SPEED.reset(token)
     text = events_ if styles_ is None else header(styles_, ctx.size) + "\n".join(events_) + "\n"
     if extras.get("behind"):              # the big words: their own file, drawn under the person
         extras = dict(extras, behind_ass=header(styles_, ctx.size) + "\n".join(extras["behind"]) + "\n")
@@ -184,6 +188,63 @@ def faces(video: str, zone: Tuple[int, int, int, int], fps: float = 5.0, until: 
             if tt is not None and (until is None or tt <= until):
                 out.append((tt, box))
     return sorted(out)
+
+
+def _cover_filter(zone, fit: str, scale: int) -> str:
+    zx, zy, zw, zh = zone
+    shown = (f"scale={zw}:{zh}:force_original_aspect_ratio=increase,crop={zw}:{zh}" if fit == "cover"
+             else f"scale={zw}:{zh}")
+    return f"{shown},scale={max(2, zw // scale)}:{max(2, zh // scale)}"
+
+
+def scene(video: str, zone: Tuple[int, int, int, int], fit: str = "cover", fps: float = 3.0, scale: int = 4,
+          until: Optional[float] = None, time_map: Optional[Callable[[float], Optional[float]]] = None):
+    """The video as shown in the zone (covering it, or `fit="stretch"`: it IS the zone), 3 small grey images a second,
+    on the output's timeline (time_map; a background shorter than `until` loops) -> core.Scene, or None."""
+    import numpy as np
+    from captions.core import Scene
+    zx, zy, zw, zh = zone
+    w, h = max(2, zw // scale), max(2, zh // scale)
+    r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-i", video, "-vf",
+                        f"fps={fps},{_cover_filter(zone, fit, scale)},format=gray", "-f", "rawvideo", "-"],
+                       capture_output=True)
+    n = len(r.stdout) // (w * h)
+    if r.returncode or not n:
+        return None
+    arr = np.frombuffer(r.stdout[:n * w * h], np.uint8).reshape(n, h, w).astype(np.float32)
+    dur = n / fps
+    frames = []
+    reps = int((until or dur) // max(dur, 0.1)) + 1 if until and dur else 1
+    for rep in range(reps):
+        for i in range(n):
+            t = i / fps + rep * dur
+            t = time_map(t) if time_map else t
+            if t is not None and (until is None or t <= until):
+                frames.append((t, arr[i]))
+    frames.sort(key=lambda tf: tf[0])
+    return Scene(frames, zone, scale)
+
+
+def analyse(ctx: Ctx, style_id: str, params: Optional[Dict], video: Optional[str], fit: str = "cover",
+            until: Optional[float] = None, time_map: Optional[Callable[[float], Optional[float]]] = None) -> Ctx:
+    """What a style needs to see of the picture before it is drawn: the faces (« Évite le visage », or « Auto » that
+    avoids them) and the scene (« Auto », « Lisibilité auto »). The spaces' own styles need nothing."""
+    st = S.get(style_id)
+    if not st or st.native or not video or not os.path.exists(video):
+        return ctx
+    p = st.clean(params)
+    auto = p.get("position") == "auto" or "faces" in st.needs
+    if "faces" in st.needs or (auto and p.get("eviter_visages") and ctx.anchor_y is None):
+        try:
+            ctx.faces = faces(video, ctx.zone, until=until, time_map=time_map, fit=fit)
+        except Exception as e:                    # no model, unreadable video: placed without the faces
+            print(f"⚠️ Visages introuvables ({e}) : placement sans eux")
+    if auto or p.get("lisibilite"):
+        try:
+            ctx.scene = scene(video, ctx.zone, fit=fit, until=until, time_map=time_map)
+        except Exception as e:
+            print(f"⚠️ Image non analysée ({e}) : placement par défaut")
+    return ctx
 
 
 def person_mask(video: str, zone: Tuple[int, int, int, int], face_track: List, out: str, fps: int = 15) -> Optional[str]:

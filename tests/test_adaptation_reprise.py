@@ -236,3 +236,6 @@ def test_a_reprise_render_with_or_without_a_caption_library_style(tmp_path, styl
     assert float(info["format"]["duration"]) == pytest.approx(4.8, abs=0.2)
     numbers = (tmp_path / "w" / "textes_fr.ass").read_text(encoding="utf-8")
     assert "#1" in numbers and (("Mot,,0" in numbers) == (style is None))      # our words only without a library style
+    if style:                       # « Auto » goes where his captions were erased: y = CAPTION_Y of the height
+        lib = (tmp_path / "w" / "captions_lib" / "cap.ass").read_text(encoding="utf-8")
+        assert f",{int(1920 * rm.CAPTION_Y)})" in lib

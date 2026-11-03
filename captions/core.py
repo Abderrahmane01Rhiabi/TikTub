@@ -19,12 +19,16 @@ _ADAPT_FONTS = os.path.join(ROOT, "adaptation", "fonts")
 LATIN = {"semi": (os.path.join(_MONTAGE_FONTS, "Montserrat-SemiBold.ttf"), "Montserrat SemiBold"),
          "xbold": (os.path.join(_ADAPT_FONTS, "Montserrat-ExtraBold.ttf"), "Montserrat ExtraBold"),
          "black": (os.path.join(_ADAPT_FONTS, "Montserrat-Black.ttf"), "Montserrat Black"),
-         "serif": (os.path.join(_MONTAGE_FONTS, "InstrumentSerif-Italic.ttf"), "Instrument Serif")}
+         "serif": (os.path.join(_MONTAGE_FONTS, "InstrumentSerif-Italic.ttf"), "Instrument Serif"),
+         "lilita": (os.path.join(_MONTAGE_FONTS, "LilitaOne-Regular.ttf"), "Lilita One")}
 # no Arabic serif or italic: the accent font is the heaviest Tajawal (Arabic is never slanted)
 ARABIC = {"semi": (os.path.join(_ADAPT_FONTS, "Tajawal-ExtraBold.ttf"), "Tajawal ExtraBold"),
           "xbold": (os.path.join(_ADAPT_FONTS, "Tajawal-ExtraBold.ttf"), "Tajawal ExtraBold"),
           "black": (os.path.join(_ADAPT_FONTS, "Tajawal-Black.ttf"), "Tajawal Black"),
-          "serif": (os.path.join(_ADAPT_FONTS, "Tajawal-Black.ttf"), "Tajawal Black")}
+          "serif": (os.path.join(_ADAPT_FONTS, "Tajawal-Black.ttf"), "Tajawal Black"),
+          "lilita": (os.path.join(_ADAPT_FONTS, "Tajawal-Black.ttf"), "Tajawal Black")}
+FONT_CHOICES = [("semi", "Montserrat SemiBold"), ("xbold", "Montserrat ExtraBold"), ("black", "Montserrat Black"),
+                ("serif", "Instrument Serif (italique)"), ("lilita", "Lilita One")]   # Arabic: Tajawal for all
 RTL_LANGS = {"ar"}
 SYSTEM_FONTS = ["/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
                 "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
@@ -40,8 +44,7 @@ def fonts_dir() -> str:
     """libass reads ONE fonts folder: every caption font gathered in temp/caption_fonts (kept by the storage cleanup)."""
     d = os.path.abspath(os.path.join("temp", "caption_fonts"))
     os.makedirs(d, exist_ok=True)
-    for path in [p for p, _ in LATIN.values()] + [p for p, _ in ARABIC.values()] + SYSTEM_FONTS + \
-            [os.path.join(_MONTAGE_FONTS, "LilitaOne-Regular.ttf")]:
+    for path in [p for p, _ in LATIN.values()] + [p for p, _ in ARABIC.values()] + SYSTEM_FONTS:
         dst = os.path.join(d, os.path.basename(path))
         if os.path.exists(path) and not os.path.exists(dst):
             shutil.copy(path, dst)
@@ -181,6 +184,14 @@ class Ctx:
     colour: str = "#FF7A00"                       # the channel's colour (channels/channel_config.json)
     faces: List[Tuple[float, Tuple[float, float, float, float]]] = field(default_factory=list)
     size: Tuple[int, int] = (W, H)
+    scene: Optional["Scene"] = None               # the picture as shown, to place and light the text (render.analyse)
+    anchor_y: Optional[int] = None                # "auto" always goes there (the Reprise: where his captions were)
+
+    @property
+    def room_below(self) -> bool:
+        """Is there room for a line under the picture (on the background)?"""
+        x, y, w, h = self.zone
+        return y + h + 200 <= self.size[1] - 60
 
     @property
     def rtl(self) -> bool:
@@ -208,6 +219,40 @@ class Ctx:
         return bare(word[0] if isinstance(word, (list, tuple)) else word) in self.strong
 
 
+# ---------------------------------------------------------------- the picture under the text
+
+class Scene:
+    """The video as it is shown in the zone, a few images a second, small and grey: how busy and how bright a band
+    of it is while a caption is up (render.scene builds it)."""
+
+    def __init__(self, frames, zone, scale: int):
+        self.frames = frames                    # [(t, grey array of the zone / scale)]
+        self.zone, self.scale = zone, scale
+
+    def band(self, a: float, b: float, y: float, half: float = 70, width: float = 0.8):
+        """(busy 0..1, brightness 0..255) of the band around canvas y between a and b (None: outside the picture)."""
+        import numpy as np
+        zx, zy, zw, zh = self.zone
+        r0, r1 = int((y - half - zy) / self.scale), int((y + half - zy) / self.scale)
+        if r1 <= 0 or not self.frames:
+            return None
+        sel = [f for t, f in self.frames if a - 0.15 <= t <= b + 0.15] or \
+              [min(self.frames, key=lambda tf: abs(tf[0] - (a + b) / 2))[1]]
+        busy, luma = [], []
+        for f in sel:
+            h, w = f.shape
+            c0, c1 = int(w * (1 - width) / 2), int(w * (1 + width) / 2)
+            part = f[max(0, r0):min(h, r1), c0:c1]
+            if part.size < 20:
+                continue
+            gy, gx = np.abs(np.diff(part, axis=0)).mean(), np.abs(np.diff(part, axis=1)).mean()
+            busy.append(min(1.0, (gx + gy) / 24.0))
+            luma.append(float(part.mean()))
+        if not busy:
+            return None
+        return sum(busy) / len(busy), sum(luma) / len(luma)
+
+
 # ---------------------------------------------------------------- settings
 
 @dataclass
@@ -219,6 +264,7 @@ class Param:
     lo: Optional[float] = None
     hi: Optional[float] = None
     choices: Optional[List[Tuple[str, str]]] = None
+    section: str = "Style"
 
     def clean(self, value):
         if value is None:
@@ -239,22 +285,44 @@ class Param:
 
     def public(self) -> Dict:
         return {"name": self.name, "label": self.label, "kind": self.kind, "default": self.default, "lo": self.lo,
-                "hi": self.hi, "choices": [{"value": c, "label": l} for c, l in self.choices] if self.choices else None}
+                "hi": self.hi, "section": self.section,
+                "choices": [{"value": c, "label": l} for c, l in self.choices] if self.choices else None}
 
 
-POSITIONS = [("bas", "Bas de l'image"), ("milieu", "Milieu"), ("haut", "Haut"), ("sous", "Sous l'image")]
+POSITIONS = [("auto", "Auto (évite visages, détails, texte déjà là)"), ("bas", "Bas de l'image"), ("milieu", "Milieu"),
+             ("haut", "Haut"), ("sous", "Sous l'image")]
+BANDS = [("bas", "Bas"), ("haut", "Haut"), ("milieu", "Milieu"), ("sous", "Sous l'image")]
+SPEEDS = [("normale", "Normale"), ("rapide", "Rapide"), ("lente", "Lente"), ("aucune", "Aucune animation")]
 
 
-def common(position="bas", words=3, colour="#ffffff", accent="#ffd60a", spacing=-2, upper="non") -> List[Param]:
-    """The settings every new style has."""
-    return [Param("taille", "Taille (%)", "int", 100, 60, 160),
-            Param("position", "Position", "choice", position, choices=POSITIONS),
-            Param("mots", "Mots à la fois", "int", words, 1, 4),
-            Param("couleur", "Couleur du texte", "colour", colour),
-            Param("accent", "Couleur d'accent", "colour", accent),
-            Param("espacement", "Espacement des lettres", "int", spacing, -8, 8),
-            Param("majuscules", "Majuscules", "choice", upper,
-                  choices=[("non", "Non"), ("oui", "Tout"), ("mots_forts", "Mots forts seulement")])]
+def common(position="auto", words=3, colour="#ffffff", accent="#ffd60a", spacing=-2, upper="non", font="xbold",
+           accent_font="serif", border=1.5, shadow=2, line=True) -> List[Param]:
+    """The settings every new style has (its own defaults given here), by section."""
+    out = [Param("taille", "Taille (%)", "int", 100, 60, 160, section="Texte"),
+           Param("couleur", "Couleur du texte", "colour", colour, section="Texte"),
+           Param("accent", "Couleur d'accent", "colour", accent, section="Texte"),
+           Param("police", "Police", "choice", font, choices=FONT_CHOICES, section="Texte"),
+           Param("police_forts", "Police des mots forts", "choice", accent_font, choices=FONT_CHOICES, section="Texte"),
+           Param("mots", "Mots à la fois", "int", words, 1, 4, section="Texte"),
+           Param("espacement", "Espacement des lettres", "int", spacing, -8, 8, section="Texte"),
+           Param("majuscules", "Majuscules", "choice", upper,
+                 choices=[("non", "Non"), ("oui", "Tout"), ("mots_forts", "Mots forts seulement")], section="Texte"),
+           Param("contour", "Contour (épaisseur)", "int", border, 0, 10, section="Contour et ombre"),
+           Param("contour_couleur", "Couleur du contour", "colour", "#000000", section="Contour et ombre"),
+           Param("ombre", "Ombre (distance)", "int", shadow, 0, 8, section="Contour et ombre"),
+           Param("ombre_couleur", "Couleur de l'ombre", "colour", "#000000", section="Contour et ombre"),
+           Param("position", "Position", "choice", position, choices=POSITIONS, section="Placement"),
+           Param("preferee", "Bande préférée (en Auto)", "choice", "bas", choices=BANDS, section="Placement"),
+           Param("decalage", "Décalage vertical (% de l'image)", "int", 0, -20, 20, section="Placement"),
+           Param("eviter_visages", "Éviter les visages (en Auto)", "bool", True, section="Placement"),
+           Param("lisibilite", "Lisibilité auto (contour plus fort sur fond clair)", "bool", True, section="Placement"),
+           Param("animation", "Animation", "choice", "normale", choices=SPEEDS, section="Animation")]
+    if line:
+        out += [Param("fond", "Fond derrière le texte", "choice", "aucun",
+                      choices=[("aucun", "Aucun"), ("bloc", "Bloc arrondi"), ("bande", "Bande")], section="Fond"),
+                Param("fond_couleur", "Couleur du fond", "colour", "#000000", section="Fond"),
+                Param("fond_opacite", "Opacité du fond (%)", "int", 55, 10, 100, section="Fond")]
+    return out
 
 
 def shown(word, ctx: Ctx, p: Dict) -> str:

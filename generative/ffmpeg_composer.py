@@ -460,11 +460,11 @@ def render_video_ffmpeg(
             # the shared library: drawn on the video's box, the channel's colour, its extras (blend, a click...)
             zone = ((tw - min(sw, tw)) // 2, (th - min(sh, th)) // 2, min(sw, tw), min(sh, th))
             ctx = captions.context(captions_lang, zone, words, None, captions_channel)
-            if "faces" in caption_lib.get(caption_style).needs:
-                ctx.faces = captions.faces(bg_video_path, zone, until=total)
             params = dict(caption_params or {})
             if caption_color and "accent" not in params:
                 params["accent"] = caption_color
+            # what « Auto » / « Évite le visage » need to see of the background (it loops: until=total)
+            captions.analyse(ctx, caption_style, params, bg_video_path, until=total)
             built = captions.build(caption_style, [tuple(w) for w in words], ctx, params)
             cap_f, cap_v, cap_audio = captions.filters(built, "ov", add_input, os.path.join(work, "lib"), size, fps=25)
             filters += cap_f

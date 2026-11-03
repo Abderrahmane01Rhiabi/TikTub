@@ -464,9 +464,7 @@ def render(video_path: str, words: Words, plan: Dict, settings: Dict, out_path: 
         zone = (bx, by, bw, bh)
         ctx = captions.context(settings.get("captions_lang") or "en", zone, out_words, strong or None,
                                settings.get("captions_channel"))
-        from captions import styles as caption_lib
-        if "faces" in caption_lib.get(style).needs:
-            ctx.faces = captions.faces(video_path, zone, time_map=edit.to_out, until=total)
+        captions.analyse(ctx, style, settings.get("caption_params"), video_path, time_map=edit.to_out, until=total)
         built = captions.build(style, out_words, ctx, settings.get("caption_params"))
         n_caps = sum(1 for line in built.ass.splitlines() if line.startswith("Dialogue"))
 
