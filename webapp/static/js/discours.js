@@ -368,12 +368,14 @@ async function dsPreviews(body, p){
         </div></div>
         <div class="chcard-foot">${t.video_id ? '' : `<button class="btn primary small push pv-validate" data-icon="check" ${ok && !t.validated ? '' : 'disabled'}>Valider cette vidéo</button>`}</div>
       </article>`;
-    }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} vidéo(s) validée(s)</span><span></span>
+    }).join('') + `<div class="navbar"><button class="btn secondary" id="dsBackPlans">← Revenir aux plans</button>
+      <span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} vidéo(s) validée(s)</span>
       <button class="btn primary" id="dsRender" ${p.targets.some(t => t.validated && !t.video_id) ? '' : 'disabled'} data-icon="film">Envoyer les vidéos validées à Publication →</button></div>`;
   hydrateIcons(body);
   const box = document.getElementById('dsSettings');
   dsBindRanges(box);
   dsBindSound(box);
+  document.getElementById('dsBackPlans').onclick = () => dsCall(`/api/adaptations/${p.project_id}/discours/plans/back`, 'POST');
   document.getElementById('dsRedo').onclick = () => {
     const mine = dsReadSettings(box), changed = {};
     Object.keys(mine).forEach(k => { if (mine[k] !== base[k] || k in (d.reglages || {})) changed[k] = mine[k]; });

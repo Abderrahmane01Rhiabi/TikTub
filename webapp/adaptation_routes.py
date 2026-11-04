@@ -1080,6 +1080,13 @@ def discours_approve_plans(pid: str):
     return _serialize_adaptation(p)
 
 
+@router.post("/api/adaptations/{pid}/discours/plans/back")
+def discours_back_to_plans(pid: str):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(dp.back_to_plans, pid))
+
+
 class DiscoursSettings(BaseModel):
     reglages: Optional[dict] = None     # the video's own settings (over the channel's « style Discours »)
     son: Optional[str] = None

@@ -508,6 +508,17 @@ def _again(p: Dict):
     p["status"] = "voicing"
 
 
+def back_to_plans(pid: str) -> Dict:
+    """From the previews back to the Plans screen (its timeline, its propositions): the videos made again after."""
+    ap = _ap()
+    p = ap.load(pid)
+    ap._expect(p, "preview_review")
+    for t in p["targets"]:
+        t["validated"] = False
+    p["status"] = "plans_review"
+    return ap.save(p)
+
+
 def change_settings(pid: str, reglages: Optional[Dict] = None, son: Optional[str] = None,
                     chanson: Optional[str] = None) -> Dict:
     """The video's own settings and sound: every channel's video made again (no AI; a new smart song only when the

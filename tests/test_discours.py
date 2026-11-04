@@ -467,6 +467,11 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
     assert all(b["debut"] >= D.HOOK_S and b["fin"] <= f["total"] for b in f["plans"])
     dp.set_moment(pid, 1, "retirer")
     f = dp.frise(ap.load(pid))
+    dp.approve_plans(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    r = client.post(f"/api/adaptations/{pid}/discours/plans/back")
+    assert r.status_code == 200 and r.json()["status"] == "plans_review"                # from the previews, back
+    assert client.post(f"/api/adaptations/{pid}/discours/plans/back").status_code == 400
     assert 1 in [x["index"] for x in f["retires"]] and 1 not in [b["index"] for b in f["plans"]]
 
 
