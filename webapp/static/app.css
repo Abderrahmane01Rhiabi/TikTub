@@ -670,3 +670,23 @@
 .ds-head{position:absolute;top:16px;bottom:0;border-left:2px solid #e74c3c;pointer-events:none}
 .ds-player{display:flex;gap:12px;align-items:flex-end;margin-bottom:8px}
 .ds-player video{height:220px;max-width:60%;background:#000;border-radius:8px}
+
+/* Discours : the live preview (a phone drawn by the page, the captions made by the server laid over it) */
+.ds-live-wrap{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
+.ds-live-wrap > div:first-child{flex:1 1 420px;min-width:min(100%,420px)}
+.ds-live{width:216px;display:flex;flex-direction:column;gap:6px}
+.ds-lwho{margin-bottom:6px}
+.ds-phone{position:relative;width:216px;aspect-ratio:9/16;background:#000;border-radius:14px;overflow:hidden;box-shadow:0 0 0 2px var(--border)}
+.ds-phone > *{position:absolute}
+.ds-lbg{inset:0;overflow:hidden}
+.ds-lbgv{width:100%;height:100%;object-fit:cover;filter:blur(10px) brightness(.78);transform:scale(1.1)}
+.ds-lshadow{background:rgba(0,0,0,.78)}
+.ds-lframe{overflow:hidden;background:#222}
+.ds-lfv{width:100%;height:100%;object-fit:cover;object-position:50% 38%;display:block}
+.ds-lgrain{position:absolute;inset:0;opacity:.16;mix-blend-mode:overlay;pointer-events:none;animation:ds-grain .3s steps(3) infinite;
+  background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>")}
+@keyframes ds-grain{0%{background-position:0 0}33%{background-position:-40px 20px}66%{background-position:30px -30px}}
+.ds-lsig{color:rgba(255,255,255,.7);font-family:Montserrat,system-ui,sans-serif;font-weight:600;white-space:nowrap}
+.ds-lcap{inset:0;width:100%;height:100%;mix-blend-mode:screen;pointer-events:none}
+.ds-lwait{left:8px;bottom:8px;color:#aaa;background:rgba(0,0,0,.5);padding:1px 6px;border-radius:4px}
+.ds-lnone .ds-lframe{background:linear-gradient(160deg,#3a3f4a,#1c1f26)}

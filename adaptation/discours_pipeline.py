@@ -497,6 +497,11 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
                  strong=strong, channel=t["channel"], signature=signature)
     made = D.duration(out)
     ok = abs(made - total) < 0.6
+    try:                                             # what this montage saw, ready for the live preview
+        report(f"{t['channel']} : aperçu direct", 0.95)
+        live_seen(p, t["channel"], D.frame_box(s), made_zone=D.frame_box(s))
+    except Exception as e:
+        print(f"⚠️ Analyse pour l'aperçu direct impossible ({e})")
     return {"path": out, "son": son_for(p, t), "duree": round(made, 1), "reglages": s, "mot_fort_a": round(hit, 2),
             "cle": key, "checks": {"ok": ok, "problems": [] if ok else ["La vidéo n'a pas la durée de la parole."]}}
 
@@ -522,6 +527,63 @@ def _again(p: Dict):
     for t in p["targets"]:
         t["validated"] = False
     p["status"] = "voicing"
+
+
+LIVE_S = 3.5                         # the live preview's captions: about this long a phrase
+
+
+def live_words(p: Dict, code: str) -> Optional[tuple]:
+    """The live preview's captions: the words in `code` (translated) from the Short's start to the end of a phrase
+    said after the speaker's first seconds, its strong words, and when that phrase starts (s). None before the cut."""
+    d = p["discours"]
+    if not d.get("local") or not d.get("parts"):
+        return None
+    words = D.caption_words(d["local"], timeline(p, settings_for(p, p["targets"][0])), d.get("traduction"), code,
+                            d.get("langue") or "en")
+    start = next((k for k, w in enumerate(words) if w[1] >= D.HOOK_S), 0)
+    end = start
+    while end + 1 < len(words) and words[end + 1][2] - words[start][1] <= LIVE_S:
+        end += 1
+    tr = (d.get("traduction") or {}).get("langues", {}).get(code, {})
+    strong = set(tr.get("mots_forts") or []) if code != (d.get("langue") or "en") else set(d.get("mots_forts") or [])
+    return ([list(w) for w in words[:end + 1]], strong, words[start][1]) if words else None
+
+
+def live_seen(p: Dict, channel: str, zone, made_zone=None) -> Optional[tuple]:
+    """What the real montage saw of its frame (the faces, the busy bands), for the live captions: analysed once per
+    montage at that montage's size (~20 s, kept beside it), then fitted to `zone` (another size, the same picture
+    stretched; `made_zone`: that montage's frame, else its preview's) -> (a key, faces, scene), or None before one."""
+    import pickle
+    from captions import render as R
+    from captions.core import Scene
+    work = os.path.join(work_dir(p, "cibles", channel), "travail")
+    made, kept = os.path.join(work, "cadre.mp4"), os.path.join(work, "analyse.pkl")
+    if not os.path.exists(made):
+        return None
+    mtime = os.path.getmtime(made)
+    got = None
+    if os.path.exists(kept):
+        try:
+            got = pickle.load(open(kept, "rb"))
+        except Exception:
+            got = None
+    if not got or got.get("mtime") != mtime:
+        t = next(x for x in p["targets"] if x["channel"] == channel)
+        z = tuple(made_zone or D.frame_box((t.get("preview") or {}).get("reglages") or settings_for(p, t)))
+        sc = R.scene(made, z, fit="stretch")
+        got = {"mtime": mtime, "zone": z, "faces": R.faces(made, z, fit="stretch"),
+               "frames": sc.frames if sc else [], "scale": sc.scale if sc else 4}
+        pickle.dump(got, open(kept, "wb"))
+    (ax, ay, aw, ah), (bx, by, bw, bh) = got["zone"], tuple(zone)
+    fx, fy = bw / aw, bh / ah
+    faces = [(t, (bx + (x0 - ax) * fx, by + (y0 - ay) * fy, bx + (x1 - ax) * fx, by + (y1 - ay) * fy))
+             for t, (x0, y0, x1, y1) in got["faces"]]
+    scene = None
+    if got["frames"]:
+        import cv2
+        size = (max(2, bw // got["scale"]), max(2, bh // got["scale"]))
+        scene = Scene([(t, cv2.resize(f, size)) for t, f in got["frames"]], tuple(zone), got["scale"])
+    return (f"{made}|{mtime}", faces, scene)
 
 
 def back_to_plans(pid: str) -> Dict:

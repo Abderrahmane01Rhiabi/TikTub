@@ -70,6 +70,37 @@ def test_pauses_are_tightened_on_the_cut_timeline():
     assert [D.unmap(t, parts) for t in (1.0, 2.5, 4.5, 9.0)] == [1.0, 3.5, 8.5, 9.0]     # and the way back
 
 
+def test_the_live_captions_layer_without_a_speech(tmp_path, monkeypatch):
+    from captions import render as R
+    monkeypatch.chdir(tmp_path)
+    s = D.clean_settings({"cadre": "4:5", "taille": 70, "sous_titres": "escalier"})
+    out = R.preview("escalier", "en", s["sous_titres_params"], "#FF7A00", zone=D.frame_box(s), black=True)
+    assert os.path.getsize(out) > 1000                    # the gallery's phrase, at the frame's place, on black
+    assert out != R.preview("escalier", "en", s["sous_titres_params"], "#FF7A00")      # the gallery's own: apart
+
+
+def test_the_live_captions_see_what_the_montage_saw(tmp_path, monkeypatch):
+    from captions import render as R
+    monkeypatch.setattr(ap, "project_dir", lambda pid: str(tmp_path / pid))
+    box = D.frame_box({"cadre": "carre", "taille": 84})
+    p = {"project_id": "ad_x", "targets": [{"channel": "chanA", "preview": {"reglages": {"cadre": "carre", "taille": 84}}}]}
+    assert dp.live_seen(p, "chanA", box) is None                                       # no montage yet
+    made = os.path.join(dp.work_dir(p, "cibles", "chanA"), "travail", "cadre.mp4")
+    os.makedirs(os.path.dirname(made))
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc2=size={box[2]}x{box[3]}:rate=30:duration=3",
+                    "-c:v", "libx264", "-preset", "ultrafast", made], check=True)
+    calls = []
+    monkeypatch.setattr(R, "faces", lambda video, zone, **kw: calls.append(zone) or [(1.0, (zone[0], zone[1], zone[0] + 100, zone[1] + 50))])
+    key, faces, scene = dp.live_seen(p, "chanA", box)
+    assert faces == [(1.0, (box[0], box[1], box[0] + 100, box[1] + 50))] and scene.frames
+    small = D.frame_box({"cadre": "carre", "taille": 60})
+    key2, faces2, scene2 = dp.live_seen(p, "chanA", small)                            # another size: no new analysis
+    assert calls == [box] and key2 == key
+    k = small[2] / box[2]
+    assert faces2[0][1] == pytest.approx((small[0], small[1], small[0] + 100 * k, small[1] + 50 * k))
+    assert scene2.frames[0][1].shape == (small[3] // scene2.scale, small[2] // scene2.scale)
+
+
 def test_the_fingerprint_of_a_montage(tmp_path):
     f = tmp_path / "voix.mp3"
     f.write_bytes(b"a")
@@ -439,7 +470,7 @@ def test_a_discours_from_the_link_to_publication(fakes):
     assert db.broll_last_used("cestpourca") == {}         # the mood shot was taken out: nothing remembered
 
 
-def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
+def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client, tmp_path):
     p = ap.create("https://www.youtube.com/watch?v=XIGWjzqKTp0", [], fakes["channels"][:1], mode="discours")
     pid = p["project_id"]
     ap.runner_for(pid, "analysing")(pid)
@@ -488,6 +519,26 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
     f = dp.frise(ap.load(pid))
     dp.approve_plans(pid)
     ap.runner_for(pid, "voicing")(pid)
+    words, strong, at = dp.live_words(ap.load(pid), "fr")
+    assert at >= D.HOOK_S and words[-1][2] - at <= dp.LIVE_S + 1                      # from the start to the phrase's end
+    from captions import render as R
+    seen = {}
+
+    def preview(style, lang, params, colour, zone=None, words=None, black=False, seen_=None, start=0.0, **kw):
+        seen.update(style=style, lang=lang, zone=zone, words=words, black=black, saw=kw.get("seen"), start=start)
+        out = str(tmp_path / "cap.mp4")
+        open(out, "wb").write(b"mp4")
+        return out
+    monkeypatch.setattr(R, "preview", preview)
+    r = client.get(f"/api/discours/live_captions?style=pop&cadre=4:5&taille=70&lang=fr&pid={pid}")
+    assert r.status_code == 200 and r.content == b"mp4"
+    assert seen["zone"] == D.frame_box({"cadre": "4:5", "taille": 70}) and seen["black"] is True
+    assert seen["words"][0] == words and seen["start"] == pytest.approx(at - 0.25)       # only the phrase shown
+    assert seen["saw"] is None                           # the fakes made no frame: placed without the picture
+    assert client.get(f"/api/adaptations/{pid}").json()["discours"]["direct"]["debut"] == at   # the picture played with it
+    client.get("/api/discours/live_captions?style=inconnu&lang=ar")
+    assert seen["style"] == "escalier" and seen["words"] is None                      # unknown or not for Arabic: Escalier
+    assert client.get("/api/discours/exemple").status_code in (200, 404)
     made = len(fakes["renders"])
     r = client.post(f"/api/adaptations/{pid}/discours/plans/back")
     assert r.status_code == 200 and r.json()["status"] == "plans_review"                # from the previews, back

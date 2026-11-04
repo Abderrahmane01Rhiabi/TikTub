@@ -238,12 +238,15 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
 
 def _serialize_discours(p: dict, targets: list, full: bool = True) -> dict:
     from adaptation import discours as D, discours_pipeline as dp
+    from captions import render as R
     d = p.get("discours") or {}
     pid = p["project_id"]
     for out, t in zip(targets, p.get("targets") or []):
         out["son"] = dp.son_for(p, t)
         out["reglages"] = dp.settings_for(p, t)
         out["films"] = (t.get("discours") or {}).get("films") is True
+        out["couleur"] = R.channel_colour(t["channel"])          # the « dégradé » background's colour
+        out["display_name"] = t.get("display_name") or t["channel"]   # the name in the corner (« identité »)
     out = {"son": d.get("son"), "chanson": d.get("chanson"), "sons": list(dp.SONS), "duree": d.get("duree"),
            "orateur": d.get("orateur") or "", "langue": d.get("langue"), "titre_video": d.get("titre_video") or "",
            "films": dp.films_ok(p) if p.get("targets") else False, "reglages": d.get("reglages") or {},
@@ -278,12 +281,22 @@ def _serialize_discours(p: dict, targets: list, full: bool = True) -> dict:
         out["frise"] = dp.frise(p)
     except Exception:                                # a timeline that cannot be drawn never hides the screen
         out["frise"] = None
+    try:                                             # the live preview's phrase: its picture played with it
+        said = dp.live_words(p, langs_code(p["targets"][0]["language"])) if p.get("targets") else None
+        out["direct"] = {"debut": said[2], "parts": dp.timeline(p, dp.settings_for(p, p["targets"][0]))} if said else None
+    except Exception:
+        out["direct"] = None
     tr = d.get("traduction") or {}
     out["traduction"] = {"phrases": tr.get("phrases") or [],
                          "youtube": {c: (x or {}).get("youtube") for c, x in (tr.get("langues") or {}).items()}} if tr else None
     out["mots_forts"] = d.get("mots_forts") or []
     out["mot_fort"] = d.get("mot_fort")
     return out
+
+
+def langs_code(language: str) -> str:
+    from adaptation import langs
+    return langs.lang(language)["code"]
 
 
 def _adaptation_or_404(pid: str) -> dict:
@@ -1148,12 +1161,66 @@ def discours_video(pid: str):
     return FileResponse(d["video"], media_type="video/mp4")
 
 
+@router.get("/api/discours/live_captions")
+def discours_live_captions(style: str, cadre: str = "carre", taille: int = 84, lang: str = "fr",
+                           params: Optional[str] = None, channel: Optional[str] = None, pid: Optional[str] = None):
+    """The live preview's captions layer: the real style, at the frame's place, on black (the page lays it over its
+    picture). A phrase of the speech when `pid` is given, else the gallery's. Made once per change, then cached."""
+    from adaptation import discours as D, discours_pipeline as dp
+    from captions import render as R
+    try:
+        raw = json.loads(params) if params else {}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Réglages illisibles")
+    settings = D.clean_settings({"cadre": cadre, "taille": taille, "sous_titres": style,
+                                 "sous_titres_params": raw if isinstance(raw, dict) else {}})
+    lang = (lang or "fr").strip()[:2].lower()       # a channel's hint can be a sentence (« ar (Modern Standard…) »)
+    p = _discours_or_404(pid) if pid else None
+    said = dp.live_words(p, lang) if p else None
+    zone = D.frame_box(settings)
+    seen = None
+    if said:                                     # what the last montage saw: the captions placed as there
+        try:
+            seen = dp.live_seen(p, channel or p["targets"][0]["channel"], zone)
+        except Exception as e:
+            print(f"⚠️ Aperçu direct sans l'image du montage ({e})")
+    colour = R.channel_colour(_main().checked_channel(channel)) if channel else "#FF7A00"
+    try:
+        path = R.preview(D.caption_style_for(settings, lang), lang, settings["sous_titres_params"], colour, zone=zone,
+                         words=said[:2] if said else None, black=True, seen=seen,
+                         start=max(0.0, said[2] - 0.25) if said else 0.0)
+    except R.CaptionError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    return FileResponse(path, media_type="video/mp4")
+
+
+@router.get("/api/discours/exemple")
+def discours_example():
+    """A speech for Réglages → Discours' live preview: 8 light seconds of the latest Discours passage on this PC (one
+    phone per channel: the whole passage would be loaded twice by each), cut once."""
+    import db as _db
+    from adaptation import discours as D
+    for p in sorted(_db.list_adaptations(), key=lambda x: x.get("created_at") or "", reverse=True):
+        seg = (p.get("discours") or {}).get("segment") if p.get("mode") == "discours" else None
+        if seg and os.path.exists(seg):
+            out = os.path.join("temp", "discours_exemple.mp4")
+            if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(seg):
+                os.makedirs("temp", exist_ok=True)
+                D._run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", "2", "-i", seg, "-t", "8", "-an", "-vf",
+                        "scale=-2:480", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-movflags", "+faststart",
+                        out])
+            return FileResponse(out, media_type="video/mp4")
+    raise HTTPException(status_code=404, detail="Aucun discours encore découpé.")
+
+
 def _discours_channel_payload(channel_name: str) -> dict:
     from adaptation import discours as D
     from captions import styles as S
     profile = _main().channel_manager.get_channel_profile(channel_name) or {}
     lang = (profile.get("language_hint") or "fr").split("-")[0]
+    from captions import render as R
     return {"reglages": D.channel_settings(profile), "defauts": D.DEFAULTS, "language": lang,
+            "couleur": R.channel_colour(channel_name), "display_name": profile.get("display_name") or channel_name,
             "cadres": list(D.FRAMES), "fonds": list(D.FONDS), "etalonnages": list(D.GRADES),
             "densites": list(D.DENSITY),
             "styles": [{"id": st.id, "label": st.label, "number": st.number, "group": st.group}

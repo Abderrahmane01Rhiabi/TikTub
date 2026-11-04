@@ -170,6 +170,15 @@ function dsRemap(t, parts){               // the passage's time -> the cut Short
   return out;
 }
 
+function dsUnmap(t, parts){                // the cut Short's time -> the passage's (adaptation/discours.unmap)
+  let out = 0;
+  for (const [a, b] of parts){
+    if (t <= out + b - a) return a + t - out;
+    out += b - a;
+  }
+  return parts.length ? parts[parts.length - 1][1] : t;
+}
+
 function dsFrise(d, pid){
   const f = d.frise;
   if (!f) return '';
@@ -373,6 +382,82 @@ async function dsStyles(lang){
   catch (e){ return []; }
 }
 
+// ---------------------------------------------------------------- the live preview (a phone, drawn by the page)
+
+const DS_FRAMES = { carre: [1, 1], '4:5': [4, 5], '16:9': [16, 9] };           // adaptation/discours.FRAMES
+const DS_GRADES = { dark: 'contrast(1.12) saturate(1.1)', vivid: 'contrast(1.08) saturate(1.35)', aucun: 'none' };
+
+function dsBox(s){                                     // adaptation/discours.frame_box, on the 1080x1920 canvas
+  const [aw, ah] = DS_FRAMES[s.cadre] || [1, 1];
+  let fw = Math.floor(1080 * (s.taille || 84) / 100 / 2) * 2, fh = Math.round(fw * ah / aw / 2) * 2;
+  if (fh > 1500){ fh = 1500; fw = Math.round(fh * aw / ah / 2) * 2; }
+  return [Math.floor((1080 - fw) / 2), Math.floor((1920 - fh) / 2), fw, fh];
+}
+
+function dsLiveHtml(note){
+  return `<div class="ds-live"><div class="ds-phone">
+      <div class="ds-lbg"><video class="ds-lbgv" muted loop playsinline></video></div>
+      <div class="ds-lshadow"></div>
+      <div class="ds-lframe"><video class="ds-lfv" muted loop playsinline></video><div class="ds-lgrain"></div></div>
+      <div class="ds-lsig"></div>
+      <video class="ds-lcap" muted loop playsinline autoplay></video>
+      <div class="ds-lwait tiny">sous-titres…</div>
+    </div><div class="tiny ds-lnote">${note}</div></div>`;
+}
+
+// opts: { src (the speech), lang, channel, pid, couleur (the « dégradé »), nom (the corner's name),
+//         direct ({debut, parts}: the captions' phrase in the Short, to play its picture with it) }
+function dsLive(root, opts){
+  const q = c => root.querySelector(c);
+  const phone = q('.ds-phone'), fv = q('.ds-lfv'), bgv = q('.ds-lbgv'), cap = q('.ds-lcap'), wait = q('.ds-lwait');
+  if (opts.src){ fv.src = opts.src; bgv.src = opts.src; fv.play().catch(() => {}); bgv.play().catch(() => {}); }
+  else phone.classList.add('ds-lnone');
+  fv.ontimeupdate = () => { if (Math.abs(bgv.currentTime - fv.currentTime) > 0.3) bgv.currentTime = fv.currentTime; };
+  if (opts.direct) cap.ontimeupdate = () => {          // the speaker at the phrase the captions show
+    const want = dsUnmap(opts.direct.debut - 0.25 + cap.currentTime, opts.direct.parts);
+    if (Math.abs(fv.currentTime - want) > 0.25) fv.currentTime = want;
+  };
+  let capKey = '', timer = null;
+  cap.oncanplay = () => { wait.style.display = 'none'; cap.play().catch(() => {}); };
+  cap.onerror = () => { wait.textContent = 'sous-titres impossibles'; };
+  const update = s => {
+    const k = phone.clientWidth / 1080, [x, y, fw, fh] = dsBox(s), r = (s.arrondi || 0) * k;
+    const place = el => Object.assign(el.style, { left: x * k + 'px', top: y * k + 'px', width: fw * k + 'px', height: fh * k + 'px', borderRadius: r + 'px' });
+    place(q('.ds-lframe'));
+    place(q('.ds-lshadow'));
+    q('.ds-lshadow').style.transform = `translateY(${18 * k}px)`;
+    q('.ds-lshadow').style.filter = `blur(${28 * k}px)`;
+    q('.ds-lshadow').style.display = s.ombre ? '' : 'none';
+    fv.style.filter = DS_GRADES[s.etalonnage] || 'none';
+    q('.ds-lgrain').style.display = s.grain ? '' : 'none';
+    const c = (opts.couleur || '#282828').replace('#', ''), rgb = [0, 2, 4].map(i => Math.round(parseInt(c.slice(i, i + 2), 16) * 0.55));
+    q('.ds-lbg').style.background = s.fond === 'degrade' ? `linear-gradient(to bottom, rgb(${rgb}) 0%, #000 78%)` : '#000';
+    bgv.style.display = s.fond === 'flou' ? '' : 'none';
+    const sig = q('.ds-lsig');
+    Object.assign(sig.style, { display: s.identite ? '' : 'none', right: (1080 - x - fw + 24) * k + 'px',
+                               bottom: (1920 - y - fh + 22) * k + 'px', fontSize: 30 * k + 'px' });
+    sig.textContent = opts.nom || '';
+    const qs = new URLSearchParams({ style: s.sous_titres, cadre: s.cadre, taille: s.taille, lang: opts.lang || 'fr',
+                                     params: JSON.stringify(s.sous_titres_params || {}) });
+    if (opts.channel) qs.set('channel', opts.channel);
+    if (opts.pid) qs.set('pid', opts.pid);
+    const key = qs.toString();
+    if (key !== capKey){                                // the real style, made by the server (cached after once)
+      capKey = key;
+      clearTimeout(timer);
+      timer = setTimeout(() => { wait.textContent = 'sous-titres…'; wait.style.display = ''; cap.src = `/api/discours/live_captions?${key}`; }, 350);
+    }
+  };
+  return { update };
+}
+
+function dsLiveBind(box, live, extra){
+  const go = () => live.update({ ...extra(), ...dsReadSettings(box) });
+  box.querySelectorAll('.ds-r').forEach(el => { el.addEventListener('input', go); el.addEventListener('change', go); });
+  requestAnimationFrame(go);
+  return go;
+}
+
 // ---------------------------------------------------------------- each channel's video
 
 async function dsPreviews(body, p){
@@ -385,7 +470,11 @@ async function dsPreviews(body, p){
   body.innerHTML = `<article class="chcard" id="dsSettings">
       <div class="chcard-head"><div class="who"><div class="name">Réglages de cette vidéo</div>
         <div class="meta" style="margin-left:0">Par-dessus le « style Discours » de chaque chaîne (Réglages → Discours). Refaire les vidéos ne rappelle pas l'IA.</div></div></div>
-      <div class="chcard-body">${dsSettingsHtml(base, { cadres: d.cadres, fonds: d.fonds, etalonnages: d.etalonnages, styles })}
+      <div class="chcard-body"><div class="ds-live-wrap"><div>
+        ${dsSettingsHtml(base, { cadres: d.cadres, fonds: d.fonds, etalonnages: d.etalonnages, styles })}</div>
+        <div>${p.targets.length > 1 ? `<div class="seg ds-lwho">${p.targets.map((t, i) =>
+          `<button class="seg-opt ${i ? '' : 'active'}" data-i="${i}">${esc(t.language_label)}</button>`).join('')}</div>` : ''}
+          ${dsLiveHtml("Aperçu direct : chaque réglage s'affiche tout de suite, sans refaire les vidéos. Très proche du montage, pas identique au pixel près.")}</div></div>
         ${dsSoundPicker(d.son, d.chanson)}
         ${d.musique ? `<div class="tiny" style="margin-top:6px">🎵 Musique intelligente : <b>${esc(d.musique.titre || d.musique.fichier)}</b> — ${esc(d.musique.pourquoi_chanson || '')}</div>` : ''}</div>
       <div class="chcard-foot"><button class="btn secondary small push" id="dsRedo" data-icon="refresh">Refaire les vidéos avec ces réglages</button></div></article>`
@@ -414,6 +503,16 @@ async function dsPreviews(body, p){
   const box = document.getElementById('dsSettings');
   dsBindRanges(box);
   dsBindSound(box);
+  const liveFor = t => dsLive(box.querySelector('.ds-live'), { src: d.passage_url, lang: t.language.split('-')[0], channel: t.channel,
+                                                              pid: p.project_id, couleur: t.couleur, nom: t.display_name || rpChannelName(t.channel),
+                                                              direct: d.direct });
+  let live = liveFor(p.targets[0]);
+  const redraw = dsLiveBind(box, { update: s => live.update(s) }, () => ({ sous_titres_params: base.sous_titres_params }));
+  box.querySelectorAll('.ds-lwho .seg-opt').forEach(b => b.onclick = () => {
+    box.querySelectorAll('.ds-lwho .seg-opt').forEach(x => x.classList.toggle('active', x === b));
+    live = liveFor(p.targets[b.dataset.i]);
+    redraw();
+  });
   document.getElementById('dsBackPlans').onclick = () => dsCall(`/api/adaptations/${p.project_id}/discours/plans/back`, 'POST');
   document.getElementById('dsRedo').onclick = () => {
     const mine = dsReadSettings(box), changed = {};
@@ -446,10 +545,15 @@ function dsChannelCard(card, ch, d){
     <div class="chcard-body">
       <label class="switch" style="color:var(--text)"><input type="checkbox" class="ds-films" ${s.films ? 'checked' : ''}>
         <b>Extraits de films autorisés</b> <span class="tiny">plans de coupe tirés de films, séries ou clips (fiction) : risque de réclamation Content ID. Les cérémonies, émissions TV et archives sont toujours permises.</span></label>
-      ${dsSettingsHtml(s, { cadres: d.cadres, fonds: d.fonds, etalonnages: d.etalonnages, densites: d.densites, styles: d.styles })}
+      <div class="ds-live-wrap"><div>
+        ${dsSettingsHtml(s, { cadres: d.cadres, fonds: d.fonds, etalonnages: d.etalonnages, densites: d.densites, styles: d.styles })}</div>
+        ${dsLiveHtml("Aperçu direct sur le dernier discours découpé, avec la phrase d'exemple.")}</div>
     </div>
     <div class="chcard-foot"><span class="note push ds-saved"></span></div>`;
   dsBindRanges(card);
+  dsLiveBind(card, dsLive(card.querySelector('.ds-live'), { src: '/api/discours/exemple', lang: d.language, channel: ch.name,
+                                                            couleur: d.couleur, nom: d.display_name || ch.display_name }),
+             () => ({ sous_titres_params: s.sous_titres_params }));
   let timer = null;
   const save = () => {
     clearTimeout(timer);

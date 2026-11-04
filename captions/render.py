@@ -332,27 +332,42 @@ def _preview_background(path: str, zone) -> str:
     return path
 
 
-def preview(style_id: str, lang: str = "fr", params: Optional[Dict] = None, colour: str = "#FF7A00") -> str:
+def preview(style_id: str, lang: str = "fr", params: Optional[Dict] = None, colour: str = "#FF7A00",
+            zone: Optional[Tuple[int, int, int, int]] = None, words: Optional[Tuple[Words, set]] = None,
+            black: bool = False, seen: Optional[Tuple] = None, start: float = 0.0) -> str:
     """A 4-s silent preview of a style on the gallery's phrase (540x960) -> its path, made once and cached in
-    temp/caption_previews (kept by the storage cleanup)."""
+    temp/caption_previews (kept by the storage cleanup). For the Discours' live preview: its frame (`zone`), a phrase
+    of the speech (`words`, strong words) and a black backdrop (`black`: the page lays it over its own picture),
+    placed like the real montage: `seen` = (a key, the faces, the scene) of its picture, the words from the Short's
+    start (« Auto » keeps a band from one group to the next) and only what follows `start` shown."""
     st = S.get(style_id)
     if not st:
         raise CaptionError(f"Style de sous-titres inconnu : {style_id}")
     lang = lang if lang in SAMPLES else "fr"
     p = st.clean(params)
-    key = hashlib.sha1(json.dumps([PREVIEW_VERSION, style_id, lang, p, colour], sort_keys=True).encode()).hexdigest()[:16]
+    custom = bool(zone or words or black or seen)
+    zone = tuple(zone or (87, 507, 906, 906))
+    words, strong = words or sample_words(lang)
+    mine = [list(zone), words, sorted(strong), black] + ([seen[0], start] if seen else []) if custom else []
+    # (the gallery's own key: kept)
+    key = hashlib.sha1(json.dumps([PREVIEW_VERSION, style_id, lang, p, colour] + mine,
+                                  sort_keys=True).encode()).hexdigest()[:16]
     out_dir = os.path.abspath(os.path.join("temp", "caption_previews"))
     out = os.path.join(out_dir, f"{style_id}_{lang}_{key}.mp4")
     if os.path.exists(out):
         return out
     os.makedirs(out_dir, exist_ok=True)
-    zone = (87, 507, 906, 906)
-    words, strong = sample_words(lang)
-    ctx = Ctx(lang=lang, zone=zone, strong=strong, impact=sorted(strong, key=len)[-1], colour=colour)
+    ctx = Ctx(lang=lang, zone=zone, strong=strong, impact=sorted(strong, key=len)[-1] if strong else None, colour=colour)
+    if seen:                                 # the faces and the scene of that picture: « Auto » placed as in the video
+        ctx.strong = strong_words(words, sorted(strong))
+        ctx.faces, ctx.scene = seen[1] or [], seen[2]
     built = build(style_id, words, ctx, p)
     dur = words[-1][2] + 0.9
-    bg = _preview_background(os.path.join(out_dir, "fond.png"), zone)
-    inputs = ["-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.2f}", "-i", bg]
+    if black:
+        inputs = ["-f", "lavfi", "-i", f"color=black:s={W}x{H}:r={FPS}:d={dur:.2f}"]
+    else:
+        bg = _preview_background(os.path.join(out_dir, "fond.png"), zone)
+        inputs = ["-loop", "1", "-framerate", str(FPS), "-t", f"{dur:.2f}", "-i", bg]
     count = [1]
 
     def add_input(*args):
@@ -368,7 +383,8 @@ def preview(style_id: str, lang: str = "fr", params: Optional[Dict] = None, colo
         sound = ["-map", "[a]", "-c:a", "aac", "-b:a", "96k"]
     tmp = out + ".part.mp4"
     r = subprocess.run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", "[v]",
-                        *sound, "-t", f"{dur:.2f}", "-r", str(FPS), "-c:v", "libx264", "-preset", "veryfast", "-crf", "26",
+                        *sound, "-ss", f"{start:.3f}", "-t", f"{dur - start:.2f}", "-r", str(FPS), "-c:v", "libx264",
+                        "-preset", "veryfast", "-crf", "26",
                         "-movflags", "+faststart", tmp], capture_output=True, text=True)
     shutil.rmtree(work, ignore_errors=True)
     if r.returncode:
