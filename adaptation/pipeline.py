@@ -77,7 +77,8 @@ def _expect(p: Dict, *statuses: str):
 
 # ---------------------------------------------------------------- creation
 
-MODES = ("sources", "script", "reprise")      # reprise: a friend's Short taken again (adaptation/reprise_pipeline.py)
+MODES = ("sources", "script", "reprise", "discours")   # reprise: a friend's Short taken again (adaptation/reprise_pipeline.py);
+# discours: a speech, the speaker's own voice, cut and illustrated (adaptation/discours_pipeline.py)
 
 
 def _new_pid() -> str:
@@ -86,7 +87,8 @@ def _new_pid() -> str:
 
 def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
            versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None,
-           idea: Optional[str] = None, son: str = "notre_musique", volume_db: Optional[float] = None) -> Dict:
+           idea: Optional[str] = None, son: str = "notre_musique", volume_db: Optional[float] = None,
+           chanson: Optional[str] = None, duree: int = 45) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
     mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
     versions (script mode, several channels): one project per channel, a group — the reference
@@ -99,7 +101,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         mode, reference_url = "script", ""
     if mode not in MODES:
         raise PipelineError("Mode inconnu.")
-    if mode in ("script", "reprise"):
+    if mode in ("script", "reprise", "discours"):
         urls = []                       # the footage is searched for the script, plan by plan / his own images
     if not idea and not reference_url.strip():
         raise PipelineError("Il faut le lien du Short modèle, ou ton idée.")
@@ -110,13 +112,17 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
     targets = []
     for c in channels:
         s = settings.channel_settings(c["profile"])
-        if not s["voice_id"]:
+        if not s["voice_id"] and mode != "discours":        # a Discours keeps the speaker's voice
             raise PipelineError(f"La chaîne {c['channel']} n'a pas de voix : choisis-en une dans Réglages → Voix.")
         music = os.path.join(c["music_dir"], s["music_file"]) if s["music_file"] else None
         t = {"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
              "music_path": music if music and os.path.exists(music) else None,
              "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
              "validated": False, "video_id": None, "voice_model": s["voice_model"]}
+        if mode == "discours":
+            from adaptation import discours
+            t.update(discours=discours.channel_settings(c["profile"]),
+                     display_name=(c["profile"] or {}).get("display_name") or c["channel"])
         own = (style_of or {}).get(c["channel"])
         if own:                         # "Refaire ce style": the winning video's voice, music and look
             if own.get("voice_id"):
@@ -136,6 +142,9 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         from adaptation import musique, reprise_pipeline
         return save(reprise_pipeline.new_project({**base, "project_id": _new_pid()}, targets, son,
                                                  musique.GAP if volume_db is None else volume_db))
+    if mode == "discours":
+        from adaptation import discours_pipeline
+        return save(discours_pipeline.new_project({**base, "project_id": _new_pid()}, targets, son, chanson, duree))
     if mode == "sources" and versions and len(targets) > 1:
         base["versions"] = True         # one project, the same clips, an angle per channel at the script step
     if mode == "script" and versions and len(targets) > 1:
@@ -2326,10 +2335,13 @@ RUNNERS = {"analysing": run_analysis, "searching": run_images, "fetching": run_f
 
 
 def _reprise(p: Dict):
-    """The Reprise's own steps when the project is one (else None)."""
+    """The own steps of a Reprise or a Discours project (else None)."""
     if p.get("mode") == "reprise":
         from adaptation import reprise_pipeline
         return reprise_pipeline
+    if p.get("mode") == "discours":
+        from adaptation import discours_pipeline
+        return discours_pipeline
     return None
 
 

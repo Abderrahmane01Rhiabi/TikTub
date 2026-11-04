@@ -184,6 +184,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     base["targets"] = targets
     if p.get("mode") == "reprise":
         base["reprise"] = _serialize_reprise(p, targets)
+    if p.get("mode") == "discours":
+        base["discours"] = _serialize_discours(p, targets, full)
     if full:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s",
@@ -231,6 +233,43 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
     }
 
 
+def _serialize_discours(p: dict, targets: list, full: bool = True) -> dict:
+    from adaptation import discours as D, discours_pipeline as dp
+    d = p.get("discours") or {}
+    pid = p["project_id"]
+    for out, t in zip(targets, p.get("targets") or []):
+        out["son"] = dp.son_for(p, t)
+        out["reglages"] = dp.settings_for(p, t)
+        out["films"] = (t.get("discours") or {}).get("films") is True
+    out = {"son": d.get("son"), "chanson": d.get("chanson"), "sons": list(dp.SONS), "duree": d.get("duree"),
+           "orateur": d.get("orateur") or "", "langue": d.get("langue"), "titre_video": d.get("titre_video") or "",
+           "films": dp.films_ok(p) if p.get("targets") else False, "reglages": d.get("reglages") or {},
+           "defauts": D.DEFAULTS, "cadres": list(D.FRAMES), "fonds": list(D.FONDS), "etalonnages": list(D.GRADES),
+           "musique": {k: (d.get("musique") or {}).get(k) for k in ("titre", "fichier", "pourquoi_chanson")}
+           if d.get("musique") else None,
+           "video_url": f"/api/adaptations/{pid}/discours/video" if d.get("video") else None}
+    if not full:
+        return out
+    words = d.get("mots") or []
+    out["passages"] = [{**x, "texte": " ".join(w[0] for w in words[x["i0"]:x["i1"] + 1])} for x in d.get("passages") or []]
+    c = d.get("choix")
+    if c:
+        lo, hi = max(0, c["i0"] - 40), min(len(words), c["i1"] + 41)     # the words around it, to move its ends
+        out["choix"] = {**c, "autour": {"debut": lo, "mots": [w[0] for w in words[lo:hi]]}}
+    out["moments"] = [{"index": i, "mot": m.get("mot"), "temps": m.get("temps"), "scene": m.get("scene"),
+                       "action": m.get("action"), "journal": m.get("journal") or [],
+                       "clip": {k: (m.get("clip") or {}).get(k) for k in ("url", "titre", "niveau", "film", "a_la_main")}
+                       if m.get("clip") else None,
+                       "clip_url": f"/api/adaptations/{pid}/discours/moments/{i}/clip" if m.get("clip") else None}
+                      for i, m in enumerate(d.get("moments") or [])]
+    tr = d.get("traduction") or {}
+    out["traduction"] = {"phrases": tr.get("phrases") or [],
+                         "youtube": {c: (x or {}).get("youtube") for c, x in (tr.get("langues") or {}).items()}} if tr else None
+    out["mots_forts"] = d.get("mots_forts") or []
+    out["mot_fort"] = d.get("mot_fort")
+    return out
+
+
 def _adaptation_or_404(pid: str) -> dict:
     import db as _db
     p = _db.get_adaptation(pid)
@@ -259,6 +298,8 @@ class AdaptationCreate(BaseModel):
     versions: bool = False
     son: str = "notre_musique"          # Reprise: sa_musique | notre_musique | intelligente | sans_musique
     volume_db: Optional[float] = None   # Reprise: the music this many dB under the voice
+    chanson: Optional[str] = None       # Discours, son "choisie": a shared song (assets/musiques)
+    duree: int = 45                     # Discours: the Short's length aimed at (30 / 45 / 60 s)
 
 
 @router.post("/api/adaptations")
@@ -270,7 +311,7 @@ def create_adaptation(req: AdaptationCreate):
                 "music_dir": _main().channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
     mode = "script" if req.mode == "idee" else req.mode
     p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, mode, req.versions, None, None, req.idea,
-                         req.son, req.volume_db)
+                         req.son, req.volume_db, req.chanson, req.duree)
     _start_adaptation_step(p["project_id"], "analysing")
     return _serialize_adaptation(p)
 
@@ -892,6 +933,161 @@ def reprise_video(pid: str, which: str):
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Vidéo pas encore prête.")
     return FileResponse(path, media_type="video/mp4")
+
+
+# ---------------------------------------------------------------------------
+# Discours (a speech, the speaker's own voice): its passage, its cut-aways, its settings
+# ---------------------------------------------------------------------------
+
+def _discours_or_404(pid: str) -> dict:
+    p = _adaptation_or_404(pid)
+    if p.get("mode") != "discours":
+        raise HTTPException(status_code=400, detail="Ce projet n'est pas un Discours.")
+    return p
+
+
+class DiscoursPassage(BaseModel):
+    index: int
+    i0: Optional[int] = None            # its first word (index in the whole transcript)
+    i1: Optional[int] = None            # its last word
+    orateur: Optional[str] = None       # the speaker's name, for the credits
+
+
+@router.put("/api/adaptations/{pid}/discours/passage")
+def discours_passage(pid: str, req: DiscoursPassage):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(dp.choose_passage, pid, req.index, req.i0, req.i1, req.orateur))
+
+
+@router.post("/api/adaptations/{pid}/discours/passages/plus")
+def discours_more_passages(pid: str):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(dp.more_passages, pid))
+
+
+@router.post("/api/adaptations/{pid}/discours/passage/approve")
+def discours_approve_passage(pid: str):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    p = _adaptation_call(dp.approve_passage, pid)
+    _start_adaptation_step(pid, "searching")
+    return _serialize_adaptation(p)
+
+
+class DiscoursMoment(BaseModel):
+    action: Optional[str] = None        # garder | retirer
+    url: Optional[str] = None           # the person's own link for this moment
+    debut: float = 0.0                  # the second of that video it starts at
+
+
+def _restart_if_voicing(pid: str, p: dict):
+    if p["status"] == "voicing":
+        _start_adaptation_step(pid, "voicing")
+
+
+@router.post("/api/adaptations/{pid}/discours/moments/{index}")
+def discours_moment(pid: str, index: int, req: DiscoursMoment):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    if req.url:
+        p = _adaptation_call(dp.link_moment, pid, index, req.url, req.debut)
+    else:
+        p = _adaptation_call(dp.set_moment, pid, index, req.action or "")
+    _restart_if_voicing(pid, p)
+    return _serialize_adaptation(p)
+
+
+@router.post("/api/adaptations/{pid}/discours/moments/{index}/file")
+async def discours_moment_file(pid: str, index: int, file: UploadFile = File(...)):
+    """« Déposer un fichier » for one cut-away: kept in the project, its first seconds used."""
+    from adaptation import discours_pipeline as dp, pipeline as ap, sources
+    _discours_or_404(pid)
+    with tempfile.TemporaryDirectory() as tmp:
+        src = await _dropped(file, tmp)
+        try:
+            key = await asyncio.to_thread(sources.save_local, src, os.path.join(ap.project_dir(pid), "fichiers"),
+                                          Path(file.filename).name)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=str(e)[:300])
+    p = await asyncio.to_thread(_adaptation_call, dp.link_moment, pid, index, key, 0.0)
+    _restart_if_voicing(pid, p)
+    return _serialize_adaptation(p)
+
+
+@router.get("/api/adaptations/{pid}/discours/moments/{index}/clip")
+def discours_moment_clip(pid: str, index: int):
+    ms = (_discours_or_404(pid).get("discours") or {}).get("moments") or []
+    paths = [x.get("path") for x in ((ms[index].get("clip") or {}).get("extraits") or [])] if 0 <= index < len(ms) else []
+    path = next((x for x in paths if x and os.path.exists(x)), None)
+    if not path:
+        raise HTTPException(status_code=404, detail="Extrait introuvable.")
+    return FileResponse(path, media_type="video/mp4")
+
+
+@router.post("/api/adaptations/{pid}/discours/plans/approve")
+def discours_approve_plans(pid: str):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    p = _adaptation_call(dp.approve_plans, pid)
+    _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
+
+
+class DiscoursSettings(BaseModel):
+    reglages: Optional[dict] = None     # the video's own settings (over the channel's « style Discours »)
+    son: Optional[str] = None
+    chanson: Optional[str] = None
+
+
+@router.patch("/api/adaptations/{pid}/discours/reglages")
+def discours_settings(pid: str, req: DiscoursSettings):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    p = _adaptation_call(dp.change_settings, pid, req.reglages, req.son, req.chanson)
+    _restart_if_voicing(pid, p)
+    return _serialize_adaptation(p)
+
+
+@router.get("/api/adaptations/{pid}/discours/video")
+def discours_video(pid: str):
+    d = _discours_or_404(pid).get("discours") or {}
+    if not d.get("video") or not os.path.exists(d["video"]):
+        raise HTTPException(status_code=404, detail="Vidéo pas encore prête.")
+    return FileResponse(d["video"], media_type="video/mp4")
+
+
+def _discours_channel_payload(channel_name: str) -> dict:
+    from adaptation import discours as D
+    from captions import styles as S
+    profile = _main().channel_manager.get_channel_profile(channel_name) or {}
+    lang = (profile.get("language_hint") or "fr").split("-")[0]
+    return {"reglages": D.channel_settings(profile), "defauts": D.DEFAULTS, "language": lang,
+            "cadres": list(D.FRAMES), "fonds": list(D.FONDS), "etalonnages": list(D.GRADES),
+            "densites": list(D.DENSITY),
+            "styles": [{"id": st.id, "label": st.label, "number": st.number, "group": st.group}
+                       for st in S.for_space("discours", lang) if not st.native]}
+
+
+@router.get("/api/channels/{channel_name}/discours")
+def get_channel_discours(channel_name: str):
+    _main().checked_channel(channel_name)
+    return _discours_channel_payload(channel_name)
+
+
+@router.put("/api/channels/{channel_name}/discours")
+def update_channel_discours(channel_name: str, body: dict):
+    """A channel's « style Discours » (Réglages → Discours) and whether its cut-aways may be films."""
+    from adaptation import discours as D
+    _main().checked_channel(channel_name)
+    profile = _main().channel_manager.get_channel_profile(channel_name)
+    mine = {k: v for k, v in D.clean_settings(body).items() if k in body or (k == "sous_titres_params" and "sous_titres" in body)}
+    if isinstance(body.get("films"), bool):
+        mine["films"] = body["films"]
+    profile["discours"] = {**(profile.get("discours") or {}), **mine}
+    _main().channel_manager.save_channel_profile(channel_name, profile)
+    return _discours_channel_payload(channel_name)
 
 
 # ---------------------------------------------------------------------------

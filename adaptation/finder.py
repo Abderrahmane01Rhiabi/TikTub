@@ -377,6 +377,22 @@ def real_faults(text: str) -> str:
     return ", ".join(x for x in parts if REAL_FAULTS.search(x))
 
 
+# check(strict=True): a montage that erases nothing (Discours: the cut-aways shown as they are) — a TV channel's
+# logo or a watermark IS a fault, said with where it is; one in a corner is cut off by our square crop
+LOGO_LINE = "(un logo, un texte incruste ou le son ne sont PAS des defauts : ils sont effaces ou remplaces)"
+STRICT_LINE = ("(ICI on ne nettoie rien : un logo de chaine TV ou de media — Brut., TNT, BFM, CNN, ESPN, NBC, un logo "
+               "de site — ou un filigrane EST un defaut. Dis OU il est : « logo TV (coin) : <nom> » s'il est dans un coin "
+               "de l'image (le quart exterieur), « logo TV (centre) : <nom> » ou « filigrane (centre) : <nom> » s'il est "
+               "ailleurs ou en travers de l'image ; le son n'est pas un defaut)")
+LOGO_FAULTS = re.compile(r"logo|filigrane|watermark", re.I)
+
+
+def strict_faults(text: str) -> str:
+    """real_faults, plus the logos and watermarks left on screen (not those in a corner: cropped away)."""
+    parts = [x.strip() for x in re.split(r"[,;/]| et ", text or "") if x.strip()]
+    return ", ".join(x for x in parts if (REAL_FAULTS.search(x) or LOGO_FAULTS.search(x)) and "(coin)" not in x.lower())
+
+
 def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
     """For each plan, the best checked video and its moment: exact, then
     equivalent, then partial; the longest moment; never the same moment for
@@ -917,16 +933,19 @@ def model_of(ref: Optional[Dict]) -> Optional[Dict]:
 
 
 def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gemini=None,
-          model: Optional[Dict] = None) -> Dict:
+          model: Optional[Dict] = None, strict: bool = False) -> Dict:
     """Gemini watches one candidate and judges it plan by plan (exact /
     equivalent / partial / nothing), with the moments; the plans are then
-    summed up per scene for the page and the download."""
+    summed up per scene for the page and the download. strict: nothing will
+    be erased (Discours), the logos left on screen are faults."""
     from gemini_ai_generator import GeminiAIGenerator
     g = gemini or GeminiAIGenerator(api_key=os.getenv("GEMINI_API_KEY"))
     units = _units(scenes_, plans or [])
     listing = "\n".join(f"{n}. {u['text']}" + (f" (indices : {u['indices']})" if u["indices"] else "")
                         for n, u in enumerate(units, 1))       # numbered from 1: Gemini's reasons quote them
-    seen = _watch(url, g, CHECK_PROMPT.format(plans=listing, modele=MODEL_PART.format(**model) if model else ""))
+    prompt = CHECK_PROMPT.replace(LOGO_LINE, STRICT_LINE) if strict else CHECK_PROMPT
+    faults = strict_faults if strict else real_faults
+    seen = _watch(url, g, prompt.format(plans=listing, modele=MODEL_PART.format(**model) if model else ""))
     r = seen["answer"]
     if isinstance(r, list) and len(r) == 1 and isinstance(r[0], dict):      # once came back wrapped in a list
         r = r[0]
@@ -949,13 +968,13 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         u = units[n]
         credit = str(e.get("credit_vu") or "").strip()[:60] if level != "rien" else ""
         par_plan[str(u["plan"])] = {"niveau": level, "moments": ms, "raison": str(e.get("raison") or ""),
-                                    "scene": u["scene"], "defauts": real_faults(str(e.get("defauts") or "")),
+                                    "scene": u["scene"], "defauts": faults(str(e.get("defauts") or "")),
                                     **({"credit": credit} if credit else {})}
         have = par_scene.get(str(u["scene"]))
         if not have or LEVELS.index(level) < LEVELS.index(have["niveau"]):
             par_scene[str(u["scene"])] = {"niveau": level, "moments": list(ms) + (have or {}).get("moments", []),
                                           "raison": str(e.get("raison") or ""),
-                                          "defauts": real_faults(str(e.get("defauts") or "")),
+                                          "defauts": faults(str(e.get("defauts") or "")),
                                           **({"credit": credit} if credit else {})}
         else:
             have["moments"] += ms

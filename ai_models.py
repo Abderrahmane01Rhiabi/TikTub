@@ -63,6 +63,9 @@ STEPS: Dict[str, tuple] = {
     "storyboard.adapt_to":   (FLASH, "réécrire un plan pour une image déjà trouvée"),
     "tone.guess":            (FLASH, "deviner le ton du sujet"),
     "pipeline._choose_music": (FLASH, "choisir la musique"),
+    "discours.passages":     (FLASH, "proposer les passages forts d'un discours"),
+    "discours.moments":      (FLASH, "proposer les plans d'illustration d'un discours"),
+    "discours.translate":    (FLASH, "traduire les sous-titres d'un discours"),
     "script_generator.generate_script": (FLASH, "écrire le script (Génération)"),
     "planner.plan_video":    (FLASH, "regarder le clip et choisir les moments (Montage auto)"),
     "planner.pick_keywords": (FLASH, "choisir les mots à mettre en valeur (Montage auto)"),
@@ -76,6 +79,7 @@ TEXT_ONLY = {"idee.plan", "storyboard.angles", "storyboard.write", "storyboard.c
              "storyboard.adapt_to", "finder.plan_queries", "finder.local_queries", "finder.action_queries",
              "finder._sort_one", "script.write", "script.critique", "script.revise", "tone.guess",
              "pipeline._choose_music", "script_generator.generate_script", "planner.pick_keywords",
+             "discours.passages", "discours.moments", "discours.translate",
              "ai_scheduler._ask_ai_for_slots"}
 GROUNDED = {"idee.research"}            # Google Search: Gemini Flash only
 
