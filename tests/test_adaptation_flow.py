@@ -177,6 +177,32 @@ def test_a_failed_check_blocks_the_validation_and_a_voice_change_redoes_one_targ
     ap.validate_preview(pid, "chanA")
 
 
+def test_back_to_the_scripts_without_a_change_keeps_the_previews(project, fakes, monkeypatch):
+    p = new_project(project)
+    pid = p["project_id"]
+    ap.run_analysis(pid); ap.start_scripts(pid); ap.run_scripts(pid)
+    for ch in ("chanA", "chanB"):
+        ap.approve_script(pid, ch)
+    ap.start_voices(pid); ap.run_voices(pid)
+    from adaptation import render
+    made = []
+    real = render.render
+    monkeypatch.setattr(render, "render", lambda *a, **k: made.append(a[5]) or real(*a, **k))
+    ap.back_to_script(pid)
+    for ch in ("chanA", "chanB"):
+        ap.approve_script(pid, ch)
+    ap.start_voices(pid); ap.run_voices(pid)
+    assert made == [] and ap.load(pid)["status"] == "preview_review"         # nothing changed: nothing made again
+    ap.back_to_script(pid)
+    sc = ap.target(ap.load(pid), "chanA")["script"]
+    sc["passages"][0]["texte"] = "Un autre début :"
+    ap.edit_script(pid, "chanA", sc)
+    for ch in ("chanA", "chanB"):
+        ap.approve_script(pid, ch, force=True)
+    ap.start_voices(pid); ap.run_voices(pid)
+    assert len(made) == 1 and "chanA" in made[0]                              # only the changed one
+
+
 def test_a_failure_marks_the_step_and_retry_resumes_it(project, fakes, monkeypatch):
     from adaptation import reference
     p = new_project(project)

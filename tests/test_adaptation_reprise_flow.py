@@ -121,6 +121,13 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     ap.runner_for(pid, "voicing")(pid)
     assert len(fakes["voices"]) == 2
     assert fakes["beds"][-2:] == [("sa_musique.wav", 13.0), ("sa_musique.wav", 13.0)]
+    made = len(fakes["renders"])
+    rp.change_sound(pid, "sa_musique", 13)                                   # the same sound again: nothing changed
+    ap.runner_for(pid, "voicing")(pid)
+    assert len(fakes["renders"]) == made and ap.load(pid)["status"] == "preview_review"
+    rp.change_sound(pid, "sa_musique", 10)                                   # the music lower: made again
+    ap.runner_for(pid, "voicing")(pid)
+    assert len(fakes["renders"]) == made + 2
 
     ap.validate_preview(pid, "cestpourca")
     ap.start_render(pid)

@@ -294,16 +294,22 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
         t["voice"] = v
     timings = json.load(open(v["json"], encoding="utf-8"))
     bed = bed_for(p, t, timings, work, report)
-    report(f"{t['channel']} : montage", 0.5)
     out = os.path.join(work, f"reprise_{t['channel']}.mp4")
+    from captions import render as caption_render          # the channel's style in Réglages → Sous-titres, if any
+    captions = caption_render.channel_choice(t["channel"])
+    music = [bed is not None, t.get("music_path"), t.get("music_start"), r.get("musique"), r.get("volume_db")]
+    key = _ap().render_key("v1", r["clean"], r["plans"], r["script"], code, timings, v["mp3"], music,
+                           rm.caption_y(r["elements"]), captions, son_for(p, t), rm.__file__, caption_render.__file__)
+    if _ap().kept_video(t.get("preview"), key):
+        return t["preview"]                          # nothing changed since this preview: not made again
+    report(f"{t['channel']} : montage", 0.5)
     import render_slot
     with render_slot.SLOT:
-        from captions import render as caption_render          # the channel's style in Réglages → Sous-titres, if any
         rm.render(r["clean"], r["plans"], r["script"], code, timings, v["mp3"], bed, out, os.path.join(work, "parties"),
-                  rm.caption_y(r["elements"]), captions=caption_render.channel_choice(t["channel"]))
+                  rm.caption_y(r["elements"]), captions=captions)
     made = reprise.probe(out)
     ok = abs(made["duree"] - (timings["duration"] + 0.8)) < 1.0
-    return {"path": out, "son": son_for(p, t), "duree": round(made["duree"], 1),
+    return {"path": out, "son": son_for(p, t), "duree": round(made["duree"], 1), "cle": key,
             "checks": {"ok": ok, "problems": [] if ok else ["La vidéo n'a pas la durée de la voix."]}}
 
 

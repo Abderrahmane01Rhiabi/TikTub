@@ -70,6 +70,17 @@ def test_pauses_are_tightened_on_the_cut_timeline():
     assert [D.unmap(t, parts) for t in (1.0, 2.5, 4.5, 9.0)] == [1.0, 3.5, 8.5, 9.0]     # and the way back
 
 
+def test_the_fingerprint_of_a_montage(tmp_path):
+    f = tmp_path / "voix.mp3"
+    f.write_bytes(b"a")
+    key = ap.render_key("v1", str(f), {"x": [1, 2]}, {"b", "a"})
+    assert key == ap.render_key("v1", str(f), {"x": [1, 2]}, {"a", "b"})                 # the same inputs: the same
+    assert key != ap.render_key("v1", str(f), {"x": [1, 3]}, {"a", "b"})
+    f.write_bytes(b"ab")                                                                 # the voice made again
+    assert key != ap.render_key("v1", str(f), {"x": [1, 2]}, {"a", "b"})
+    assert not ap.kept_video({"cle": key, "path": str(tmp_path / "absent.mp4")}, key)
+
+
 def test_a_mood_shot_is_the_best_tagged_one_not_used_yet(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     src = str(tmp_path / "src.mp4")
@@ -477,9 +488,18 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
     f = dp.frise(ap.load(pid))
     dp.approve_plans(pid)
     ap.runner_for(pid, "voicing")(pid)
+    made = len(fakes["renders"])
     r = client.post(f"/api/adaptations/{pid}/discours/plans/back")
     assert r.status_code == 200 and r.json()["status"] == "plans_review"                # from the previews, back
     assert client.post(f"/api/adaptations/{pid}/discours/plans/back").status_code == 400
+    dp.approve_plans(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    assert len(fakes["renders"]) == made and ap.load(pid)["status"] == "preview_review"   # nothing changed: kept
+    dp.back_to_plans(pid)
+    dp.move_moment(pid, 0, 3)
+    dp.approve_plans(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    assert len(fakes["renders"]) == made + 1                                           # a shot moved: made again
     assert 1 in [x["index"] for x in f["retires"]] and 1 not in [b["index"] for b in f["plans"]]
 
 

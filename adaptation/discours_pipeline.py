@@ -481,16 +481,24 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
         if code != (d.get("langue") or "en") else set(d.get("mots_forts") or [])
     hit = _hit(p, parts, total, s)
     bed = bed_for(p, t, s, parts, total, work, report)
-    report(f"{t['channel']} : montage", 0.4)
     out = os.path.join(work, f"discours_{t['channel']}.mp4")
+    plan = plan_of(p, parts, total, hit)
+    signature = t.get("display_name") or t["channel"]
+    from captions import render as caption_render
+    music = [bed is not None, t.get("music_path"), d.get("chanson"), d.get("musique"), hit, total]  # the bed itself:
+    key = _ap().render_key("v1", pic, speech, plan, words, code, s, music, strong, t["channel"],     # made each time
+                           signature, son_for(p, t), D.__file__, caption_render.__file__)
+    if _ap().kept_video(t.get("preview"), key):
+        return t["preview"]                          # back from the plans, nothing changed: not made again
+    report(f"{t['channel']} : montage", 0.4)
     import render_slot
     with render_slot.SLOT:
-        D.render(pic, speech, plan_of(p, parts, total, hit), words, code, s, bed, out, os.path.join(work, "travail"),
-                 strong=strong, channel=t["channel"], signature=t.get("display_name") or t["channel"])
+        D.render(pic, speech, plan, words, code, s, bed, out, os.path.join(work, "travail"),
+                 strong=strong, channel=t["channel"], signature=signature)
     made = D.duration(out)
     ok = abs(made - total) < 0.6
     return {"path": out, "son": son_for(p, t), "duree": round(made, 1), "reglages": s, "mot_fort_a": round(hit, 2),
-            "checks": {"ok": ok, "problems": [] if ok else ["La vidéo n'a pas la durée de la parole."]}}
+            "cle": key, "checks": {"ok": ok, "problems": [] if ok else ["La vidéo n'a pas la durée de la parole."]}}
 
 
 def run_voices(pid: str, report: Optional[Report] = None, only: Optional[str] = None):

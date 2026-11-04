@@ -1940,6 +1940,36 @@ def _captions_of(t: Dict) -> Dict:
     return caption_render.channel_choice(t["channel"])
 
 
+MEDIA = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".png", ".jpg", ".jpeg", ".webp", ".ass", ".json",
+         ".py", ".ttf", ".otf")
+
+
+def render_key(*inputs) -> str:
+    """The fingerprint of everything a montage is made from: the same one again (back from the previews, nothing
+    changed) -> the video already made is kept. A file is read by its size and date, so a voice, a music, a clip or
+    the montage code itself made again changes it."""
+    import hashlib
+
+    def sig(x):
+        if isinstance(x, dict):
+            return {str(k): sig(v) for k, v in x.items()}
+        if isinstance(x, (list, tuple, set)):
+            out = [sig(v) for v in x]
+            return sorted(out, key=lambda v: json.dumps(v, sort_keys=True, default=str)) if isinstance(x, set) else out
+        if isinstance(x, str) and x.lower().endswith(MEDIA) and os.path.isfile(x):
+            st = os.stat(x)
+            return f"{x}|{st.st_size}|{int(st.st_mtime)}"
+        return x
+    return hashlib.md5(json.dumps(sig(list(inputs)), sort_keys=True, default=str).encode()).hexdigest()
+
+
+def kept_video(old: Optional[Dict], key: str) -> bool:
+    """The preview already made from exactly these inputs, still on disk, and its checks passed (a failed one is
+    always made again)."""
+    return bool(old and old.get("cle") == key and os.path.exists(old.get("path") or "")
+                and (old.get("checks") or {}).get("ok"))
+
+
 def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset: float) -> Dict:
     base = os.path.join(project_dir(p["project_id"]), t["channel"])
     voice_mp3 = os.path.join(base, "voice.mp3")
@@ -1957,6 +1987,14 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
     beats = _beats(t)
     fx = _effects(p, t, os.path.join(base, "work"))
     anns = _annotations(p, t, os.path.join(base, "work"), report, offset + share * 0.2, fx, beats)
+    from captions import render as caption_render
+    key = render_key("v1", preview, t["voice_id"], model, t["voice"]["passages"], t["voice"]["words"], p["clips"],
+                     voice_mp3, t["language"],
+                     p["credits"], t.get("music_path"), t.get("music_start"), anns, _style_of(t), fx, beats,
+                     tone.sound_rules(_tone(p, t)), _captions_of(t), render.__file__, caption_render.__file__)
+    if preview and kept_video(t.get("preview"), key):
+        t["style"] = _style_of(t)
+        return t["preview"]                         # nothing changed since this preview: not made again
     report(f"{'aperçu' if preview else 'rendu'} {t['channel']}", offset + share * 0.3)
     r = render.render(t["voice"]["passages"], t["voice"]["words"], p["clips"], voice_mp3, t["language"], out,
                       os.path.join(base, "work"), credit=p["credits"],
@@ -1968,7 +2006,7 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
     t["style"] = _style_of(t)           # the look really used (the channel's may have changed since the project began)
     r["recette"] = _recipe(p, t, r.get("recette") or {})
     c = checks.verify(out, voice_mp3, t["voice"]["passages"], [x["start"] for x in r.get("segments") or []] or None)
-    return {"path": out, "summary": r, "checks": c, "recette": r["recette"]}
+    return {"path": out, "summary": r, "checks": c, "recette": r["recette"], "cle": key}
 
 
 def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
