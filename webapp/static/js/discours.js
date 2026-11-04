@@ -56,7 +56,7 @@ async function dsCreationHtml(){
     <label class="f" style="margin-top:6px">Durée visée</label>
     <div class="seg" id="dsDuree">${[30, 45, 60].map(d => `<button class="seg-opt ${d === 45 ? 'active' : ''}" data-d="${d}">${d} s</button>`).join('')}</div>
     <div class="tiny" style="margin-top:4px">La voix et l'image de l'orateur sont gardées ; les sous-titres sont traduits dans la langue de chaque chaîne.
-      Les plans de coupe ne sont des extraits de films que si <b>toutes</b> les chaînes choisies les autorisent (Réglages → Discours).</div>`;
+      Cérémonies, émissions TV et archives sont toujours permises ; les extraits de films, séries ou clips seulement si <b>toutes</b> les chaînes choisies les autorisent (Réglages → Discours).</div>`;
 }
 
 function dsBindCreation(box){
@@ -156,7 +156,7 @@ function dsPlans(body, p){
   const d = p.discours;
   const kept = d.moments.filter(m => m.action === 'garder').length;
   body.innerHTML = `<div class="tiny">${kept}/${d.moments.length} plan(s) gardé(s). Chaque plan passe par-dessus l'orateur pendant que sa voix continue.
-      ${d.films ? '' : ' Pas d\'extraits de films (une des chaînes ne les autorise pas).'}</div>
+      ${d.films ? '' : ' Pas d\'extraits de films, séries ou clips (une des chaînes ne les autorise pas) ; les cérémonies et émissions TV sont permises.'}</div>
     <div class="grid-3">${d.moments.map(m => `
       <article class="chcard ds-m" data-i="${m.index}">
         <div class="chcard-head"><div class="who"><div class="name">${fmtSec(m.temps)} · « ${esc(m.mot)} »</div>
@@ -317,7 +317,7 @@ function dsChannelCard(card, ch, d){
       <div class="meta" style="margin-left:0">${esc(d.language)}</div></div></div>
     <div class="chcard-body">
       <label class="switch" style="color:var(--text)"><input type="checkbox" class="ds-films" ${s.films ? 'checked' : ''}>
-        <b>Extraits de films autorisés</b> <span class="tiny">plans de coupe tirés de films, séries, clips : risque de réclamation Content ID</span></label>
+        <b>Extraits de films autorisés</b> <span class="tiny">plans de coupe tirés de films, séries ou clips (fiction) : risque de réclamation Content ID. Les cérémonies, émissions TV et archives sont toujours permises.</span></label>
       ${dsSettingsHtml(s, { cadres: d.cadres, fonds: d.fonds, etalonnages: d.etalonnages, densites: d.densites, styles: d.styles })}
     </div>
     <div class="chcard-foot"><span class="note push ds-saved"></span></div>`;

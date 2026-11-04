@@ -385,6 +385,11 @@ STRICT_LINE = ("(ICI on ne nettoie rien : un logo de chaine TV ou de media — B
                "de l'image (le quart exterieur), « logo TV (centre) : <nom> » ou « filigrane (centre) : <nom> » s'il est "
                "ailleurs ou en travers de l'image ; le son n'est pas un defaut)")
 LOGO_FAULTS = re.compile(r"logo|filigrane|watermark", re.I)
+# "film" also says a TV show (rights, for the Adaptation); a Discours tells fiction apart: a ceremony, a speech or a
+# news archive is always allowed there, a film / series / music video only on the channels that allow them
+FICTION_LINE = ("\nAjoute aussi \"fiction\" : true si ce sont des images d'un FILM de fiction, d'une SERIE ou d'un CLIP "
+                "musical ; false pour une ceremonie, une emission TV, un discours, une interview, du sport, un reportage "
+                "ou une archive d'actualite.")
 
 
 def strict_faults(text: str) -> str:
@@ -945,7 +950,8 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
                         for n, u in enumerate(units, 1))       # numbered from 1: Gemini's reasons quote them
     prompt = CHECK_PROMPT.replace(LOGO_LINE, STRICT_LINE) if strict else CHECK_PROMPT
     faults = strict_faults if strict else real_faults
-    seen = _watch(url, g, prompt.format(plans=listing, modele=MODEL_PART.format(**model) if model else ""))
+    prompt = prompt.format(plans=listing, modele=MODEL_PART.format(**model) if model else "")
+    seen = _watch(url, g, prompt + FICTION_LINE if strict else prompt)
     r = seen["answer"]
     if isinstance(r, list) and len(r) == 1 and isinstance(r[0], dict):      # once came back wrapped in a list
         r = r[0]
@@ -990,6 +996,7 @@ def check(url: str, scenes_: List[Dict], plans: Optional[List[Dict]] = None, gem
         reach = sources.reachable(url) if _video_id(url) else True
     return {"verdict": VERDICT[LEVELS[best]], "par_scene": par_scene, "par_plan": par_plan, "moments": moments,
             "copie": copy, "remontage": r.get("remontage") is True, "film": r.get("film") is True,
+            "fiction": r.get("fiction") is True,
             "credits_vus": [str(x)[:60] for x in (r.get("credits_vus") or []) if x][:6]
             if r.get("remontage") is True and isinstance(r.get("credits_vus"), list) else [],
             "telechargeable": reach,

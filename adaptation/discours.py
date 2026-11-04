@@ -33,6 +33,8 @@ DENSITY = {"faible": 3.5, "normale": 2.5, "forte": 1.7}       # seconds of speec
 DURATIONS = (30, 45, 60)
 PAUSE_MIN, PAUSE_KEEP = 0.45, 0.25          # a pause longer than PAUSE_MIN is brought down to PAUSE_KEEP (s)
 PLAN_S, PLAN_FAST_S, CLIP_LEN = 1.9, 0.8, 2.0   # a cut-away before / after the rise; the extract downloaded
+MAX_CHECKS = 2                              # videos watched per moment at most (the person's call, 2026-11-04: ~$0.25
+                                            # a Discours instead of ~$0.50 with 4)
 DROP_AT = 0.45                              # the rise without a punchline: this part of the Short
 SPEECH_LUFS = -16.0                         # musique.bed sets the music under this level
 FONT = os.path.join("montage", "fonts", "Montserrat-SemiBold.ttf")
@@ -284,8 +286,9 @@ JSON uniquement : {{"moments": [{{"mot": "...", "temps": s, "scene": "...", "rec
 "mots_forts": ["..."], "mot_fort": {{"mot": "...", "temps": s}}}}"""
 WHAT = {True: ("une personne / un film / un lieu cite, OU une metaphore visuelle forte tiree d'un film connu (ex. « life "
                "is coming from you » -> Wonka qui souffle une bougie).", "extrait de film, ceremonie, archive, sport"),
-        False: ("une personne / un lieu / un evenement cite, OU une image concrete qui illustre la phrase. JAMAIS "
-                "d'extrait de film, de serie, de clip musical ni d'emission TV.", "ceremonie, archive, sport, reportage, nature")}
+        False: ("une personne / un lieu / un evenement cite (ceremonie, archive, emission TV, sport), OU une image concrete "
+                "qui illustre la phrase. JAMAIS d'extrait de film de fiction, de serie ni de clip musical.",
+                "ceremonie, emission TV, archive, sport, reportage, nature")}
 
 
 def nearest_word(words: List[List], text: str, near: float) -> Optional[List]:
@@ -339,7 +342,8 @@ def find_clip(item: Dict, films: bool, used: set, work: str, exclude: str = "", 
               checker: Optional[Callable] = None, search: Optional[Callable] = None,
               download: Optional[Callable] = None) -> Optional[Dict]:
     """The first YouTube result Gemini sees matching (exact / equivalent, nothing left on screen, not a film when
-    the channel refuses them) -> {"url", "titre", "niveau", "film", "extraits": [{"path", "debut"}]}, or None."""
+    the channel refuses them; a ceremony or a TV show is not one), MAX_CHECKS watched at most
+    -> {"url", "titre", "niveau", "film" (fiction), "extraits": [{"path", "debut"}]}, or None."""
     from adaptation import finder, sources
     checker = checker or (lambda url, scene, phrase: finder.check(url, [{"scene": scene, "phrase": phrase, "indices": ""}],
                                                                   strict=True))
@@ -356,12 +360,16 @@ def find_clip(item: Dict, films: bool, used: set, work: str, exclude: str = "", 
                 continue
             seen |= {key, title}
             cands.append(c)
-    for c in cands[:4]:
+    checks = 0
+    for c in cands:
+        if checks >= MAX_CHECKS:
+            break
         url = c["url"]
         vid = finder.same_video(url)
         dur = c.get("duration")
         if vid in used or (exclude and vid == finder.same_video(exclude)) or (dur and not 5 <= float(dur) <= 1800):
             continue
+        checks += 1
         try:
             v = checker(url, item.get("scene") or "", item.get("mot") or "")
         except Exception as e:
@@ -372,8 +380,8 @@ def find_clip(item: Dict, films: bool, used: set, work: str, exclude: str = "", 
         if level not in ("exacte", "equivalente") or e.get("defauts") or not ms or v.get("telechargeable") is False:
             log.append(f"✗ {(c.get('title') or url)[:50]} : {level}{' · ' + e['defauts'] if e.get('defauts') else ''}")
             continue
-        if v.get("film") and not films:
-            log.append(f"✗ {(c.get('title') or url)[:50]} : extrait de film (pas autorisé sur cette chaîne)")
+        if v.get("fiction") and not films:
+            log.append(f"✗ {(c.get('title') or url)[:50]} : film, série ou clip (pas autorisé sur cette chaîne)")
             continue
         got = []
         for k, m in enumerate(ms[:2]):
@@ -388,7 +396,7 @@ def find_clip(item: Dict, films: bool, used: set, work: str, exclude: str = "", 
         if got:
             log.append(f"✓ {(c.get('title') or url)[:50]} : {level}, {len(got)} moment(s)")
             return {"url": url, "titre": c.get("title") or v.get("title") or "", "niveau": level,
-                    "film": bool(v.get("film")), "extraits": got}
+                    "film": bool(v.get("fiction")), "extraits": got}
     return None
 
 

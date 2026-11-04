@@ -121,7 +121,7 @@ def test_moments_are_on_said_words_and_films_follow_the_channel():
     # « award » 0.5 s before « Denzel »: too close, the second one dropped
     assert [(m["mot"], m["temps"]) for m in r["moments"]] == [("young,", 4.0), ("award,", 8.5)]
     assert r["mots_forts"] == ["wings", "great"] and r["mot_fort"]["mot"] == "wings."
-    assert "JAMAIS d'extrait de film" in g.prompts[0]
+    assert "JAMAIS d'extrait de film de fiction" in g.prompts[0] and "emission TV" in g.prompts[0]
     D.moments(WORDS, 30.0, films=True, gemini=g)
     assert "Wonka" in g.prompts[-1]
 
@@ -131,7 +131,7 @@ def test_a_clip_is_watched_and_a_film_refused_unless_allowed(tmp_path):
     found = {"q1": [{"url": "https://www.youtube.com/watch?v=AAAAAAAAAAA", "title": "Film clip", "duration": 120},
                     {"url": "https://www.youtube.com/watch?v=BBBBBBBBBBB", "title": "Interview", "duration": 300}],
              "q2": [{"url": "https://youtu.be/AAAAAAAAAAA", "title": "Film clip", "duration": 120}]}
-    verdicts = {"AAAAAAAAAAA": {"film": True, "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 3}]}}},
+    verdicts = {"AAAAAAAAAAA": {"film": True, "fiction": True, "par_scene": {"0": {"niveau": "exacte", "moments": [{"debut": 3}]}}},
                 "BBBBBBBBBBB": {"film": False, "par_scene": {"0": {"niveau": "equivalente", "moments": [{"debut": 10.26},
                                                                                                       {"debut": 40}]}}}}
     watched = []
@@ -154,6 +154,22 @@ def test_a_clip_is_watched_and_a_film_refused_unless_allowed(tmp_path):
     assert allowed["film"] is True and allowed["url"].endswith("AAAAAAAAAAA")
     assert D.find_clip(item, True, {"youtube:AAAAAAAAAAA", "youtube:BBBBBBBBBBB"}, str(tmp_path), checker=checker,
                        search=lambda q: found[q], download=download) is None
+    # a ceremony is a TV show (« film » for the Adaptation) but not fiction: allowed without films
+    verdicts["AAAAAAAAAAA"]["fiction"] = False
+    assert D.find_clip(item, False, set(), str(tmp_path), checker=checker, search=lambda q: found[q],
+                       download=download)["url"].endswith("AAAAAAAAAAA")
+
+
+def test_two_videos_watched_per_moment_at_most(tmp_path):
+    many = [{"url": f"https://www.youtube.com/watch?v={c * 11}", "title": c, "duration": 60} for c in "ABCDE"]
+    watched = []
+
+    def checker(url, scene, phrase):
+        watched.append(url[-1])
+        return {"par_scene": {"0": {"niveau": "rien"}}}
+    assert D.find_clip({"mot": "x", "scene": "y", "recherches": ["q"]}, False, {"youtube:" + "A" * 11}, str(tmp_path),
+                       checker=checker, search=lambda q: many) is None
+    assert watched == ["B", "C"]                                           # an already used one is not counted
 
 
 def test_the_strict_check_keeps_the_logos_left_on_screen():
@@ -161,6 +177,7 @@ def test_the_strict_check_keeps_the_logos_left_on_screen():
     assert finder.LOGO_LINE in finder.CHECK_PROMPT
     assert finder.strict_faults("logo TV (coin) : BFM, logo TV (centre) : CNN") == "logo TV (centre) : CNN"
     assert finder.real_faults("logo TV (centre) : CNN") == ""
+    assert '"fiction"' in finder.FICTION_LINE and "ceremonie" in finder.FICTION_LINE
 
 
 def test_the_frame_is_centred_and_sized():
