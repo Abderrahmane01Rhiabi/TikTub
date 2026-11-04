@@ -22,7 +22,7 @@ sys.path.insert(0, str(ROOT))
 # generative modules) never overrides a variable that already exists, so
 # these empty values win over the real .env: no test can call Gemini,
 # OpenAI or ElevenLabs.
-for _key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY"):
+for _key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "PIXABAY_API_KEY"):
     os.environ[_key] = ""
 
 # webapp.main chdirs into its data dir when first imported (by the `client`

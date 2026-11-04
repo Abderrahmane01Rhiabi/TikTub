@@ -211,16 +211,31 @@ def run_search(pid: str, report: Optional[Report] = None):
             report("sous-titres traduits", 0.18)
             d["traduction"] = D.translate(d["local"], d.get("langue") or "en", _codes(p), d.get("orateur") or "")
             ap.save(p)
-        used = {(m.get("clip") or {}).get("url") for m in d["moments"] if m.get("clip")}
         from adaptation import finder
-        used = {finder.same_video(u) for u in used if u}
+        used = {finder.same_video(c["url"]) for c in (m.get("clip") for m in d["moments"]) if c and c.get("url")}
+        stock_used = stock_used_by(p)
         todo = [m for m in d["moments"] if "clip" not in m]
+        missing = [m for m in todo if not m.get("ambiance")]
+        if missing:                                  # a project made before the mood shots
+            for m, q in zip(missing, D.ambiance_for(missing)):
+                m["ambiance"] = q
         for k, m in enumerate(todo):
             report(f"plans de coupe ({k + 1}/{len(todo)})", 0.22 + 0.75 * k / max(1, len(todo)))
             log: List[str] = []
-            got = D.find_clip(m, films_ok(p), used, work_dir(p, "plans"), exclude=p["reference_url"], log=log)
+            got = None
+            if m.get("type") != "ambiance":          # a person, a place, an event: shown, found on YouTube and watched
+                got = D.find_clip(m, films_ok(p), used, work_dir(p, "plans"), exclude=p["reference_url"], log=log)
+            if not got:                              # an idea, an emotion, or nothing found: a mood shot (Pixabay)
+                try:
+                    got = D.stock_clip(m.get("ambiance") or "", stock_used, work_dir(p, "plans"))
+                except Exception as e:
+                    log.append(f"✗ Pixabay : {str(e)[:80]}")
+                if got:
+                    log.append(f"✓ plan d'ambiance « {m.get('ambiance')} »")
             m.update(clip=got, action="garder" if got else "retirer", journal=log[-4:])
-            if got:
+            if got and got.get("stock"):
+                stock_used.add(got["stock"])
+            elif got:
                 used.add(finder.same_video(got["url"]))
             ap.save(p)
         p.update(status="plans_review", error=None, failed_step=None)
@@ -228,6 +243,16 @@ def run_search(pid: str, report: Optional[Report] = None):
     except Exception as e:
         ap.fail(pid, "searching", e)
     report("terminé", 1.0)
+
+
+def stock_used_by(p: Dict) -> set:
+    """The mood shots not to take again: those any channel of the project used (broll_usage, like the drones: the
+    same shot again and again reads as repetitive content), and those already in this project."""
+    import db
+    out = {(m.get("clip") or {}).get("stock") for m in p["discours"].get("moments") or []}
+    for t in p["targets"]:
+        out |= set(db.broll_last_used(t["channel"]))
+    return {x for x in out if x}
 
 
 def set_moment(pid: str, index: int, action: str) -> Dict:
@@ -493,6 +518,10 @@ def run_final(pid: str, report: Optional[Report] = None):
             if thumb:
                 rec["thumbnail_path"] = thumb
             db.upsert_video(rec["video_id"], rec)
+            shots = [m["clip"]["stock"] for m in p["discours"]["moments"] or []
+                     if m.get("action") == "garder" and (m.get("clip") or {}).get("stock")]
+            if shots:                                # remembered per channel, like the drones
+                db.record_broll_usage(t["channel"], shots, rec["video_id"])
             t.update(video_id=rec["video_id"], final={"path": dest})
             ap.save(p)
         waiting = [t for t in p["targets"] if not t.get("video_id")]

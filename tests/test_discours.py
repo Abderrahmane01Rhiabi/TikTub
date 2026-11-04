@@ -5,6 +5,7 @@ Gemini, Whisper, Demucs, YouTube and ffmpeg replaced by fakes."""
 
 import json
 import os
+import shutil
 import subprocess
 
 import pytest
@@ -68,13 +69,50 @@ def test_pauses_are_tightened_on_the_cut_timeline():
     assert D.remap(8.5, parts) == 4.5 and D.remap(20, parts) == 5.0
 
 
+def test_a_mood_shot_is_the_best_tagged_one_not_used_yet(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    src = str(tmp_path / "src.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1920x1080:rate=30:duration=6",
+                    "-c:v", "libx264", "-preset", "ultrafast", src], check=True)
+    hits = [{"id": 1, "tags": "subway, train, man", "duration": 6, "pageURL": "p1",
+             "videos": {"medium": {"url": "u1", "width": 1920}}},
+            {"id": 2, "tags": "boxer, training, gym, dark", "duration": 6, "pageURL": "p2",
+             "videos": {"medium": {"url": "u2", "width": 1920}}},
+            {"id": 3, "tags": "boxer, gym", "duration": 6, "pageURL": "p3", "videos": {"small": {"url": "u3", "width": 960}}}]
+
+    class Answer:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"hits": hits}
+    fetched = []
+
+    def fetch(url, dest):
+        fetched.append(url)
+        shutil.copy(src, dest)
+    got = D.stock_clip("boxer training dark gym", set(), str(tmp_path / "w"), api_key="k", get=lambda *a, **k: Answer(),
+                       fetch=fetch)
+    assert got["stock"] == "pixabay:2" and fetched == ["u2"] and got["niveau"] == "ambiance"
+    assert abs(D.duration(got["extraits"][0]["path"]) - 2.3) < 0.2
+    again = D.stock_clip("boxer training dark gym", {"pixabay:2"}, str(tmp_path / "w"), api_key="k",
+                         get=lambda *a, **k: Answer(), fetch=fetch)
+    assert again["stock"] == "pixabay:1"                  # the used one skipped; the 960-px one never taken
+    assert D.stock_clip("x", set(), str(tmp_path), api_key="") is None
+
+
+def test_the_speaker_comes_first():
+    plan = D.shots([(0.1, ["a.mp4"]), (5.0, ["b.mp4"])], [i * 0.5 for i in range(40)], 20.0, drop=10.0)
+    assert plan[0][0] == D.HOOK_S
+
+
 def test_cut_aways_end_on_words_and_quicken_after_the_rise():
     starts = [i * 0.5 for i in range(40)]
-    plan = D.shots([(1.0, ["a.mp4", "b.mp4"]), (6.0, ["c.mp4"]), (12.0, ["d.mp4"])], starts, 20.0, drop=10.0)
-    assert plan[0][:3] == (1.0, 2.5, "a.mp4")                              # 1.9 s at most, ended on a word
-    assert plan[1][:3] == (2.5, 4.0, "b.mp4")                              # its second extract right after
-    crowded = D.shots([(1.0, ["a.mp4", "b.mp4"]), (1.2, ["c.mp4"])], starts, 20.0, drop=10.0)
-    assert [x[2] for x in crowded] == ["a.mp4", "c.mp4"] and crowded[1][0] == 2.0     # two at once: one after the other
+    plan = D.shots([(3.0, ["a.mp4", "b.mp4"]), (8.0, ["c.mp4"]), (12.0, ["d.mp4"])], starts, 20.0, drop=10.0)
+    assert plan[0][:3] == (3.0, 4.5, "a.mp4")                              # 1.9 s at most, ended on a word
+    assert plan[1][:3] == (4.5, 6.0, "b.mp4")                              # its second extract right after
+    crowded = D.shots([(3.0, ["a.mp4", "b.mp4"]), (3.2, ["c.mp4"])], starts, 20.0, drop=10.0)
+    assert [x[2] for x in crowded] == ["a.mp4", "c.mp4"] and crowded[1][0] == 4.0     # two at once: one after the other
     assert [x[2] for x in plan].count("d.mp4") == 2                        # after the rise: two quick plans
     assert all(e - s >= 0.5 for s, e, _, _ in plan)
     assert all(plan[i][1] <= plan[i + 1][0] + 1e-6 for i in range(len(plan) - 1))
@@ -251,8 +289,12 @@ def fakes(monkeypatch, tmp_path):
         return pic, snd
     monkeypatch.setattr(D, "cut", cut)
     monkeypatch.setattr(D, "moments", lambda local, speech, films, density="normale", speaker="": {
-        "moments": [{"mot": "award,", "temps": 7.0, "scene": "trophée", "recherches": ["afi award"]},
-                    {"mot": "Denzel", "temps": 7.5, "scene": "Denzel", "recherches": ["denzel"]}],
+        "moments": [{"mot": "award,", "temps": 7.0, "scene": "trophée", "recherches": ["afi award"], "type": "precis",
+                     "ambiance": "golden trophy"},
+                    {"mot": "Denzel", "temps": 7.5, "scene": "Denzel", "recherches": ["denzel"], "type": "precis",
+                     "ambiance": "man walking alone night"},
+                    {"mot": "great.", "temps": 5.0, "scene": "la grandeur", "recherches": ["x"], "type": "ambiance",
+                     "ambiance": "mountain summit sunrise"}],
         "mots_forts": ["award"], "mot_fort": {"mot": "great.", "temps": 6.5}})
     calls["films"] = []
 
@@ -267,6 +309,17 @@ def fakes(monkeypatch, tmp_path):
         return {"url": "https://www.youtube.com/watch?v=CCCCCCCCCCC", "titre": "AFI", "niveau": "exacte", "film": False,
                 "extraits": [{"path": path, "debut": 2.0}]}
     monkeypatch.setattr(D, "find_clip", find_clip)
+    calls["stock"] = []
+
+    def stock_clip(query, used, work, **kw):
+        calls["stock"].append((query, sorted(used)))
+        if query == "golden trophy":
+            return None
+        path = os.path.join(work, f"pixabay_{len(calls['stock'])}.mp4")
+        open(path, "wb").write(b"x")
+        return {"url": "https://pixabay.com/x", "titre": query, "niveau": "ambiance", "film": False,
+                "stock": f"pixabay:{len(calls['stock'])}", "extraits": [{"path": path, "debut": 0.0}]}
+    monkeypatch.setattr(D, "stock_clip", stock_clip)
 
     def translate(local, source, codes, speaker="", gemini=None):
         rows = [{"i0": a, "i1": b, **{c: f"{c} {k}" for c in codes}} for k, (a, b) in enumerate(D.phrases_of(local))]
@@ -330,10 +383,13 @@ def test_a_discours_from_the_link_to_publication(fakes):
     p = ap.load(pid)
     assert p["status"] == "plans_review", p.get("error")
     assert fakes["films"] == [False, False]           # one channel refuses films: the whole project does
-    assert [m["action"] for m in p["discours"]["moments"]] == ["garder", "retirer"]
+    # « Denzel »: nothing on YouTube -> a mood shot; « great. » (an idea): straight to Pixabay, never watched
+    assert [(m["action"], (m["clip"] or {}).get("niveau")) for m in p["discours"]["moments"]] == [
+        ("garder", "exacte"), ("garder", "ambiance"), ("garder", "ambiance")]
+    assert [q for q, _ in fakes["stock"]] == ["man walking alone night", "mountain summit sunrise"]
+    assert fakes["stock"][1][1] == ["pixabay:1"]                            # never the same shot twice
     assert p["discours"]["local"][0] == ["years", 0.15, 0.55]
-    with pytest.raises(ap.PipelineError):
-        dp.set_moment(pid, 1, "garder")                                       # no picture to keep
+    dp.set_moment(pid, 2, "retirer")
     dp.link_moment(pid, 1, "https://www.youtube.com/watch?v=DDDDDDDDDDD", 12.5)
     assert ap.load(pid)["discours"]["moments"][1]["clip"]["a_la_main"] is True
 
@@ -366,6 +422,24 @@ def test_a_discours_from_the_link_to_publication(fakes):
     assert rec["original_title"] == "Freeman (fr) 🔥" and rec["recette"]["mode"] == "discours"
     assert rec["recette"]["son"] == "choisie" and rec["recette"]["musique"] == "choisie.mp3"
     assert rec["recette"]["orateur"] == "Morgan Freeman" and "Morgan Freeman" in rec["ai_data"]["description"]
+    assert db.broll_last_used("cestpourca") == {}         # the mood shot was taken out: nothing remembered
+
+
+def test_a_used_mood_shot_is_remembered_per_channel(fakes):
+    p = ap.create("https://www.youtube.com/watch?v=XIGWjzqKTp0", [], fakes["channels"][:1], mode="discours")
+    pid = p["project_id"]
+    for step in ("analysing",):
+        ap.runner_for(pid, step)(pid)
+    dp.approve_passage(pid)
+    ap.runner_for(pid, "searching")(pid)
+    dp.approve_plans(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    ap.validate_preview(pid, "cestpourca")
+    ap.start_render(pid)
+    ap.runner_for(pid, "rendering")(pid)
+    assert set(db.broll_last_used("cestpourca")) == {"pixabay:1", "pixabay:2"}
+    p2 = ap.create("https://www.youtube.com/watch?v=other", [], fakes["channels"][:1], mode="discours")
+    assert {"pixabay:1", "pixabay:2"} <= dp.stock_used_by(p2)
 
 
 def test_a_discours_sound_falls_back_and_unknown_choices_are_refused(fakes):

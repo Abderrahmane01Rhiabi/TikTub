@@ -33,6 +33,7 @@ DENSITY = {"faible": 3.5, "normale": 2.5, "forte": 1.7}       # seconds of speec
 DURATIONS = (30, 45, 60)
 PAUSE_MIN, PAUSE_KEEP = 0.45, 0.25          # a pause longer than PAUSE_MIN is brought down to PAUSE_KEEP (s)
 PLAN_S, PLAN_FAST_S, CLIP_LEN = 1.9, 0.8, 2.0   # a cut-away before / after the rise; the extract downloaded
+HOOK_S = 2.0                                # the speaker alone first: no cut-away before this (s)
 MAX_CHECKS = 2                              # videos watched per moment at most (the person's call, 2026-11-04: ~$0.25
                                             # a Discours instead of ~$0.50 with 4)
 DROP_AT = 0.45                              # the rise without a punchline: this part of the Short
@@ -279,10 +280,17 @@ pendant que la voix continue. Donne {n} moments d'illustration DISTINCTS sur tou
 debuts). Chacun : {quoi}
 Seulement des images qui EXISTENT sur YouTube ({ou}), jamais une scene a tourner.
 Pour chacun : "mot" (le mot exact prononce ou le plan commence, tel qu'il est ecrit), "temps", "scene" (ce qu'on doit
-voir, une phrase), "recherches" (2 recherches YouTube en anglais, la 2e plus large).
+voir, une phrase), "type" ("precis" quand la phrase cite une personne, un film, un lieu ou un evenement qu'il faut
+MONTRER ; "ambiance" quand elle dit une idee ou une emotion : la grandeur, l'echec, n'abandonne jamais...),
+"recherches" (2 recherches YouTube en anglais, la 2e plus large) et "ambiance" (une recherche en anglais pour une
+banque d'images libres, 3 a 6 mots, un plan d'ambiance cinematographique de chaine de motivation qui porte l'emotion
+de la phrase : une personne seule qui marche, un sportif qui s'entraine, une silhouette face a la ville, la pluie, une
+route vide, un lever de soleil... ex. "man walking alone night city", "boxer training dark gym").
+Environ la moitie des moments en "ambiance", jamais deux recherches "ambiance" identiques.
 Puis "mots_forts" : 3 a 6 mots du passage (tels qu'ils sont ecrits) qui portent l'idee, et "mot_fort" : LE mot de la
 chute, celui ou la musique doit monter.
-JSON uniquement : {{"moments": [{{"mot": "...", "temps": s, "scene": "...", "recherches": ["...", "..."]}}],
+JSON uniquement : {{"moments": [{{"mot": "...", "temps": s, "scene": "...", "type": "precis|ambiance",
+"recherches": ["...", "..."], "ambiance": "..."}}],
 "mots_forts": ["..."], "mot_fort": {{"mot": "...", "temps": s}}}}"""
 WHAT = {True: ("une personne / un film / un lieu cite, OU une metaphore visuelle forte tiree d'un film connu (ex. « life "
                "is coming from you » -> Wonka qui souffle une bougie).", "extrait de film, ceremonie, archive, sport"),
@@ -321,7 +329,9 @@ def moments(local: List[List], speech_s: float, films: bool, density: str = "nor
             if not w or not qs or w[1] - last < 1.5:
                 continue
             last = w[1]
-            out.append({"mot": w[0], "temps": w[1], "scene": str(m.get("scene") or ""), "recherches": qs})
+            out.append({"mot": w[0], "temps": w[1], "scene": str(m.get("scene") or ""), "recherches": qs,
+                        "type": "ambiance" if m.get("type") == "ambiance" else "precis",
+                        "ambiance": " ".join(str(m.get("ambiance") or "").split())[:80]})
         if out:
             strong = [bare(x) for x in (r.get("mots_forts") or []) if bare(x)][:6]
             mf = r.get("mot_fort") if isinstance(r.get("mot_fort"), dict) else {}
@@ -400,11 +410,85 @@ def find_clip(item: Dict, films: bool, used: set, work: str, exclude: str = "", 
     return None
 
 
+# ---------------------------------------------------------------- mood shots (Pixabay: free, no logo, nothing to watch)
+
+STOCK_DIR = os.path.join("assets", "stock_discours")   # every clip downloaded once, shared by the projects
+STOCK_MIN_W = 1920
+STOCK_STOP = {"the", "and", "with", "into", "from", "cinematic", "shot", "footage", "dramatic", "lighting", "slow",
+              "motion", "video", "scene"}
+AMBIANCE = """Voici des moments d'un discours de motivation, chacun avec ce qu'on devait y voir :
+{lignes}
+Pour chacun, une recherche en anglais pour une banque d'images libres (3 a 6 mots) : un plan d'ambiance
+cinematographique de chaine de motivation qui porte l'emotion de la phrase (une personne seule qui marche, un sportif
+qui s'entraine, une silhouette face a la ville, la pluie, une route vide, un lever de soleil...). Toutes differentes.
+JSON uniquement : {{"recherches": ["...", ...]}} (dans l'ordre, une par moment)"""
+
+
+def ambiance_for(items: List[Dict], gemini=None) -> List[str]:
+    """The stock searches of moments that have none (a project made before them): one short text call."""
+    from adaptation.sources import _gemini
+    g = gemini or _gemini()
+    lines = "\n".join(f"{k + 1}. « {m.get('mot')} » : {m.get('scene')}" for k, m in enumerate(items))
+    r = g._generate_content([{"text": AMBIANCE.format(lignes=lines)}], max_tokens=2000, timeout=120, temperature=0.5)
+    qs = [" ".join(str(q).split())[:80] for q in ((r or {}).get("recherches") or [])] if isinstance(r, dict) else []
+    return [qs[k] if k < len(qs) and qs[k] else "person walking alone cinematic" for k in range(len(items))]
+
+
+def stock_clip(query: str, used: set, work: str, api_key: Optional[str] = None, get: Optional[Callable] = None,
+               fetch: Optional[Callable] = None) -> Optional[Dict]:
+    """A Pixabay shot for `query` the channels have not used yet (Full HD at least), downloaded once into STOCK_DIR,
+    its 2 s taken a third of the way in -> a clip like find_clip's ({"stock": "pixabay:<id>"}), or None."""
+    import requests
+    key = os.getenv("PIXABAY_API_KEY") if api_key is None else api_key
+    if not key or not query:
+        return None
+    get = get or requests.get
+    r = get("https://pixabay.com/api/videos/", params={"key": key, "q": query, "per_page": 30, "safesearch": "true"},
+            timeout=30)
+    r.raise_for_status()
+    words = {w for w in re.findall(r"[a-z]+", query.lower()) if len(w) > 2 and w not in STOCK_STOP}
+
+    def fit(hit):                     # the shot whose tags say the most of the search (Pixabay ranks by popularity)
+        tags = set(re.findall(r"[a-z]+", (hit.get("tags") or "").lower()))
+        return len(words & tags)
+    hits = r.json().get("hits", [])
+    for hit in sorted(hits, key=lambda h: -fit(h)):              # stable: Pixabay's order between equals
+        sid = f"pixabay:{hit['id']}"
+        if sid in used:
+            continue
+        v = next((hit["videos"][k] for k in ("medium", "large", "small")
+                  if hit["videos"].get(k, {}).get("url") and hit["videos"][k].get("width", 0) >= STOCK_MIN_W), None)
+        if not v:
+            continue
+        os.makedirs(STOCK_DIR, exist_ok=True)
+        src = os.path.join(STOCK_DIR, f"{hit['id']}.mp4")
+        if not os.path.exists(src):
+            if fetch:
+                fetch(v["url"], src)
+            else:
+                with requests.get(v["url"], timeout=300, stream=True) as dl:
+                    dl.raise_for_status()
+                    with open(src + ".part", "wb") as fh:
+                        for chunk in dl.iter_content(1 << 20):
+                            fh.write(chunk)
+                os.replace(src + ".part", src)
+        os.makedirs(work, exist_ok=True)
+        a = round(max(0.0, float(hit.get("duration") or 6) / 3), 1)
+        out = os.path.join(work, f"pixabay_{hit['id']}.mp4")
+        if not os.path.exists(out):
+            _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{a:.1f}", "-t", f"{CLIP_LEN + 0.3:.1f}", "-i", src,
+                  "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", out])
+        return {"url": hit.get("pageURL") or "", "titre": hit.get("tags") or query, "niveau": "ambiance", "film": False,
+                "stock": sid, "recherche": query, "extraits": [{"path": out, "debut": 0.0}]}
+    return None
+
+
 def shots(anchors: List[Tuple[float, List[str]]], word_starts: List[float], total: float, drop: float) -> List[Tuple]:
-    """The cut-aways on the cut timeline: [(start, end, clip, offset in the clip)]. Each extract up to PLAN_S s, ending
+    """The cut-aways on the cut timeline: [(start, end, clip, offset in the clip)], none before HOOK_S (the speaker
+    first). Each extract up to PLAN_S s, ending
     on a word like their cuts; after the rise, two quick plans of PLAN_FAST_S; two moments at once: one after the other."""
     out, starts, free = [], [], 0.0
-    anchors = sorted(anchors, key=lambda x: x[0])
+    anchors = sorted(((max(t, HOOK_S), c) for t, c in anchors), key=lambda x: x[0])
     for t, _ in anchors:
         starts.append(max(t, free))
         free = starts[-1] + 1.0
