@@ -34,6 +34,7 @@
     <button class="step" data-i="13" data-space="settings">Voix</button>
     <button class="step" data-i="14" data-space="settings">Effets sonores</button>
     <button class="step" data-i="16" data-space="settings">Sous-titres</button>
+    <button class="step" data-i="17" data-space="settings">Discours</button>
     <button class="step" data-i="15" data-space="settings">Modèles d'IA</button>
     <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
     <button class="step" data-i="9" data-space="settings">Stockage</button>
@@ -165,7 +166,7 @@
     <dialog id="addChannelDialog"></dialog>
     <div class="navbar">
       <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 10</span>
+      <span class="progress-text">Réglages · 1 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -181,7 +182,7 @@
     <div class="grid-3" id="backgroundsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 10</span>
+      <span class="progress-text">Réglages · 2 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -199,7 +200,7 @@
     <div class="stack" id="backupList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 9 sur 10</span>
+      <span class="progress-text">Réglages · 10 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -215,7 +216,7 @@
     <div class="stack" id="storageView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 10 sur 10</span>
+      <span class="progress-text">Réglages · 11 sur 11</span>
       <button class="btn primary next">Terminé ✓</button>
     </div>
   </section>
@@ -300,7 +301,7 @@
     <div class="grid-3" id="montageSettingsGrid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 10</span>
+      <span class="progress-text">Réglages · 3 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -324,7 +325,7 @@
     <div id="brollGrid" class="broll-grid"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 4 sur 10</span>
+      <span class="progress-text">Réglages · 4 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -356,7 +357,7 @@
     <div class="stack" id="songList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 5 sur 10</span>
+      <span class="progress-text">Réglages · 5 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -384,7 +385,7 @@
     <div class="stack" id="sfxList"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 6 sur 10</span>
+      <span class="progress-text">Réglages · 6 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -412,7 +413,23 @@
     <div class="grid-3" id="capChannels"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 7 sur 10</span>
+      <span class="progress-text">Réglages · 7 sur 11</span>
+      <button class="btn primary next">Suivant →</button>
+    </div>
+  </section>
+
+  <!-- Screen 17 : each channel's « style Discours » and whether its cut-aways may be films (Réglages) -->
+  <section class="screen" data-idx="17">
+    <div class="page-head">
+      <div>
+        <h1 class="h1">Discours</h1>
+        <p class="sub">Le style des vidéos « Discours » de chaque chaîne : le cadre, le fond, les sous-titres, la musique. Chaque vidéo peut s'en écarter à son aperçu. Et si ses plans de coupe peuvent être des extraits de films.</p>
+      </div>
+    </div>
+    <div class="grid-3" id="dsChannels"></div>
+    <div class="navbar">
+      <button class="btn secondary prev">← Précédent</button>
+      <span class="progress-text">Réglages · 8 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -429,7 +446,7 @@
     <div class="stack" id="aiModelsView"></div>
     <div class="navbar">
       <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 8 sur 10</span>
+      <span class="progress-text">Réglages · 9 sur 11</span>
       <button class="btn primary next">Suivant →</button>
     </div>
   </section>
@@ -524,6 +541,7 @@ const PAGE_BUILD = '__TIKTUB_BUILD__';
 <script src="/static/js/sous_titres.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/adaptation.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/reprise.js?v=__TIKTUB_BUILD__"></script>
+<script src="/static/js/discours.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/roblox.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/publication.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/dashboard.js?v=__TIKTUB_BUILD__"></script>

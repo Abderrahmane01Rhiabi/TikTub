@@ -390,3 +390,13 @@ def test_the_new_ai_steps_are_in_the_model_table():
     import ai_models
     for step in ("discours.passages", "discours.moments", "discours.translate"):
         assert step in ai_models.STEPS and step in ai_models.TEXT_ONLY
+
+
+def test_the_page_loads_the_discours_screens(client):
+    page = client.get("/").text
+    assert "/static/js/discours.js" in page and page.index("reprise.js") < page.index("discours.js")
+    assert 'data-idx="17"' in page and 'id="dsChannels"' in page and "Réglages · 8 sur 11" in page
+    js = client.get("/static/js/discours.js").text
+    assert "function renderDiscours" in js and "discours/passage/approve" in js and "function loadDiscoursSettings" in js
+    core = client.get("/static/js/core.js").text
+    assert "settings: [0, 1, 11, 12, 13, 14, 16, 17, 15, 8, 9]" in core

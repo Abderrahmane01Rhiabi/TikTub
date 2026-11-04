@@ -186,6 +186,9 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         base["reprise"] = _serialize_reprise(p, targets)
     if p.get("mode") == "discours":
         base["discours"] = _serialize_discours(p, targets, full)
+        d = p.get("discours") or {}
+        titre = (d.get("choix") or {}).get("titre")
+        base["subject"] = " — ".join(x for x in (d.get("orateur"), titre) if x) or d.get("titre_video") or None
     if full:
         ref = p.get("reference") or {}
         base["reference"] = {k: ref.get(k) for k in ("sujet", "question", "credits", "faits_douteux", "duree_s",

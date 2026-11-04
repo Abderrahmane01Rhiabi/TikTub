@@ -229,5 +229,5 @@ def test_the_screen_is_in_reglages():
     core = open(os.path.join(static, "js", "core.js"), encoding="utf-8").read()
     js = open(os.path.join(static, "js", "reglages.js"), encoding="utf-8").read()
     assert 'data-idx="15"' in html and 'data-i="15" data-space="settings">Modèles d\'IA' in html
-    assert "15: [() => loadAiModels()" in core and "settings: [0, 1, 11, 12, 13, 14, 16, 15, 8, 9]" in core
+    assert "15: [() => loadAiModels()" in core and "settings: [0, 1, 11, 12, 13, 14, 16, 17, 15, 8, 9]" in core
     assert "async function loadAiModels" in js and "esc(" in js.split("async function loadAiModels")[1][:3000]
