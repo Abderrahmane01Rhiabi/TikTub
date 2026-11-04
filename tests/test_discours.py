@@ -538,7 +538,7 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client, 
     assert client.get(f"/api/adaptations/{pid}").json()["discours"]["direct"]["debut"] == at   # the picture played with it
     client.get("/api/discours/live_captions?style=inconnu&lang=ar")
     assert seen["style"] == "escalier" and seen["words"] is None                      # unknown or not for Arabic: Escalier
-    assert client.get("/api/discours/exemple").status_code in (200, 404)
+    assert client.get("/api/discours/exemple").status_code == 404     # the fakes' passage is no video: skipped
     made = len(fakes["renders"])
     r = client.post(f"/api/adaptations/{pid}/discours/plans/back")
     assert r.status_code == 200 and r.json()["status"] == "plans_review"                # from the previews, back

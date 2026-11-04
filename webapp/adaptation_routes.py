@@ -1206,9 +1206,12 @@ def discours_example():
             out = os.path.join("temp", "discours_exemple.mp4")
             if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(seg):
                 os.makedirs("temp", exist_ok=True)
-                D._run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", "2", "-i", seg, "-t", "8", "-an", "-vf",
-                        "scale=-2:480", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-movflags", "+faststart",
-                        out])
+                try:
+                    D._run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", "2", "-i", seg, "-t", "8", "-an", "-vf",
+                            "scale=-2:480", "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-movflags",
+                            "+faststart", out])
+                except Exception:
+                    continue                             # an unreadable passage: the one before
             return FileResponse(out, media_type="video/mp4")
     raise HTTPException(status_code=404, detail="Aucun discours encore découpé.")
 
