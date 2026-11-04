@@ -21,6 +21,7 @@ every channel here, the person's choice 2026-11-04), "choisie" (a shared song th
 punchline), "notre_musique" (the channel's track), "sans_musique".
 """
 
+import json
 import os
 import shutil
 from datetime import datetime
@@ -500,6 +501,8 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
     try:                                             # what this montage saw, ready for the live preview
         report(f"{t['channel']} : aperçu direct", 0.95)
         live_seen(p, t["channel"], D.frame_box(s), made_zone=D.frame_box(s))
+        live_voice(p)                                # and « Écouter »: the voice, this choice's music
+        live_bed(p, t["channel"], son_for(p, t), d.get("chanson"), s["drop_punchline"])
     except Exception as e:
         print(f"⚠️ Analyse pour l'aperçu direct impossible ({e})")
     return {"path": out, "son": son_for(p, t), "duree": round(made, 1), "reglages": s, "mot_fort_a": round(hit, 2),
@@ -584,6 +587,53 @@ def live_seen(p: Dict, channel: str, zone, made_zone=None) -> Optional[tuple]:
         size = (max(2, bw // got["scale"]), max(2, bh // got["scale"]))
         scene = Scene([(t, cv2.resize(f, size)) for t, f in got["frames"]], tuple(zone), got["scale"])
     return (f"{made}|{mtime}", faces, scene)
+
+
+LIVE_GAP = 3.0                       # the live listening's music: made this many dB under the voice, lowered by the page
+
+
+def live_voice(p: Dict) -> Optional[str]:
+    """The speech as in the video (its pauses cut, at the montage's level): what « Écouter » plays."""
+    speech = os.path.join(work_dir(p, "passage"), "parole.wav")
+    if not os.path.exists(speech):
+        return None
+    out = os.path.join(work_dir(p, "passage"), "ecoute_voix.wav")
+    if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(speech):
+        D._run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", speech, "-af",
+                f"loudnorm=I={D.SPEECH_LUFS}:TP=-1.5:LRA=11,aresample=48000", out])
+    return out
+
+
+def live_bed(p: Dict, channel: str, son: str, chanson: Optional[str], drop: bool) -> Optional[str]:
+    """This channel's music for « Écouter », as the montage would place it (its rise on the punchline or not), LIVE_GAP
+    dB under the voice; None: no music. Made once per choice. A smart song not chosen yet is never asked for here."""
+    import hashlib
+    d = p["discours"]
+    t = next((x for x in p["targets"] if x["channel"] == channel), None)
+    speech = os.path.join(work_dir(p, "passage"), "parole.wav")
+    if not t or not os.path.exists(speech):
+        raise DiscoursPipelineError("Fais les vidéos une fois avant d'écouter.")
+    if son not in SONS:
+        raise DiscoursPipelineError("Choix du son inconnu.")
+    if son == "intelligente" and not d.get("musique"):
+        raise DiscoursPipelineError("La musique intelligente n'est pas encore choisie : refais les vidéos une fois.")
+    q = {**p, "discours": {**d, "son": son, "chanson": os.path.basename(chanson or d.get("chanson") or "")}}
+    son = son_for(q, t)
+    if son == "sans_musique":
+        return None
+    s = {**settings_for(p, t), "volume_db": LIVE_GAP, "drop_punchline": bool(drop)}
+    parts = timeline(q, s)
+    total = D.duration(speech)
+    key = hashlib.md5(json.dumps([son, q["discours"]["chanson"], drop, d.get("musique"), t.get("music_path"), parts,
+                                  os.path.getmtime(speech)], sort_keys=True, default=str).encode()).hexdigest()[:12]
+    work = work_dir(p, "cibles", channel, "ecoute")
+    out = os.path.join(work, f"musique_{key}.wav")
+    if not os.path.exists(out):
+        made = bed_for(q, t, s, parts, total, work, lambda phase, f: None)
+        if not made:
+            return None
+        os.replace(made, out)
+    return out
 
 
 def back_to_plans(pid: str) -> Dict:

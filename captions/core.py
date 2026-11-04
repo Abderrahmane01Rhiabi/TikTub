@@ -186,6 +186,8 @@ class Ctx:
     size: Tuple[int, int] = (W, H)
     scene: Optional["Scene"] = None               # the picture as shown, to place and light the text (render.analyse)
     anchor_y: Optional[int] = None                # "auto" always goes there (the Reprise: where his captions were)
+    native_y: Optional[int] = None                # a space's own style (drawn for a full-screen picture, round the
+                                                  # middle) moved there: the Discours, under its framed speaker
 
     @property
     def room_below(self) -> bool:
@@ -211,6 +213,10 @@ class Ctx:
         if position == "sous":
             return int(min(self.size[1] - 160, y + h + 110))
         return int(y + h * 0.80)
+
+    def framed_y(self) -> int:
+        """Where a space's own style goes over a framed picture: under it when there is room, else low in it."""
+        return self.y("sous" if self.room_below else "bas")
 
     def max_w(self, position: str) -> float:
         return (self.size[0] - 160) if position == "sous" else max(300, self.zone[2] - 80)

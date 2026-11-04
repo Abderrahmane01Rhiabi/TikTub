@@ -49,9 +49,35 @@ def build(style_id: str, words: Words, ctx: Ctx, params: Optional[Dict] = None) 
     finally:
         S.SPEED.reset(token)
     text = events_ if styles_ is None else header(styles_, ctx.size) + "\n".join(events_) + "\n"
+    if st.native and ctx.native_y is not None:      # drawn round the middle of the screen: moved where it is asked
+        text = moved(text, native_shift(text, ctx))
     if extras.get("behind"):              # the big words: their own file, drawn under the person
         extras = dict(extras, behind_ass=header(styles_, ctx.size) + "\n".join(extras["behind"]) + "\n")
     return Built(style_id, text, extras, st.needs)
+
+
+def native_shift(ass: str, ctx: Ctx) -> float:
+    """How far down a space's own style goes: its words' middle on ctx.native_y; a tall one (the Cascade, a word a
+    line) kept on the screen, under the picture as much as it can."""
+    import re
+    ys = [float(y) for y in re.findall(r"\\pos\(-?[\d.]+,(-?[\d.]+)\)", ass)]
+    if not ys:
+        return ctx.native_y - ctx.size[1] / 2
+    lo, hi = min(ys), max(ys)
+    dy = ctx.native_y - (lo + hi) / 2
+    dy = max(dy, ctx.zone[1] + ctx.zone[3] + 70 - lo)            # its top under the picture
+    return min(dy, ctx.size[1] - 110 - hi)                        # its bottom on the screen
+
+
+def moved(ass: str, dy: float) -> str:
+    """Every \\pos and \\move of an .ass text `dy` px lower (its clips too)."""
+    import re
+    num = r"(-?[\d.]+)"
+    ass = re.sub(r"\\pos\(" + num + "," + num + r"\)", lambda m: f"\\pos({m[1]},{float(m[2]) + dy:.1f})", ass)
+    ass = re.sub(r"\\move\(" + num + "," + num + "," + num + "," + num,
+                 lambda m: f"\\move({m[1]},{float(m[2]) + dy:.1f},{m[3]},{float(m[4]) + dy:.1f}", ass)
+    return re.sub(r"\\clip\(" + num + "," + num + "," + num + "," + num + r"\)",
+                  lambda m: f"\\clip({m[1]},{float(m[2]) + dy:.1f},{m[3]},{float(m[4]) + dy:.1f})", ass)
 
 
 # ---------------------------------------------------------------- the filters a space adds to its own graph
@@ -334,21 +360,23 @@ def _preview_background(path: str, zone) -> str:
 
 def preview(style_id: str, lang: str = "fr", params: Optional[Dict] = None, colour: str = "#FF7A00",
             zone: Optional[Tuple[int, int, int, int]] = None, words: Optional[Tuple[Words, set]] = None,
-            black: bool = False, seen: Optional[Tuple] = None, start: float = 0.0) -> str:
+            black: bool = False, seen: Optional[Tuple] = None, start: float = 0.0, framed: bool = False) -> str:
     """A 4-s silent preview of a style on the gallery's phrase (540x960) -> its path, made once and cached in
     temp/caption_previews (kept by the storage cleanup). For the Discours' live preview: its frame (`zone`), a phrase
     of the speech (`words`, strong words) and a black backdrop (`black`: the page lays it over its own picture),
     placed like the real montage: `seen` = (a key, the faces, the scene) of its picture, the words from the Short's
-    start (« Auto » keeps a band from one group to the next) and only what follows `start` shown."""
+    start (« Auto » keeps a band from one group to the next) and only what follows `start` shown; `framed`: a space's
+    own style moved under the frame, as the Discours draws it."""
     st = S.get(style_id)
     if not st:
         raise CaptionError(f"Style de sous-titres inconnu : {style_id}")
     lang = lang if lang in SAMPLES else "fr"
     p = st.clean(params)
-    custom = bool(zone or words or black or seen)
+    custom = bool(zone or words or black or seen or framed)
     zone = tuple(zone or (87, 507, 906, 906))
     words, strong = words or sample_words(lang)
-    mine = [list(zone), words, sorted(strong), black] + ([seen[0], start] if seen else []) if custom else []
+    mine = [list(zone), words, sorted(strong), black] + ([seen[0], start] if seen else []) + (["cadre"] if framed else []) \
+        if custom else []
     # (the gallery's own key: kept)
     key = hashlib.sha1(json.dumps([PREVIEW_VERSION, style_id, lang, p, colour] + mine,
                                   sort_keys=True).encode()).hexdigest()[:16]
@@ -358,6 +386,8 @@ def preview(style_id: str, lang: str = "fr", params: Optional[Dict] = None, colo
         return out
     os.makedirs(out_dir, exist_ok=True)
     ctx = Ctx(lang=lang, zone=zone, strong=strong, impact=sorted(strong, key=len)[-1] if strong else None, colour=colour)
+    if framed:
+        ctx.native_y = ctx.framed_y()
     if seen:                                 # the faces and the scene of that picture: « Auto » placed as in the video
         ctx.strong = strong_words(words, sorted(strong))
         ctx.faces, ctx.scene = seen[1] or [], seen[2]

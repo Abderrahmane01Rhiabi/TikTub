@@ -378,7 +378,7 @@ function dsBindRanges(box){
 }
 
 async function dsStyles(lang){
-  try { return (await api(`/api/captions/styles?space=discours&lang=${lang}`)).styles.filter(s => !s.native); }
+  try { return (await api(`/api/captions/styles?space=discours&lang=${lang}`)).styles.filter(s => s.native !== 'adaptation'); }
   catch (e){ return []; }
 }
 
@@ -394,7 +394,7 @@ function dsBox(s){                                     // adaptation/discours.fr
   return [Math.floor((1080 - fw) / 2), Math.floor((1920 - fh) / 2), fw, fh];
 }
 
-function dsLiveHtml(note){
+function dsLiveHtml(note, listen){
   return `<div class="ds-live"><div class="ds-phone">
       <div class="ds-lbg"><video class="ds-lbgv" muted loop playsinline></video></div>
       <div class="ds-lshadow"></div>
@@ -402,7 +402,9 @@ function dsLiveHtml(note){
       <div class="ds-lsig"></div>
       <video class="ds-lcap" muted loop playsinline autoplay></video>
       <div class="ds-lwait tiny">sous-titres…</div>
-    </div><div class="tiny ds-lnote">${note}</div></div>`;
+    </div>${listen ? `<div class="ds-lsound"><button class="btn secondary small ds-lplay">▶ Écouter</button>
+      <button class="btn secondary small ds-lmute" title="Couper ou remettre la musique">🔇 Musique</button>
+      <div class="tiny ds-lstate"></div></div>` : ''}<div class="tiny ds-lnote">${note}</div></div>`;
 }
 
 // opts: { src (the speech), lang, channel, pid, couleur (the « dégradé »), nom (the corner's name),
@@ -413,7 +415,9 @@ function dsLive(root, opts){
   if (opts.src){ fv.src = opts.src; bgv.src = opts.src; fv.play().catch(() => {}); bgv.play().catch(() => {}); }
   else phone.classList.add('ds-lnone');
   fv.ontimeupdate = () => { if (Math.abs(bgv.currentTime - fv.currentTime) > 0.3) bgv.currentTime = fv.currentTime; };
+  const state = opts.state || { listening: false };
   if (opts.direct) cap.ontimeupdate = () => {          // the speaker at the phrase the captions show
+    if (state.listening) return;
     const want = dsUnmap(opts.direct.debut - 0.25 + cap.currentTime, opts.direct.parts);
     if (Math.abs(fv.currentTime - want) > 0.25) fv.currentTime = want;
   };
@@ -448,7 +452,78 @@ function dsLive(root, opts){
       timer = setTimeout(() => { wait.textContent = 'sous-titres…'; wait.style.display = ''; cap.src = `/api/discours/live_captions?${key}`; }, 350);
     }
   };
-  return { update };
+  return { update, fv, bgv, cap, state };
+}
+
+// « Écouter »: the speech as in the video and its music, the picture and the captions following the voice; the music's
+// volume follows the slider while it plays (made LIVE_GAP dB under the voice, lowered here). opts: { pid, direct,
+// channel: () => the channel shown, sound: () => { son, chanson, montee, volume } }
+function dsListen(root, live, opts){
+  const play = root.querySelector('.ds-lplay'), mute = root.querySelector('.ds-lmute'), stateEl = root.querySelector('.ds-lstate');
+  if (!play) return { refresh(){}, volume(){}, stop(){} };
+  const voice = new Audio(`/api/adaptations/${opts.pid}/discours/ecoute/voix`), music = new Audio();
+  voice.preload = 'none';
+  let muted = false, musicKey = '', blobUrl = null;
+  const gap = (opts.direct || {}).gap || 3;
+  const volume = () => {
+    const v = opts.sound().volume;
+    music.volume = Math.max(0, Math.min(1, Math.pow(10, -(v - gap) / 20)));
+    music.muted = muted;
+  };
+  const loadMusic = async () => {
+    const s = opts.sound(), q = new URLSearchParams({ channel: opts.channel(), son: s.son, montee: s.montee });
+    if (s.chanson) q.set('chanson', s.chanson);
+    const key = q.toString();
+    if (key === musicKey) return;
+    musicKey = key;
+    music.pause();
+    if (blobUrl){ URL.revokeObjectURL(blobUrl); blobUrl = null; }
+    music.removeAttribute('src');
+    if (s.son === 'sans_musique') return;
+    stateEl.textContent = 'musique en préparation…';
+    const r = await fetch(`/api/adaptations/${opts.pid}/discours/ecoute/musique?${key}`);
+    if (!r.ok){ stateEl.textContent = ((await r.json().catch(() => ({}))).detail) || 'musique impossible'; return; }
+    stateEl.textContent = '';
+    if (r.status === 204) return;
+    blobUrl = URL.createObjectURL(await r.blob());
+    music.src = blobUrl;
+    volume();
+    if (live.state.listening){ music.currentTime = voice.currentTime; music.play().catch(() => {}); }
+  };
+  const stop = () => {
+    live.state.listening = false;
+    voice.pause(); music.pause();
+    play.textContent = '▶ Écouter';
+    live.cap.style.opacity = '';
+    live.cap.loop = true; live.cap.play().catch(() => {});
+  };
+  voice.ontimeupdate = () => {
+    if (!live.state.listening) return;
+    const t = voice.currentTime, d = opts.direct;
+    if (music.src && Math.abs(music.currentTime - t) > 0.15) music.currentTime = t;
+    if (d){
+      const want = dsUnmap(t, d.parts);
+      if (Math.abs(live.fv.currentTime - want) > 0.3) live.fv.currentTime = want;
+      const inPhrase = t >= d.debut - 0.25 && t <= d.fin + 0.6;          // the captions' phrase, at its moment
+      live.cap.style.opacity = inPhrase ? '' : '0';
+      if (inPhrase && Math.abs(live.cap.currentTime - (t - d.debut + 0.25)) > 0.2) live.cap.currentTime = t - d.debut + 0.25;
+    }
+    stateEl.textContent = `${fmtSec(t)} / ${fmtSec(voice.duration || 0)}`;
+  };
+  voice.onended = stop;
+  voice.onerror = () => { stateEl.textContent = "Fais les vidéos une fois avant d'écouter."; stop(); };
+  play.onclick = async () => {
+    if (live.state.listening) return stop();
+    live.state.listening = true;
+    play.textContent = '⏸ Arrêter';
+    live.cap.loop = false;
+    await loadMusic();
+    voice.currentTime = 0;
+    voice.play().catch(() => stop());
+    if (music.src){ music.currentTime = 0; music.play().catch(() => {}); }
+  };
+  mute.onclick = () => { muted = !muted; mute.classList.toggle('on', muted); mute.textContent = muted ? '🔈 Remettre la musique' : '🔇 Musique'; volume(); };
+  return { refresh: () => { if (live.state.listening) loadMusic(); }, volume, stop };
 }
 
 function dsLiveBind(box, live, extra){
@@ -474,7 +549,7 @@ async function dsPreviews(body, p){
         ${dsSettingsHtml(base, { cadres: d.cadres, fonds: d.fonds, etalonnages: d.etalonnages, styles })}</div>
         <div>${p.targets.length > 1 ? `<div class="seg ds-lwho">${p.targets.map((t, i) =>
           `<button class="seg-opt ${i ? '' : 'active'}" data-i="${i}">${esc(t.language_label)}</button>`).join('')}</div>` : ''}
-          ${dsLiveHtml("Aperçu direct : chaque réglage s'affiche tout de suite, sans refaire les vidéos. Très proche du montage, pas identique au pixel près.")}</div></div>
+          ${dsLiveHtml("Aperçu direct : chaque réglage s'affiche et s'entend tout de suite, sans refaire les vidéos. Très proche du montage, pas identique au pixel près.", true)}</div></div>
         ${dsSoundPicker(d.son, d.chanson)}
         ${d.musique ? `<div class="tiny" style="margin-top:6px">🎵 Musique intelligente : <b>${esc(d.musique.titre || d.musique.fichier)}</b> — ${esc(d.musique.pourquoi_chanson || '')}</div>` : ''}</div>
       <div class="chcard-foot"><button class="btn secondary small push" id="dsRedo" data-icon="refresh">Refaire les vidéos avec ces réglages</button></div></article>`
@@ -503,15 +578,26 @@ async function dsPreviews(body, p){
   const box = document.getElementById('dsSettings');
   dsBindRanges(box);
   dsBindSound(box);
-  const liveFor = t => dsLive(box.querySelector('.ds-live'), { src: d.passage_url, lang: t.language.split('-')[0], channel: t.channel,
+  const shared = { listening: false };
+  const liveFor = t => dsLive(box.querySelector('.ds-live'), { state: shared, src: d.passage_url, lang: t.language.split('-')[0], channel: t.channel,
                                                               pid: p.project_id, couleur: t.couleur, nom: t.display_name || rpChannelName(t.channel),
                                                               direct: d.direct });
+  let who = 0;
   let live = liveFor(p.targets[0]);
   const redraw = dsLiveBind(box, { update: s => live.update(s) }, () => ({ sous_titres_params: base.sous_titres_params }));
+  const sound = () => { const r = dsReadSettings(box); return { ...dsSoundOf(box), montee: !!r.drop_punchline, volume: Number(r.volume_db) }; };
+  const listen = dsListen(box.querySelector('.ds-live'), live, { pid: p.project_id, direct: d.direct, sound,
+                                                              channel: () => p.targets[who].channel });
+  box.querySelector('.ds-r[data-k="volume_db"]').addEventListener('input', () => listen.volume());
+  box.querySelector('.ds-r[data-k="drop_punchline"]').addEventListener('change', () => listen.refresh());
+  box.querySelectorAll('input[name="dsSon"], .ds-chanson').forEach(el => el.addEventListener('change', () => listen.refresh()));
   box.querySelectorAll('.ds-lwho .seg-opt').forEach(b => b.onclick = () => {
     box.querySelectorAll('.ds-lwho .seg-opt').forEach(x => x.classList.toggle('active', x === b));
-    live = liveFor(p.targets[b.dataset.i]);
+    listen.stop();
+    who = Number(b.dataset.i);
+    live.update = liveFor(p.targets[who]).update;
     redraw();
+    listen.refresh();
   });
   document.getElementById('dsBackPlans').onclick = () => dsCall(`/api/adaptations/${p.project_id}/discours/plans/back`, 'POST');
   document.getElementById('dsRedo').onclick = () => {

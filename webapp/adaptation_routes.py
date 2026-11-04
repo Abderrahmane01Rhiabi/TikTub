@@ -283,7 +283,8 @@ def _serialize_discours(p: dict, targets: list, full: bool = True) -> dict:
         out["frise"] = None
     try:                                             # the live preview's phrase: its picture played with it
         said = dp.live_words(p, langs_code(p["targets"][0]["language"])) if p.get("targets") else None
-        out["direct"] = {"debut": said[2], "parts": dp.timeline(p, dp.settings_for(p, p["targets"][0]))} if said else None
+        out["direct"] = {"debut": said[2], "fin": said[0][-1][2], "gap": dp.LIVE_GAP,
+                         "parts": dp.timeline(p, dp.settings_for(p, p["targets"][0]))} if said else None
     except Exception:
         out["direct"] = None
     tr = d.get("traduction") or {}
@@ -1187,11 +1188,32 @@ def discours_live_captions(style: str, cadre: str = "carre", taille: int = 84, l
     colour = R.channel_colour(_main().checked_channel(channel)) if channel else "#FF7A00"
     try:
         path = R.preview(D.caption_style_for(settings, lang), lang, settings["sous_titres_params"], colour, zone=zone,
-                         words=said[:2] if said else None, black=True, seen=seen,
+                         words=said[:2] if said else None, black=True, seen=seen, framed=True,
                          start=max(0.0, said[2] - 0.25) if said else 0.0)
     except R.CaptionError as e:
         raise HTTPException(status_code=500, detail=str(e))
     return FileResponse(path, media_type="video/mp4")
+
+
+@router.get("/api/adaptations/{pid}/discours/ecoute/voix")
+def discours_listen_voice(pid: str):
+    from adaptation import discours_pipeline as dp
+    path = dp.live_voice(_discours_or_404(pid))
+    if not path:
+        raise HTTPException(status_code=404, detail="Fais les vidéos une fois avant d'écouter.")
+    return FileResponse(path, media_type="audio/wav")
+
+
+@router.get("/api/adaptations/{pid}/discours/ecoute/musique")
+def discours_listen_music(pid: str, channel: str, son: str, chanson: Optional[str] = None, montee: bool = True):
+    """The music for « Écouter » (LIVE_GAP dB under the voice; the page lowers it to the slider's value).
+    204: no music for this choice."""
+    from adaptation import discours_pipeline as dp
+    from fastapi import Response
+    path = _adaptation_call(dp.live_bed, _discours_or_404(pid), channel, son, chanson, montee)
+    if not path:
+        return Response(status_code=204)
+    return FileResponse(path, media_type="audio/wav")
 
 
 @router.get("/api/discours/exemple")
@@ -1227,7 +1249,7 @@ def _discours_channel_payload(channel_name: str) -> dict:
             "cadres": list(D.FRAMES), "fonds": list(D.FONDS), "etalonnages": list(D.GRADES),
             "densites": list(D.DENSITY),
             "styles": [{"id": st.id, "label": st.label, "number": st.number, "group": st.group}
-                       for st in S.for_space("discours", lang) if not st.native]}
+                       for st in S.for_space("discours", lang) if st.native != "adaptation"]}
 
 
 @router.get("/api/channels/{channel_name}/discours")

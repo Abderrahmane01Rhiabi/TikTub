@@ -100,7 +100,7 @@ def clean_settings(raw: Optional[Dict], base: Optional[Dict] = None) -> Dict:
     if "sous_titres" in raw:
         from captions import styles as S
         st = S.get(raw.get("sous_titres") or "")
-        if st and not st.native and "discours" in st.spaces:
+        if st and "discours" in st.spaces:                # the spaces' own ones too: moved under the frame
             if st.id != out.get("sous_titres"):
                 out["sous_titres_params"] = {}
             out["sous_titres"] = st.id
@@ -760,6 +760,7 @@ def render(pic: str, speech: str, plan: List[Tuple], words: List[List], lang: st
     style = caption_style_for(settings, lang)
     params = settings.get("sous_titres_params") or {}
     ctx = R.context(lang, box, words, keywords=sorted(strong or []), channel=channel)
+    ctx.native_y = ctx.framed_y()                     # a Génération / Montage style: under the frame, not on his face
     ctx = R.analyse(ctx, style, params, fg, fit="stretch", until=total)
     built = R.build(style, words, ctx, params)
     mask_video = None

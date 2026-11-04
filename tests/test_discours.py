@@ -5,6 +5,7 @@ Gemini, Whisper, Demucs, YouTube and ffmpeg replaced by fakes."""
 
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -35,7 +36,8 @@ def test_settings_in_three_layers_and_checked():
     s = D.clean_settings({"cadre": "4:5", "taille": 300, "fond": "rose", "volume_db": "fort", "grain": False,
                           "sous_titres": "karaoke"})
     assert s["cadre"] == "4:5" and s["taille"] == 100 and s["fond"] == "noir" and s["volume_db"] == 7.0
-    assert s["grain"] is False and s["sous_titres"] == "escalier"        # a space's own style is not offered here
+    assert s["grain"] is False and s["sous_titres"] == "karaoke"         # Génération's own style: offered, moved
+    assert D.clean_settings({"sous_titres": "adaptation_or"})["sous_titres"] == "escalier"   # the Adaptation's: not
     chan = D.channel_settings({"discours": {"fond": "flou", "films": True, "sous_titres": "editorial"}})
     assert chan["fond"] == "flou" and chan["films"] is True and chan["sous_titres"] == "editorial"
     video = D.clean_settings({"cadre": "16:9"}, base=D.clean_settings(chan))
@@ -99,6 +101,19 @@ def test_the_live_captions_see_what_the_montage_saw(tmp_path, monkeypatch):
     k = small[2] / box[2]
     assert faces2[0][1] == pytest.approx((small[0], small[1], small[0] + 100 * k, small[1] + 50 * k))
     assert scene2.frames[0][1].shape == (small[3] // scene2.scale, small[2] // scene2.scale)
+
+
+def test_the_spaces_own_styles_go_under_the_frame():
+    from captions import render as R
+    from captions.core import Ctx
+    words, strong = R.sample_words("fr")
+    ctx = Ctx(lang="fr", zone=D.frame_box({"cadre": "carre", "taille": 84}), strong=strong)
+    plain = R.build("karaoke", words, ctx, {}).ass
+    ctx.native_y = ctx.framed_y()
+    moved = R.build("karaoke", words, ctx, {}).ass
+    ys = [float(y) for y in re.findall(r"\\pos\([\d.]+,([\d.]+)\)", moved)]
+    assert ys and all(y > ctx.zone[1] + ctx.zone[3] for y in ys)                       # under the frame, not on him
+    assert plain != moved and "pos(540,9" in plain                                      # Génération's own: unchanged
 
 
 def test_the_fingerprint_of_a_montage(tmp_path):
@@ -539,6 +554,19 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client, 
     client.get("/api/discours/live_captions?style=inconnu&lang=ar")
     assert seen["style"] == "escalier" and seen["words"] is None                      # unknown or not for Arabic: Escalier
     assert client.get("/api/discours/exemple").status_code == 404     # the fakes' passage is no video: skipped
+    ran = []
+    monkeypatch.setattr(D, "_run", lambda cmd: ran.append(cmd) or open(cmd[-1], "wb").write(b"wav"))
+    r = client.get(f"/api/adaptations/{pid}/discours/ecoute/voix")
+    assert r.status_code == 200 and "loudnorm=I=-16" in " ".join(ran[-1])             # the voice at the video's level
+    q = f"/api/adaptations/{pid}/discours/ecoute/musique?channel=cestpourca"
+    assert client.get(q + "&son=sans_musique").status_code == 204
+    r = client.get(q + "&son=choisie&chanson=choisie.mp3&montee=false")
+    assert r.status_code == 200 and fakes["beds"][-1] == ("choisie.mp3", fakes["beds"][-1][1], dp.LIVE_GAP)
+    n = len(fakes["beds"])
+    client.get(q + "&son=choisie&chanson=choisie.mp3&montee=false")
+    assert len(fakes["beds"]) == n                                                      # made once per choice
+    assert client.get(q + "&son=inconnu").status_code == 400
+    assert client.get(f"/api/adaptations/{pid}").json()["discours"]["direct"]["gap"] == dp.LIVE_GAP
     made = len(fakes["renders"])
     r = client.post(f"/api/adaptations/{pid}/discours/plans/back")
     assert r.status_code == 200 and r.json()["status"] == "plans_review"                # from the previews, back
@@ -610,7 +638,9 @@ def test_a_channels_discours_settings(client, project):
     name = "chanD"
     d = client.get(f"/api/channels/{name}/discours").json()
     assert d["reglages"]["films"] is False and "escalier" in [s["id"] for s in d["styles"]]
-    assert "karaoke" not in [s["id"] for s in d["styles"]]
+    ids = [s["id"] for s in d["styles"]]
+    assert {"karaoke", "mrbeast", "hormozi", "bounce", "typewriter", "minimal", "cascade", "accent"} <= set(ids)
+    assert not [i for i in ids if i.startswith("adaptation_")]
     d = client.put(f"/api/channels/{name}/discours", json={"films": True, "fond": "degrade", "taille": 999}).json()
     assert d["reglages"]["films"] is True and d["reglages"]["fond"] == "degrade" and d["reglages"]["taille"] == 100
     d = client.put(f"/api/channels/{name}/discours", json={"cadre": "4:5"}).json()
