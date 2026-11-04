@@ -227,7 +227,9 @@ def run_search(pid: str, report: Optional[Report] = None):
                 got = D.find_clip(m, films_ok(p), used, work_dir(p, "plans"), exclude=p["reference_url"], log=log)
             if not got:                              # an idea, an emotion, or nothing found: a mood shot (Pixabay)
                 try:
-                    got = D.stock_clip(m.get("ambiance") or "", stock_used, work_dir(p, "plans"))
+                    m["propositions"] = D.stock_search(m.get("ambiance") or "", stock_used)
+                    got = D.stock_clip(m.get("ambiance") or "", stock_used, work_dir(p, "plans"),
+                                       candidates=m["propositions"])
                 except Exception as e:
                     log.append(f"✗ Pixabay : {str(e)[:80]}")
                 if got:
@@ -294,6 +296,89 @@ def link_moment(pid: str, index: int, url: str, start: float = 0.0) -> Dict:
     if p["status"] == "preview_review":
         _again(p)
     return ap.save(p)
+
+
+def _moment(p: Dict, index: int) -> Dict:
+    _ap()._expect(p, "plans_review", "preview_review")
+    ms = p["discours"]["moments"]
+    if not 0 <= index < len(ms):
+        raise DiscoursPipelineError("Plan inconnu.")
+    return ms[index]
+
+
+def search_stock(pid: str, index: int, query: str) -> Dict:
+    """« Chercher sur Pixabay » for one moment, with the person's own words: new propositions, the shot unchanged."""
+    ap = _ap()
+    p = ap.load(pid)
+    m = _moment(p, index)
+    query = (query or "").strip()
+    if not query:
+        raise DiscoursPipelineError("Écris ce qu'on doit voir (en anglais, c'est mieux).")
+    try:
+        found = D.stock_search(query, stock_used_by(p))
+    except Exception as e:
+        raise DiscoursPipelineError(f"Pixabay ne répond pas : {str(e)[:150]}")
+    if not found:
+        raise DiscoursPipelineError(f"Rien de neuf sur Pixabay pour « {query} » : essaie d'autres mots.")
+    m.update(ambiance=query, propositions=found)
+    return ap.save(p)
+
+
+def pick_stock(pid: str, index: int, stock: str) -> Dict:
+    """One of the moment's Pixabay propositions taken instead of its shot."""
+    ap = _ap()
+    p = ap.load(pid)
+    m = _moment(p, index)
+    cand = next((c for c in m.get("propositions") or [] if c["stock"] == stock), None)
+    if not cand:
+        raise DiscoursPipelineError("Proposition inconnue : relance la recherche.")
+    try:
+        clip = D.stock_take(cand, m.get("ambiance") or "", work_dir(p, "plans"))
+    except Exception as e:
+        raise DiscoursPipelineError(f"Téléchargement impossible : {str(e)[:200]}")
+    m.update(clip=clip, action="garder")
+    if p["status"] == "preview_review":
+        _again(p)
+    return ap.save(p)
+
+
+def move_moment(pid: str, index: int, word: int) -> Dict:
+    """A shot moved onto another word of the passage (the timeline): the moments kept in the speech's order."""
+    ap = _ap()
+    p = ap.load(pid)
+    m = _moment(p, index)
+    local = p["discours"]["local"]
+    if not 0 <= word < len(local):
+        raise DiscoursPipelineError("Mot inconnu.")
+    m.update(mot=local[word][0], temps=local[word][1])
+    p["discours"]["moments"].sort(key=lambda x: float(x["temps"]))
+    if p["status"] == "preview_review":
+        _again(p)
+    return ap.save(p)
+
+
+def frise(p: Dict) -> Optional[Dict]:
+    """The timeline as the video will have it (pauses cut, the 1st target's settings): the words, the cut-aways
+    ({"index" of the moment, start, end}), the moments taken out, and where the music rises."""
+    d = p["discours"]
+    if not d.get("local") or not d.get("parts") or not d.get("moments"):
+        return None
+    s = settings_for(p, p["targets"][0])
+    parts = timeline(p, s)
+    total = round(sum(b - a for a, b in parts), 3)
+    hit = _hit(p, parts, total, s)
+    anchors, off = [], []
+    for i, m in enumerate(d["moments"]):
+        t = D.remap(float(m["temps"]), parts)
+        n = len((m.get("clip") or {}).get("extraits") or [])
+        if m.get("action") == "garder" and n:
+            anchors.append((t, [i] * n))
+        else:
+            off.append({"index": i, "temps": round(t, 3)})
+    starts = [D.remap(w[1], parts) for w in d["local"]]
+    plans = [{"index": c, "debut": a, "fin": b} for a, b, c, _ in D.shots(anchors, starts, total, hit)]
+    return {"total": total, "montee": round(hit, 3), "accroche": D.HOOK_S,
+            "mots": [[w[0], round(t, 3)] for w, t in zip(d["local"], starts)], "plans": plans, "retires": off}
 
 
 def approve_plans(pid: str) -> Dict:

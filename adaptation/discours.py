@@ -434,14 +434,16 @@ def ambiance_for(items: List[Dict], gemini=None) -> List[str]:
     return [qs[k] if k < len(qs) and qs[k] else "person walking alone cinematic" for k in range(len(items))]
 
 
-def stock_clip(query: str, used: set, work: str, api_key: Optional[str] = None, get: Optional[Callable] = None,
-               fetch: Optional[Callable] = None) -> Optional[Dict]:
-    """A Pixabay shot for `query` the channels have not used yet (Full HD at least), downloaded once into STOCK_DIR,
-    its 2 s taken a third of the way in -> a clip like find_clip's ({"stock": "pixabay:<id>"}), or None."""
+STOCK_CHOICES = 12                   # the propositions kept per moment, for the person to choose from
+
+
+def stock_search(query: str, used: set, api_key: Optional[str] = None, get: Optional[Callable] = None) -> List[Dict]:
+    """The Pixabay shots for `query` the channels have not used yet (Full HD at least), best tag match first:
+    [{"stock": "pixabay:<id>", "tags", "page", "image", "apercu" (a small preview), "src", "duree"}]. Free: no Gemini."""
     import requests
     key = os.getenv("PIXABAY_API_KEY") if api_key is None else api_key
     if not key or not query:
-        return None
+        return []
     get = get or requests.get
     r = get("https://pixabay.com/api/videos/", params={"key": key, "q": query, "per_page": 30, "safesearch": "true"},
             timeout=30)
@@ -451,36 +453,56 @@ def stock_clip(query: str, used: set, work: str, api_key: Optional[str] = None, 
     def fit(hit):                     # the shot whose tags say the most of the search (Pixabay ranks by popularity)
         tags = set(re.findall(r"[a-z]+", (hit.get("tags") or "").lower()))
         return len(words & tags)
-    hits = r.json().get("hits", [])
-    for hit in sorted(hits, key=lambda h: -fit(h)):              # stable: Pixabay's order between equals
+    out = []
+    for hit in sorted(r.json().get("hits", []), key=lambda h: -fit(h)):     # stable: Pixabay's order between equals
         sid = f"pixabay:{hit['id']}"
-        if sid in used:
+        vids = hit.get("videos") or {}
+        v = next((vids[k] for k in ("medium", "large", "small")
+                  if vids.get(k, {}).get("url") and vids[k].get("width", 0) >= STOCK_MIN_W), None)
+        if sid in used or not v or hit.get("isLowQuality"):
             continue
-        v = next((hit["videos"][k] for k in ("medium", "large", "small")
-                  if hit["videos"].get(k, {}).get("url") and hit["videos"][k].get("width", 0) >= STOCK_MIN_W), None)
-        if not v:
-            continue
-        os.makedirs(STOCK_DIR, exist_ok=True)
-        src = os.path.join(STOCK_DIR, f"{hit['id']}.mp4")
-        if not os.path.exists(src):
-            if fetch:
-                fetch(v["url"], src)
-            else:
-                with requests.get(v["url"], timeout=300, stream=True) as dl:
-                    dl.raise_for_status()
-                    with open(src + ".part", "wb") as fh:
-                        for chunk in dl.iter_content(1 << 20):
-                            fh.write(chunk)
-                os.replace(src + ".part", src)
-        os.makedirs(work, exist_ok=True)
-        a = round(max(0.0, float(hit.get("duration") or 6) / 3), 1)
-        out = os.path.join(work, f"pixabay_{hit['id']}.mp4")
-        if not os.path.exists(out):
-            _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{a:.1f}", "-t", f"{CLIP_LEN + 0.3:.1f}", "-i", src,
-                  "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", out])
-        return {"url": hit.get("pageURL") or "", "titre": hit.get("tags") or query, "niveau": "ambiance", "film": False,
-                "stock": sid, "recherche": query, "extraits": [{"path": out, "debut": 0.0}]}
-    return None
+        tiny = vids.get("tiny") or vids.get("small") or {}
+        out.append({"stock": sid, "tags": hit.get("tags") or "", "page": hit.get("pageURL") or "",
+                    "image": tiny.get("thumbnail") or v.get("thumbnail") or "", "apercu": tiny.get("url") or v["url"],
+                    "src": v["url"], "duree": float(hit.get("duration") or 6)})
+        if len(out) >= STOCK_CHOICES:
+            break
+    return out
+
+
+def stock_take(cand: Dict, query: str, work: str, fetch: Optional[Callable] = None) -> Dict:
+    """One proposition downloaded once into STOCK_DIR, its 2 s taken a third of the way in -> a clip like
+    find_clip's ({"stock": "pixabay:<id>"})."""
+    import requests
+    pid = cand["stock"].split(":", 1)[1]
+    os.makedirs(STOCK_DIR, exist_ok=True)
+    src = os.path.join(STOCK_DIR, f"{pid}.mp4")
+    if not os.path.exists(src):
+        if fetch:
+            fetch(cand["src"], src)
+        else:
+            with requests.get(cand["src"], timeout=300, stream=True) as dl:
+                dl.raise_for_status()
+                with open(src + ".part", "wb") as fh:
+                    for chunk in dl.iter_content(1 << 20):
+                        fh.write(chunk)
+            os.replace(src + ".part", src)
+    os.makedirs(work, exist_ok=True)
+    a = round(max(0.0, cand.get("duree", 6) / 3), 1)
+    out = os.path.join(work, f"pixabay_{pid}.mp4")
+    if not os.path.exists(out):
+        _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{a:.1f}", "-t", f"{CLIP_LEN + 0.3:.1f}", "-i", src,
+              "-an", "-c:v", "libx264", "-preset", "veryfast", "-crf", "16", out])
+    return {"url": cand.get("page") or "", "titre": cand.get("tags") or query, "niveau": "ambiance", "film": False,
+            "stock": cand["stock"], "recherche": query, "extraits": [{"path": out, "debut": 0.0}]}
+
+
+def stock_clip(query: str, used: set, work: str, api_key: Optional[str] = None, get: Optional[Callable] = None,
+               fetch: Optional[Callable] = None, candidates: Optional[List[Dict]] = None) -> Optional[Dict]:
+    """The best Pixabay shot for `query` not used yet (from `candidates` when already searched), or None."""
+    cands = stock_search(query, used, api_key, get) if candidates is None else candidates
+    cand = next((c for c in cands if c["stock"] not in used), None)
+    return stock_take(cand, query, work, fetch) if cand else None
 
 
 def shots(anchors: List[Tuple[float, List[str]]], word_starts: List[float], total: float, drop: float) -> List[Tuple]:

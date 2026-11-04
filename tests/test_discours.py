@@ -99,6 +99,8 @@ def test_a_mood_shot_is_the_best_tagged_one_not_used_yet(tmp_path, monkeypatch):
                          get=lambda *a, **k: Answer(), fetch=fetch)
     assert again["stock"] == "pixabay:1"                  # the used one skipped; the 960-px one never taken
     assert D.stock_clip("x", set(), str(tmp_path), api_key="") is None
+    found = D.stock_search("boxer training dark gym", {"pixabay:1"}, api_key="k", get=lambda *a, **k: Answer())
+    assert [c["stock"] for c in found] == ["pixabay:2"] and found[0]["src"] == "u2" and found[0]["page"] == "p2"
 
 
 def test_the_speaker_comes_first():
@@ -423,6 +425,49 @@ def test_a_discours_from_the_link_to_publication(fakes):
     assert rec["recette"]["son"] == "choisie" and rec["recette"]["musique"] == "choisie.mp3"
     assert rec["recette"]["orateur"] == "Morgan Freeman" and "Morgan Freeman" in rec["ai_data"]["description"]
     assert db.broll_last_used("cestpourca") == {}         # the mood shot was taken out: nothing remembered
+
+
+def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
+    p = ap.create("https://www.youtube.com/watch?v=XIGWjzqKTp0", [], fakes["channels"][:1], mode="discours")
+    pid = p["project_id"]
+    ap.runner_for(pid, "analysing")(pid)
+    dp.approve_passage(pid)
+    ap.runner_for(pid, "searching")(pid)
+    props = [{"stock": f"pixabay:{n}", "tags": f"tag {n}", "page": "p", "image": "i", "apercu": "a", "src": "s",
+              "duree": 6.0} for n in (7, 8, 9)]
+    seen = []
+    monkeypatch.setattr(D, "stock_search", lambda q, used, **kw: seen.append((q, sorted(used))) or props)
+
+    def stock_take(cand, query, work, fetch=None):
+        path = os.path.join(work, f"{cand['stock'][7:]}.mp4")
+        open(path, "wb").write(b"x")
+        return {"url": "p", "titre": cand["tags"], "niveau": "ambiance", "film": False, "stock": cand["stock"],
+                "recherche": query, "extraits": [{"path": path, "debut": 0.0}]}
+    monkeypatch.setattr(D, "stock_take", stock_take)
+    r = client.post(f"/api/adaptations/{pid}/discours/moments/0/pixabay", json={"recherche": "boxer alone dark gym"})
+    assert r.status_code == 200, r.text
+    assert seen[0][0] == "boxer alone dark gym" and "pixabay:1" in seen[0][1]      # the shots already taken left out
+    m = r.json()["discours"]["moments"][0]
+    assert m["ambiance"] == "boxer alone dark gym" and [c["stock"] for c in m["propositions"]] == [c["stock"] for c in props]
+    assert m["clip"]["niveau"] == "exacte"                                          # a search alone changes no shot
+    r = client.post(f"/api/adaptations/{pid}/discours/moments/0/pixabay", json={"stock": "pixabay:8"})
+    m = r.json()["discours"]["moments"][0]
+    assert m["clip"]["stock"] == "pixabay:8" and m["action"] == "garder" and m["propositions"][1]["pris"] == 0
+    assert client.post(f"/api/adaptations/{pid}/discours/moments/0/pixabay", json={"stock": "pixabay:99"}).status_code == 400
+
+    d = ap.load(pid)["discours"]
+    r = client.post(f"/api/adaptations/{pid}/discours/moments/0/move", json={"mot": len(d["local"]) - 1})
+    s = r.json()["discours"]
+    times = [m["temps"] for m in s["moments"]]
+    assert times == sorted(times) and s["moments"][-1]["mot"] == d["local"][-1][0]   # still in the speech's order
+    assert s["moments"][-1]["clip"]["stock"] == "pixabay:8" and s["moments"][-1]["mot_i"] == len(d["local"]) - 1
+    assert client.post(f"/api/adaptations/{pid}/discours/moments/0/move", json={"mot": 999}).status_code == 400
+    f = s["frise"]
+    assert f["total"] > 0 and len(f["mots"]) == len(d["local"]) and f["plans"]
+    assert all(b["debut"] >= D.HOOK_S and b["fin"] <= f["total"] for b in f["plans"])
+    dp.set_moment(pid, 1, "retirer")
+    f = dp.frise(ap.load(pid))
+    assert 1 in [x["index"] for x in f["retires"]] and 1 not in [b["index"] for b in f["plans"]]
 
 
 def test_a_used_mood_shot_is_remembered_per_channel(fakes):

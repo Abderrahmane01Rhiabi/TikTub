@@ -259,12 +259,24 @@ def _serialize_discours(p: dict, targets: list, full: bool = True) -> dict:
     if c:
         lo, hi = max(0, c["i0"] - 40), min(len(words), c["i1"] + 41)     # the words around it, to move its ends
         out["choix"] = {**c, "autour": {"debut": lo, "mots": [w[0] for w in words[lo:hi]]}}
+    local, moments = d.get("local") or [], d.get("moments") or []
+    taken = {(m.get("clip") or {}).get("stock"): i for i, m in enumerate(moments)}
     out["moments"] = [{"index": i, "mot": m.get("mot"), "temps": m.get("temps"), "scene": m.get("scene"),
                        "action": m.get("action"), "journal": m.get("journal") or [],
-                       "clip": {k: (m.get("clip") or {}).get(k) for k in ("url", "titre", "niveau", "film", "a_la_main")}
+                       "type": m.get("type"), "ambiance": m.get("ambiance") or "",
+                       "mot_i": min(range(len(local)), key=lambda k: abs(local[k][1] - float(m.get("temps") or 0)))
+                       if local else None,
+                       "propositions": [{k: c.get(k) for k in ("stock", "tags", "page", "image", "apercu")}
+                                        | {"pris": taken.get(c["stock"])} for c in m.get("propositions") or []],
+                       "clip": {k: (m.get("clip") or {}).get(k) for k in ("url", "titre", "niveau", "film", "a_la_main",
+                                                                           "stock")}
                        if m.get("clip") else None,
                        "clip_url": f"/api/adaptations/{pid}/discours/moments/{i}/clip" if m.get("clip") else None}
-                      for i, m in enumerate(d.get("moments") or [])]
+                      for i, m in enumerate(moments)]
+    try:
+        out["frise"] = dp.frise(p)
+    except Exception:                                # a timeline that cannot be drawn never hides the screen
+        out["frise"] = None
     tr = d.get("traduction") or {}
     out["traduction"] = {"phrases": tr.get("phrases") or [],
                          "youtube": {c: (x or {}).get("youtube") for c, x in (tr.get("langues") or {}).items()}} if tr else None
@@ -998,6 +1010,36 @@ def discours_moment(pid: str, index: int, req: DiscoursMoment):
         p = _adaptation_call(dp.link_moment, pid, index, req.url, req.debut)
     else:
         p = _adaptation_call(dp.set_moment, pid, index, req.action or "")
+    _restart_if_voicing(pid, p)
+    return _serialize_adaptation(p)
+
+
+class DiscoursStock(BaseModel):
+    recherche: Optional[str] = None     # new words to search Pixabay with
+    stock: Optional[str] = None         # or one proposition taken ("pixabay:<id>")
+
+
+@router.post("/api/adaptations/{pid}/discours/moments/{index}/pixabay")
+def discours_moment_stock(pid: str, index: int, req: DiscoursStock):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    if req.stock:
+        p = _adaptation_call(dp.pick_stock, pid, index, req.stock)
+    else:
+        p = _adaptation_call(dp.search_stock, pid, index, req.recherche or "")
+    _restart_if_voicing(pid, p)
+    return _serialize_adaptation(p)
+
+
+class DiscoursMove(BaseModel):
+    mot: int                            # the word of the passage the shot now starts on
+
+
+@router.post("/api/adaptations/{pid}/discours/moments/{index}/move")
+def discours_moment_move(pid: str, index: int, req: DiscoursMove):
+    from adaptation import discours_pipeline as dp
+    _discours_or_404(pid)
+    p = _adaptation_call(dp.move_moment, pid, index, req.mot)
     _restart_if_voicing(pid, p)
     return _serialize_adaptation(p)
 

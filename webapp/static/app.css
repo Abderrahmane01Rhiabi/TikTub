@@ -634,3 +634,31 @@
 .cap-gallery{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:12px;margin-bottom:8px}
 .cap-video{display:flex;align-items:center;justify-content:center;aspect-ratio:9/16;max-height:380px;background:#000;border-radius:10px;overflow:hidden}
 .cap-video video{width:100%;height:100%;object-fit:contain}
+
+/* Discours → Plans : the timeline and the Pixabay propositions */
+.ds-frise{overflow-x:auto;padding-bottom:6px}
+.ds-track{position:relative;height:118px;min-width:100%}
+.ds-row{position:absolute;left:0;right:0}
+.ds-ticks{top:0;height:16px;border-bottom:1px solid var(--border-soft)}
+.ds-tick{position:absolute;top:0;font-size:10px;color:var(--dim);border-left:1px solid var(--border-soft);padding-left:2px;height:16px}
+.ds-plans{top:22px;height:40px;background:var(--panel2);border-radius:6px}
+.ds-lbl{position:absolute;right:8px;top:12px;font-size:11px;color:var(--dim)}
+.ds-blk{position:absolute;top:4px;height:32px;border-radius:5px;color:#fff;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:center;cursor:grab;overflow:hidden}
+.ds-off{position:absolute;top:8px;width:22px;height:24px;margin-left:-11px;border:1px dashed var(--muted);border-radius:5px;color:var(--muted);font-size:11px;display:flex;align-items:center;justify-content:center;cursor:grab}
+.ds-youtube{background:#c0392b}
+.ds-ambiance{background:#2e86de}
+.ds-main{background:#8e44ad}
+.ds-key{display:inline-block;padding:0 6px;border-radius:4px;color:#fff;font-size:11px}
+.ds-words{top:68px;height:50px}
+.ds-w{position:absolute;top:0;font-size:11px;padding:2px 3px;border-radius:4px;white-space:nowrap;border-left:1px solid var(--border);cursor:default}
+.ds-w:nth-child(3n+2){top:15px}
+.ds-w:nth-child(3n){top:30px}
+.ds-w.drop{background:var(--accent);color:var(--accent-ink)}
+.ds-zone{position:absolute;top:16px;bottom:48px;background:repeating-linear-gradient(45deg,transparent 0 6px,rgba(127,127,127,.15) 6px 12px)}
+.ds-rise{position:absolute;top:16px;bottom:0;border-left:2px dashed var(--ok)}
+.ds-stock{margin:6px 0;display:flex;flex-direction:column;gap:6px}
+.ds-props{display:grid;grid-template-columns:repeat(4,1fr);gap:4px}
+.ds-prop{margin:0;cursor:pointer;border:2px solid transparent;border-radius:6px;overflow:hidden;background:#000}
+.ds-prop.on{border-color:var(--ok)}
+.ds-prop video{width:100%;aspect-ratio:16/9;object-fit:cover;display:block}
+.ds-prop figcaption{font-size:10px;text-align:center;color:#ddd;padding:1px 0}

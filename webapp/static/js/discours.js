@@ -152,14 +152,63 @@ function dsPassage(body, p){
 
 // ---------------------------------------------------------------- the cut-aways
 
+const DS_PX_S = 90;                       // the timeline: pixels per second
+const dsPage = {};                        // the page of Pixabay propositions shown per moment (« Autres »)
+
+function dsPlanKind(m){
+  const c = m.clip || {};
+  return c.a_la_main ? 'main' : c.stock ? 'ambiance' : 'youtube';
+}
+
+function dsFrise(d){
+  const f = d.frise;
+  if (!f) return '';
+  const w = Math.ceil(f.total * DS_PX_S) + 40, x = t => Math.round(t * DS_PX_S);
+  const ticks = Array.from({ length: Math.floor(f.total) + 1 }, (_, s) =>
+    `<span class="ds-tick" style="left:${x(s)}px">${s % 5 ? '' : fmtSec(s)}</span>`).join('');
+  const blocks = f.plans.map(b => {
+    const m = d.moments[b.index] || {};
+    return `<div class="ds-blk ds-${dsPlanKind(m)}" draggable="true" data-i="${b.index}" style="left:${x(b.debut)}px;width:${Math.max(18, x(b.fin - b.debut))}px"
+      title="${esc(m.scene || '')} — glisse-le sur un autre mot">${b.index + 1}</div>`;
+  }).join('');
+  const off = f.retires.map(r => `<div class="ds-off" draggable="true" data-i="${r.index}" style="left:${x(r.temps)}px" title="retiré : ${esc((d.moments[r.index] || {}).scene || '')}">${r.index + 1}</div>`).join('');
+  const words = f.mots.map(([t, s], k) => `<span class="ds-w" data-w="${k}" style="left:${x(s)}px">${esc(t)}</span>`).join('');
+  return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">Timeline</div>
+      <div class="meta" style="margin-left:0">La vidéo de ${fmtSec(f.total)} telle qu'elle sera montée (pauses resserrées). Glisse un plan sur un mot pour le déplacer.
+        <span class="ds-key ds-youtube">vidéo YouTube</span> <span class="ds-key ds-ambiance">ambiance Pixabay</span> <span class="ds-key ds-main">à toi</span></div></div></div>
+    <div class="ds-frise"><div class="ds-track" style="width:${w}px">
+      <div class="ds-zone" style="left:0;width:${x(f.accroche)}px" title="L'orateur d'abord : aucun plan avant ${f.accroche} s"></div>
+      <div class="ds-rise" style="left:${x(f.montee)}px" title="La musique monte ici"></div>
+      <div class="ds-row ds-ticks">${ticks}</div>
+      <div class="ds-row ds-plans"><span class="ds-lbl">orateur</span>${blocks}${off}</div>
+      <div class="ds-row ds-words">${words}</div>
+    </div></div></article>`;
+}
+
+function dsStockHtml(m){
+  const all = m.propositions || [], page = dsPage[m.index] || 0, cur = (m.clip || {}).stock;
+  const shown = all.slice(page * 4, page * 4 + 4);
+  return `<div class="ds-stock">
+    <div class="ad-row"><input class="f ds-q" value="${esc(m.ambiance || '')}" placeholder="ce qu'on doit voir (en anglais)" style="flex:1">
+      <button class="btn secondary small ds-search">Chercher sur Pixabay</button></div>
+    ${all.length ? `<div class="ds-props">${shown.map(c => `
+      <figure class="ds-prop ${c.stock === cur ? 'on' : ''}" data-s="${esc(c.stock)}" title="${esc(c.tags)}">
+        <video src="${esc(c.apercu)}" poster="${esc(c.image)}" muted loop playsinline preload="none"></video>
+        <figcaption>${c.stock === cur ? '✓ choisi' : c.pris != null && c.pris !== m.index ? `déjà au plan ${c.pris + 1}` : 'prendre'}</figcaption></figure>`).join('')}</div>
+      ${all.length > 4 ? `<button class="btn secondary small ds-more">Autres ↻ (${page + 1}/${Math.ceil(all.length / 4)})</button>` : ''}` : ''}
+  </div>`;
+}
+
 function dsPlans(body, p){
   const d = p.discours;
   const kept = d.moments.filter(m => m.action === 'garder').length;
+  const nw = d.frise ? d.frise.mots.length : 0;
   body.innerHTML = `<div class="tiny">${kept}/${d.moments.length} plan(s) gardé(s). Chaque plan passe par-dessus l'orateur pendant que sa voix continue.
       ${d.films ? '' : ' Pas d\'extraits de films, séries ou clips (une des chaînes ne les autorise pas) ; les cérémonies et émissions TV sont permises.'}</div>
+    ${dsFrise(d)}
     <div class="grid-3">${d.moments.map(m => `
-      <article class="chcard ds-m" data-i="${m.index}">
-        <div class="chcard-head"><div class="who"><div class="name">${fmtSec(m.temps)} · « ${esc(m.mot)} »</div>
+      <article class="chcard ds-m" data-i="${m.index}" id="dsM${m.index}">
+        <div class="chcard-head"><div class="who"><div class="name">${m.index + 1}. ${fmtSec(m.temps)} · « ${esc(m.mot)} »</div>
           <div class="meta" style="margin-left:0">${esc(m.scene || '')}</div></div>
           ${m.action === 'garder' ? `<span class="pill ok">gardé</span>` : '<span class="pill warn">retiré</span>'}</div>
         <div class="chcard-body">
@@ -168,7 +217,10 @@ function dsPlans(body, p){
             : `<div class="tiny">Aucune vidéo trouvée.${m.journal.length ? '<br>' + m.journal.map(esc).join('<br>') : ''}</div>`}
           <div class="ad-row" style="margin-top:6px">
             <select class="f ds-act" style="width:auto"><option value="garder" ${m.action === 'garder' ? 'selected' : ''} ${m.clip_url ? '' : 'disabled'}>garder</option>
-              <option value="retirer" ${m.action === 'retirer' ? 'selected' : ''}>retirer</option></select></div>
+              <option value="retirer" ${m.action === 'retirer' ? 'selected' : ''}>retirer</option></select>
+            ${m.mot_i != null ? `<button class="btn secondary small ds-mv" data-d="-1" title="Un mot plus tôt" ${m.mot_i > 0 ? '' : 'disabled'}>◀</button>
+              <button class="btn secondary small ds-mv" data-d="1" title="Un mot plus tard" ${m.mot_i < nw - 1 ? '' : 'disabled'}>▶</button>` : ''}</div>
+          ${dsStockHtml(m)}
           <div class="ad-row"><input class="f ds-url" placeholder="Ton lien (YouTube…)" style="flex:1">
             <input class="f ds-t" type="number" min="0" step="0.5" value="0" title="La seconde où le plan commence" style="width:70px">
             <button class="btn secondary small ds-link">OK</button></div>
@@ -177,8 +229,43 @@ function dsPlans(body, p){
     <div class="navbar"><span class="progress-text">${kept} plan(s) de coupe</span><span></span>
       <button class="btn primary" id="dsPlansOk" data-icon="film">Faire les vidéos →</button></div>`;
   hydrateIcons(body);
+  const base = `/api/adaptations/${p.project_id}/discours/moments`;
+  const move = (i, w) => dsCall(`${base}/${i}/move`, 'POST', { mot: Number(w) });
+  body.querySelectorAll('.ds-blk, .ds-off').forEach(b => {
+    b.ondragstart = ev => ev.dataTransfer.setData('text/plain', b.dataset.i);
+    b.onclick = () => document.getElementById('dsM' + b.dataset.i)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  body.querySelectorAll('.ds-w').forEach(w => {
+    w.ondragover = ev => { ev.preventDefault(); w.classList.add('drop'); };
+    w.ondragleave = () => w.classList.remove('drop');
+    w.ondrop = ev => { ev.preventDefault(); w.classList.remove('drop'); move(ev.dataTransfer.getData('text/plain'), w.dataset.w); };
+  });
   body.querySelectorAll('.ds-m').forEach(card => {
-    const i = card.dataset.i, url = `/api/adaptations/${p.project_id}/discours/moments/${i}`;
+    const i = Number(card.dataset.i), url = `${base}/${i}`, m = d.moments[i];
+    card.querySelectorAll('.ds-mv').forEach(b => b.onclick = () => move(i, m.mot_i + Number(b.dataset.d)));
+    card.querySelector('.ds-search').onclick = ev => {
+      const q = card.querySelector('.ds-q').value.trim();
+      if (!q) return;
+      ev.currentTarget.disabled = true;
+      dsPage[i] = 0;
+      dsCall(`${url}/pixabay`, 'POST', { recherche: q });
+    };
+    const more = card.querySelector('.ds-more');
+    if (more) more.onclick = () => {
+      dsPage[i] = ((dsPage[i] || 0) + 1) % Math.ceil(m.propositions.length / 4);
+      dsPlans(body, p);
+      document.getElementById('dsM' + i)?.scrollIntoView({ block: 'nearest' });
+    };
+    card.querySelectorAll('.ds-prop').forEach(f => {
+      const v = f.querySelector('video');
+      f.onmouseenter = () => v.play().catch(() => {});
+      f.onmouseleave = () => v.pause();
+      f.onclick = () => {
+        if (f.classList.contains('on')) return;
+        f.querySelector('figcaption').textContent = '…';
+        dsCall(`${url}/pixabay`, 'POST', { stock: f.dataset.s });
+      };
+    });
     card.querySelector('.ds-act').onchange = ev => dsCall(url, 'POST', { action: ev.target.value });
     card.querySelector('.ds-link').onclick = ev => {
       const link = card.querySelector('.ds-url').value.trim();
