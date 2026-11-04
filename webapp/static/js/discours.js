@@ -180,7 +180,8 @@ function dsFrise(d, pid){
     `<span class="ds-tick" style="left:${x(s)}px">${s % 5 ? '' : fmtSec(s)}</span>`).join('');
   const blocks = f.plans.map(b => {
     const m = d.moments[b.index] || {};
-    const pic = ((m.propositions || []).find(c => c.stock === (m.clip || {}).stock) || {}).image;
+    const pic = ((m.propositions || []).find(c => c.stock === (m.clip || {}).stock) || {}).image
+      || (m.clip_url ? `/api/adaptations/${pid}/discours/moments/${b.index}/frame` : '');
     return `<div class="ds-blk ds-${dsPlanKind(m)}" draggable="true" data-i="${b.index}" style="left:${x(b.debut)}px;width:${Math.max(18, x(b.fin - b.debut))}px${pic ? `;background-image:url('${esc(pic)}')` : ''}"
       title="${esc(m.scene || '')} — glisse-le sur un autre mot"><b>${b.index + 1}</b></div>`;
   }).join('');
@@ -209,7 +210,7 @@ function dsBindFrise(body, d){
   const f = d.frise, v = document.getElementById('dsPlayer');
   if (!f || !v) return;
   const head = document.getElementById('dsHead'), now = document.getElementById('dsNow'), frise = body.querySelector('.ds-frise');
-  v.ontimeupdate = () => {
+  v.ontimeupdate = v.onseeked = () => {
     const t = dsRemap(v.currentTime, f.parts);
     head.style.left = Math.round(t * DS_PX_S) + 'px';
     const b = f.plans.find(p => p.debut <= t && t < p.fin), m = b ? d.moments[b.index] : null;

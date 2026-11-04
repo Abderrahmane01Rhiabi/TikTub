@@ -1072,6 +1072,18 @@ def discours_moment_clip(pid: str, index: int):
     return FileResponse(path, media_type="video/mp4")
 
 
+@router.get("/api/adaptations/{pid}/discours/moments/{index}/frame")
+def discours_moment_frame(pid: str, index: int):
+    """One small image of the cut-away (its timeline block)."""
+    from adaptation import discours as D
+    clip = discours_moment_clip(pid, index).path
+    try:
+        path = D.frame_at(clip, 0.5, os.path.splitext(clip)[0] + "_bloc.jpg")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    return FileResponse(path, media_type="image/jpeg")
+
+
 @router.post("/api/adaptations/{pid}/discours/plans/approve")
 def discours_approve_plans(pid: str):
     from adaptation import discours_pipeline as dp

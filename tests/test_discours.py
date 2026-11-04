@@ -470,6 +470,9 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
     assert spans[0][0] == 0 and abs(spans[-1][1] - f["total"]) < 0.06                  # speaker + plans: the whole Short
     assert all(b[0] >= a[1] - 0.001 for a, b in zip(spans, spans[1:]))
     assert all(abs(D.remap(o["source"], f["parts"]) - (o["debut"] + o["fin"]) / 2) < 0.02 for o in f["orateur"])
+    monkeypatch.setattr(D, "frame_at", lambda video, t, out, width=180: open(out, "wb").write(b"jpg") and out)
+    r = client.get(f"/api/adaptations/{pid}/discours/moments/0/frame")
+    assert r.status_code == 200 and r.content == b"jpg"                                 # a cut-away's block image
     dp.set_moment(pid, 1, "retirer")
     f = dp.frise(ap.load(pid))
     dp.approve_plans(pid)
