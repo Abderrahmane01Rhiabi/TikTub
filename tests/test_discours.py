@@ -67,6 +67,7 @@ def test_pauses_are_tightened_on_the_cut_timeline():
     assert D.remap(1.0, parts) == 1.0 and D.remap(3.5, parts) == 2.5
     assert D.remap(2.5, parts) == 2.0                                      # inside a cut pause: the next part
     assert D.remap(8.5, parts) == 4.5 and D.remap(20, parts) == 5.0
+    assert [D.unmap(t, parts) for t in (1.0, 2.5, 4.5, 9.0)] == [1.0, 3.5, 8.5, 9.0]     # and the way back
 
 
 def test_a_mood_shot_is_the_best_tagged_one_not_used_yet(tmp_path, monkeypatch):
@@ -465,6 +466,10 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client):
     f = s["frise"]
     assert f["total"] > 0 and len(f["mots"]) == len(d["local"]) and f["plans"]
     assert all(b["debut"] >= D.HOOK_S and b["fin"] <= f["total"] for b in f["plans"])
+    spans = sorted([(o["debut"], o["fin"]) for o in f["orateur"]] + [(b["debut"], b["fin"]) for b in f["plans"]])
+    assert spans[0][0] == 0 and abs(spans[-1][1] - f["total"]) < 0.06                  # speaker + plans: the whole Short
+    assert all(b[0] >= a[1] - 0.001 for a, b in zip(spans, spans[1:]))
+    assert all(abs(D.remap(o["source"], f["parts"]) - (o["debut"] + o["fin"]) / 2) < 0.02 for o in f["orateur"])
     dp.set_moment(pid, 1, "retirer")
     f = dp.frise(ap.load(pid))
     dp.approve_plans(pid)
@@ -513,6 +518,17 @@ def test_the_screen_gets_the_discours(fakes, client):
     assert s["targets"][0]["reglages"]["fond"] == "flou" and s["targets"][0]["films"] is True
     assert routes._serialize_adaptation(ap.load(pid), full=False)["discours"].get("passages") is None
     assert client.get(f"/api/adaptations/{pid}/discours/moments/0/clip").status_code == 404
+    assert d["passage_url"] is None and client.get(f"/api/adaptations/{pid}/discours/frame?t=1").status_code == 404
+
+
+def test_the_timeline_shows_the_speakers_image(tmp_path):
+    src = str(tmp_path / "s.mp4")
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=30:duration=3",
+                    "-c:v", "libx264", "-preset", "ultrafast", src], check=True)
+    out = D.frame_at(src, 1.5, str(tmp_path / "im" / "1.5.jpg"))
+    assert os.path.getsize(out) > 500
+    mtime = os.path.getmtime(out)
+    assert D.frame_at(src, 1.5, out) == out and os.path.getmtime(out) == mtime         # made once
 
 
 def test_a_channels_discours_settings(client, project):

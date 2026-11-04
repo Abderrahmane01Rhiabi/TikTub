@@ -257,6 +257,25 @@ def remap(t: float, parts: List[List[float]]) -> float:
     return out
 
 
+def unmap(t: float, parts: List[List[float]]) -> float:
+    """remap's way back: a time of the cut Short -> the passage's time (to show the speaker's image there)."""
+    out = 0.0
+    for a, b in parts:
+        if t <= out + b - a:
+            return a + t - out
+        out += b - a
+    return parts[-1][1] if parts else t
+
+
+def frame_at(video: str, t: float, out: str, width: int = 180) -> str:
+    """One small image of `video` at `t` s (the timeline's speaker blocks), made once."""
+    if not os.path.exists(out):
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-ss", f"{max(0.0, t):.2f}", "-i", video, "-frames:v", "1",
+              "-vf", f"scale={width}:-2", "-q:v", "4", out])
+    return out
+
+
 def cut(seg: str, parts: List[List[float]], pic: str, snd: str) -> Tuple[str, str]:
     """The passage's picture and sound with only `parts` kept (15 ms fades on the sound: no click)."""
     n = len(parts)

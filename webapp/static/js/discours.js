@@ -160,29 +160,66 @@ function dsPlanKind(m){
   return c.a_la_main ? 'main' : c.stock ? 'ambiance' : 'youtube';
 }
 
-function dsFrise(d){
+function dsRemap(t, parts){               // the passage's time -> the cut Short's (adaptation/discours.remap)
+  let out = 0;
+  for (const [a, b] of parts){
+    if (t < a) return out;
+    if (t <= b) return out + t - a;
+    out += b - a;
+  }
+  return out;
+}
+
+function dsFrise(d, pid){
   const f = d.frise;
   if (!f) return '';
   const w = Math.ceil(f.total * DS_PX_S) + 40, x = t => Math.round(t * DS_PX_S);
+  const speaker = (f.orateur || []).map(o => `<div class="ds-spk" data-src="${o.source}" style="left:${x(o.debut)}px;width:${Math.max(4, x(o.fin - o.debut))}px;
+      background-image:url('/api/adaptations/${pid}/discours/frame?t=${o.source}')" title="L'orateur ${fmtSec(o.debut)} → ${fmtSec(o.fin)}"></div>`).join('');
   const ticks = Array.from({ length: Math.floor(f.total) + 1 }, (_, s) =>
     `<span class="ds-tick" style="left:${x(s)}px">${s % 5 ? '' : fmtSec(s)}</span>`).join('');
   const blocks = f.plans.map(b => {
     const m = d.moments[b.index] || {};
-    return `<div class="ds-blk ds-${dsPlanKind(m)}" draggable="true" data-i="${b.index}" style="left:${x(b.debut)}px;width:${Math.max(18, x(b.fin - b.debut))}px"
-      title="${esc(m.scene || '')} — glisse-le sur un autre mot">${b.index + 1}</div>`;
+    const pic = ((m.propositions || []).find(c => c.stock === (m.clip || {}).stock) || {}).image;
+    return `<div class="ds-blk ds-${dsPlanKind(m)}" draggable="true" data-i="${b.index}" style="left:${x(b.debut)}px;width:${Math.max(18, x(b.fin - b.debut))}px${pic ? `;background-image:url('${esc(pic)}')` : ''}"
+      title="${esc(m.scene || '')} — glisse-le sur un autre mot"><b>${b.index + 1}</b></div>`;
   }).join('');
   const off = f.retires.map(r => `<div class="ds-off" draggable="true" data-i="${r.index}" style="left:${x(r.temps)}px" title="retiré : ${esc((d.moments[r.index] || {}).scene || '')}">${r.index + 1}</div>`).join('');
   const words = f.mots.map(([t, s], k) => `<span class="ds-w" data-w="${k}" style="left:${x(s)}px">${esc(t)}</span>`).join('');
   return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">Timeline</div>
-      <div class="meta" style="margin-left:0">La vidéo de ${fmtSec(f.total)} telle qu'elle sera montée (pauses resserrées). Glisse un plan sur un mot pour le déplacer.
-        <span class="ds-key ds-youtube">vidéo YouTube</span> <span class="ds-key ds-ambiance">ambiance Pixabay</span> <span class="ds-key ds-main">à toi</span></div></div></div>
-    <div class="ds-frise"><div class="ds-track" style="width:${w}px">
-      <div class="ds-zone" style="left:0;width:${x(f.accroche)}px" title="L'orateur d'abord : aucun plan avant ${f.accroche} s"></div>
-      <div class="ds-rise" style="left:${x(f.montee)}px" title="La musique monte ici"></div>
-      <div class="ds-row ds-ticks">${ticks}</div>
-      <div class="ds-row ds-plans"><span class="ds-lbl">orateur</span>${blocks}${off}</div>
-      <div class="ds-row ds-words">${words}</div>
-    </div></div></article>`;
+      <div class="meta" style="margin-left:0">La vidéo de ${fmtSec(f.total)} telle qu'elle sera montée (pauses resserrées) : l'orateur en gris, les plans de coupe par-dessus.
+        Glisse un plan sur un mot pour le déplacer ; clique un mot pour l'écouter.
+        <span class="ds-key ds-spk-key">orateur</span> <span class="ds-key ds-youtube">vidéo YouTube</span> <span class="ds-key ds-ambiance">ambiance Pixabay</span> <span class="ds-key ds-main">à toi</span></div></div></div>
+    <div class="chcard-body">
+      ${d.passage_url ? `<div class="ds-player"><video id="dsPlayer" src="${d.passage_url}" controls playsinline preload="metadata"></video>
+        <div class="tiny" id="dsNow">Le passage d'origine, tel qu'il a été dit (avant de resserrer les pauses). Le curseur rouge suit la lecture.</div></div>` : ''}
+      <div class="ds-frise"><div class="ds-track" style="width:${w}px">
+        <div class="ds-zone" style="left:0;width:${x(f.accroche)}px" title="L'orateur d'abord : aucun plan avant ${f.accroche} s"></div>
+        <div class="ds-rise" style="left:${x(f.montee)}px" title="La musique monte ici"></div>
+        <div class="ds-row ds-ticks">${ticks}</div>
+        <div class="ds-row ds-speaker">${speaker}</div>
+        <div class="ds-row ds-plans"><span class="ds-lbl">plans</span>${blocks}${off}</div>
+        <div class="ds-row ds-words">${words}</div>
+        <div class="ds-head" id="dsHead" style="left:0"></div>
+      </div></div>
+    </div></article>`;
+}
+
+function dsBindFrise(body, d){
+  const f = d.frise, v = document.getElementById('dsPlayer');
+  if (!f || !v) return;
+  const head = document.getElementById('dsHead'), now = document.getElementById('dsNow'), frise = body.querySelector('.ds-frise');
+  v.ontimeupdate = () => {
+    const t = dsRemap(v.currentTime, f.parts);
+    head.style.left = Math.round(t * DS_PX_S) + 'px';
+    const b = f.plans.find(p => p.debut <= t && t < p.fin), m = b ? d.moments[b.index] : null;
+    now.textContent = `${fmtSec(t)} dans le Short · ${m ? `plan ${b.index + 1} : ${m.scene || ''}` : "l'orateur à l'écran"}`;
+    const x = t * DS_PX_S;
+    if (x < frise.scrollLeft || x > frise.scrollLeft + frise.clientWidth - 40) frise.scrollLeft = Math.max(0, x - 80);
+  };
+  const seek = s => { v.currentTime = Number(s); v.play().catch(() => {}); };
+  body.querySelectorAll('.ds-w').forEach(el => el.onclick = () => seek(f.mots[el.dataset.w][2]));
+  body.querySelectorAll('.ds-spk').forEach(el => el.onclick = () => seek(el.dataset.src));
 }
 
 function dsStockHtml(m){
@@ -205,7 +242,7 @@ function dsPlans(body, p){
   const nw = d.frise ? d.frise.mots.length : 0;
   body.innerHTML = `<div class="tiny">${kept}/${d.moments.length} plan(s) gardé(s). Chaque plan passe par-dessus l'orateur pendant que sa voix continue.
       ${d.films ? '' : ' Pas d\'extraits de films, séries ou clips (une des chaînes ne les autorise pas) ; les cérémonies et émissions TV sont permises.'}</div>
-    ${dsFrise(d)}
+    ${dsFrise(d, p.project_id)}
     <div class="grid-3">${d.moments.map(m => `
       <article class="chcard ds-m" data-i="${m.index}" id="dsM${m.index}">
         <div class="chcard-head"><div class="who"><div class="name">${m.index + 1}. ${fmtSec(m.temps)} · « ${esc(m.mot)} »</div>
@@ -229,6 +266,7 @@ function dsPlans(body, p){
     <div class="navbar"><span class="progress-text">${kept} plan(s) de coupe</span><span></span>
       <button class="btn primary" id="dsPlansOk" data-icon="film">Faire les vidéos →</button></div>`;
   hydrateIcons(body);
+  dsBindFrise(body, d);
   const base = `/api/adaptations/${p.project_id}/discours/moments`;
   const move = (i, w) => dsCall(`${base}/${i}/move`, 'POST', { mot: Number(w) });
   body.querySelectorAll('.ds-blk, .ds-off').forEach(b => {

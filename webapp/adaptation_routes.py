@@ -250,7 +250,8 @@ def _serialize_discours(p: dict, targets: list, full: bool = True) -> dict:
            "defauts": D.DEFAULTS, "cadres": list(D.FRAMES), "fonds": list(D.FONDS), "etalonnages": list(D.GRADES),
            "musique": {k: (d.get("musique") or {}).get(k) for k in ("titre", "fichier", "pourquoi_chanson")}
            if d.get("musique") else None,
-           "video_url": f"/api/adaptations/{pid}/discours/video" if d.get("video") else None}
+           "video_url": f"/api/adaptations/{pid}/discours/video" if d.get("video") else None,
+           "passage_url": f"/api/adaptations/{pid}/discours/passage" if d.get("segment") else None}
     if not full:
         return out
     words = d.get("mots") or []
@@ -1100,6 +1101,31 @@ def discours_settings(pid: str, req: DiscoursSettings):
     p = _adaptation_call(dp.change_settings, pid, req.reglages, req.son, req.chanson)
     _restart_if_voicing(pid, p)
     return _serialize_adaptation(p)
+
+
+@router.get("/api/adaptations/{pid}/discours/passage")
+def discours_passage_video(pid: str):
+    """The chosen passage as it was said (before its pauses are cut): the Plans screen's player."""
+    d = _discours_or_404(pid).get("discours") or {}
+    if not d.get("segment") or not os.path.exists(d["segment"]):
+        raise HTTPException(status_code=404, detail="Passage pas encore découpé.")
+    return FileResponse(d["segment"], media_type="video/mp4")
+
+
+@router.get("/api/adaptations/{pid}/discours/frame")
+def discours_frame(pid: str, t: float = 0.0):
+    """The speaker at `t` s of the passage (a timeline block), a small image made once."""
+    from adaptation import discours as D, discours_pipeline as dp
+    p = _discours_or_404(pid)
+    seg = (p.get("discours") or {}).get("segment")
+    if not seg or not os.path.exists(seg):
+        raise HTTPException(status_code=404, detail="Passage pas encore découpé.")
+    t = round(max(0.0, t), 1)
+    try:
+        path = D.frame_at(seg, t, os.path.join(dp.work_dir(p, "passage", "images"), f"{t:.1f}.jpg"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.get("/api/adaptations/{pid}/discours/video")

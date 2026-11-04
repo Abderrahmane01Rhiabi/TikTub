@@ -358,8 +358,9 @@ def move_moment(pid: str, index: int, word: int) -> Dict:
 
 
 def frise(p: Dict) -> Optional[Dict]:
-    """The timeline as the video will have it (pauses cut, the 1st target's settings): the words, the cut-aways
-    ({"index" of the moment, start, end}), the moments taken out, and where the music rises."""
+    """The timeline as the video will have it (pauses cut, the 1st target's settings): the words (with their passage
+    time, for the player), the speaker's blocks between the cut-aways ({start, end, "source": the passage time
+    of its image}), the cut-aways ({"index" of the moment, start, end}), the moments taken out, where the music rises."""
     d = p["discours"]
     if not d.get("local") or not d.get("parts") or not d.get("moments"):
         return None
@@ -377,8 +378,15 @@ def frise(p: Dict) -> Optional[Dict]:
             off.append({"index": i, "temps": round(t, 3)})
     starts = [D.remap(w[1], parts) for w in d["local"]]
     plans = [{"index": c, "debut": a, "fin": b} for a, b, c, _ in D.shots(anchors, starts, total, hit)]
-    return {"total": total, "montee": round(hit, 3), "accroche": D.HOOK_S,
-            "mots": [[w[0], round(t, 3)] for w, t in zip(d["local"], starts)], "plans": plans, "retires": off}
+    speaker, free = [], 0.0
+    for b in plans + [{"debut": total, "fin": total}]:
+        if b["debut"] - free > 0.05:
+            speaker.append({"debut": round(free, 3), "fin": round(b["debut"], 3),
+                            "source": round(D.unmap((free + b["debut"]) / 2, parts), 2)})
+        free = max(free, b["fin"])
+    return {"total": total, "montee": round(hit, 3), "accroche": D.HOOK_S, "parts": parts,
+            "mots": [[w[0], round(t, 3), w[1]] for w, t in zip(d["local"], starts)], "plans": plans,
+            "orateur": speaker, "retires": off}
 
 
 def approve_plans(pid: str) -> Dict:
