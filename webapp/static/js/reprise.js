@@ -137,6 +137,73 @@ function rpScript(body, p){
   document.getElementById('rpVoices').onclick = () => rpPost(`/api/adaptations/${p.project_id}/voices`, 'POST');
 }
 
+// ---------------------------------------------------------------- the timeline (reprise_pipeline.frise)
+
+const RP_PX_S = 40;                       // the timeline: pixels per second
+
+function rpPartName(x){
+  if (x.numero) return `#${x.numero}`;
+  return x.role ? x.role.charAt(0).toUpperCase() + x.role.slice(1) : 'Partie';
+}
+
+function rpMusicSvg(m, total){
+  const w = Math.ceil(total * RP_PX_S), h = 40, lv = m.niveau || [];
+  if (!lv.length) return '';
+  const y = db => (h - 2) * (1 - (Math.max(-70, Math.min(-10, db)) + 70) / 60) + 1;
+  const pts = lv.map((db, i) => `${(i * m.pas * RP_PX_S).toFixed(1)},${y(db).toFixed(1)}`);
+  return `<svg class="rp-wave" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">
+    <polygon points="0,${h} ${pts.join(' ')} ${((lv.length - 1) * m.pas * RP_PX_S).toFixed(1)},${h}"/></svg>`;
+}
+
+function rpMusicSummary(m){
+  if (!m) return 'Sans musique.';
+  const bits = [m.entree > 0.05 ? `entre à ${fmtSec(m.entree)}` : 'là dès la 1re seconde'];
+  if (m.montee != null) bits.push(`monte à ${fmtSec(m.montee)}`);
+  if (m.coupe) bits.push(`coupée sur un temps fort à ${fmtSec(m.coupe)}, la salle (réverbération) la porte jusqu'à la fin`);
+  return `🎵 ${esc(m.titre || '')}${m.debut_chanson != null ? ` (prise à ${fmtSec(m.debut_chanson)} de la chanson)` : ''} : ${bits.join(', ')}.`;
+}
+
+function rpFrise(f, pid){
+  if (!f) return '';
+  const w = Math.ceil(f.total * RP_PX_S) + 40, x = t => Math.round(t * RP_PX_S), m = f.musique;
+  const ticks = Array.from({ length: Math.floor(f.total) + 1 }, (_, s) =>
+    `<span class="ds-tick" style="left:${x(s)}px">${s % 5 ? '' : fmtSec(s)}</span>`).join('');
+  const parts = f.parties.map((pa, k) => `<div class="rp-part rp-part-${k % 2}" data-t="${pa.debut}" style="left:${x(pa.debut)}px;width:${Math.max(4, x(pa.fin - pa.debut) - 2)}px"
+      title="${esc(rpPartName(pa))} · ${fmtSec(pa.debut)} → ${fmtSec(pa.fin)} · images à ×${pa.vitesse}\n${esc(pa.texte)}"><b>${esc(rpPartName(pa))}</b> <span>${esc(pa.texte)}</span></div>`).join('');
+  const imgs = f.images.map(im => `<div class="rp-img ${im.fige ? 'rp-fige' : ''}" data-t="${im.debut}" style="left:${x(im.debut)}px;width:${Math.max(3, x(im.fin - im.debut) - 1)}px;
+      background-image:url('/api/adaptations/${pid}/reprise/frame?t=${im.source}')"
+      title="${im.fige ? "Plus d'images pour cette partie : la dernière reste figée" : `Plan ${im.plan + 1} de la vidéo d'origine (${fmtSec(im.source)})`} · ${fmtSec(im.debut)} → ${fmtSec(im.fin)}"></div>`).join('');
+  const marks = m ? [
+    m.entree > 0.05 ? `<div class="rp-mark rp-in" style="left:${x(m.entree)}px" title="La musique entre"><span>entrée</span></div>` : '',
+    m.montee != null ? `<div class="rp-mark rp-rise" style="left:${x(m.montee)}px" title="La montée de la chanson"><span>montée</span></div>` : '',
+    m.coupe ? `<div class="rp-mark rp-cut" style="left:${x(m.coupe)}px" title="Coupée sur un temps fort, puis la réverbération"><span>fin + salle</span></div>` : '',
+  ].join('') : '';
+  return `<div class="rp-frise-box">
+    <div class="tiny" style="margin-bottom:4px"><b>Timeline</b> — clique une partie ou une image pour la voir dans la vidéo. ${rpMusicSummary(m)}</div>
+    <div class="rp-frise-wrap"><div class="rp-lbls"><span>voix</span><span>images</span><span>musique</span></div>
+    <div class="ds-frise"><div class="rp-track" style="width:${w}px">
+      <div class="ds-row ds-ticks">${ticks}</div>
+      <div class="ds-row rp-row-voix">${parts}</div>
+      <div class="ds-row rp-row-img">${imgs}</div>
+      <div class="ds-row rp-row-mus">${m ? rpMusicSvg(m, f.total) : '<span class="tiny" style="padding:12px 8px;display:block">sans musique</span>'}</div>
+      ${marks}
+      <div class="ds-head rp-head" style="left:0"></div>
+    </div></div></div></div>`;
+}
+
+function rpBindFrise(card){
+  const v = card.querySelector('video'), head = card.querySelector('.rp-head'), frise = card.querySelector('.ds-frise');
+  if (!v || !head) return;
+  v.ontimeupdate = v.onseeked = () => {
+    const xpx = v.currentTime * RP_PX_S;
+    head.style.left = Math.round(xpx) + 'px';
+    if (xpx < frise.scrollLeft || xpx > frise.scrollLeft + frise.clientWidth - 40) frise.scrollLeft = Math.max(0, xpx - 80);
+  };
+  card.querySelectorAll('.rp-part, .rp-img').forEach(el => el.onclick = () => {
+    v.currentTime = Number(el.dataset.t) + 0.01; v.play().catch(() => {});
+  });
+}
+
 // ---------------------------------------------------------------- each channel's video
 
 async function rpPreviews(body, p){
@@ -168,7 +235,7 @@ async function rpPreviews(body, p){
               `<option value="${x}" ${x === t.voice_model_used ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
             <button class="btn secondary small pv-revoice">Refaire avec cette voix / ce modèle</button>
           </div>
-        </div></div>
+        </div>${rpFrise(t.frise, p.project_id)}</div>
         <div class="chcard-foot">${t.video_id ? '' : `<button class="btn primary small push pv-validate" data-icon="check" ${ok && !t.validated ? '' : 'disabled'}>Valider cette vidéo</button>`}</div>
       </article>`;
     }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} vidéo(s) validée(s)</span><span></span>
@@ -180,6 +247,7 @@ async function rpPreviews(body, p){
   body.querySelectorAll('.ad-prev-card').forEach(card => {
     const ch = card.dataset.channel, t = p.targets.find(x => x.channel === ch);
     const sel = card.querySelector('.pv-voice'), model = card.querySelector('.pv-model');
+    rpBindFrise(card);
     sel.onchange = () => {
       const v = (voicesByLang[t.language] || []).find(x => x.voice_id === sel.value), sample = card.querySelector('.pv-sample');
       if (sample && v) sample.src = v.preview_url;

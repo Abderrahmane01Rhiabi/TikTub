@@ -218,6 +218,11 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
     for out, t in zip(targets, p.get("targets") or []):
         out["son"] = rp.son_for(p, t)
         out["voice_model_used"] = rp.model_for(t)
+        try:
+            out["frise"] = rp.frise(p, t) if t.get("preview") else None
+        except Exception as e:                       # the timeline is a view: never the project's page down
+            print(f"⚠️ Frise Reprise ({t['channel']}) : {e}")
+            out["frise"] = None
     sc = r.get("script") or {}
     mus = r.get("musique") or {}
     return {
@@ -901,6 +906,22 @@ def _reprise_or_404(pid: str) -> dict:
 
 class RepriseElement(BaseModel):
     action: str                         # garder | cacher
+
+
+@router.get("/api/adaptations/{pid}/reprise/frame")
+def reprise_frame(pid: str, t: float = 0.0):
+    """The clean video at `t` s (a timeline image), a small image made once."""
+    from adaptation import discours as D, reprise_pipeline as rp
+    p = _reprise_or_404(pid)
+    clean = (p.get("reprise") or {}).get("clean")
+    if not clean or not os.path.exists(clean):
+        raise HTTPException(status_code=404, detail="Vidéo propre pas encore prête.")
+    t = round(max(0.0, t), 1)
+    try:
+        path = D.frame_at(clean, t, os.path.join(rp.work_dir(p, "images"), f"{t:.1f}.jpg"))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)[:200])
+    return FileResponse(path, media_type="image/jpeg")
 
 
 @router.post("/api/adaptations/{pid}/reprise/elements/{index}")

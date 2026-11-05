@@ -129,6 +129,13 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     assert set(fakes["sons"]) == {("son.wav", True)}                         # the Short's sound made by mixage
     assert {t["channel"]: rp.son_for(p, t) for t in p["targets"]} == {"cestpourca": "intelligente",
                                                                      "lungtemotivates": "notre_musique"}
+    f = rp.frise(p, p["targets"][0])                                         # the timeline of the preview
+    assert f["total"] == 70.0 and [x["debut"] for x in f["parties"]] == [0.0, 5.0]
+    assert f["images"] and all(a["fin"] <= b["debut"] + 0.01 for a, b in zip(f["images"], f["images"][1:]))
+    assert f["images"][-1]["fin"] == 70.0 and f["son"] == "intelligente"
+    place = os.path.join(ap.project_dir(pid), "cibles", "cestpourca", "fond_intelligente.wav.json")
+    json.dump({"entree": 0.0, "montee": 5.0, "coupe": 67.5, "pas": 0.25, "niveau": [-30.0]}, open(place, "w"))
+    assert rp.frise(p, p["targets"][0])["musique"]["titre"] == "Past Lives"
 
     rp.change_sound(pid, "sa_musique", 13)                                   # another sound: the voices are kept
     ap.runner_for(pid, "voicing")(pid)

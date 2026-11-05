@@ -97,3 +97,17 @@ def test_a_video_is_mastered_in_place(tmp_path):
     probe = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "stream=codec_type", "-of", "csv=p=0", v],
                            capture_output=True, text=True).stdout.split()
     assert probe.count("video") == 1 and probe.count("audio") == 1
+
+
+def test_a_song_with_a_silent_start_is_heard_from_the_first_second(tmp_path):
+    x = X._read(_music(tmp_path / "m.wav", seconds=14))
+    x[: int(3.5 * SR)] = 0.0                                     # a « Lyrics » video: 3.5 s of silence first
+    song = X._write(x, str(tmp_path / "lyrics.wav"))
+    assert abs(X.audible(song)[0] - 3.5) < 0.1
+    out = X.bed(song, str(tmp_path / "b.wav"), 8.0, start=1.0, gap=7.0, lift_at=4.0)
+    y = X._read(out)[:, 0]
+    assert 10 * np.log10(np.mean(y[int(0.5 * SR):SR] ** 2) + 1e-12) > -50   # music at 0.5 s, not 3 s of nothing
+    import json
+    place = json.load(open(out + ".json"))
+    assert place["debut_chanson"] >= 3.4 and abs(place["montee"] - 1.5) < 0.15  # its rise 2.5 s earlier
+    assert place["niveau"] and place["coupe"] and place["entree"] == 0.0

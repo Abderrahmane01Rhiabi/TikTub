@@ -858,10 +858,9 @@ def music_bed(song: str, rise: Optional[float], hit: float, total: float, out: s
         start, pad, lift = rise or 0.0, come, None
     elif rise is None:
         start, pad, lift = 0.0, 0.0, None
-    else:
-        start, pad, lift = rise - hit, 0.0, hit
-        if start < 0:
-            start, pad = 0.0, -start
+    else:                                             # from the 1st second: its rise earlier rather than a silence
+        start, pad = max(0.0, rise - hit), 0.0
+        lift = rise - start
     src = mixage.music_source(song, start, total - pad)
     return mixage.bed(src, out, total, start, pad, gap, lift_at=lift)
 

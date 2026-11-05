@@ -101,11 +101,11 @@ def _write(x: np.ndarray, path: str) -> str:
     return path
 
 
-def ending(bed: str, out: str, total: float) -> str:
+def ending(bed: str, out: str, total: float, cut: Optional[float] = None) -> str:
     """The music cut on a strong beat 1.6-3.2 s before the end (else 2.2 s before), its hall tail carrying it out:
     the last second before the cut convolved with the hall (numpy: FFmpeg's afir gave a silent tail here)."""
     from scipy.signal import fftconvolve
-    cut = strong_beat(bed, total - 3.2, total - 1.6) or total - 2.2
+    cut = cut or strong_beat(bed, total - 3.2, total - 1.6) or total - 2.2
     x = _read(bed)
     n, c = len(x), int(cut * RATE)
     if c <= RATE or c >= n:
@@ -172,16 +172,60 @@ def instrumental(song: str) -> str:
     return out
 
 
+_AUDIBLE: Dict[tuple, tuple] = {}
+
+
+def audible(path: str) -> tuple:
+    """(first, last) s where the song is heard: a song taken from a « Lyrics » video starts with seconds of silence
+    (Into Your Arms: 3.6 s) and may end with some."""
+    key = (path, os.path.getmtime(path))
+    if key not in _AUDIBLE:
+        raw = _run(["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"]).stdout
+        x = np.frombuffer(raw, np.float32)
+        hop = 400                                                                   # 50 ms
+        e = np.array([np.mean(x[i:i + hop] ** 2) for i in range(0, max(0, len(x) - hop), hop)])
+        on = np.flatnonzero(e > 10 ** (-50 / 10))                                   # above -50 dBFS
+        _AUDIBLE[key] = (round(on[0] * 0.05, 2), round((on[-1] + 1) * 0.05, 2)) if len(on) else (0.0, len(x) / 8000)
+    return _AUDIBLE[key]
+
+
+def envelope(path: str, step: float = 0.25) -> List[float]:
+    """The level (dBFS) every `step` s: the timeline's drawing of the music."""
+    raw = _run(["ffmpeg", "-nostdin", "-v", "error", "-i", path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"]).stdout
+    x = np.frombuffer(raw, np.float32)
+    hop = int(8000 * step)
+    return [round(float(10 * np.log10(np.mean(x[i:i + hop] ** 2) + 1e-12)), 1) for i in range(0, len(x) - hop + 1, hop)]
+
+
+def note(bed_path: str, **place) -> Dict:
+    """Where the music sits in the Short, kept beside its bed (<bed>.json) for the timeline: what bed() decided
+    (place) and the level it has, every 0.25 s."""
+    import json
+    try:
+        level_now = envelope(bed_path)
+    except MixageError:
+        level_now = []
+    info = {**place, "pas": 0.25, "niveau": level_now}
+    json.dump(info, open(bed_path + ".json", "w", encoding="utf-8"))
+    return info
+
+
 def bed(src: str, out: str, total: float, start: float = 0.0, pad: float = 0.0, gap: float = 7.0,
         lift_at: Optional[float] = None, levelled: bool = True, end: bool = True, lift: float = 1.33) -> str:
     """The music under the voice: from `start` s of the song after `pad` s of silence (« entrée »: pad = the moment it
     comes in), levelled, `gap` dB under VOICE_LUFS measured on what is heard, `lift` from `lift_at` (its rise), faded
-    in, and ended on a strong beat with a hall tail (else faded out)."""
+    in, and ended on a strong beat with a hall tail (else faded out). Never from the song's silent start: taken from
+    its first sound, the rise coming that much earlier. Where it all landed: note() (<out>.json)."""
     work = out + ".parts"
     os.makedirs(work, exist_ok=True)
-    long = float(_run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", src]).stdout or 0)
+    first, last = audible(src)
+    if start < first:                                            # « Lyrics » videos: seconds of silence first
+        lift_at = lift_at - (first - start) if lift_at is not None else None
+        start = first
+    long = min(last + 0.5, float(_run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                       src]).stdout or 0) or last + 0.5)
     if long and start + total - pad > long - 0.5:                # the song would end and start again: taken earlier
-        moved_by = min(start, start + total - pad - (long - 0.5))
+        moved_by = min(start - first, start + total - pad - (long - 0.5))
         start -= moved_by
         lift_at = lift_at - moved_by if lift_at is not None else None
     raw = os.path.join(work, "brut.wav")
@@ -197,13 +241,18 @@ def bed(src: str, out: str, total: float, start: float = 0.0, pad: float = 0.0, 
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", music, "-af",
           f"volume={gain:.4f}{rise},afade=t=in:st=0:d={fade_in},adelay={int(pad * 1000)}:all=1,apad=whole_dur={total:.3f},"
           f"atrim=0:{total:.3f}" + ("" if end else f",afade=t=out:st={max(0.0, total - 2.0):.2f}:d=2"), placed])
+    cut = None
     if end:
-        ending(placed, out, total)
+        cut = strong_beat(placed, total - 3.2, total - 1.6) or total - 2.2
+        ending(placed, out, total, cut)
     else:
         os.replace(placed, out)
     for f in os.listdir(work):
         os.remove(os.path.join(work, f))
     os.rmdir(work)
+    note(out, entree=round(pad, 2), debut_chanson=round(start, 2),
+         montee=round(lift_at, 2) if lift_at is not None and lift_at > pad else None,
+         coupe=round(cut, 2) if cut else None, fin=round(total, 2))
     return out
 
 

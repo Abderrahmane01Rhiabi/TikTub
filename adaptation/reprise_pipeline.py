@@ -265,11 +265,13 @@ def bed_for(p: Dict, t: Dict, v: Dict, work: str, report: Report) -> Optional[st
     out = os.path.join(work, f"fond_{son}.wav")
     if son == "sans_musique":
         return None
+    from adaptation import mixage                     # levelled, its instrumental when it holds up, a hall at the end
     if son == "sa_musique":
         from roblox import voix
         rest = voix.separate(r["clean"], work_dir(p, "demucs"))["reste"]
-        return musique.bed(rest, out, total, gap=gap)
-    from adaptation import mixage                     # levelled, its instrumental when it holds up, a hall at the end
+        musique.bed(rest, out, total, gap=gap)
+        mixage.note(out, entree=0.0, montee=None, coupe=None, fin=round(total, 2))
+        return out
     if son == "notre_musique":
         start = float(t.get("music_start") or 0.0)
         return mixage.bed(mixage.music_source(t["music_path"], start, total), out, total, start=start, gap=gap)
@@ -277,10 +279,46 @@ def bed_for(p: Dict, t: Dict, v: Dict, work: str, report: Report) -> Optional[st
     hit = rm.starts_of(v)[choice["partie"]]          # this language's moment for the chosen part
     path = os.path.join(SHARED_MUSIC, choice["fichier"])
     rise, _ = musique.peak_for(musique.listen(path), hit, total, choice["montee"])
-    start, pad = rise - hit, 0.0
-    if start < 0:
-        start, pad = 0.0, -start
-    return mixage.bed(mixage.music_source(path, start, total - pad), out, total, start, pad, gap, lift_at=hit)
+    start = max(0.0, rise - hit)                      # the music from the 1st second: its rise earlier rather than a silence
+    return mixage.bed(mixage.music_source(path, start, total), out, total, start, 0.0, gap, lift_at=rise - start)
+
+
+def frise(p: Dict, t: Dict) -> Optional[Dict]:
+    """This channel's video as a timeline: its parts (the voice's times), the original's images under each (as
+    rm.render lays them: at the part's speed, the last image held if they end early), where the music comes in,
+    rises and ends, and its level (mixage.note beside the bed)."""
+    r = p.get("reprise") or {}
+    v = t.get("voice") or {}
+    if not r.get("script") or not r.get("plans") or not os.path.exists(v.get("json", "")):
+        return None
+    timings = json.load(open(v["json"], encoding="utf-8"))
+    code = langs.lang(t["language"])["code"]
+    total = timings["duration"] + 0.8
+    parts, images = [], []
+    for k, (part, a, d) in enumerate(zip(r["script"]["parties"], rm.starts_of(timings), rm.part_lengths(timings))):
+        shots = [(i, r["plans"][i]) for i in part["plans"] if 0 <= i < len(r["plans"])]
+        foot = sum(s["fin"] - s["debut"] for _, s in shots) or 1.0
+        speed = min(rm.SPEED[1], max(rm.SPEED[0], foot / d))
+        at = a
+        for i, s in shots:
+            if at >= a + d:
+                break
+            end = min(a + d, at + (s["fin"] - s["debut"]) / speed)
+            images.append({"plan": i, "debut": round(at, 2), "fin": round(end, 2), "source": round((s["debut"] + s["fin"]) / 2, 2)})
+            at = end
+        if at < a + d - 0.1:                         # the images ran out: the last one held
+            images.append({"plan": None, "debut": round(at, 2), "fin": round(a + d, 2), "fige": True,
+                           "source": images[-1]["source"] if images else 0.0})
+        parts.append({"debut": round(a, 2), "fin": round(a + d, 2), "role": part.get("role"), "numero": part.get("numero"),
+                      "texte": part.get(code) or "", "vitesse": round(speed, 2)})
+    son = son_for(p, t)
+    music = None
+    placed = os.path.join(_ap().project_dir(p["project_id"]), "cibles", t["channel"], f"fond_{son}.wav.json")
+    if son != "sans_musique" and os.path.exists(placed):
+        music = json.load(open(placed, encoding="utf-8"))
+        music["titre"] = ((r.get("musique") or {}).get("titre") if son == "intelligente"
+                          else "sa musique" if son == "sa_musique" else os.path.basename(t.get("music_path") or ""))
+    return {"total": round(total, 2), "parties": parts, "images": images, "musique": music, "son": son}
 
 
 def make_video(p: Dict, t: Dict, report: Report) -> Dict:

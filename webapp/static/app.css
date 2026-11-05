@@ -671,6 +671,32 @@
 .ds-player{display:flex;gap:12px;align-items:flex-end;margin-bottom:8px}
 .ds-player video{height:220px;max-width:60%;background:#000;border-radius:8px}
 
+/* Reprise → Aperçu : each video's timeline (its parts, the original's images, the music) */
+.rp-frise-box{margin-top:12px}
+.rp-track{position:relative;height:160px;min-width:100%}
+.rp-frise-wrap{display:flex;gap:6px}
+.rp-frise-wrap .ds-frise{flex:1;min-width:0}
+.rp-lbls{flex:0 0 52px;position:relative;height:160px;font-size:11px;color:var(--dim)}
+.rp-lbls span{position:absolute;right:0}
+.rp-lbls span:nth-child(1){top:30px}
+.rp-lbls span:nth-child(2){top:75px}
+.rp-lbls span:nth-child(3){top:126px}
+.rp-row-voix{top:20px;height:38px}
+.rp-row-img{top:62px;height:44px}
+.rp-row-mus{top:112px;height:44px;background:var(--panel2);border-radius:6px}
+.rp-part{position:absolute;top:0;height:36px;border-radius:5px;padding:2px 6px;font-size:11px;line-height:15px;overflow:hidden;cursor:pointer;color:#fff}
+.rp-part span{opacity:.8}
+.rp-part-0{background:#2e86de}
+.rp-part-1{background:#1b5fa8}
+.rp-img{position:absolute;top:0;height:44px;border-radius:4px;background:#333 center/cover no-repeat;cursor:pointer;box-shadow:inset 0 0 0 1px rgba(0,0,0,.4)}
+.rp-fige{filter:grayscale(1) brightness(.6);background-image:repeating-linear-gradient(45deg,transparent 0 6px,rgba(255,255,255,.2) 6px 12px)!important}
+.rp-wave{position:absolute;left:0;top:2px}
+.rp-wave polygon{fill:var(--ok);opacity:.55}
+.rp-mark{position:absolute;top:16px;bottom:0;border-left:2px solid var(--muted)}
+.rp-mark span{position:absolute;top:96px;left:3px;font-size:10px;white-space:nowrap;color:var(--text);background:var(--panel);padding:0 3px;border-radius:3px}
+.rp-rise{border-left:2px dashed var(--ok)}
+.rp-cut{border-left-style:dotted}
+
 /* Discours : the live preview (a phone drawn by the page, the captions made by the server laid over it) */
 .ds-live-wrap{display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap}
 .ds-live-wrap > div:first-child{flex:1 1 420px;min-width:min(100%,420px)}
