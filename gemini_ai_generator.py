@@ -513,7 +513,9 @@ Respond with JSON:
                     "metadata": (None, json.dumps(metadata), "application/json"),
                     "file": (os.path.basename(video_path), file_bytes, mime_type),
                 },
-                timeout=120
+                # by its size: a 31 MB Short at ~2 Mbit/s up needs over 2 min (cut at 120 s twice); one number, the
+                # sending is timed by it too (a (connect, read) pair cut the sending at the connect's 30 s)
+                timeout=max(120, len(file_bytes) / 1e6 * 10)
             )
             if response.status_code != 200:
                 print(f"❌ Gemini file upload failed: {response.status_code} - {response.text[:300]}")

@@ -7,11 +7,11 @@ const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'se
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_REPRISE = [['Short', ['analysing', 'cleaning', 'cleaning_review']], ['Script', ['scripting', 'script_review']],
-                          ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
+                          ['Réglages', ['settings_review']], ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_DISCOURS = [['Discours', ['analysing']], ['Passage', ['passage_review']], ['Plans', ['searching', 'plans_review']],
                            ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STATUS = { passage_review: 'passage à choisir', plans_review: 'plans à vérifier', cleaning: 'nettoyage (carte graphique)…', cleaning_review: 'nettoyage à vérifier', analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
-  script_review: 'scripts à relire', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
+  script_review: 'scripts à relire', settings_review: 'réglages à choisir', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
 async function openAdaptation(){

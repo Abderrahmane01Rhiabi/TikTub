@@ -211,6 +211,11 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     return base
 
 
+def db_voice(voice_id: str):
+    import db as _db
+    return _db.get_voice(voice_id) if voice_id else None
+
+
 def _serialize_reprise(p: dict, targets: list) -> dict:
     from adaptation import reprise_pipeline as rp, settings as st
     r = p.get("reprise") or {}
@@ -218,6 +223,7 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
     for out, t in zip(targets, p.get("targets") or []):
         out["son"] = rp.son_for(p, t)
         out["voice_model_used"] = rp.model_for(t)
+        out["voice_name"] = (db_voice(t["voice_id"]) or {}).get("name")
         try:
             out["frise"] = rp.frise(p, t) if t.get("preview") else None
         except Exception as e:                       # the timeline is a view: never the project's page down
@@ -226,7 +232,8 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
     sc = r.get("script") or {}
     mus = r.get("musique") or {}
     return {
-        "son": r.get("son"), "volume_db": r.get("volume_db"), "sons": ["sa_musique", "notre_musique", "intelligente", "sans_musique"],
+        "son": r.get("son"), "volume_db": r.get("volume_db"), "sons": list(rp.SONS), "chanson": r.get("chanson"),
+        "partie": r.get("partie"), "sous_titres": r.get("sous_titres"), "live_gap": rp.LIVE_GAP, "demo_s": rp.DEMO_S,
         "smart_channels": list(rp.SMART_CHANNELS), "voice_models": list(st.VOICE_MODELS),
         "elements": [{"index": i, **{k: e.get(k) for k in ("type", "description", "action", "raison", "debut", "fin")}}
                      for i, e in enumerate(r.get("elements") or [])],
@@ -834,7 +841,8 @@ def start_adaptation_voices(pid: str):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     p = _adaptation_call(ap.start_voices, pid)
-    _start_adaptation_step(pid, "voicing")
+    if p["status"] == "voicing":                     # a Reprise goes to its settings first (nothing made yet)
+        _start_adaptation_step(pid, "voicing")
     return _serialize_adaptation(p)
 
 
@@ -974,6 +982,78 @@ def reprise_sound(pid: str, req: RepriseSound):
     p = _adaptation_call(rp.change_sound, pid, req.son, req.volume_db)
     _start_adaptation_step(pid, "voicing")
     return _serialize_adaptation(p)
+
+
+class RepriseSettings(BaseModel):
+    son: Optional[str] = None
+    volume_db: Optional[float] = None
+    chanson: Optional[str] = None
+    partie: Optional[int] = None
+    sous_titres: Optional[dict] = None
+    voix: Optional[dict] = None
+
+
+@router.patch("/api/adaptations/{pid}/reprise/reglages")
+def reprise_settings(pid: str, req: RepriseSettings):
+    """The video's settings (only those sent): kept before the videos are made, the videos made again after."""
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    p = _adaptation_call(rp.set_settings, pid, req.dict(exclude_unset=True))
+    if p["status"] == "voicing":
+        _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
+
+
+@router.post("/api/adaptations/{pid}/reprise/fabriquer")
+def reprise_make(pid: str):
+    from adaptation import reprise_pipeline as rp
+    _reprise_or_404(pid)
+    p = _adaptation_call(rp.make_videos, pid)
+    _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
+
+
+@router.get("/api/adaptations/{pid}/reprise/demo/video")
+def reprise_demo_video(pid: str):
+    from adaptation import reprise_pipeline as rp
+    return FileResponse(_adaptation_call(rp.demo_clip, _reprise_or_404(pid)), media_type="video/mp4")
+
+
+@router.get("/api/adaptations/{pid}/reprise/demo/sous_titres")
+def reprise_demo_captions(pid: str, channel: str, style: Optional[str] = None, params: Optional[str] = None,
+                          chaine: bool = False):
+    """The demo's captions layer (on black): `style` (none: ours), or the channel's choice (`chaine`)."""
+    from adaptation import reprise_pipeline as rp
+    try:
+        raw = json.loads(params) if params else {}
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Réglages illisibles")
+    choice = None if chaine else {"style": style or None, "params": raw if isinstance(raw, dict) else {}}
+    if choice and choice["style"]:
+        from captions import styles as caption_lib
+        st = caption_lib.get(choice["style"])
+        if not st or "reprise" not in st.spaces:
+            raise HTTPException(status_code=400, detail="Style de sous-titres inconnu pour une Reprise.")
+        choice["params"] = st.clean(choice["params"])
+    return FileResponse(_adaptation_call(rp.demo_captions, _reprise_or_404(pid), channel, choice), media_type="video/mp4")
+
+
+@router.get("/api/adaptations/{pid}/reprise/demo/voix")
+def reprise_demo_voice(pid: str, channel: str, voice_id: Optional[str] = None, model: Optional[str] = None):
+    from adaptation import reprise_pipeline as rp
+    path, what = _adaptation_call(rp.demo_voice, _reprise_or_404(pid), channel, voice_id, model)
+    return FileResponse(path, media_type="audio/wav", headers={"X-Voix": what})
+
+
+@router.get("/api/adaptations/{pid}/reprise/demo/musique")
+def reprise_demo_music(pid: str, channel: str, son: str, chanson: Optional[str] = None, partie: Optional[int] = None):
+    """The demo's music (LIVE_GAP dB under the voice; the page lowers it to the slider). 204: no music."""
+    from adaptation import reprise_pipeline as rp
+    from fastapi import Response
+    path = _adaptation_call(rp.demo_music, _reprise_or_404(pid), channel, son, chanson, partie)
+    if not path:
+        return Response(status_code=204)
+    return FileResponse(path, media_type="audio/wav")
 
 
 @router.get("/api/adaptations/{pid}/reprise/video/{which}")

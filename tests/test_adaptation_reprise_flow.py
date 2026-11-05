@@ -119,6 +119,8 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     ap.approve_script(pid, "cestpourca")
     ap.approve_script(pid, "lungtemotivates")
     ap.start_voices(pid)
+    assert ap.load(pid)["status"] == "settings_review" and not fakes["voices"]   # the settings first: nothing paid yet
+    rp.make_videos(pid)
     ap.runner_for(pid, "voicing")(pid)
     p = ap.load(pid)
     assert p["status"] == "preview_review"
@@ -159,6 +161,53 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     assert rec["ai_data"]["description"] == "Une histoire vraie. #shorts"      # no credit line (taken out by hand)
     assert rec["ai_data"]["tags"] == ["cochon", "ferme"]
     assert rec["recette"]["mode"] == "reprise" and rec["recette"]["son"] == "sa_musique"
+
+
+def _to_settings(fakes):
+    p = ap.create("https://www.youtube.com/shorts/abc", [], fakes["channels"], mode="reprise", son="intelligente")
+    pid = p["project_id"]
+    ap.runner_for(pid, "analysing")(pid)
+    rp.approve_cleaning(pid)
+    ap.runner_for(pid, "scripting")(pid)
+    for t in ap.load(pid)["targets"]:
+        ap.approve_script(pid, t["channel"])
+    ap.start_voices(pid)
+    return pid
+
+
+def test_the_settings_before_the_videos_then_on_the_previews(fakes, monkeypatch):
+    pid = _to_settings(fakes)
+    os.makedirs(rp.SHARED_MUSIC, exist_ok=True)
+    open(os.path.join(rp.SHARED_MUSIC, "ma_chanson.mp3"), "wb").write(b"x")
+    with pytest.raises(ap.PipelineError):
+        rp.set_settings(pid, {"son": "choisie"})                              # a picked song needs its song
+    with pytest.raises(ap.PipelineError):
+        rp.set_settings(pid, {"sous_titres": {"style": "inconnu"}})
+    monkeypatch.setattr(db, "get_voice", lambda vid: {"voice_id": vid} if vid == "vfr2" else None)
+    p = rp.set_settings(pid, {"son": "choisie", "chanson": "ma_chanson.mp3", "partie": 1, "volume_db": 12,
+                              "sous_titres": {"style": "hormozi", "params": {}},
+                              "voix": {"cestpourca": {"voice_id": "vfr2", "model": "eleven_v3"}}})
+    assert p["status"] == "settings_review"                                  # kept for the videos, nothing made
+    r = p["reprise"]
+    assert (r["son"], r["chanson"], r["partie"], r["volume_db"]) == ("choisie", "ma_chanson.mp3", 1, 12.0)
+    assert r["sous_titres"]["style"] == "hormozi" and rp.captions_for(p, p["targets"][0])["style"] == "hormozi"
+    assert (p["targets"][0]["voice_id"], p["targets"][0]["voice_model"]) == ("vfr2", "eleven_v3")
+    assert [rp.son_for(p, t) for t in p["targets"]] == ["choisie", "notre_musique"]   # shared songs: its channels only
+    monkeypatch.setattr(musique, "listen", lambda path: {"titre": "Ma chanson", "moment_fort": 30.0, "montees": [30.0], "duree": 150.0})
+    v = rp.timings_of(p, p["targets"][0])                                    # no voice yet: estimated from the script
+    assert v["passages"][1]["start"] > 0 and v["duration"] > v["passages"][1]["start"]
+    assert all(a["end"] <= b["start"] for a, b in zip(v["words"], v["words"][1:]))
+    path, start, lift = rp.song_plan(p, p["targets"][0], v, lambda *a: None)
+    assert path.endswith("ma_chanson.mp3") and abs(lift - v["passages"][1]["start"]) < 0.01   # its rise on part 2
+    rp.make_videos(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    assert ("fr", "vfr2", "eleven_v3") in fakes["voices"]
+    made = len(fakes["voices"])
+    rp.set_settings(pid, {"volume_db": 20, "sous_titres": None})              # on the previews: made again …
+    p = ap.load(pid)
+    assert p["status"] == "voicing" and p["reprise"]["sous_titres"] is None and not any(t["validated"] for t in p["targets"])
+    ap.runner_for(pid, "voicing")(pid)
+    assert len(fakes["voices"]) == made                                       # … the voices kept
 
 
 def test_no_music_and_a_channel_without_track(fakes):

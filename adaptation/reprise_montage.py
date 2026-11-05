@@ -246,13 +246,6 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     lst = os.path.join(work, "parties.txt")
     open(lst, "w").write("".join(f"file '{os.path.abspath(f)}'\n" for f in files))
     numbers = [p.get("numero") if script.get("genre") == "top" and p.get("role") == "point" else None for p in parts]
-    from captions import render as caption_render, styles as caption_lib
-    lib_style = (captions or {}).get("style")
-    if lib_style and not (caption_lib.get(lib_style) and "reprise" in caption_lib.get(lib_style).spaces):
-        lib_style = None
-    # our numbers always; our word captions only without a library style
-    ass = globals()["captions"](os.path.join(work, f"textes_{code}.ass"), [] if lib_style else v["words"], starts_of(v),
-                                numbers, code, total, y)
     gain = 1.0 if mastered else 10 ** ((VOICE_LUFS - lufs(mp3)) / 20)       # mastered: the Short's sound (mixage)
     lim = ":level=disabled" if mastered else ""                                # (no make-up gain over the master)
     inputs = ["-f", "concat", "-safe", "0", "-i", lst, "-i", mp3]
@@ -260,18 +253,10 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     def add_input(*args) -> int:
         inputs.extend(args)
         return sum(1 for x in inputs if x == "-i") - 1
-    g = [f"[0:v]tpad=stop_mode=clone:stop_duration=1,trim=0:{total:.3f},setpts=PTS-STARTPTS,"
-         f"ass='{os.path.abspath(ass)}':fontsdir='{langs.FONTS_DIR}':shaping=complex[v0]"]
-    extra_audio = []
-    if lib_style:
-        out_words = [(w["w"], w["start"], w["end"]) for w in glued(v["words"])]
-        ctx = caption_render.context(code, (0, 0, W, H), out_words, None)
-        ctx.anchor_y = int(H * y)          # « Auto »: where his captions were erased, as our own captions go
-        built = caption_render.build(lib_style, out_words, ctx, (captions or {}).get("params"))
-        cap_f, cap_v, extra_audio = caption_render.filters(built, "v0", add_input, os.path.join(work, "captions_lib"), (W, H), fps=FPS)
-        g += cap_f + [f"[{cap_v}]format=yuv420p[vout]"]
-    else:
-        g.append("[v0]format=yuv420p[vout]")
+    g = [f"[0:v]tpad=stop_mode=clone:stop_duration=1,trim=0:{total:.3f},setpts=PTS-STARTPTS[v0]"]
+    cap_g, extra_audio = caption_graph("v0", "vout", v["words"], starts_of(v), numbers, code, total, y, captions,
+                                       work, add_input)
+    g += cap_g
     mixed = "".join(extra_audio)
     if bed:
         bi = add_input("-i", bed)
@@ -284,6 +269,47 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
         g.append(f"[1:a]volume={gain:.4f},apad,atrim=0:{total:.3f},alimiter=limit=0.95{lim}[aout]")
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", "[vout]",
           "-map", "[aout]", "-c:v", "h264_nvenc", "-cq", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out])
+    return out
+
+
+def caption_graph(src: str, out: str, words: List[Dict], starts: List[float], numbers: List[Optional[int]], code: str,
+                  total: float, y: float, captions: Optional[Dict], work: str, add_input) -> tuple:
+    """The captions laid on [src] -> [out] (yuv420p), as the video has them: a style of the shared library draws the
+    words (« Auto » where his captions were erased), else ours; our numbers always. -> (filters, the style's sounds)."""
+    from captions import render as caption_render, styles as caption_lib
+    lib_style = (captions or {}).get("style")
+    if lib_style and not (caption_lib.get(lib_style) and "reprise" in caption_lib.get(lib_style).spaces):
+        lib_style = None
+    ass = globals()["captions"](os.path.join(work, f"textes_{code}.ass"), [] if lib_style else words, starts,
+                                numbers, code, total, y)
+    g = [f"[{src}]ass='{os.path.abspath(ass)}':fontsdir='{langs.FONTS_DIR}':shaping=complex[{out}_n]"]
+    if not lib_style:
+        return g + [f"[{out}_n]format=yuv420p[{out}]"], []
+    out_words = [(w["w"], w["start"], w["end"]) for w in glued(words)]
+    ctx = caption_render.context(code, (0, 0, W, H), out_words, None)
+    ctx.anchor_y = int(H * y)              # « Auto »: where his captions were erased, as our own captions go
+    built = caption_render.build(lib_style, out_words, ctx, (captions or {}).get("params"))
+    cap_f, cap_v, extra_audio = caption_render.filters(built, f"{out}_n", add_input, os.path.join(work, "captions_lib"),
+                                                       (W, H), fps=FPS)
+    return g + cap_f + [f"[{cap_v}]format=yuv420p[{out}]"], extra_audio
+
+
+def caption_layer(words: List[Dict], starts: List[float], numbers: List[Optional[int]], code: str, total: float,
+                  y: float, captions: Optional[Dict], out: str, work: str) -> str:
+    """The demo's captions: the video's very captions (caption_graph) on black, 540x960, `total` s (the page lays
+    them over its picture)."""
+    os.makedirs(work, exist_ok=True)
+    inputs = ["-f", "lavfi", "-i", f"color=black:s={W}x{H}:r={FPS}:d={total:.2f}"]
+
+    def add_input(*args) -> int:
+        inputs.extend(args)
+        return sum(1 for x in inputs if x == "-i") - 1
+    g, _ = caption_graph("0:v", "c", words, starts, numbers, code, total, y, captions, work, add_input)
+    g.append("[c]scale=540:960,format=yuv420p[v]")
+    tmp = out + ".part.mp4"
+    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", "[v]", "-an",
+          "-t", f"{total:.2f}", "-c:v", "libx264", "-preset", "veryfast", "-crf", "26", "-movflags", "+faststart", tmp])
+    os.replace(tmp, out)
     return out
 
 
