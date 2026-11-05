@@ -254,6 +254,7 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     ass = globals()["captions"](os.path.join(work, f"textes_{code}.ass"), [] if lib_style else v["words"], starts_of(v),
                                 numbers, code, total, y)
     gain = 1.0 if mastered else 10 ** ((VOICE_LUFS - lufs(mp3)) / 20)       # mastered: the Short's sound (mixage)
+    lim = ":level=disabled" if mastered else ""                                # (no make-up gain over the master)
     inputs = ["-f", "concat", "-safe", "0", "-i", lst, "-i", mp3]
 
     def add_input(*args) -> int:
@@ -275,12 +276,12 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     if bed:
         bi = add_input("-i", bed)
         g.append(f"[1:a]volume={gain:.4f}[vo];[vo][{bi}:a]{mixed}amix=inputs={2 + len(extra_audio)}:normalize=0:duration=longest,"
-                 f"atrim=0:{total:.3f},alimiter=limit=0.95[aout]")
+                 f"atrim=0:{total:.3f},alimiter=limit=0.95{lim}[aout]")
     elif extra_audio:
         g.append(f"[1:a]volume={gain:.4f},apad[vo];[vo]{mixed}amix=inputs={1 + len(extra_audio)}:normalize=0:duration=first,"
-                 f"atrim=0:{total:.3f},alimiter=limit=0.95[aout]")
+                 f"atrim=0:{total:.3f},alimiter=limit=0.95{lim}[aout]")
     else:
-        g.append(f"[1:a]volume={gain:.4f},apad,atrim=0:{total:.3f},alimiter=limit=0.95[aout]")
+        g.append(f"[1:a]volume={gain:.4f},apad,atrim=0:{total:.3f},alimiter=limit=0.95{lim}[aout]")
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", "[vout]",
           "-map", "[aout]", "-c:v", "h264_nvenc", "-cq", "20", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", out])
     return out

@@ -21,7 +21,7 @@ import numpy as np
 RATE = 48000
 VOICE_LUFS = -16.0                  # the voice before the master (the music is set under it)
 TARGET_LUFS = -14.0                 # the Short's integrated loudness (YouTube's reference)
-TRUE_PEAK = -1.0                    # dBTP
+TRUE_PEAK = -1.5                    # dBTP before the AAC encoding (it overshoots a little): -1 dBTP in the Short
 CARVE = (1200, 5500)                # the voice's band in the music (the tutorial: centre 2.9 kHz, ~5.6 kHz wide)
 CARVE_RATIO = 3.0                   # how much that band gives way while he speaks (~6-8 dB at a normal voice)
 REVERB_S = 2.4                      # the hall's tail at the end

@@ -815,9 +815,9 @@ def render(pic: str, speech: str, plan: List[Tuple], words: List[List], lang: st
     for k, lab in enumerate(sounds):
         g.append(f"{lab}aresample=48000[sx{k}]")
         mix.append(f"[sx{k}]")
-    up = "" if mastered else ",volume=1.26"
-    g.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first{up},alimiter=limit=0.93[aout]"
-             if len(mix) > 1 else f"[vo]anull{up},alimiter=limit=0.93[aout]")
+    up = ",alimiter=limit=0.84:level=disabled" if mastered else ",volume=1.26,alimiter=limit=0.93"   # (level: its own
+    g.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first{up}[aout]"            # make-up gain off)
+             if len(mix) > 1 else f"[vo]anull{up}[aout]")
     tmp = out + ".part.mp4"
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", f"[{cur}]",
           "-map", "[aout]", "-t", f"{total:.3f}", "-r", str(FPS), *_venc(), "-c:a", "aac", "-b:a", "192k",
