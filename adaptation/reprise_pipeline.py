@@ -479,7 +479,8 @@ def run_final(pid: str, report: Optional[Report] = None):
             title = (r["script"].get("titre") or {}).get(code)
             if r.get("miniature") and title:
                 try:
-                    rec["thumbnail_path"] = rm.thumbnail(r["miniature"], title, code, os.path.splitext(dest)[0] + ".jpg")
+                    rec["thumbnail_path"] = rm.thumbnail_apart(r["miniature"], title, code,
+                                                              os.path.splitext(dest)[0] + ".jpg")
                 except Exception:
                     pass                         # Publication takes its picture from the video
             db.upsert_video(rec["video_id"], rec)

@@ -342,3 +342,19 @@ def thumbnail(src_img: str, title: str, code: str, out: str, reader=None) -> str
         y += step
     im.save(out)
     return out
+
+
+def thumbnail_apart(src_img: str, title: str, code: str, out: str) -> str:
+    """thumbnail() in a process of its own: its OCR's first load (easyocr -> torch, thousands of files read from
+    /mnt/c) took 3 min holding the server's GIL, every page of the app timing out meanwhile."""
+    import sys
+    r = subprocess.run([sys.executable, "-m", "adaptation.reprise_montage", src_img, title, code, out],
+                       capture_output=True, timeout=900)
+    if r.returncode or not os.path.exists(out):
+        raise MontageError(r.stderr.decode(errors="replace")[-400:] or "miniature non faite")
+    return out
+
+
+if __name__ == "__main__":
+    import sys
+    thumbnail(*sys.argv[1:5])
