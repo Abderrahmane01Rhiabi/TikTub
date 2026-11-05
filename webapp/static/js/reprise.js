@@ -66,9 +66,9 @@ function rpCleaning(body, p){
           <span class="tiny">${r.credit ? `Images de ${esc(r.credit)} (crédité dans la description)` : ''}</span></div>
         <label class="f" style="margin-top:10px">Ce que son créateur a ajouté</label>
         <div class="stack" style="gap:6px">${r.elements.map(e => `
-          <div class="ad-row rp-el" data-i="${e.index}" style="justify-content:space-between">
-            <span><b>${esc(RP_TYPES[e.type] || e.type)}</b> <span class="tiny">${esc(e.description || '')} · ${fmtSec(e.debut)}–${fmtSec(e.fin)}${e.raison ? ' · ' + esc(e.raison) : ''}</span></span>
-            <select class="f rp-action" style="width:auto">
+          <div class="ad-row rp-el" data-i="${e.index}" style="justify-content:space-between;flex-wrap:nowrap;align-items:center">
+            <span style="flex:1;min-width:0"><b>${esc(RP_TYPES[e.type] || e.type)}</b> <span class="tiny">${esc(e.description || '')} · ${fmtSec(e.debut)}–${fmtSec(e.fin)}${e.raison ? ' · ' + esc(e.raison) : ''}</span></span>
+            <select class="f rp-action" style="width:auto;flex:none">
               <option value="cacher" ${e.action === 'cacher' ? 'selected' : ''}>cacher</option>
               <option value="garder" ${e.action === 'garder' ? 'selected' : ''}>garder</option></select></div>`).join('')}</div>
         <div class="tiny" style="margin-top:6px">« Garder » un dessin qui aide à comprendre l'image (une croix, une flèche, un cercle). Les textes, logos, pseudos et boutons sont à cacher.</div>

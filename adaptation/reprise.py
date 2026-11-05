@@ -361,7 +361,8 @@ def _frames(path: str, w: int, h: int):
 def _writer(out: str, src: str, info: Dict):
     return subprocess.Popen(["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s",
                              f"{info['w']}x{info['h']}", "-r", info["rate"], "-i", "-", "-i", src, "-map", "0:v",
-                             "-map", "1:a?", "-c:v", "h264_nvenc", "-cq", "19", "-c:a", "copy", "-shortest", out],
+                             "-map", "1:a?", "-c:v", "h264_nvenc", "-cq", "19", "-pix_fmt", "yuv420p", "-c:a", "copy", "-shortest",
+                             out],                      # yuv420p: from bgr24 nvenc made a 4:4:4 RGB video, green in browsers
                             stdin=subprocess.PIPE)
 
 
