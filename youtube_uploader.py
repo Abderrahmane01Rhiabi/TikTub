@@ -1132,6 +1132,32 @@ def find_interrupted_upload(youtube, attempt: Dict):
     return None
 
 
+STUCK_AFTER_MIN = 20                # a cut send's video still processing, empty, this long after: never will
+
+
+def interrupted_state(youtube, youtube_id: str) -> str:
+    """What became of the video a cut-short send left on YouTube: "ok" (its file arrived and is processed or being
+    processed with it), "processing" (too early to say) or "stuck" (its file never arrived whole — 2026-11-05: an
+    empty video, 0 s, « processing » for ever, taken for a success by its title alone). Raises if YouTube can't be
+    asked."""
+    import dateutil.parser
+    items = youtube.videos().list(part="status,processingDetails,contentDetails,snippet", id=youtube_id).execute().get("items") or []
+    if not items:
+        return "stuck"                                        # gone (deleted): sent again
+    it = items[0]
+    status, proc = it.get("status") or {}, (it.get("processingDetails") or {}).get("processingStatus")
+    if status.get("uploadStatus") in ("failed", "rejected", "deleted") or proc in ("failed", "terminated"):
+        return "stuck"
+    if status.get("uploadStatus") == "processed" or proc == "succeeded":
+        return "ok"
+    empty = (it.get("contentDetails") or {}).get("duration") in (None, "P0D")
+    try:
+        age = (datetime.now(timezone.utc) - dateutil.parser.parse(it["snippet"]["publishedAt"])).total_seconds() / 60
+    except (KeyError, TypeError, ValueError):
+        age = 0
+    return "stuck" if empty and age > STUCK_AFTER_MIN else "processing"
+
+
 class _ReportedResults(list):
     """A run's results, each one also handed to on_result the moment it
     lands — the live progress of « Publier tout » (webapp: /api/publish_status)."""
@@ -1257,6 +1283,29 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True, on_res
                                 "error": "Un envoi précédent de cette vidéo a été interrompu et YouTube n'a pas pu "
                                          "être vérifié — non renvoyée pour éviter un doublon. Réessaie plus tard."})
                 continue
+            state = None
+            if found:
+                try:
+                    state = interrupted_state(youtube, found)
+                except Exception as e:
+                    print(f"⚠️ État de la vidéo {found} impossible à lire ({video['video_id']}): {e}")
+                    state = "processing"
+                if state == "processing":            # too early: looked at again next time, never sent twice
+                    results.append({"video_id": video['video_id'], "title": title, "success": False, "url": None,
+                                    "error": "Un envoi précédent de cette vidéo a été interrompu ; YouTube la traite "
+                                             "encore — elle sera revérifiée au prochain « Publier tout »."})
+                    continue
+                if state == "stuck":                 # its file never arrived: the empty video removed, sent again
+                    try:
+                        youtube.videos().delete(id=found).execute()
+                        print(f"🗑️ Vidéo bloquée supprimée sur YouTube ({found}) : envoi coupé, renvoyée")
+                    except Exception as e:
+                        results.append({"video_id": video['video_id'], "title": title, "success": False, "url": None,
+                                        "error": f"Un envoi précédent a laissé une vidéo vide sur YouTube ({found}) "
+                                                 f"qui n'a pas pu être supprimée ({e}) — supprime-la dans YouTube "
+                                                 "Studio, puis relance."})
+                        continue
+                    found = None
             if found:
                 url = f"https://youtube.com/watch?v={found}"
                 update_video_status(video['video_id'], url, found, attempt.get('scheduled_time'))

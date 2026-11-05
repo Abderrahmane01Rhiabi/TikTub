@@ -1,6 +1,7 @@
 """Publishing: what actually gets sent to YouTube, and what happens when
 something (file, connection, quota) gets in the way."""
 
+import os
 from datetime import datetime, timedelta, timezone
 
 import db
@@ -273,6 +274,7 @@ def test_a_send_cut_short_found_on_youtube_is_not_sent_again(project, fake_youtu
     uploads = ChannelUploads([("YTold", "Mon titre", "2020-01-01T00:00:00Z"), ("YTcut", "Mon titre", just_after)])
     monkeypatch.setattr(type(fake_youtube), "channels", lambda self: uploads.channels(), raising=False)
     monkeypatch.setattr(type(fake_youtube), "playlistItems", lambda self: uploads.playlistItems(), raising=False)
+    monkeypatch.setattr(yu, "interrupted_state", lambda yt, vid: "ok")
 
     result = yu.upload_channel_schedule("chanA")[0]
 
@@ -281,6 +283,57 @@ def test_a_send_cut_short_found_on_youtube_is_not_sent_again(project, fake_youtu
     video = db.get_video("v1")
     assert video["youtube_id"] == "YTcut" and video["status"] == "scheduled_on_youtube"
     assert not video.get("upload_attempt")
+
+
+def _cut_on_youtube(project, fake_youtube, monkeypatch, state):
+    interrupted(project)
+    just_after = (datetime.now(timezone.utc) - timedelta(minutes=9)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    uploads = ChannelUploads([("YTcut", "Mon titre", just_after)])
+    monkeypatch.setattr(type(fake_youtube), "channels", lambda self: uploads.channels(), raising=False)
+    monkeypatch.setattr(type(fake_youtube), "playlistItems", lambda self: uploads.playlistItems(), raising=False)
+    monkeypatch.setattr(yu, "interrupted_state", lambda yt, vid: state)
+    deleted = []
+    monkeypatch.setattr(type(fake_youtube), "delete", lambda self, id: deleted.append(id) or Answer({}), raising=False)
+    return deleted
+
+
+def test_a_cut_send_still_processing_is_neither_trusted_nor_sent_again(project, fake_youtube, monkeypatch):
+    deleted = _cut_on_youtube(project, fake_youtube, monkeypatch, "processing")
+    result = yu.upload_channel_schedule("chanA")[0]
+    assert not result["success"] and "traite encore" in result["error"]
+    assert fake_youtube.inserted == [] and deleted == []
+    video = db.get_video("v1")
+    assert video["upload_attempt"] and not video.get("youtube_id")       # looked at again next time
+    assert os.path.exists(video["video_path"])                           # its file kept
+
+
+def test_a_cut_send_left_empty_on_youtube_is_removed_and_sent_again(project, fake_youtube, monkeypatch):
+    deleted = _cut_on_youtube(project, fake_youtube, monkeypatch, "stuck")
+    result = yu.upload_channel_schedule("chanA")[0]
+    assert deleted == ["YTcut"] and len(fake_youtube.inserted) == 1     # the empty one gone, the real one sent
+    assert result["success"] and db.get_video("v1")["youtube_id"] != "YTcut"
+
+
+class _Videos:
+    def __init__(self, item):
+        self.item = item
+
+    def videos(self):
+        return type("V", (), {"list": lambda _, **kw: Answer({"items": [self.item] if self.item else []})})()
+
+
+def test_what_a_cut_send_left_on_youtube():
+    old = (datetime.now(timezone.utc) - timedelta(minutes=60)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    new = (datetime.now(timezone.utc) - timedelta(minutes=3)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def item(upload, proc, duration, at):
+        return {"status": {"uploadStatus": upload}, "processingDetails": {"processingStatus": proc},
+                "contentDetails": {"duration": duration}, "snippet": {"publishedAt": at}}
+    assert yu.interrupted_state(_Videos(item("processed", "succeeded", "PT1M1S", old)), "x") == "ok"
+    assert yu.interrupted_state(_Videos(item("uploaded", "processing", "P0D", new)), "x") == "processing"
+    assert yu.interrupted_state(_Videos(item("uploaded", "processing", "P0D", old)), "x") == "stuck"   # 2026-11-05
+    assert yu.interrupted_state(_Videos(item("failed", "failed", "P0D", new)), "x") == "stuck"
+    assert yu.interrupted_state(_Videos(None), "x") == "stuck"
 
 
 def test_a_send_cut_short_not_on_youtube_is_sent_normally(project, fake_youtube, monkeypatch):
