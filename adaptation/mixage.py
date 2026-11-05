@@ -129,6 +129,34 @@ def ending(bed: str, out: str, total: float) -> str:
 INSTRUMENTALS = os.path.join("assets", "musiques", ".instrumental")
 
 
+INSTRUMENTAL_MEAN_DB = 6.0          # the instrumental kept when it is at most this much under the song on the part used
+INSTRUMENTAL_QUIET_DB = 10.0        # … and in its quiet moments (Past Lives: 19 dB there, nearly empty: refused)
+
+
+def _rms(path: str, start: float, length: float) -> tuple:
+    raw = _run(["ffmpeg", "-nostdin", "-v", "error", "-ss", f"{max(0.0, start):.2f}", "-t", f"{max(0.5, length):.2f}", "-i",
+                path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"]).stdout
+    x = np.frombuffer(raw, np.float32)
+    hop = 800
+    e = np.array([np.mean(x[i:i + hop] ** 2) for i in range(0, max(0, len(x) - hop), hop)]) if len(x) > hop else np.zeros(1)
+    return 10 * np.log10(np.mean(e) + 1e-12), 10 * np.log10(np.percentile(e, 25) + 1e-12)
+
+
+def music_source(song: str, start: float, length: float) -> str:
+    """The song's instrumental when it holds up on its own on the part used (the blind test: 4/5 on a full instrumental,
+    1/5 on a nearly empty one raised), else the song itself (its singing then given way by the carve)."""
+    try:
+        inst = instrumental(song)
+        s_mean, s_quiet = _rms(song, start, length)
+        i_mean, i_quiet = _rms(inst, start, length)
+    except Exception as e:
+        print(f"⚠️ Instrumental impossible ({e}) : la chanson entière")
+        return song
+    if s_mean - i_mean <= INSTRUMENTAL_MEAN_DB and s_quiet - i_quiet <= INSTRUMENTAL_QUIET_DB:
+        return inst
+    return song
+
+
 def instrumental(song: str) -> str:
     """The song without its singing (Demucs, graphics card, about a minute, once per song): a singer under a speech
     sings in the voice's own band, which no level or EQ can fix; the reference Shorts have no singing under the voice."""
@@ -179,6 +207,49 @@ def bed(src: str, out: str, total: float, start: float = 0.0, pad: float = 0.0, 
     return out
 
 
+def carve_filters(music: str, key: str, out: str, tag: str = "cv") -> List[str]:
+    """FFmpeg filters giving way in the music `music` to the voice `key` (labels, without brackets): its voice band
+    (CARVE) pressed down while he speaks, the rest of it untouched -> `out`."""
+    lo, hi = CARVE
+    return [f"[{music}]acrossover=split={lo} {hi}[{tag}_lo][{tag}_mid][{tag}_hi]",
+            f"[{tag}_mid][{key}]sidechaincompress=threshold=0.05:ratio={CARVE_RATIO}:attack=15:release=250:makeup=1[{tag}_mc]",
+            f"[{tag}_lo][{tag}_mc][{tag}_hi]amix=inputs=3:normalize=0[{out}]"]
+
+
+def master_file(path: str, target: float = TARGET_LUFS) -> str:
+    """A finished video (or sound file) mastered in place: its sound measured, brought to `target` LUFS linearly, true
+    peak under TRUE_PEAK; the picture copied as it is."""
+    gain = target - measure(path)["lufs"]
+    limit = 10 ** (TRUE_PEAK / 20)
+    tmp = path + ".master" + os.path.splitext(path)[1]
+    video = path.lower().endswith((".mp4", ".mov", ".mkv"))
+    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", path, "-af",
+          f"volume={gain:.2f}dB,alimiter=limit={limit:.3f}:attack=2:release=60:level=disabled",
+          *(["-map", "0:v?", "-map", "0:a", "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"]
+            if video else []), tmp])
+    os.replace(tmp, path)
+    return path
+
+
+def _voice_chain(voice: str) -> str:
+    return f"aresample={RATE},highpass=f=80,lowpass=f=14000,volume={VOICE_LUFS - measure(voice)['lufs']:.2f}dB"
+
+
+def clean_voice(voice: str, out: str) -> str:
+    """The voice as track() sets it (cleaned, at VOICE_LUFS): « Écouter » plays it."""
+    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", voice, "-af", _voice_chain(voice), "-ac", "2", out])
+    return out
+
+
+def carved(voice: str, music: str, out: str) -> str:
+    """The music as track() lays it under this voice (its voice band giving way while he speaks), alone: « Écouter »
+    plays it beside clean_voice() and lowers it live."""
+    g = [f"[0:a]{_voice_chain(voice)}[key]", f"[1:a]aresample={RATE}[m_in]"] + carve_filters("m_in", "key", "mu")
+    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", voice, "-i", music, "-filter_complex", ";".join(g),
+          "-map", "[mu]", "-ac", "2", out])
+    return out
+
+
 def track(voice: str, music: Optional[str], out: str, carve: bool = True, punch: bool = False, duck: bool = False,
           sounds: Optional[List[str]] = None, target: float = TARGET_LUFS) -> str:
     """The Short's sound: the voice cleaned and set to VOICE_LUFS by measure (linear: his nuances kept), the music under
@@ -186,18 +257,14 @@ def track(voice: str, music: Optional[str], out: str, carve: bool = True, punch:
     then « punch » (denser, like the loud motivation edits) if asked, and the master: measured, brought to `target`
     LUFS linearly, true peak under TRUE_PEAK."""
     pre = out + ".mix.wav"
-    vg = VOICE_LUFS - measure(voice)["lufs"]
     inputs = ["-i", voice] + (["-i", music] if music else [])
     for s in sounds or []:
         inputs += ["-i", s]
-    g = [f"[0:a]aresample={RATE},highpass=f=80,lowpass=f=14000,volume={vg:.2f}dB" + (",asplit[vo][key]" if music else "[vo]")]
+    g = [f"[0:a]{_voice_chain(voice)}" + (",asplit[vo][key]" if music else "[vo]")]
     mix = ["[vo]"]
     if music:
-        lo, hi = CARVE
         if carve:
-            g += [f"[1:a]aresample={RATE},acrossover=split={lo} {hi}[m_lo][m_mid][m_hi]",
-                  f"[m_mid][key]sidechaincompress=threshold=0.05:ratio={CARVE_RATIO}:attack=15:release=250:makeup=1[m_midc]",
-                  "[m_lo][m_midc][m_hi]amix=inputs=3:normalize=0[mu]"]
+            g += [f"[1:a]aresample={RATE}[m_in]"] + carve_filters("m_in", "key", "mu")
         elif duck:
             g += [f"[1:a]aresample={RATE}[m_in]",
                   "[m_in][key]sidechaincompress=threshold=0.05:ratio=2:attack=120:release=600:makeup=1[mu]"]
@@ -211,9 +278,5 @@ def track(voice: str, music: Optional[str], out: str, carve: bool = True, punch:
     g.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first{tail}" if len(mix) > 1 else f"[vo]anull{tail}")
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-ar", str(RATE), "-ac", "2",
           pre])
-    gain = target - measure(pre)["lufs"]
-    limit = 10 ** (TRUE_PEAK / 20)
-    _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", pre, "-af",
-          f"volume={gain:.2f}dB,alimiter=limit={limit:.3f}:attack=2:release=60:level=disabled", "-ar", str(RATE), out])
-    os.remove(pre)
-    return out
+    os.replace(pre, out)
+    return master_file(out, target)

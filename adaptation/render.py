@@ -916,7 +916,8 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
     # loudnorm resamples to 192 kHz internally: back to 44.1 kHz before mixing,
     # or the mix comes out shorter than the picture (lost the end of the narration once)
     g.append("".join(f"[a{s['k']}]" for s in segs) + f"concat=n={len(segs)}:v=0:a=1,"
-             "loudnorm=I=-16:TP=-1.5:LRA=7,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo[voice]")
+             "loudnorm=I=-16:TP=-1.5:LRA=7,aresample=44100,aformat=sample_rates=44100:channel_layouts=stereo,"
+             "asplit[voice][vkey]")                    # vkey: the voice the music gives way to (adaptation/mixage)
     mix = ["[voice]"]
 
     # crash sounds: only where a real shock is heard (see impact_sound)
@@ -963,8 +964,12 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
         music_info.update(gain=round(gain, 3), silence_avant_choc=hush)
         g.append(f"[{mi}:a]aformat=sample_rates=44100:channel_layouts=stereo,atrim=0:{total:.3f},"
                  f"afade=t=in:d=0.4,volume='{level}':eval=frame,"
-                 f"afade=t=out:st={max(0.0, total - 0.15):.3f}:d=0.15[mus]")
+                 f"afade=t=out:st={max(0.0, total - 0.15):.3f}:d=0.15[mus0]")
+        from adaptation import mixage
+        g += mixage.carve_filters("mus0", "vkey", "mus")      # its voice band giving way while the narration speaks
         mix.append("[mus]")
+    else:
+        g.append("[vkey]anullsink")
     if built and built.extras.get("sounds"):           # the library style's own sound (« Clic »), mixed with the rest
         for j, (path, at, vol) in enumerate(built.extras["sounds"]):
             if at is None or not os.path.exists(path):
@@ -1014,6 +1019,9 @@ def _render(passages: List[Dict], words: List[Dict], clips: Dict[str, Dict], voi
            "-map", "[vout]", "-map", "[aout]", "-t", f"{total:.3f}", "-c:v", "libx264", *enc,
            "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", tmp]
     _run(cmd, total, part(0.5, 1.0))
+    from adaptation import mixage
+    if os.path.exists(tmp):                                # (a test's render writes none)
+        mixage.master_file(tmp)                            # -14 LUFS, true peak under -1 dB, the picture copied
     os.replace(tmp, out_path)
     bpm = round(60 / (beats[1] - beats[0])) if beats and len(beats) > 1 else None
     on_beat = lambda s: bool(beats and s["k"] > 0 and min(abs(s["out"] - b) for b in beats) < 0.02)

@@ -1944,6 +1944,11 @@ MEDIA = (".mp4", ".mov", ".mkv", ".webm", ".mp3", ".wav", ".m4a", ".png", ".jpg"
          ".py", ".ttf", ".otf")
 
 
+def _mixage_file() -> str:
+    from adaptation import mixage
+    return mixage.__file__
+
+
 def render_key(*inputs) -> str:
     """The fingerprint of everything a montage is made from: the same one again (back from the previews, nothing
     changed) -> the video already made is kept. A file is read by its size and date, so a voice, a music, a clip or
@@ -1991,7 +1996,8 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
     key = render_key("v1", preview, t["voice_id"], model, t["voice"]["passages"], t["voice"]["words"], p["clips"],
                      voice_mp3, t["language"],
                      p["credits"], t.get("music_path"), t.get("music_start"), anns, _style_of(t), fx, beats,
-                     tone.sound_rules(_tone(p, t)), _captions_of(t), render.__file__, caption_render.__file__)
+                     tone.sound_rules(_tone(p, t)), _captions_of(t), render.__file__, caption_render.__file__,
+                     _mixage_file())
     if preview and kept_video(t.get("preview"), key):
         t["style"] = _style_of(t)
         return t["preview"]                         # nothing changed since this preview: not made again

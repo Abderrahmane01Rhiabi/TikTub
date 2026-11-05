@@ -359,7 +359,8 @@ function dsSettingsHtml(s, opts){
     ${opts.densites ? `<div><label class="f">Plans de coupe</label>${dsSelect('densite', s.densite, opts.densites)}</div>` : ''}
     <div><label class="f">Musique sous la voix</label>${range('volume_db', 3, 30, ' dB')}</div>
     <div class="stack" style="gap:4px">${check('ombre', 'Ombre sous le cadre')}${check('grain', 'Grain')}
-      ${check('drop_punchline', 'Montée de la musique sur la chute')}${check('identite', 'Nom de la chaîne dans le coin')}</div>
+      ${check('drop_punchline', 'Montée de la musique sur la chute')}${check('identite', 'Nom de la chaîne dans le coin')}
+      ${check('entree', 'Voix seule d\'abord, la musique entre au milieu')}${check('punch', 'Son plus dense (punch)')}</div>
   </div>`;
 }
 
@@ -471,7 +472,7 @@ function dsListen(root, live, opts){
     music.muted = muted;
   };
   const loadMusic = async () => {
-    const s = opts.sound(), q = new URLSearchParams({ channel: opts.channel(), son: s.son, montee: s.montee });
+    const s = opts.sound(), q = new URLSearchParams({ channel: opts.channel(), son: s.son, montee: s.montee, entree: s.entree });
     if (s.chanson) q.set('chanson', s.chanson);
     const key = q.toString();
     if (key === musicKey) return;
@@ -585,11 +586,11 @@ async function dsPreviews(body, p){
   let who = 0;
   let live = liveFor(p.targets[0]);
   const redraw = dsLiveBind(box, { update: s => live.update(s) }, () => ({ sous_titres_params: base.sous_titres_params }));
-  const sound = () => { const r = dsReadSettings(box); return { ...dsSoundOf(box), montee: !!r.drop_punchline, volume: Number(r.volume_db) }; };
+  const sound = () => { const r = dsReadSettings(box); return { ...dsSoundOf(box), montee: !!r.drop_punchline, entree: !!r.entree, volume: Number(r.volume_db) }; };
   const listen = dsListen(box.querySelector('.ds-live'), live, { pid: p.project_id, direct: d.direct, sound,
                                                               channel: () => p.targets[who].channel });
   box.querySelector('.ds-r[data-k="volume_db"]').addEventListener('input', () => listen.volume());
-  box.querySelector('.ds-r[data-k="drop_punchline"]').addEventListener('change', () => listen.refresh());
+  box.querySelectorAll('.ds-r[data-k="drop_punchline"], .ds-r[data-k="entree"]').forEach(el => el.addEventListener('change', () => listen.refresh()));
   box.querySelectorAll('input[name="dsSon"], .ds-chanson').forEach(el => el.addEventListener('change', () => listen.refresh()));
   box.querySelectorAll('.ds-lwho .seg-opt').forEach(b => b.onclick = () => {
     box.querySelectorAll('.ds-lwho .seg-opt').forEach(x => x.classList.toggle('active', x === b));

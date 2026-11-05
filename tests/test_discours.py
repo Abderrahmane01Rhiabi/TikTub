@@ -387,18 +387,32 @@ def fakes(monkeypatch, tmp_path):
             "titre": f"Freeman ({c}) 🔥", "description": "Un hommage. #shorts", "tags": ["freeman"]}} for c in codes}}
     monkeypatch.setattr(D, "translate", translate)
 
-    def render(pic, speech, plan, words, lang, settings, bed, out, work, strong=None, channel=None, signature=""):
+    def render(pic, speech, plan, words, lang, settings, bed, out, work, strong=None, channel=None, signature="",
+               mastered=False):
         calls["renders"].append({"lang": lang, "plans": len(plan), "first": words[0][0], "bed": bed and os.path.basename(bed),
-                                 "cadre": settings["cadre"], "fond": settings["fond"], "strong": strong})
+                                 "cadre": settings["cadre"], "fond": settings["fond"], "strong": strong,
+                                 "son": os.path.basename(speech), "mastered": mastered})
         open(out, "wb").write(b"x")
         return out
     monkeypatch.setattr(D, "render", render)
 
-    def song_bed(song, hit, total, out, gap, on_rise=True):
+    def music_bed(song, rise, hit, total, out, gap, entree=False):
         calls["beds"].append((os.path.basename(song), round(hit, 2), gap))
+        calls["bed_opts"].append({"rise": rise, "entree": entree})
         open(out, "wb").write(b"x")
         return out
-    monkeypatch.setattr(D, "song_bed", song_bed)
+    monkeypatch.setattr(D, "music_bed", music_bed)
+    monkeypatch.setattr(D, "biggest_rise", lambda song: 30.0)
+    calls["bed_opts"], calls["tracks"] = [], []
+    from adaptation import mixage
+
+    def track(voice, music, out, carve=True, punch=False, **kw):
+        calls["tracks"].append({"music": music and os.path.basename(music), "carve": carve, "punch": punch})
+        open(out, "wb").write(b"x")
+        return out
+    monkeypatch.setattr(mixage, "track", track)
+    monkeypatch.setattr(mixage, "carved", lambda voice, music, out: open(out, "wb").write(b"carved") and out)
+    monkeypatch.setattr(mixage, "clean_voice", lambda voice, out: open(out, "wb").write(b"voice") and out)
     monkeypatch.setattr(D, "thumbnail", lambda video, at, out: None)
     monkeypatch.setattr(musique, "plan", lambda d, sujet, ton, parts, total: {
         "fichier": "past.mp3", "titre": "Past Lives", "montee": 47.4, "partie": 1, "a": 5.0, "comment": "ok"})
@@ -462,14 +476,18 @@ def test_a_discours_from_the_link_to_publication(fakes):
     assert ar["lang"] == "ar" and ar["cadre"] == "4:5" and ar["strong"] == {"ar 1"}
     assert fr["plans"] >= 2
     hit = D.remap(6.5, [[0.0, 4.0], [4.6, 9.4]])                           # the punchline, on the cut timeline
-    assert fakes["beds"] == [("past.mp3", round(hit, 2), 7.0)] * 2            # smart music on every channel here
+    made = [b for b in fakes["beds"] if b[2] != dp.LIVE_GAP]                 # (the others: « Écouter », ready)
+    assert made == [("past.mp3", round(hit, 2), 7.0)] * 2                    # smart music on every channel here
+    assert ("past.mp3", round(hit, 2), dp.LIVE_GAP) in fakes["beds"]
+    assert fakes["tracks"][-1] == {"music": "fond_intelligente.wav", "carve": True, "punch": False}
+    assert fr["mastered"] is True and fr["son"] == "son.wav" and fr["bed"] is None   # the sound made by mixage
 
     dp.change_settings(pid, {"cadre": "16:9", "volume_db": 12}, son="choisie", chanson="choisie.mp3")
     p = ap.load(pid)
     assert p["status"] == "voicing" and p["discours"]["reglages"] == {"cadre": "16:9", "volume_db": 12.0}
     ap.runner_for(pid, "voicing")(pid)
     assert [r["cadre"] for r in fakes["renders"][-2:]] == ["16:9", "16:9"]
-    assert fakes["beds"][-1] == ("choisie.mp3", round(hit, 2), 12.0)
+    assert [b for b in fakes["beds"] if b[2] != dp.LIVE_GAP][-1] == ("choisie.mp3", round(hit, 2), 12.0)
     with pytest.raises(ap.PipelineError):
         ap.change_voice(pid, "cestpourca", "x")                              # the speaker's voice: nothing to change
 
@@ -554,14 +572,15 @@ def test_the_shots_can_be_chosen_searched_and_moved(fakes, monkeypatch, client, 
     client.get("/api/discours/live_captions?style=inconnu&lang=ar")
     assert seen["style"] == "escalier" and seen["words"] is None                      # unknown or not for Arabic: Escalier
     assert client.get("/api/discours/exemple").status_code == 404     # the fakes' passage is no video: skipped
-    ran = []
-    monkeypatch.setattr(D, "_run", lambda cmd: ran.append(cmd) or open(cmd[-1], "wb").write(b"wav"))
     r = client.get(f"/api/adaptations/{pid}/discours/ecoute/voix")
-    assert r.status_code == 200 and "loudnorm=I=-16" in " ".join(ran[-1])             # the voice at the video's level
+    assert r.status_code == 200 and r.content == b"voice"                              # the voice as the video mixes it
     q = f"/api/adaptations/{pid}/discours/ecoute/musique?channel=cestpourca"
     assert client.get(q + "&son=sans_musique").status_code == 204
     r = client.get(q + "&son=choisie&chanson=choisie.mp3&montee=false")
     assert r.status_code == 200 and fakes["beds"][-1] == ("choisie.mp3", fakes["beds"][-1][1], dp.LIVE_GAP)
+    assert r.content == b"carved" and fakes["bed_opts"][-1] == {"rise": None, "entree": False}   # carved for his voice
+    client.get(q + "&son=choisie&chanson=choisie.mp3&montee=false&entree=true")
+    assert fakes["bed_opts"][-1] == {"rise": 30.0, "entree": True}                    # « entrée »: from its rise
     n = len(fakes["beds"])
     client.get(q + "&son=choisie&chanson=choisie.mp3&montee=false")
     assert len(fakes["beds"]) == n                                                      # made once per choice

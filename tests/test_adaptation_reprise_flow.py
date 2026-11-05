@@ -53,8 +53,9 @@ def fakes(monkeypatch, tmp_path):
         return v
     monkeypatch.setattr(rm, "voice", voice)
 
-    def render(clean, plans, script, code, v, mp3, bed, out, work, y=rm.CAPTION_Y, captions=None):
+    def render(clean, plans, script, code, v, mp3, bed, out, work, y=rm.CAPTION_Y, captions=None, mastered=False):
         calls["renders"].append((code, bed and os.path.basename(bed)))
+        calls.setdefault("sons", []).append((os.path.basename(mp3), mastered))
         open(out, "wb").write(b"x")
         return out
     monkeypatch.setattr(rm, "render", render)
@@ -64,6 +65,16 @@ def fakes(monkeypatch, tmp_path):
         open(out, "wb").write(b"x")
         return out
     monkeypatch.setattr(musique, "bed", bed)
+    from adaptation import mixage
+    monkeypatch.setattr(mixage, "bed", lambda src, out, total, start=0.0, pad=0.0, gap=7.0, lift_at=None, **kw:
+                        bed(src, out, total, start, pad, gap, lift_at))
+    monkeypatch.setattr(mixage, "music_source", lambda song, start, length: song)
+
+    def track(voice, music, out, carve=True, punch=False, **kw):
+        calls.setdefault("tracks", []).append((music and os.path.basename(music), carve))
+        open(out, "wb").write(b"x")
+        return out
+    monkeypatch.setattr(mixage, "track", track)
     monkeypatch.setattr(musique, "plan", lambda d, sujet, ton, parts, total: {
         "fichier": "past.mp3", "titre": "Past Lives", "montee": 47.4, "partie": 1, "a": 5.0, "comment": "ok"})
     monkeypatch.setattr(musique, "listen", lambda path: {"moment_fort": 47.4, "montees": [47.4], "duree": 150.0})
@@ -114,6 +125,8 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     assert sorted(fakes["voices"]) == [("ar", "var", "eleven_flash_v2_5"), ("fr", "vfr", "eleven_v4")]
     # the smart music on its channel; the other one gets its own track (not on its list yet)
     assert sorted(fakes["beds"]) == [("past.mp3", 16.0), ("piste.mp3", 16.0)]
+    assert sorted(fakes["tracks"]) == [("fond_intelligente.wav", True), ("fond_notre_musique.wav", True)]
+    assert set(fakes["sons"]) == {("son.wav", True)}                         # the Short's sound made by mixage
     assert {t["channel"]: rp.son_for(p, t) for t in p["targets"]} == {"cestpourca": "intelligente",
                                                                      "lungtemotivates": "notre_musique"}
 

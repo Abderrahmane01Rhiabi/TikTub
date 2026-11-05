@@ -216,7 +216,7 @@ def part_lengths(v: Dict) -> List[float]:
 
 
 def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3: str, bed: Optional[str],
-           out: str, work: str, y: float = CAPTION_Y, captions: Optional[Dict] = None) -> str:
+           out: str, work: str, y: float = CAPTION_Y, captions: Optional[Dict] = None, mastered: bool = False) -> str:
     """The Reprise video in one language: clean's images in the script's order at the voice's pace, our captions,
     the voice over the bed (None: no music) -> out. captions: the channel's choice in Réglages → Sous-titres — a style
     of the shared library draws the words (our numbers stay ours); none: our usual captions."""
@@ -253,7 +253,7 @@ def render(clean: str, plans: List[Dict], script: Dict, code: str, v: Dict, mp3:
     # our numbers always; our word captions only without a library style
     ass = globals()["captions"](os.path.join(work, f"textes_{code}.ass"), [] if lib_style else v["words"], starts_of(v),
                                 numbers, code, total, y)
-    gain = 10 ** ((VOICE_LUFS - lufs(mp3)) / 20)
+    gain = 1.0 if mastered else 10 ** ((VOICE_LUFS - lufs(mp3)) / 20)       # mastered: the Short's sound (mixage)
     inputs = ["-f", "concat", "-safe", "0", "-i", lst, "-i", mp3]
 
     def add_input(*args) -> int:

@@ -43,7 +43,8 @@ FONT = os.path.join("montage", "fonts", "Montserrat-SemiBold.ttf")
 # the « style Discours »: the base, then the channel's (profile["discours"]), then the video's (preview panel)
 DEFAULTS = {"cadre": "carre", "taille": 84, "arrondi": 40, "fond": "noir", "ombre": False,
             "sous_titres": "escalier", "sous_titres_params": {}, "pauses": "resserrees", "densite": "normale",
-            "etalonnage": "dark", "grain": True, "volume_db": 7.0, "drop_punchline": True, "identite": False}
+            "etalonnage": "dark", "grain": True, "volume_db": 7.0, "drop_punchline": True, "identite": False,
+            "punch": False, "entree": False}             # the sound (adaptation/mixage): denser; music coming in mid-way
 CHANNEL_ONLY = {"films": False}             # a channel's own: may its cut-aways be films (Content ID risk)
 
 
@@ -94,7 +95,7 @@ def clean_settings(raw: Optional[Dict], base: Optional[Dict] = None) -> Dict:
             out[k] = int(max(lo, min(hi, raw[k])))
     if isinstance(raw.get("volume_db"), (int, float)) and not isinstance(raw.get("volume_db"), bool):
         out["volume_db"] = float(max(3.0, min(30.0, raw["volume_db"])))
-    for k in ("ombre", "grain", "drop_punchline", "identite"):
+    for k in ("ombre", "grain", "drop_punchline", "identite", "punch", "entree"):
         if isinstance(raw.get(k), bool):
             out[k] = raw[k]
     if "sous_titres" in raw:
@@ -732,7 +733,7 @@ def _fp(path: str) -> str:
 
 def render(pic: str, speech: str, plan: List[Tuple], words: List[List], lang: str, settings: Dict, bed: Optional[str],
            out: str, work: str, strong: Optional[set] = None, channel: Optional[str] = None,
-           signature: str = "") -> str:
+           signature: str = "", mastered: bool = False) -> str:
     """The Short: the frame (the speaker, the cut-aways over him, graded) on its background, the captions of the
     library, the speech with the music bed under it."""
     from captions import render as R
@@ -804,7 +805,8 @@ def render(pic: str, speech: str, plan: List[Tuple], words: List[List], lang: st
         g.append(f"[{cur}]drawtext=fontfile='{_fp(os.path.abspath(FONT))}':text='{name}':fontsize=30:"
                  f"fontcolor=white@0.7:x={fx + fw}-tw-24:y={fy + fh}-th-22[sig]")
         cur = "sig"
-    g.append(f"[1:a]loudnorm=I={SPEECH_LUFS}:TP=-1.5:LRA=11,aresample=48000[vo]")
+    g.append("[1:a]aresample=48000[vo]" if mastered          # the Short's sound already made (adaptation/mixage)
+             else f"[1:a]loudnorm=I={SPEECH_LUFS}:TP=-1.5:LRA=11,aresample=48000[vo]")
     mix = ["[vo]"]
     if bed:
         bi = add_input("-i", bed)
@@ -813,8 +815,9 @@ def render(pic: str, speech: str, plan: List[Tuple], words: List[List], lang: st
     for k, lab in enumerate(sounds):
         g.append(f"{lab}aresample=48000[sx{k}]")
         mix.append(f"[sx{k}]")
-    g.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first,volume=1.26,alimiter=limit=0.93[aout]"
-             if len(mix) > 1 else "[vo]volume=1.26,alimiter=limit=0.93[aout]")
+    up = "" if mastered else ",volume=1.26"
+    g.append(f"{''.join(mix)}amix=inputs={len(mix)}:normalize=0:duration=first{up},alimiter=limit=0.93[aout]"
+             if len(mix) > 1 else f"[vo]anull{up},alimiter=limit=0.93[aout]")
     tmp = out + ".part.mp4"
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", f"[{cur}]",
           "-map", "[aout]", "-t", f"{total:.3f}", "-r", str(FPS), *_venc(), "-c:a", "aac", "-b:a", "192k",
@@ -842,6 +845,25 @@ def biggest_rise(song: str) -> float:
         if rise > best:
             best, at = rise, i * 0.5
     return at
+
+
+def music_bed(song: str, rise: Optional[float], hit: float, total: float, out: str, gap: float,
+              entree: bool = False) -> str:
+    """The music under the speech (adaptation/mixage): its instrumental when it holds up, levelled, `gap` dB under the
+    voice, its rise (`rise` s of the song; None: from its start) on `hit`, ended on a strong beat with a hall tail.
+    « entree »: the speaker alone first, the music dropping in at the punchline (or ~45 % in), from its rise."""
+    from adaptation import mixage
+    if entree:
+        come = hit if 0.25 * total <= hit <= 0.6 * total else 0.45 * total
+        start, pad, lift = rise or 0.0, come, None
+    elif rise is None:
+        start, pad, lift = 0.0, 0.0, None
+    else:
+        start, pad, lift = rise - hit, 0.0, hit
+        if start < 0:
+            start, pad = 0.0, -start
+    src = mixage.music_source(song, start, total - pad)
+    return mixage.bed(src, out, total, start, pad, gap, lift_at=lift)
 
 
 def song_bed(song: str, hit: float, total: float, out: str, gap: float, on_rise: bool = True) -> str:

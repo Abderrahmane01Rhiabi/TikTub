@@ -269,14 +269,18 @@ def bed_for(p: Dict, t: Dict, v: Dict, work: str, report: Report) -> Optional[st
         from roblox import voix
         rest = voix.separate(r["clean"], work_dir(p, "demucs"))["reste"]
         return musique.bed(rest, out, total, gap=gap)
+    from adaptation import mixage                     # levelled, its instrumental when it holds up, a hall at the end
     if son == "notre_musique":
-        return musique.bed(t["music_path"], out, total, start=float(t.get("music_start") or 0.0), gap=gap)
+        start = float(t.get("music_start") or 0.0)
+        return mixage.bed(mixage.music_source(t["music_path"], start, total), out, total, start=start, gap=gap)
     choice = dict(_music_choice(p, t, v, report))
     hit = rm.starts_of(v)[choice["partie"]]          # this language's moment for the chosen part
-    song = musique.listen(os.path.join(SHARED_MUSIC, choice["fichier"]))
-    choice["montee"], _ = musique.peak_for(song, hit, total, choice["montee"])
-    choice["a"] = hit
-    return musique.placed_bed(SHARED_MUSIC, choice, total, out, gap=gap)
+    path = os.path.join(SHARED_MUSIC, choice["fichier"])
+    rise, _ = musique.peak_for(musique.listen(path), hit, total, choice["montee"])
+    start, pad = rise - hit, 0.0
+    if start < 0:
+        start, pad = 0.0, -start
+    return mixage.bed(mixage.music_source(path, start, total - pad), out, total, start, pad, gap, lift_at=hit)
 
 
 def make_video(p: Dict, t: Dict, report: Report) -> Dict:
@@ -295,18 +299,22 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
     timings = json.load(open(v["json"], encoding="utf-8"))
     bed = bed_for(p, t, timings, work, report)
     out = os.path.join(work, f"reprise_{t['channel']}.mp4")
+    from adaptation import mixage
     from captions import render as caption_render          # the channel's style in Réglages → Sous-titres, if any
     captions = caption_render.channel_choice(t["channel"])
     music = [bed is not None, t.get("music_path"), t.get("music_start"), r.get("musique"), r.get("volume_db")]
-    key = _ap().render_key("v1", r["clean"], r["plans"], r["script"], code, timings, v["mp3"], music,
-                           rm.caption_y(r["elements"]), captions, son_for(p, t), rm.__file__, caption_render.__file__)
+    key = _ap().render_key("v2", r["clean"], r["plans"], r["script"], code, timings, v["mp3"], music,
+                           rm.caption_y(r["elements"]), captions, son_for(p, t), rm.__file__, mixage.__file__,
+                           caption_render.__file__)
     if _ap().kept_video(t.get("preview"), key):
         return t["preview"]                          # nothing changed since this preview: not made again
+    report(f"{t['channel']} : son", 0.45)                  # the voice cleaned, the music giving way to it, mastered
+    sound = mixage.track(v["mp3"], bed, os.path.join(work, "son.wav"), carve=True)
     report(f"{t['channel']} : montage", 0.5)
     import render_slot
     with render_slot.SLOT:
-        rm.render(r["clean"], r["plans"], r["script"], code, timings, v["mp3"], bed, out, os.path.join(work, "parties"),
-                  rm.caption_y(r["elements"]), captions=captions)
+        rm.render(r["clean"], r["plans"], r["script"], code, timings, sound, None, out, os.path.join(work, "parties"),
+                  rm.caption_y(r["elements"]), captions=captions, mastered=True)
     made = reprise.probe(out)
     ok = abs(made["duree"] - (timings["duration"] + 0.8)) < 1.0
     return {"path": out, "son": son_for(p, t), "duree": round(made["duree"], 1), "cle": key,

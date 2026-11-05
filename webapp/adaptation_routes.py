@@ -1205,12 +1205,13 @@ def discours_listen_voice(pid: str):
 
 
 @router.get("/api/adaptations/{pid}/discours/ecoute/musique")
-def discours_listen_music(pid: str, channel: str, son: str, chanson: Optional[str] = None, montee: bool = True):
+def discours_listen_music(pid: str, channel: str, son: str, chanson: Optional[str] = None, montee: bool = True,
+                          entree: bool = False):
     """The music for « Écouter » (LIVE_GAP dB under the voice; the page lowers it to the slider's value).
     204: no music for this choice."""
     from adaptation import discours_pipeline as dp
     from fastapi import Response
-    path = _adaptation_call(dp.live_bed, _discours_or_404(pid), channel, son, chanson, montee)
+    path = _adaptation_call(dp.live_bed, _discours_or_404(pid), channel, son, chanson, montee, entree)
     if not path:
         return Response(status_code=204)
     return FileResponse(path, media_type="audio/wav")

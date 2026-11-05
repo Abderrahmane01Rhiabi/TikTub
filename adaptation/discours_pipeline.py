@@ -434,22 +434,22 @@ def timeline(p: Dict, s: Optional[Dict] = None) -> List[List[float]]:
 
 def bed_for(p: Dict, t: Dict, s: Dict, parts: List[List[float]], total: float, work: str,
             report: Report) -> Optional[str]:
+    """This channel's music under the speech (adaptation/mixage, through D.music_bed), or None (no music)."""
     son = son_for(p, t)
     gap = float(s["volume_db"])
     out = os.path.join(work, f"fond_{son}.wav")
     hit = _hit(p, parts, total, s)
     if son == "sans_musique":
         return None
-    if son == "notre_musique":
-        return D.song_bed(t["music_path"], hit, total, out, gap, on_rise=s["drop_punchline"])
-    if son == "choisie":
-        return D.song_bed(os.path.join(SHARED_MUSIC, p["discours"]["chanson"]), hit, total, out, gap,
-                          on_rise=s["drop_punchline"])
-    choice = dict(_smart_choice(p, parts, total, report))
-    song = musique.listen(os.path.join(SHARED_MUSIC, choice["fichier"]))
-    choice["montee"], _ = musique.peak_for(song, hit, total, choice["montee"])
-    choice["a"] = hit
-    return musique.placed_bed(SHARED_MUSIC, choice, total, out, gap=gap)
+    if son == "intelligente":
+        choice = dict(_smart_choice(p, parts, total, report))
+        song = os.path.join(SHARED_MUSIC, choice["fichier"])
+        rise, _ = musique.peak_for(musique.listen(song), hit, total, choice["montee"])
+    else:
+        song = t["music_path"] if son == "notre_musique" else os.path.join(SHARED_MUSIC, p["discours"]["chanson"])
+        rise = D.biggest_rise(song) if s["drop_punchline"] or s["entree"] else None
+    report(f"{t['channel']} : musique", 0.2)
+    return D.music_bed(song, rise, hit, total, out, gap, entree=s["entree"])
 
 
 def plan_of(p: Dict, parts: List[List[float]], total: float, hit: float) -> List:
@@ -481,28 +481,34 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
     strong = set((d.get("traduction") or {}).get("langues", {}).get(code, {}).get("mots_forts") or []) \
         if code != (d.get("langue") or "en") else set(d.get("mots_forts") or [])
     hit = _hit(p, parts, total, s)
-    bed = bed_for(p, t, s, parts, total, work, report)
+    son = son_for(p, t)
+    if son == "intelligente":
+        _smart_choice(p, parts, total, report)       # chosen once (its choice is part of the fingerprint)
     out = os.path.join(work, f"discours_{t['channel']}.mp4")
     plan = plan_of(p, parts, total, hit)
     signature = t.get("display_name") or t["channel"]
+    from adaptation import mixage
     from captions import render as caption_render
-    music = [bed is not None, t.get("music_path"), d.get("chanson"), d.get("musique"), hit, total]  # the bed itself:
-    key = _ap().render_key("v1", pic, speech, plan, words, code, s, music, strong, t["channel"],     # made each time
-                           signature, son_for(p, t), D.__file__, caption_render.__file__)
+    music = [son, t.get("music_path"), d.get("chanson"), d.get("musique"), hit, total]
+    key = _ap().render_key("v2", pic, speech, plan, words, code, s, music, strong, t["channel"], signature,
+                           D.__file__, mixage.__file__, caption_render.__file__)
     if _ap().kept_video(t.get("preview"), key):
         return t["preview"]                          # back from the plans, nothing changed: not made again
+    bed = bed_for(p, t, s, parts, total, work, report)
+    report(f"{t['channel']} : son", 0.35)
+    sound = mixage.track(speech, bed, os.path.join(work, "son.wav"), carve=True, punch=s["punch"])
     report(f"{t['channel']} : montage", 0.4)
     import render_slot
     with render_slot.SLOT:
-        D.render(pic, speech, plan, words, code, s, bed, out, os.path.join(work, "travail"),
-                 strong=strong, channel=t["channel"], signature=signature)
+        D.render(pic, sound, plan, words, code, s, None, out, os.path.join(work, "travail"),
+                 strong=strong, channel=t["channel"], signature=signature, mastered=True)
     made = D.duration(out)
     ok = abs(made - total) < 0.6
     try:                                             # what this montage saw, ready for the live preview
         report(f"{t['channel']} : aperçu direct", 0.95)
         live_seen(p, t["channel"], D.frame_box(s), made_zone=D.frame_box(s))
         live_voice(p)                                # and « Écouter »: the voice, this choice's music
-        live_bed(p, t["channel"], son_for(p, t), d.get("chanson"), s["drop_punchline"])
+        live_bed(p, t["channel"], son_for(p, t), d.get("chanson"), s["drop_punchline"], s["entree"])
     except Exception as e:
         print(f"⚠️ Analyse pour l'aperçu direct impossible ({e})")
     return {"path": out, "son": son_for(p, t), "duree": round(made, 1), "reglages": s, "mot_fort_a": round(hit, 2),
@@ -594,17 +600,17 @@ LIVE_GAP = 3.0                       # the live listening's music: made this man
 
 def live_voice(p: Dict) -> Optional[str]:
     """The speech as in the video (its pauses cut, at the montage's level): what « Écouter » plays."""
+    from adaptation import mixage
     speech = os.path.join(work_dir(p, "passage"), "parole.wav")
     if not os.path.exists(speech):
         return None
     out = os.path.join(work_dir(p, "passage"), "ecoute_voix.wav")
     if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(speech):
-        D._run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", speech, "-af",
-                f"loudnorm=I={D.SPEECH_LUFS}:TP=-1.5:LRA=11,aresample=48000", out])
+        mixage.clean_voice(speech, out)
     return out
 
 
-def live_bed(p: Dict, channel: str, son: str, chanson: Optional[str], drop: bool) -> Optional[str]:
+def live_bed(p: Dict, channel: str, son: str, chanson: Optional[str], drop: bool, entree: bool = False) -> Optional[str]:
     """This channel's music for « Écouter », as the montage would place it (its rise on the punchline or not), LIVE_GAP
     dB under the voice; None: no music. Made once per choice. A smart song not chosen yet is never asked for here."""
     import hashlib
@@ -621,18 +627,22 @@ def live_bed(p: Dict, channel: str, son: str, chanson: Optional[str], drop: bool
     son = son_for(q, t)
     if son == "sans_musique":
         return None
-    s = {**settings_for(p, t), "volume_db": LIVE_GAP, "drop_punchline": bool(drop)}
+    s = {**settings_for(p, t), "volume_db": LIVE_GAP, "drop_punchline": bool(drop), "entree": bool(entree)}
     parts = timeline(q, s)
     total = D.duration(speech)
-    key = hashlib.md5(json.dumps([son, q["discours"]["chanson"], drop, d.get("musique"), t.get("music_path"), parts,
-                                  os.path.getmtime(speech)], sort_keys=True, default=str).encode()).hexdigest()[:12]
+    from adaptation import mixage
+    key = hashlib.md5(json.dumps([son, q["discours"]["chanson"], drop, entree, d.get("musique"), t.get("music_path"),
+                                  parts, os.path.getmtime(speech), os.path.getmtime(mixage.__file__)],
+                                 sort_keys=True, default=str).encode()).hexdigest()[:12]
     work = work_dir(p, "cibles", channel, "ecoute")
     out = os.path.join(work, f"musique_{key}.wav")
     if not os.path.exists(out):
+        from adaptation import mixage
         made = bed_for(q, t, s, parts, total, work, lambda phase, f: None)
         if not made:
             return None
-        os.replace(made, out)
+        mixage.carved(speech, made, out)             # as the montage lays it: giving way to his voice
+        os.remove(made)
     return out
 
 
