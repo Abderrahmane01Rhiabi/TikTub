@@ -137,10 +137,10 @@ Title: {title}
 
 Tag Strategy:
 1. **Specific Content First**: If anime/movie/game/artist detected, include those as primary tags
-2. **YouTube Shorts optimization**: Always include "shorts", "viral", "trending"  
-3. **Category tags**: Based on detected category
-4. **Trending keywords**: Current viral terms
-5. **Audience tags**: Target demographic terms
+2. **Category tags**: Based on detected category
+3. **Search phrases**: What someone looking for this exact video would type
+4. **Audience tags**: Target demographic terms
+5. **Never generic filler**: no "viral", "trending", "tiktok", "fyp", "entertainment" — they match no search
 
 Examples:
 - Anime detected: ["naruto", "anime shorts", "sasuke", "ninja", "manga", "otaku"]
@@ -157,7 +157,7 @@ Focus on:
 
 Respond with JSON:
 {
-  "tags": ["specific_content_tag", "category_tag", "viral_tag", ...]
+  "tags": ["specific_content_tag", "category_tag", "search_phrase", ...]
 }
 """
 
