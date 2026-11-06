@@ -810,16 +810,46 @@ def authenticate_youtube(channel_name=None, interactive=True):
 
     return build('youtube', 'v3', credentials=creds)
 
-def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name=None):
+# Tags that say nothing about a video: YouTube matches tags to searches, and nobody searches "viral"
+GENERIC_TAGS = {"viral", "trending", "tiktok", "fyp", "foryou", "foryoupage", "entertainment", "explore"}
+# The YouTube categories a channel can pick (Réglages → Adaptation, its card) — 24 when it picked none
+CATEGORIES = {"24": "Divertissement", "27": "Éducation", "20": "Jeux vidéo", "23": "Humour",
+              "22": "Personnes et blogs", "1": "Films et animation", "10": "Musique"}
+# videos whose voice we made, in the channel's language — an imported clip's speech is unknown
+VOICED_SOURCES = ("adaptation", "roblox", "generated")
+
+
+def channel_language(profile: Dict):
+    """'fr' / 'ar' / 'en' from the channel's language_hint ('ar (Modern Standard Arabic…)' → 'ar'), else None."""
+    hint = (profile.get("language_hint") or "").strip().lower()
+    return hint[:2] if hint[:2].isalpha() and hint[:2].isascii() else None
+
+
+def video_meta(channel_name=None, source=None) -> Dict:
+    """What YouTube is told besides the texts: the channel's category, the language its titles are written
+    in (the channel's — the AI writes them in it), and the spoken language only for the videos we voiced."""
+    profile = ChannelManager().get_channel_profile(channel_name) if MULTI_CHANNEL_SUPPORT and channel_name else {}
+    meta = {"categoryId": str(profile.get("youtube_category") or "24")}
+    lang = channel_language(profile)
+    if lang:
+        meta["defaultLanguage"] = lang
+        if source in VOICED_SOURCES:
+            meta["defaultAudioLanguage"] = lang
+    return meta
+
+
+def upload_video(youtube, video_path, title, description="", tags=None, video_id=None, scheduled_time=None, auto_confirm=False, channel_name=None, source=None):
     """Upload une vidéo sur YouTube avec données AI et scheduling optionnel"""
     if tags is None:
-        tags = ['Shorts', 'TikTok', 'Viral']
+        tags = ['Shorts']
 
     # Nettoie et limite les tags (YouTube limite à 500 caractères total)
     clean_tags = []
     total_length = 0
-    for tag in tags[:15]:  # Max 15 tags
+    for tag in tags:
         tag = str(tag).strip()
+        if tag.lower().lstrip('#') in GENERIC_TAGS or len(clean_tags) == 15:  # Max 15 tags
+            continue
         if tag and total_length + len(tag) < 450:  # Sécurité pour la limite
             clean_tags.append(tag)
             total_length += len(tag)
@@ -848,7 +878,7 @@ def upload_video(youtube, video_path, title, description="", tags=None, video_id
             'title': title[:100],  # YouTube limite à 100 caractères
             'description': description[:5000],  # YouTube limite à 5000 caractères
             'tags': clean_tags,
-            'categoryId': '24'  # Entertainment
+            **video_meta(channel_name, source),
         },
         'status': status_config
     }
@@ -1041,7 +1071,7 @@ def upload_scheduled_videos():
         # Utilise les données AI optimisées
         title = ai_data.get('optimized_title') or video['title']
         description = video_data.get('custom_description') or ai_data.get('description_suggestions', [''])[0]
-        tags = ai_data.get('tags', ['Shorts', 'TikTok', 'Viral'])
+        tags = ai_data.get('tags', ['Shorts'])
         
         # Upload avec scheduling
         video_path = find_matching_video_file(video_data['video_path'], video_data)
@@ -1066,7 +1096,8 @@ def upload_scheduled_videos():
                 video_id=video['video_id'],
                 scheduled_time=scheduled_time,
                 auto_confirm=auto_confirm,
-                channel_name=channel_name
+                channel_name=channel_name,
+                source=video_data.get('source')
             )
         except QuotaExceededError as e:
             if e.project_wide:
@@ -1271,7 +1302,7 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True, on_res
 
         title = ai_data.get('optimized_title') or video['title']
         description = video_data.get('custom_description') or (ai_data.get('description_suggestions') or [''])[0]
-        tags = ai_data.get('tags', ['Shorts', 'TikTok', 'Viral'])
+        tags = ai_data.get('tags', ['Shorts'])
 
         attempt = video_data.get('upload_attempt')
         if attempt:                     # the last send of this video was cut short: on YouTube already?
@@ -1353,7 +1384,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True, on_res
                 video_id=video['video_id'],
                 scheduled_time=scheduled_time,
                 auto_confirm=auto_confirm,
-                channel_name=channel_name
+                channel_name=channel_name,
+                source=video_data.get('source')
             )
             if url:                     # failed without a clear answer (network…): checked next time
                 _set_upload_attempt(video['video_id'], None)
@@ -1457,7 +1489,7 @@ def reupload_to_different_channel():
         ai_data = video_data.get("ai_data", {})
         original_title = ai_data.get("optimized_title") or video_data.get("original_title", "Untitled")
         original_description = ai_data.get("description_suggestions", [""])[0] if ai_data.get("description_suggestions") else "Viral content!"
-        original_tags = ai_data.get("tags", ['Shorts', 'TikTok', 'Viral'])
+        original_tags = ai_data.get("tags", ['Shorts'])
         
         print(f"\n� EDIT CONTENT FOR {channel_name}")
         print("=" * 40)
@@ -1648,7 +1680,7 @@ def main():
         description = suggested_desc
 
     # Tags AI
-    ai_tags = ai_data.get("tags", ['Shorts', 'TikTok', 'Viral'])
+    ai_tags = ai_data.get("tags", ['Shorts'])
     print(f"\n🤖 IA - Tags: {', '.join(ai_tags[:10])}")
     
     use_ai_tags = input("Utiliser les tags IA? (y/n, défaut: y): ").strip().lower()
@@ -1656,7 +1688,7 @@ def main():
         tags = ai_tags
     else:
         manual_tags = input("Tags manuels (séparés par virgules): ").strip()
-        tags = [tag.strip() for tag in manual_tags.split(',')] if manual_tags else ['Shorts', 'TikTok', 'Viral']
+        tags = [tag.strip() for tag in manual_tags.split(',')] if manual_tags else ['Shorts']
 
     print(f"\n📋 RÉSUMÉ:")
     print(f"📺 Titre: {title}")

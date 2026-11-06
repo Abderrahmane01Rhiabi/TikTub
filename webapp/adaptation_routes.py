@@ -52,7 +52,9 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
     music = sorted(p.name for p in music_dir.iterdir() if p.suffix.lower() in _main().MUSIC_EXTENSIONS) \
         if music_dir.exists() else []
     from adaptation.render import STYLES
-    return {"settings": s, "music_files": music, "voices": [_main()._serialize_voice(v) for v in ad.voices_for(s["language"])],
+    from youtube_uploader import CATEGORIES
+    return {"settings": s, "music_files": music,
+            "youtube_category": str(profile.get("youtube_category") or "24"), "categories": CATEGORIES, "voices": [_main()._serialize_voice(v) for v in ad.voices_for(s["language"])],
             "voice_models": list(ad.VOICE_MODELS),
             "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
 
@@ -77,6 +79,7 @@ def get_channel_adaptation(channel_name: ChannelName):
 
 class ChannelAdaptationUpdate(BaseModel):
     language: Optional[str] = None
+    youtube_category: Optional[str] = None      # the category its videos are published in
     settings: dict = Field(default_factory=dict)
 
 
@@ -89,6 +92,11 @@ def update_channel_adaptation(channel_name: ChannelName, update: ChannelAdaptati
         if update.language not in LANGS:
             raise HTTPException(status_code=400, detail=f"Langue : {', '.join(LANGS)}")
         profile["language_hint"] = update.language      # also the language of its AI titles
+    if update.youtube_category is not None:
+        from youtube_uploader import CATEGORIES
+        if update.youtube_category not in CATEGORIES:
+            raise HTTPException(status_code=400, detail="Catégorie YouTube inconnue")
+        profile["youtube_category"] = update.youtube_category
     profile["adaptation"] = {**(profile.get("adaptation") or {}), **ad.clean_update(update.settings)}
     _main().channel_manager.save_channel_profile(channel_name, profile)
     return _adaptation_channel_payload(channel_name)

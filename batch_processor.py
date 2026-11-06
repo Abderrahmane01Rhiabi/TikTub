@@ -580,21 +580,14 @@ class BatchProcessor:
 
         except Exception as e:
             logger.error(f"Erreur génération AI: {e}")
-            # Return default AI data structure
+            # Return default AI data structure — nothing generic: an empty description beats a French
+            # "viral du jour" on an Arabic channel, and generic tags match no search
             return {
-                "tags": [
-                    "TikTok", "Shorts", "Viral", "Trending", "Entertainment"
-                ],
-                "hashtags": [
-                    "#Shorts", "#Viral", "#TikTok"
-                ],
+                "tags": ["Shorts"],
+                "hashtags": ["#Shorts"],
                 "optimized_title": title,
                 "content_type": "general",
-                "description_suggestions": [
-                    "Contenu viral du jour ! 🔥",
-                    "Tu as vu ça ? Partage en commentaire ! 💬",
-                    "Tendance TikTok à ne pas manquer ! #viral"
-                ]
+                "description_suggestions": [""]
             }
 
     @holding_schedule_lock

@@ -36,6 +36,35 @@ def test_upload_publishes_the_current_title_not_the_schedule_copy(project, fake_
     assert fake_youtube.inserted[0]["snippet"]["title"] == "edited title"
 
 
+def test_youtube_gets_the_category_the_languages_and_no_generic_tags(project, fake_youtube):
+    from channel_manager import ChannelManager
+    project.add_channel("chanA")
+    manager = ChannelManager()
+    manager.save_channel_profile("chanA", {**manager.get_channel_profile("chanA"),
+                                           "language_hint": "ar (Modern Standard Arabic or Moroccan Darija)",
+                                           "youtube_category": "27"})
+    tags = ["Viral", "#trending", "TikTok", "volcan", "Shorts"]
+    project.add_video("voiced", video_path=project.add_video_file("voiced.mp4"), source="adaptation",
+                      ai_data={"optimized_title": "t1", "tags": tags})
+    project.add_video("imported", video_path=project.add_video_file("imported.mp4"),
+                      ai_data={"optimized_title": "t2", "tags": tags})
+    project.write_schedule([schedule_entry("voiced"), schedule_entry("imported")])
+
+    yu.upload_channel_schedule("chanA")
+
+    voiced, imported = (b["snippet"] for b in fake_youtube.inserted)
+    assert voiced["tags"] == ["volcan", "Shorts"]
+    assert voiced["categoryId"] == "27" and voiced["defaultLanguage"] == "ar"
+    assert voiced["defaultAudioLanguage"] == "ar"        # our voice, in the channel's language
+    assert imported["defaultLanguage"] == "ar" and "defaultAudioLanguage" not in imported   # its speech is unknown
+
+
+def test_a_channel_without_settings_keeps_entertainment_and_no_language():
+    assert yu.video_meta(None) == {"categoryId": "24"}
+    assert yu.channel_language({"language_hint": "fr-FR"}) == "fr"
+    assert yu.channel_language({"language_hint": "?"}) is None
+
+
 def test_missing_file_fails_only_that_video(project, fake_youtube):
     project.add_channel("chanA")
     project.add_video("v1", video_path="processed_videos/gone.mp4")

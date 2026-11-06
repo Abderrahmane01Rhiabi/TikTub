@@ -480,11 +480,11 @@ class AITagsGenerator:
             print(f"❌ Erreur génération tags: {e}")
             # Fallback sur méthode locale simple
             return {
-                'tags': ['shorts', 'viral', 'trending', 'entertainment'],
-                'hashtags': ['#Shorts', '#Viral'],
+                'tags': ['shorts'],
+                'hashtags': ['#Shorts'],
                 'optimized_title': title + " 🔥",
                 'content_type': 'general',
-                'description_suggestions': ["Contenu viral du jour ! 🔥"]
+                'description_suggestions': [""]
             }
 
 # Test du générateur

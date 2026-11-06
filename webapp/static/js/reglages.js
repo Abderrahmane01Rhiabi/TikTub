@@ -408,6 +408,12 @@ function renderAdaptationChannel(card, ch, data){
         ${[['calme', 'Calme'], ['explicatif', 'Explicatif'], ['spectaculaire', 'Spectaculaire'], ['drole', 'Drôle']].map(([v, l]) =>
           `<option value="${v}" ${s.ton === v ? 'selected' : ''}>Toujours ${l}</option>`).join('')}</select>
       <div class="tiny">Un ton fixe garde la même musique, les mêmes effets et les mêmes sons à chaque vidéo : la signature de la chaîne.</div>
+    </div>
+    <div class="chcard-body">
+      <label class="f">Catégorie YouTube (toutes ses vidéos publiées)</label>
+      <select class="f ad-cat" style="width:auto">${Object.entries(data.categories || {}).map(([k, l]) =>
+        `<option value="${k}" ${k === data.youtube_category ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <div class="tiny">YouTube reçoit aussi la langue de la chaîne (celle de ses titres) ; la langue parlée seulement quand la voix est la nôtre.</div>
     </div>`;
   const save = async body => {
     try { renderAdaptationChannel(card, ch, await api(`/api/channels/${ch.name}/adaptation`, { method:'PUT', body: JSON.stringify(body) })); }
@@ -419,6 +425,7 @@ function renderAdaptationChannel(card, ch, data){
   card.querySelector('.ad-music').onchange = e => save({ settings: { music_file: e.target.value || null } });
   const styleSel = card.querySelector('.ad-style');
   if (styleSel) styleSel.onchange = e => save({ settings: { style: e.target.value } });
+  card.querySelector('.ad-cat').onchange = e => save({ youtube_category: e.target.value });
   const toneSel = card.querySelector('.ad-tone');
   if (toneSel) toneSel.onchange = e => save({ settings: { ton: e.target.value || null } });
   const start = card.querySelector('.ad-start'), audio = card.querySelector('.ad-audio');
