@@ -56,8 +56,14 @@ traduction mot a mot) et les memes faits (rien d'invente). Le francais est ecrit
    a la fin ; les points sont RENUMEROTES et la phrase de chaque point commence par son nouveau numero. Une histoire :
    garde l'ordre, PAS de numero (role "etape", numero null, pas de "1." dans le texte).
 4. Pour chaque langue, la publication YouTube, comme nos autres Shorts : "youtube" = {{"titre" (100 caracteres max,
-   avec 1-2 emojis, qui donne envie de regarder), "description" (2-3 phrases + 3 a 5 hashtags dont #shorts),
-   "tags" (8 a 12)}} ; et "titre" = un titre COURT pour la miniature (6 mots au plus, sans emoji).
+   avec 1-2 emojis, qui donne envie de regarder), "description" (2-3 phrases, 200 a 350 caracteres, + 3 a 5
+   hashtags dont #shorts), "tags" (8 a 12)}} ; et "titre" = un titre COURT pour la miniature (6 mots au plus, sans
+   emoji). La description est PRECISE comme un bon article : le mot-cle principal (ce qu'on taperait pour trouver
+   cette video) des la 1re phrase, puis les details concrets du Short (noms, races, lieux, chiffres, la technique
+   montree) — jamais de phrase passe-partout ("Decouvrez pourquoi...", "Donnez votre avis", "3 raisons
+   etonnantes"). Hashtags et tags PRECIS (#caviar, #esturgeon plutot que #animaux). Les textes YouTube sont ecrits
+   avec l'orthographe complete de leur langue : en arabe, toutes les hamzas (أ إ ؤ ئ ء : رأيكم, أسماك, الأسود), sans
+   voyelles courtes.
 5. Ecris le texte de chaque partie : une accroche percutante, une phrase par point ou etape, et une chute qui invite a
    commenter. Chaque texte doit REMPLIR la duree de ses images sans la depasser ({vitesses}) : un texte trop court
    coupe ses images (on ne les accelere que jusqu'a x1,35), un texte trop long les ralentit.
