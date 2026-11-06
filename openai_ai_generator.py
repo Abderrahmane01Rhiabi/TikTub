@@ -105,27 +105,24 @@ Respond with JSON:
 """
 
         self.description_prompt = """
-Create an engaging YouTube Shorts description for this content using any detected specific content:
+Write the YouTube Shorts description for this content:
 
 Content: {analysis}
 Title: {title}
 
 Guidelines:
-- If specific anime/movie/game/artist detected, mention it naturally
-- Hook opening line
-- Call-to-action for subscribe/like  
-- Relevant hashtags (max 10) including specific content
-- Under 125 characters total
-- Engaging but professional tone
-
-Examples:
-- Anime: "Goku's power is unreal! 🔥 #DragonBall #Anime #Goku"
-- Game: "This Fortnite play hit different 🎮 #Fortnite #Gaming #Epic" 
-- Movie: "Spider-Man physics don't make sense 🕷️ #SpiderMan #Marvel #MCU"
+- 2 short sentences, 150 to 300 characters before the hashtags.
+- Sentence 1 says what happens in THIS video with its specific names (the anime and its characters, the person,
+  streamer, show or challenge) — the words someone would type to find it come first.
+- Sentence 2 gives the context: where the clip comes from (the anime and its season/arc, the show, the stream,
+  the interview) or why the moment is funny/epic — only what the analysis really shows, never invented.
+- Then 3 to 5 precise hashtags naming the anime/characters/people/show (#Frieren #DeathNote #DeenTheGreat),
+  ending with #shorts. Never #viral, #trending, #fyp, #tiktok.
+- No call to action ("Like & subscribe", "Don't miss"), no generic hype ("You won't believe", "perfectly captures").
 
 Respond with JSON:
 {
-  "description": "Your description with specific content here..."
+  "description": "..."
 }
 """
 
