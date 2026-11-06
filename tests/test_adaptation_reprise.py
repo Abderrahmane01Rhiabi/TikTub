@@ -239,3 +239,41 @@ def test_a_reprise_render_with_or_without_a_caption_library_style(tmp_path, styl
     if style:                       # « Auto » goes where his captions were erased: y = CAPTION_Y of the height
         lib = (tmp_path / "w" / "captions_lib" / "cap.ass").read_text(encoding="utf-8")
         assert f",{int(1920 * rm.CAPTION_Y)})" in lib
+
+
+def test_the_ocr_reads_only_his_zone_and_puts_the_words_back_in_place():
+    seen = []
+
+    class Reader:                                   # what it is given: the zone's box, words found in it
+        def readtext(self, img):
+            seen.append(img.shape[:2])
+            return [([[10, 12], [40, 12], [40, 20], [10, 20]], "LOOK", 0.9)]
+    zones = np.zeros((200, 100), bool)
+    zones[150:180, 20:80] = True
+    m = reprise.read_in(Reader(), np.zeros((200, 100, 3), np.uint8), zones, 1, 0.2)
+    assert seen[0][0] < 60                          # not the whole image
+    ys, xs = np.nonzero(m)
+    assert ys.min() == 154 and xs.min() == 22        # the word laid back where it is in the image (box at 142, 12)
+
+
+def test_the_colour_search_in_the_zones_rows_finds_what_the_whole_image_did():
+    img = _frame()
+    _letter(img, (255, 255, 255), (30, 30, 230))           # red in a white outline, in a caption band
+    zones = np.zeros(img.shape[:2], bool)
+    zones[700:960] = True
+    whole = reprise.colour_mask(img, [_hue_of((30, 30, 230))], np.ones(img.shape[:2], bool))
+    band = reprise.colour_mask(img, [_hue_of((30, 30, 230))], zones)
+    assert band[750:910, 290:430].any() and not band[:600].any()
+    assert (band[700:960] == whole[700:960]).all()          # the same letters as read on the whole image
+
+
+def test_a_hole_is_filled_and_nothing_else_moves():
+    import cv2
+    rng = np.random.default_rng(1)
+    img = rng.integers(0, 255, (300, 200, 3), dtype=np.uint8)
+    img[100:120, 50:150] = 255                       # his text
+    mask = np.zeros((300, 200), np.uint8)
+    mask[100:120, 50:150] = 255
+    out = reprise._inpaint(img, mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15)))
+    assert out.shape == img.shape and (out[100:120, 50:150] < 250).mean() > 0.9   # the white text gone
+    assert (out[:40] == img[:40]).all() and (out[180:] == img[180:]).all()          # far from it: untouched

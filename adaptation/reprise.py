@@ -31,6 +31,8 @@ import numpy as np
 
 WHITE = -1                       # "his text is white", among the learned hues
 HOLD = 2                         # images before / after a word left (re-read) also erased
+EVERY = 3                        # his text read, his stickers looked for, one image in EVERY (kept in between): the
+                                 # cleaning 3.5 times faster, as clean (labo 2026-11-06: esturgeon 52 -> 14 min, 0 word left)
 TEXT = ("sous_titres", "numero", "pseudo")
 DRAWN = ("autocollant", "logo")
 
@@ -238,11 +240,28 @@ def learn_colours(src: str, reader, info: Dict) -> List[int]:
     return out
 
 
+def _box(mask: np.ndarray, pad: int = 8):
+    """(y0, y1, x0, x1) around what is set in mask, pad pixels more; None: nothing set."""
+    ys, xs = np.nonzero(mask)
+    if not len(ys):
+        return None
+    h, w = mask.shape
+    return max(0, ys.min() - pad), min(h, ys.max() + pad + 1), max(0, xs.min() - pad), min(w, xs.max() + pad + 1)
+
+
 def colour_mask(img: np.ndarray, hues: List[int], zones: np.ndarray) -> np.ndarray:
     """In the zones where he writes, his letters the OCR missed (a one-letter "A", a 2-letter "IT", an animated
     number): coloured strokes outlined in black (cyan) or in white (red "A", "THE"), white strokes almost all close
-    to black; thin only (a letter, not a strawberry), grown to take the outline and the inside too."""
+    to black; thin only (a letter, not a strawberry), grown to take the outline and the inside too. Looked for in
+    the zones' rows only (the whole width kept: the « thin » test is the same)."""
     cv2 = _cv2()
+    b = _box(zones, 40)                              # 40: room for the outlines and the growing
+    if b is None:
+        return np.zeros(zones.shape, np.uint8)
+    if b[1] - b[0] < zones.shape[0]:
+        out = np.zeros(zones.shape, np.uint8)
+        out[b[0]:b[1]] = colour_mask(img[b[0]:b[1]], hues, zones[b[0]:b[1]])
+        return out
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     hue, sat, val = hsv[..., 0].astype(int), hsv[..., 1], hsv[..., 2]
     stroke = np.zeros(sat.shape, bool)
@@ -367,19 +386,30 @@ def _writer(out: str, src: str, info: Dict):
 
 
 def _inpaint(img: np.ndarray, mask: np.ndarray, kern) -> np.ndarray:
+    """The holes filled from around them: in their box only (+ room for the blur), rebuilt at half size (4 times
+    fewer pixels; the holes are soft anyway), laid back in the holes only, without a hard edge."""
     cv2 = _cv2()
     h, w = mask.shape
-    mask = cv2.dilate(mask, kern)
-    img = cv2.inpaint(img, mask, 6, cv2.INPAINT_TELEA)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
-    big = np.zeros((h, w), np.uint8)
+    y0, y1, x0, x1 = _box(mask, 48)
+    sub = img[y0:y1, x0:x1].copy()
+    m = cv2.dilate(mask[y0:y1, x0:x1], kern)
+    sh, sw = m.shape
+    half = cv2.inpaint(cv2.resize(sub, (max(1, sw // 2), max(1, sh // 2)), interpolation=cv2.INTER_AREA),
+                       (cv2.resize(m, (max(1, sw // 2), max(1, sh // 2)), interpolation=cv2.INTER_NEAREST) > 0)
+                       .astype(np.uint8) * 255, 3, cv2.INPAINT_TELEA)
+    soft = cv2.GaussianBlur(m, (0, 0), 2).astype(np.float32)[..., None] / 255
+    sub = (sub * (1 - soft) + cv2.resize(half, (sw, sh), interpolation=cv2.INTER_LINEAR) * soft).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(m, connectivity=8)
+    big = np.zeros(m.shape, np.uint8)
     for i in range(1, n):
         if stats[i, cv2.CC_STAT_AREA] > 0.01 * w * h:   # a big hole: blurred so the rebuilt blocks don't show
             big[lab == i] = 255
     if big.any():
         soft = cv2.GaussianBlur(cv2.dilate(big, kern), (0, 0), 12).astype(np.float32)[..., None] / 255
-        img = (img * (1 - soft) + cv2.GaussianBlur(img, (0, 0), 9) * soft).astype(np.uint8)
-    return img
+        sub = (sub * (1 - soft) + cv2.GaussianBlur(sub, (0, 0), 9) * soft).astype(np.uint8)
+    out = img.copy()
+    out[y0:y1, x0:x1] = sub
+    return out
 
 
 def read_in(reader, img: np.ndarray, zones: np.ndarray, scale: int, sure: float) -> np.ndarray:
@@ -388,13 +418,15 @@ def read_in(reader, img: np.ndarray, zones: np.ndarray, scale: int, sure: float)
     (the 8th Short) — which Gemini had rightly left out of its list."""
     cv2 = _cv2()
     out = np.zeros(zones.shape, np.uint8)
-    if not zones.any():
+    b = _box(zones[::scale, ::scale])
+    if b is None:
         return out
-    for pts, _, conf in reader.readtext(img):
+    y0, y1, x0, x1 = b                               # the OCR reads the zones' box only, not the whole image
+    for pts, _, conf in reader.readtext(img[y0:y1, x0:x1]):
         if conf < sure:
             continue
         m = np.zeros(zones.shape, np.uint8)
-        cv2.fillPoly(m, [(np.array(pts) * scale).astype(np.int32)], 255)
+        cv2.fillPoly(m, [((np.array(pts) + [x0, y0]) * scale).astype(np.int32)], 255)
         if (m.astype(bool) & zones).sum() > 0.5 * (m > 0).sum():
             out |= m
     return out
@@ -419,21 +451,26 @@ def clean(src: str, elements: List[Dict], out: str, work: str, reader=None,
     tmp = out + ".part.mp4"                               # never a half-written file taken for a done one
     enc = _writer(tmp, src, info)
     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (15, 15))
-    k, last = 0, None
+    k, last, before, found = 0, None, None, []
     for img in _frames(src, w, h):
         t = k / fps
         small = cv2.resize(img, (w // 2, h // 2))
         zones = zones_at(hide, t, w, h)
-        read = read_in(reader, small, zones, 2, 0.2)
-        mask = read if last is None else cv2.bitwise_or(read, last)
-        last = read
+        if k % EVERY == 0 or last is None:          # read one image in EVERY: his last two readings kept between
+            before, last = last, read_in(reader, small, zones, 2, 0.2)
+        if not zones.any():
+            mask = np.zeros((h, w), np.uint8)       # his text gone: nothing carried over
+        else:
+            mask = last.copy() if before is None else cv2.bitwise_or(last, before)
         if hues and zones.any():
             mask = cv2.bitwise_or(mask, colour_mask(img, hues, zones))
         if k in sam:
             mask = cv2.bitwise_or(mask, cv2.dilate(cv2.resize(sam[k].astype(np.uint8) * 255, (w, h),
                                                               interpolation=cv2.INTER_NEAREST), kern))
         elif not any(e["debut"] - 0.6 <= t <= e["fin"] + 1.0 for e in drawn):
-            for x0, y0, x1, y1 in find_looks(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), looks):
+            if k % EVERY == 0:                       # a sticker barely moves in 3 images: its place kept
+                found = find_looks(cv2.cvtColor(small, cv2.COLOR_BGR2GRAY), looks)
+            for x0, y0, x1, y1 in found:
                 cv2.rectangle(mask, (x0 * 2 - 10, y0 * 2 - 10), (x1 * 2 + 10, y1 * 2 + 10), 255, -1)
         for e in boxes:
             if e["debut"] - 0.4 <= t <= e["fin"] + 0.4:
@@ -462,14 +499,16 @@ def recheck(path: str, src: str, info: Dict, reader, hide: List[Dict],
     total = max(1, int(info["duree"] * fps))
     left: Dict[int, np.ndarray] = {}
     for k, img in enumerate(_frames(path, w, h)):
-        zones = zones_at(hide, k / fps, w, h).astype(np.uint8) * 255
         if progress and k % 30 == 0:
             progress(0.8 + 0.15 * k / total)
+        if k % 2:                                    # one image in 2: HOLD + 1 around a word left covers the other
+            continue
+        zones = zones_at(hide, k / fps, w, h).astype(np.uint8) * 255
         if not zones.any():
             continue
         m = read_in(reader, img, zones > 0, 1, 0.3)
         if m.any():
-            for j in range(k - HOLD, k + HOLD + 1):
+            for j in range(k - HOLD - 1, k + HOLD + 2):
                 left[j] = left.get(j, np.zeros((h, w), np.uint8)) | m
     if not left:
         return 0
