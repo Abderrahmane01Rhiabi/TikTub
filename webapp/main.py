@@ -185,6 +185,11 @@ def _recover_interrupted_jobs():
         adaptation_pipeline.recover_interrupted()
     except Exception as e:
         print(f"⚠️ Recovery of interrupted adaptations skipped: {e}")
+    try:
+        from roblox import pipeline as roblox_pipeline
+        roblox_pipeline.recover_interrupted()
+    except Exception as e:
+        print(f"⚠️ Recovery of interrupted Roblox projects skipped: {e}")
 
 
 def _start_pot_server():

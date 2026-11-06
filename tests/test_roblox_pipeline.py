@@ -382,3 +382,36 @@ def test_a_passage_removed_by_the_cleanup_is_downloaded_again_for_the_render(fak
     rp.run_render(pid)
     assert rp.load(pid)["status"] == "review" and fakes["telecharges"] == [0.0, 600.0, 0.0, 600.0]
     assert len(fakes["moments"]) == 2                                             # its moments were not looked for again
+
+
+def test_a_project_cut_by_a_server_restart_can_be_retried(fakes, project):
+    pid = new(project)["project_id"]
+    p = rp.load(pid)
+    p["status"] = "rendering"                                        # the server restarted mid-render
+    rp.save(p)
+    done = new(project)["project_id"]
+    rp.run_analysis(done)                                            # finished: at its plan
+    assert rp.recover_interrupted() == 1
+    p = rp.load(pid)
+    assert p["status"] == "error" and p["failed_step"] == "rendering" and "redémarrage" in p["error"]
+    assert rp.load(done)["status"] != "error"                        # the others left alone
+
+
+def test_the_heavy_parts_wait_for_the_other_heavy_jobs_of_the_app(fakes, project):
+    import threading
+    import render_slot
+    pid = new(project)["project_id"]
+    rp.run_analysis(pid)
+    rp.start_render(pid)
+    phases = []
+    render_slot.SLOT.acquire()                                        # another render (an Adaptation) is running
+    th = threading.Thread(target=rp.run_render, args=(pid, lambda ph, f: phases.append(ph)))
+    th.start()
+    th.join(1.0)
+    assert th.is_alive() and not fakes["render"]                      # nothing made beside it
+    assert any("en attente" in ph for ph in phases)                  # and the screen says it waits
+    render_slot.SLOT.release()
+    th.join(10)
+    assert not th.is_alive() and rp.load(pid)["status"] == "review"
+    assert render_slot.SLOT.acquire(blocking=False)                   # given back after
+    render_slot.SLOT.release()

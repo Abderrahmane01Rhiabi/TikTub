@@ -17,10 +17,12 @@ import os
 import shutil
 import subprocess
 import uuid
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
 import db
+import render_slot
 from roblox import identite, moments, nettoyage, plan, render, sources, stock, voix
 
 Report = Callable[[str, float], None]
@@ -52,6 +54,33 @@ def fail(pid: str, step: str, e: Exception) -> None:
     p = load(pid)
     p.update(status="error", error=str(e)[:500], failed_step=step)
     save(p)
+
+
+def recover_interrupted() -> int:
+    """A server restart kills the analysis or the render: the project marked as failed on that step, so that
+    « Réessayer » takes it again (it stayed « en cours » for good)."""
+    n = 0
+    for p in db.list_roblox():
+        if p.get("status") in RUNNERS:
+            p.update(status="error", error="Interrompu par un redémarrage du serveur : relance l'étape.",
+                     failed_step=p["status"])
+            save(p)
+            n += 1
+    return n
+
+
+@contextmanager
+def _heavy(report: Report, phase: str, f: float):
+    """One heavy job at a time in the whole app (render_slot.py: SAM, OCR, Demucs, ffmpeg on the graphics card and
+    in the 7.8 GB of the machine), its wait said on the progress."""
+    if not render_slot.SLOT.acquire(blocking=False):
+        report("en attente : un autre travail lourd tourne (carte graphique)", f)
+        render_slot.SLOT.acquire()
+        report(phase, f)
+    try:
+        yield
+    finally:
+        render_slot.SLOT.release()
 
 
 def _expect(p: Dict, *statuses: str) -> None:
@@ -217,8 +246,13 @@ def run_analysis(pid: str, report: Optional[Report] = None) -> None:
         made, dropped = plan.write(meta, cat, p["styles"], [t["langue"] for t in p["targets"]])
         if not made:
             raise PipelineError("Aucun style n'a trouvé de moment qui convienne. " + " ".join(dropped))
-        his = _his_voice(p, cat, made, meta, report, rec) if p.get("voix_joueur") == "remplacer" else None
-        creator = _creators_elements(cat, made, report, rec) if p.get("identite") else None
+        his = creator = None
+        if p.get("voix_joueur") == "remplacer":
+            with _heavy(report, "sa voix séparée du jeu", 0.88):
+                his = _his_voice(p, cat, made, meta, report, rec)
+        if p.get("identite"):
+            with _heavy(report, "ce que le créateur a ajouté", 0.92):
+                creator = _creators_elements(cat, made, report, rec)
         rec = stock.load(p["url"])
         rec["projets"] = sorted(set(rec.get("projets") or []) | {pid})
         stock.touch(rec)
@@ -466,13 +500,17 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
         todo = [(s, t) for s in p["styles"] if s in p["plan"] for t in p["targets"]
                 if not (p["videos"].get(f"{s}_{t['langue']}") or {}).get("path") or p["videos"][f"{s}_{t['langue']}"].get("a_refaire")]
         _ensure_passages(p, report)
-        cleaned = _cleaned(pid, report) if p.get("identite") and todo else {}
+        cleaned = {}
+        if p.get("identite") and todo:
+            with _heavy(report, "nettoyage de l'image", 0.04):
+                cleaned = _cleaned(pid, report)
         sound = {}
         for k, (style, t) in enumerate(todo):
             lang, key = t["langue"], f"{style}_{t['langue']}"
             if lang not in sound:
                 report(f"leurs voix lues par les voix choisies ({lang})", 0.05 + 0.9 * k / max(1, len(todo)))
-                sound[lang] = _new_sound(p, t, [s for s, x in todo if x["langue"] == lang], cleaned)
+                with _heavy(report, f"leurs voix lues par les voix choisies ({lang})", 0.05 + 0.9 * k / max(1, len(todo))):
+                    sound[lang] = _new_sound(p, t, [s for s, x in todo if x["langue"] == lang], cleaned)
             moments_, captions = sound[lang]
             report(f"{plan.STYLES[style][0]} ({lang}) : montage", 0.05 + 0.9 * (k + 0.3) / max(1, len(todo)))
             cache = p["traductions"].setdefault(lang, {})
@@ -490,7 +528,8 @@ def run_render(pid: str, report: Optional[Report] = None) -> None:
             os.makedirs(out_dir, exist_ok=True)
             path = os.path.join(out_dir, f"{key}.mp4")
             music = t["music_path"] if p["musique"] == "chaine" else None
-            duration = render.make(style, p["plan"][style], ctx, path, music)
+            with _heavy(report, f"{plan.STYLES[style][0]} ({lang}) : montage", 0.05 + 0.9 * (k + 0.3) / max(1, len(todo))):
+                duration = render.make(style, p["plan"][style], ctx, path, music)
             fresh = load(pid)
             fresh["traductions"] = p["traductions"]
             fresh["videos"][key] = {"style": style, "langue": lang, "channel": t["channel"], "path": path,
