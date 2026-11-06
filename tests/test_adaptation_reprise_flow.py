@@ -1,6 +1,7 @@
 """A Reprise project from the friend's link to Publication, with the downloads, Gemini, ElevenLabs, the graphics
-card and ffmpeg replaced by fakes: the steps, the cleaning review, the script edits, the sound rules (the smart
-music only on its channels, the voice kept when only the sound changes) and what Publication receives."""
+card and ffmpeg replaced by fakes: the steps, the cleaning beside them and its review, the script edits, the sound
+rules (the smart music only on its channels, the voice kept when only the sound changes), a video's own settings,
+the song's strip and what Publication receives."""
 
 import json
 import os
@@ -82,6 +83,10 @@ def fakes(monkeypatch, tmp_path):
     from roblox import voix
     monkeypatch.setattr(voix, "separate", lambda src, work: {"reste": "sa_musique.wav", "voix": "v.wav"})
     monkeypatch.setattr(ap, "project_dir", lambda pid: str(tmp_path / pid))
+    monkeypatch.setattr(rp, "_spawn", lambda fn: fn())                      # the cleaning's thread: run at once
+    monkeypatch.setattr(mixage, "audible", lambda path: (0.0, 150.0))
+    monkeypatch.setattr(mixage, "placed", lambda src, start, total, pad=0.0, lift_at=None: (start, lift_at))
+    monkeypatch.setattr(rp, "song_level", lambda path: [-20.0] * 300)
     monkeypatch.chdir(tmp_path)
     music = tmp_path / "music"
     music.mkdir()
@@ -100,18 +105,16 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     assert p["mode"] == "reprise" and p["reprise"]["son"] == "intelligente"
     ap.runner_for(pid, "analysing")(pid)
     p = ap.load(pid)
-    assert p["status"] == "cleaning_review" and fakes["clean"] == 1
+    assert p["status"] == "script_review" and fakes["clean"] == 1           # the script did not wait for the cleaning
+    assert rp.clean_state(p)["etat"] == "a_verifier"
     assert [x["fin"] for x in p["reprise"]["plans"]] == [40, 70.0]          # "1:10" written 110 read back
     assert fakes["kept"] == ["croix rouge"]
 
     rp.set_element(pid, 1, "cacher")                                         # the person hides the X after all
     rp.clean_again(pid)
-    ap.runner_for(pid, "cleaning")(pid)
-    assert ap.load(pid)["status"] == "cleaning_review" and fakes["kept"] == []
-
-    rp.approve_cleaning(pid)
-    ap.runner_for(pid, "scripting")(pid)
-    assert ap.load(pid)["status"] == "script_review"
+    p = ap.load(pid)
+    assert rp.clean_state(p)["etat"] == "a_verifier" and fakes["kept"] == [] and p["status"] == "script_review"
+    assert [e["action"] for e in rp.elements_of(p)] == ["cacher", "cacher"]
     rp.edit_script(pid, "cestpourca", ["Ce petit cochon !", "Il a bien grandi."], "Le porcelet",
                    {"titre": "Ce porcelet a tout changé 🐷", "description": "Une histoire vraie. #shorts", "tags": ["#cochon", "ferme"]})
     with pytest.raises(ap.PipelineError):
@@ -121,6 +124,11 @@ def test_a_reprise_from_the_link_to_publication(fakes):
     ap.start_voices(pid)
     assert ap.load(pid)["status"] == "settings_review" and not fakes["voices"]   # the settings first: nothing paid yet
     rp.make_videos(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    p = ap.load(pid)
+    assert p["status"] == "cleaning_wait" and len(fakes["voices"]) == 2 and not fakes["renders"]  # the voices now
+    p = rp.approve_cleaning(pid)
+    assert p["status"] == "voicing"                                           # the videos once it is approved
     ap.runner_for(pid, "voicing")(pid)
     p = ap.load(pid)
     assert p["status"] == "preview_review"
@@ -168,7 +176,6 @@ def _to_settings(fakes):
     pid = p["project_id"]
     ap.runner_for(pid, "analysing")(pid)
     rp.approve_cleaning(pid)
-    ap.runner_for(pid, "scripting")(pid)
     for t in ap.load(pid)["targets"]:
         ap.approve_script(pid, t["channel"])
     ap.start_voices(pid)
@@ -224,8 +231,23 @@ def test_a_failed_cleaning_is_retried(fakes, monkeypatch):
     monkeypatch.setattr(reprise, "clean", lambda *a, **k: (_ for _ in ()).throw(reprise.RepriseError("carte pleine")))
     ap.runner_for(pid, "analysing")(pid)
     p = ap.load(pid)
-    assert p["status"] == "error" and p["failed_step"] == "cleaning" and "carte pleine" in p["error"]
+    assert p["status"] == "script_review"                                    # the script goes on without it
+    lane = rp.clean_state(p)
+    assert lane["etat"] == "erreur" and "carte pleine" in lane["erreur"]
+    with pytest.raises(ap.PipelineError):
+        rp.approve_cleaning(pid)
+    fakes_again = []
+    monkeypatch.setattr(rp, "_spawn", lambda fn: fakes_again.append(fn))     # started again: in its thread
+    rp.clean_again(pid)
+    assert rp.clean_state(ap.load(pid))["etat"] == "en_cours" and len(fakes_again) == 1
+    p = ap.load(pid)                                                          # a project cut on the old step
+    p.update(status="error", failed_step="cleaning")
+    ap.save(p)
     assert ap.retry(pid) == "cleaning"
+    import progress
+    progress.finish(rp.clean_job(pid))
+    ap.runner_for(pid, "cleaning")(pid)
+    assert ap.load(pid)["status"] == "script_review" and len(fakes_again) == 2   # on to its script, cleaned beside
 
 
 def test_plans_written_in_minutes_and_seconds_are_read_back_for_every_mode():
@@ -250,7 +272,8 @@ def test_the_screen_gets_the_reprise(fakes, client):
     ap.runner_for(p["project_id"], "analysing")(p["project_id"])
     s = routes._serialize_adaptation(ap.load(p["project_id"]))
     r = s["reprise"]
-    assert s["mode"] == "reprise" and s["status"] == "cleaning_review"
+    assert s["mode"] == "reprise" and s["status"] == "script_review"
+    assert r["lane"]["etat"] == "a_verifier" and not r["lane"]["interrompu"]
     assert r["son"] == "intelligente" and r["smart_channels"] == ["cestpourca", "lihadha_alsabab"]
     assert [e["action"] for e in r["elements"]] == ["cacher", "garder"] and r["credit"] == "@monami"
     assert r["original_url"].endswith("/reprise/video/original") and r["propre_url"].endswith("/reprise/video/propre")
@@ -285,3 +308,48 @@ def test_the_shared_songs_and_the_voice_model_in_reglages(client, monkeypatch, t
     assert r.status_code == 200 and started == ["ma chanson.mp3"] and len(r.json()["musiques"]) == 2
     assert client.post("/api/musiques/fichier", files={"file": ("x.exe", b"y")}).status_code == 400
     assert len(client.delete("/api/musiques/ma%20chanson.mp3").json()["musiques"]) == 1
+
+
+def test_a_video_set_apart_and_the_song_strip(fakes, monkeypatch):
+    pid = _to_settings(fakes)
+    os.makedirs(rp.SHARED_MUSIC, exist_ok=True)
+    open(os.path.join(rp.SHARED_MUSIC, "ma_chanson.mp3"), "wb").write(b"x")
+    monkeypatch.setattr(musique, "listen", lambda path: {"titre": "Ma chanson", "moment_fort": 30.0,
+                                                         "montees": [12.0, 30.0, 60.0], "duree": 150.0})
+    monkeypatch.setattr(rp, "SMART_CHANNELS", ("cestpourca", "lungtemotivates"))
+    p = rp.set_settings(pid, {"son": "intelligente", "par_chaine": {
+        "lungtemotivates": {"son": "choisie", "chanson": "ma_chanson.mp3", "partie": 1, "volume_db": 20}}})
+    fr, ar = p["targets"]
+    assert rp.son_for(p, fr) == "intelligente" and rp.son_for(p, ar) == "choisie"
+    assert rp.opts(p, ar)["volume_db"] == 20.0 and rp.opts(p, fr)["volume_db"] == 16.0
+    with pytest.raises(ap.PipelineError):
+        rp.set_settings(pid, {"par_chaine": {"lungtemotivates": {"son": "fanfare"}}})
+
+    w = rp.song_window(p, ar)                                                  # its strip: the part taken, its rises
+    hit = w["partie_debut"]
+    assert w["titre"] == "Ma chanson" and w["auto"] and w["montee_video"] == pytest.approx(hit)
+    assert w["debut"] == pytest.approx(w["montee"] - hit) and w["montees"] == [m for m in (12.0, 30.0, 60.0) if m >= hit - 2]
+    p = rp.set_settings(pid, {"par_chaine": {"lungtemotivates": {"montee_chanson": 60.0}}})   # another rise on the part
+    w = rp.song_window(p, ar)
+    assert w["montee"] == 60.0 and not w["auto"] and w["debut"] == pytest.approx(60.0 - hit)
+    assert rp.song_window(p, fr) == {"attente": True}                          # Gemini has not chosen yet
+
+    quiet = [-20.0] * 300                                                      # a whisper where the strong moment opens
+    lo = int((30.0 - hit) / 0.5)
+    quiet[lo:lo + 4] = [-50.0] * 4
+    monkeypatch.setattr(rp, "song_level", lambda path: quiet)
+    p = rp.set_settings(pid, {"par_chaine": {"lungtemotivates": {"montee_chanson": None}}})
+    assert rp.song_window(p, ar)["montee"] != 30.0                            # the nearest rise opening on its sound
+
+    rp.make_videos(pid)
+    ap.runner_for(pid, "voicing")(pid)
+    ap.validate_preview(pid, "cestpourca")
+    made = len(fakes["renders"])
+    p = rp.set_settings(pid, {"par_chaine": {"lungtemotivates": {"volume_db": 24}}})   # only the Arabic one changes
+    assert p["status"] == "voicing"
+    ap.runner_for(pid, "voicing")(pid)
+    p = ap.load(pid)
+    assert len(fakes["renders"]) == made + 1 and p["targets"][0]["validated"] and not p["targets"][1]["validated"]
+    p = rp.set_settings(pid, {"par_chaine": {"lungtemotivates": None}})        # back to every video's settings
+    assert p["reprise"]["par_chaine"] == {} and rp.son_for(p, p["targets"][1]) == "intelligente"
+    assert p["status"] == "voicing"                                            # the Arabic one made again

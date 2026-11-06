@@ -1,6 +1,7 @@
 // ---------- Adaptation › Reprise : the friend's Short taken again (adaptation/reprise_pipeline.py) ----------
-// The cleaning to check (original | clean side by side, each element « garder » / « cacher »), one script per
-// language, then each channel's video with its voice, its voice model and the sound chosen.
+// The cleaning, running beside the steps (its bar above them, then original | clean side by side, each element
+// « garder » / « cacher »), one script per language, the settings (for every video or one apart, with their demo),
+// then each channel's video with its timeline.
 
 const RP_SONS = [
   ['notre_musique', 'Notre musique', 'la musique de la chaîne'],
@@ -37,11 +38,18 @@ function rpSonLabel(v){ return ([...RP_SONS, ['choisie', 'Une musique de la list
 function rpVoiceName(t){ return t.voice_name || t.voice_id; }
 
 function renderReprise(body, p){
-  if (p.status === 'cleaning_review'){ rpCleaning(body, p); return true; }
+  if (p.status === 'cleaning_review'){ rpCleaning(body, p); return true; }     // a project from before the lane
   if (p.status === 'script_review'){ rpScript(body, p); return true; }
   if (p.status === 'settings_review'){ rpSettingsStep(body, p); return true; }
+  if (p.status === 'cleaning_wait'){ rpWaiting(body, p); return true; }
   if (p.status === 'preview_review'){ rpPreviews(body, p); return true; }
   return false;                                       // done, error…: the usual screens
+}
+
+function rpWaiting(body, p){
+  body.innerHTML = `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">Les voix sont prêtes</div>
+    <div class="meta" style="margin-left:0">Les vidéos se montent dès que le nettoyage est validé (au-dessus) : environ 1 min par vidéo.</div></div>
+    <span class="pill warn">en attente du nettoyage</span></div></article>`;
 }
 
 async function rpPost(url, method, data){
@@ -49,15 +57,57 @@ async function rpPost(url, method, data){
   catch (e){ log(e.message, 'error'); }
 }
 
+// ---------------------------------------------------------------- the cleaning, beside the steps
+
+let rpLaneKey = '';
+
+function rpLaneBusy(p){
+  const l = (p.reprise || {}).lane || {};
+  return l.etat === 'en_cours' && !l.interrompu;
+}
+
+function rpLane(p){
+  const box = document.getElementById('rpLane');
+  if (!box || !p.reprise) return;
+  const l = p.reprise.lane || {}, pct = Math.round((l.fraction || 0) * 100);
+  const key = [p.project_id, p.status, l.etat, l.interrompu, l.erreur, l.etat === 'en_cours' ? pct : ''].join('|');
+  if (key === rpLaneKey) return;
+  rpLaneKey = key;
+  const pid = p.project_id, again = `<button class="btn secondary small" id="rpLaneAgain" data-icon="refresh">Relancer le nettoyage</button>`;
+  if (['analysing', 'cleaning_review'].includes(p.status) || l.etat === 'attente'){ box.innerHTML = ''; return; }
+  if (l.etat === 'approuve'){
+    box.innerHTML = `<div class="tiny rp-lane-ok">${icon('check', 11)} Nettoyage validé</div>`;
+  } else if (l.etat === 'en_cours' && !l.interrompu){
+    const eta = l.eta ? ` · encore ~${Math.max(1, Math.round(l.eta / 60))} min` : '';
+    box.innerHTML = `<div class="rp-lane"><div class="ad-row" style="justify-content:space-between;gap:8px">
+        <span>${spin('')} <b>Nettoyage de la vidéo en fond</b> <span class="tiny">(carte graphique)${eta}</span></span>
+        <span class="pill wait">${pct} %</span></div>
+      <div class="pbar"><div style="width:${pct}%"></div></div>
+      <div class="tiny">Tu peux continuer : script, réglages, voix. Seul le montage attend le nettoyage.</div></div>`;
+  } else if (l.etat === 'a_verifier'){
+    const wait = p.status === 'cleaning_wait';
+    box.innerHTML = `<details class="rp-lane rp-lane-ready" ${wait ? 'open' : ''}><summary><b>✨ Le nettoyage est prêt : vérifie-le</b>
+        <span class="tiny">${wait ? '— tes vidéos l\'attendent pour se monter' : '— quand tu veux, seul le montage l\'attend'}</span></summary>
+      <div id="rpLaneBody"></div></details>`;
+    rpCleaning(document.getElementById('rpLaneBody'), p, true);
+  } else {
+    box.innerHTML = `<div class="rp-lane rp-lane-err"><div>${l.interrompu ? "Le nettoyage s'est arrêté (le serveur a redémarré)." : `Le nettoyage a échoué : ${esc(l.erreur || '')}`}</div>
+      <div class="ad-row" style="margin-top:6px">${again}</div></div>`;
+  }
+  hydrateIcons(box);
+  const b = document.getElementById('rpLaneAgain');
+  if (b) b.onclick = () => rpPost(`/api/adaptations/${pid}/reprise/clean-again`, 'POST');
+}
+
 // ---------------------------------------------------------------- the cleaning to check
 
-function rpCleaning(body, p){
+function rpCleaning(body, p, inLane){
   const r = p.reprise, n = r.nettoyage || {};
-  body.innerHTML = `<article class="chcard">
-      <div class="chcard-head"><div class="who"><div class="name">Vérifie le nettoyage</div>
-        <div class="meta" style="margin-left:0">À gauche la vidéo de ton ami, à droite la version propre : il ne doit rester ni ses textes, ni ses logos, ni ses autocollants.
-          ${n.relues ? ` La relecture a repris ${n.relues} image(s).` : ''}</div></div></div>
+  body.innerHTML = `<article class="chcard${inLane ? ' rp-lane-card' : ''}">
+      ${inLane ? '' : `<div class="chcard-head"><div class="who"><div class="name">Vérifie le nettoyage</div></div></div>`}
       <div class="chcard-body">
+        <div class="tiny" style="margin-bottom:8px">À gauche la vidéo de ton ami, à droite la version propre : il ne doit rester ni ses textes, ni ses logos, ni ses autocollants.
+          ${n.relues ? ` La relecture a repris ${n.relues} image(s).` : ''}</div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
           <div><div class="tiny">Original</div><video id="rpOrig" src="${r.original_url}" controls playsinline muted style="width:100%;max-height:60vh;background:#000"></video></div>
           <div><div class="tiny">Propre</div><video id="rpClean" src="${r.propre_url}?v=${Date.now()}" controls playsinline style="width:100%;max-height:60vh;background:#000"></video></div>
@@ -74,7 +124,7 @@ function rpCleaning(body, p){
         <div class="tiny" style="margin-top:6px">« Garder » un dessin qui aide à comprendre l'image (une croix, une flèche, un cercle). Les textes, logos, pseudos et boutons sont à cacher.</div>
       </div>
       <div class="chcard-foot"><button class="btn secondary small" id="rpCleanAgain" data-icon="refresh" disabled>Nettoyer à nouveau</button>
-        <button class="btn primary push" id="rpCleanOk" data-icon="check">C'est propre → écrire le script</button></div>
+        <button class="btn primary push" id="rpCleanOk" data-icon="check">${inLane ? "C'est propre ✓" : "C'est propre → écrire le script"}</button></div>
     </article>`;
   hydrateIcons(body);
   const o = document.getElementById('rpOrig'), c = document.getElementById('rpClean');
@@ -156,33 +206,43 @@ async function rpSettingsData(p){
 
 function rpCapValue(st){ return st == null ? '__chaine' : (st.style || ''); }
 
+const RP_OWN = ['son', 'volume_db', 'chanson', 'partie', 'montee_chanson', 'sous_titres'];   // a video may have apart
+
+function rpPick(o){
+  const x = {};
+  RP_OWN.forEach(k => { x[k] = o[k] === undefined ? null : o[k]; });
+  if (x.volume_db == null) x.volume_db = 16;
+  if (!x.son) x.son = 'notre_musique';
+  return x;
+}
+
 function rpSettingsHtml(p, data){
   const r = p.reprise, parts = (r.script || {}).parties || [];
-  const songs = rpSongs || [], cur = r.chanson || (songs[0] || {}).fichier;
-  const capVal = rpCapValue(r.sous_titres);
+  const songs = rpSongs || [];
   return `<div class="rp-set">
     <label class="f">La musique</label>
     <div class="ad-row" style="flex-direction:column;align-items:flex-start;gap:4px">${RP_SET_SONS.map(([v, l, d]) =>
-      `<label class="switch" style="color:var(--text)"><input type="radio" name="rpSetSon" class="rp-r" value="${v}" ${v === r.son ? 'checked' : ''}>
+      `<label class="switch" style="color:var(--text)"><input type="radio" name="rpSetSon" class="rp-r" value="${v}">
         <b>${l}</b> <span class="tiny">${esc(d)}</span></label>`).join('')}</div>
-    <div class="rp-song ad-row" style="display:${r.son === 'choisie' ? 'flex' : 'none'};gap:8px;align-items:center;margin-top:4px">
+    <div class="rp-song ad-row" style="display:none;gap:8px;align-items:center;margin-top:4px">
       <select class="f rp-chanson rp-r" style="width:auto;max-width:340px">${songs.map(x =>
-        `<option value="${esc(x.fichier)}" data-url="${x.url}" ${x.fichier === cur ? 'selected' : ''}>${esc((x.analyse || {}).titre || x.fichier)}${(x.analyse || {}).humeur ? ' — ' + esc(x.analyse.humeur) : ''}</option>`).join('')
+        `<option value="${esc(x.fichier)}" data-url="${x.url}">${esc((x.analyse || {}).titre || x.fichier)}${(x.analyse || {}).humeur ? ' — ' + esc(x.analyse.humeur) : ''}</option>`).join('')
         || '<option value="">aucune musique dans la liste commune</option>'}</select>
-      <audio class="rp-song-play" controls preload="none" style="height:32px" src="${(songs.find(x => x.fichier === cur) || {}).url || ''}"></audio></div>
+      <audio class="rp-song-play" controls preload="none" style="height:32px"></audio></div>
     <div class="rp-part-row" style="margin-top:6px"><label class="tiny">La montée de la chanson tombe sur
       <select class="f rp-partie rp-r" style="width:auto;display:inline-block">
-        <option value="">automatique${r.musique && r.son === 'intelligente' ? ` (Gemini : ${esc(rpPartName(parts[r.musique.partie] || {}))})` : ''}</option>
-        ${parts.map((x, i) => `<option value="${i}" ${r.partie === i ? 'selected' : ''}>${esc(rpPartName(x))}</option>`).join('')}</select></label></div>
+        <option value="" class="rp-auto-opt">automatique</option>
+        ${parts.map((x, i) => `<option value="${i}">${esc(rpPartName(x))}</option>`).join('')}</select></label></div>
+    <div class="rp-strip" style="display:none"><div class="rp-strip-svg"></div><div class="tiny rp-strip-txt"></div></div>
     <label class="tiny" style="display:flex;gap:8px;align-items:center;margin-top:6px">Volume de la musique
-      <input type="range" class="rp-svol rp-r" min="6" max="30" step="1" value="${r.volume_db || 16}" style="width:160px">
-      <span class="rp-svol-out">${r.volume_db || 16} dB sous la voix</span></label>
-    ${r.musique && r.son === 'intelligente' ? `<div class="tiny" style="margin-top:4px">🎵 Gemini a choisi <b>${esc(r.musique.titre)}</b> — ${esc(r.musique.pourquoi_chanson || '')}</div>` : ''}
+      <input type="range" class="rp-svol rp-r" min="6" max="30" step="1" value="16" style="width:160px">
+      <span class="rp-svol-out">16 dB sous la voix</span></label>
+    ${r.musique ? `<div class="tiny rp-gemini" style="margin-top:4px">🎵 Gemini a choisi <b>${esc(r.musique.titre)}</b> — ${esc(r.musique.pourquoi_chanson || '')}</div>` : ''}
     <label class="f" style="margin-top:10px">Les sous-titres</label>
     <select class="f rp-captions rp-r">
-      <option value="__chaine" ${capVal === '__chaine' ? 'selected' : ''}>Ceux de la chaîne (Réglages → Sous-titres)</option>
-      <option value="" ${capVal === '' ? 'selected' : ''}>Nos sous-titres (3 mots, le mot dit en jaune)</option>
-      ${data.styles.map(st => `<option value="${st.id}" ${capVal === st.id ? 'selected' : ''}>${esc(st.label)}${st.group ? ' — ' + esc(st.group) : ''}</option>`).join('')}</select>
+      <option value="__chaine">Ceux de la chaîne (Réglages → Sous-titres)</option>
+      <option value="">Nos sous-titres (3 mots, le mot dit en jaune)</option>
+      ${data.styles.map(st => `<option value="${st.id}">${esc(st.label)}${st.group ? ' — ' + esc(st.group) : ''}</option>`).join('')}</select>
     <label class="f" style="margin-top:10px">Les voix</label>
     ${p.targets.map(t => {
       const vs = data.voices[t.language] || [];
@@ -193,36 +253,83 @@ function rpSettingsHtml(p, data){
     }).join('')}</div>`;
 }
 
+function rpWhoHtml(p){
+  if (p.targets.length < 2) return '';
+  return `<div class="rp-whobar"><div class="seg rp-who">${p.targets.map((t, i) => `<button class="seg-opt ${i ? '' : 'active'}" data-i="${i}">${esc(t.language_label)} · ${esc(rpChannelName(t.channel))}</button>`).join('')}</div>
+    <label class="switch tiny rp-apart-l"><input type="checkbox" class="rp-apart"> <span>Réglages à part pour cette vidéo</span></label>
+    <span class="tiny rp-apart-note"></span></div>`;
+}
+
 function rpPhoneHtml(p){
   return `<div class="rp-demo">
-    ${p.targets.length > 1 ? `<div class="seg rp-who">${p.targets.map((t, i) => `<button class="seg-opt ${i ? '' : 'active'}" data-i="${i}">${esc(t.language_label)}</button>`).join('')}</div>` : ''}
     <div class="ds-phone rp-phone"><video class="rp-dclip" muted loop playsinline autoplay src="/api/adaptations/${p.project_id}/reprise/demo/video"></video>
       <video class="ds-lcap rp-dcap" muted loop playsinline autoplay></video><div class="ds-lwait tiny rp-dwait">sous-titres…</div></div>
     <div class="ds-lsound"><button class="btn secondary small rp-dplay">▶ Écouter</button>
       <button class="btn secondary small rp-dmute" title="Couper ou remettre la musique">🔇 Musique</button></div>
     <div class="tiny rp-dstate"></div>
-    <div class="tiny ds-lnote">Les ${p.reprise.demo_s} premières secondes de la vidéo, avec ces réglages. Avant les vidéos, « Écouter » joue l'extrait de la voix choisie ; après, sa vraie voix.</div></div>`;
+    <div class="tiny ds-lnote">Les ${p.reprise.demo_s} premières secondes de la vidéo, avec ces réglages.${p.reprise.propre_url ? '' : " <b>Image d'origine : le nettoyage n'est pas fini.</b>"} Avant les vidéos, « Écouter » joue l'extrait de la voix choisie ; après, sa vraie voix.</div></div>`;
 }
 
 function rpSettingsOf(box){
-  const son = (box.querySelector('input[name="rpSetSon"]:checked') || {}).value || 'intelligente';
-  const cap = box.querySelector('.rp-captions').value, part = box.querySelector('.rp-partie').value;
-  const voix = {};
+  const st = box._rp, voix = {};
   box.querySelectorAll('.rp-voice').forEach(v => { voix[v.dataset.channel] = { voice_id: v.querySelector('.rp-vid').value, model: v.querySelector('.rp-vmodel').value }; });
-  return { son, chanson: son === 'choisie' ? box.querySelector('.rp-chanson').value || null : null,
-           partie: part === '' ? null : Number(part), volume_db: Number(box.querySelector('.rp-svol').value),
-           sous_titres: cap === '__chaine' ? null : { style: cap || null, params: {} }, voix };
+  const par = {};
+  Object.keys(st.channels).forEach(ch => { par[ch] = st.own[ch] || null; });
+  return { ...st.common, par_chaine: par, voix };
 }
 
 function rpBindSettings(box, p){
-  const pid = p.project_id, s = () => rpSettingsOf(box);
+  const pid = p.project_id, r = p.reprise, parts = (r.script || {}).parties || [];
+  const st = box._rp = { common: rpPick(r), own: {}, channels: {} };
+  p.targets.forEach(t => { st.channels[t.channel] = 1; if ((r.par_chaine || {})[t.channel]) st.own[t.channel] = rpPick(r.par_chaine[t.channel]); });
   const clip = box.querySelector('.rp-dclip'), cap = box.querySelector('.rp-dcap'), wait = box.querySelector('.rp-dwait');
   const play = box.querySelector('.rp-dplay'), mute = box.querySelector('.rp-dmute'), stateEl = box.querySelector('.rp-dstate');
-  let who = 0, capKey = '', timer = null, listening = false, muted = false, soundKey = '';
+  const song = box.querySelector('.rp-song'), sel = box.querySelector('.rp-chanson'), sp = box.querySelector('.rp-song-play');
+  const part = box.querySelector('.rp-partie'), vol = box.querySelector('.rp-svol'), out = box.querySelector('.rp-svol-out');
+  const capSel = box.querySelector('.rp-captions'), apart = box.querySelector('.rp-apart'), note = box.querySelector('.rp-apart-note');
+  const strip = box.querySelector('.rp-strip'), gem = box.querySelector('.rp-gemini');
+  let who = 0, capKey = '', timer = null, listening = false, muted = false, soundKey = '', stripKey = '', chosen = !!r.musique;
   const voice = new Audio(), music = new Audio();
   const target = () => p.targets[who];
+  const active = () => st.own[target().channel] || st.common;
+  const s = () => {
+    const voix = {};
+    box.querySelectorAll('.rp-voice').forEach(v => { voix[v.dataset.channel] = { voice_id: v.querySelector('.rp-vid').value, model: v.querySelector('.rp-vmodel').value }; });
+    return { ...active(), voix };
+  };
+  const fill = () => {                                   // the controls show the settings of the video chosen above
+    const a = active();
+    box.querySelectorAll('input[name="rpSetSon"]').forEach(x => { x.checked = x.value === a.son; });
+    if (a.chanson) sel.value = a.chanson;
+    const o = sel.selectedOptions[0];
+    sp.src = o && o.dataset.url ? o.dataset.url : '';
+    part.value = a.partie == null ? '' : String(a.partie);
+    vol.value = a.volume_db; out.textContent = `${a.volume_db} dB sous la voix`;
+    capSel.value = rpCapValue(a.sous_titres);
+    if (apart){
+      const own = !!st.own[target().channel];
+      apart.checked = own;
+      note.textContent = own ? `seulement ${rpChannelName(target().channel)}` : 'les mêmes pour toutes les vidéos';
+    }
+    showFor(a);
+  };
+  const showFor = a => {
+    song.style.display = a.son === 'choisie' ? 'flex' : 'none';
+    if (gem) gem.style.display = a.son === 'intelligente' ? '' : 'none';
+    const autoOpt = box.querySelector('.rp-auto-opt');
+    autoOpt.textContent = a.son === 'intelligente' && r.musique ? `automatique (Gemini : ${rpPartName(parts[r.musique.partie] || {})})` : 'automatique';
+  };
+  const read = () => {                                   // the controls into the video's settings
+    const a = active(), cv = capSel.value, pv = part.value;
+    const son = (box.querySelector('input[name="rpSetSon"]:checked') || {}).value || a.son;
+    const chanson = son === 'choisie' ? sel.value || null : null;
+    const partie = pv === '' ? null : Number(pv);
+    if (son !== a.son || chanson !== a.chanson || partie !== a.partie) a.montee_chanson = null;   // another rise to find
+    Object.assign(a, { son, chanson, partie, volume_db: Number(vol.value),
+                       sous_titres: cv === '__chaine' ? null : { style: cv || null, params: {} } });
+  };
   const volume = () => {
-    music.volume = Math.max(0, Math.min(1, Math.pow(10, -(s().volume_db - p.reprise.live_gap) / 20)));
+    music.volume = Math.max(0, Math.min(1, Math.pow(10, -(active().volume_db - r.live_gap) / 20)));
     music.muted = muted;
   };
   const captions = () => {
@@ -242,21 +349,26 @@ function rpBindSettings(box, p){
     clip.loop = true; cap.loop = true; clip.play().catch(() => {});
   };
   const fetchUrl = async (url) => {
-    const r = await fetch(url);
-    if (r.status === 204) return { url: null };
-    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))).detail) || 'impossible');
-    return { url: URL.createObjectURL(await r.blob()), what: r.headers.get('X-Voix') };
+    const res = await fetch(url);
+    if (res.status === 204) return { url: null };
+    if (!res.ok) throw new Error(((await res.json().catch(() => ({}))).detail) || 'impossible');
+    return { url: URL.createObjectURL(await res.blob()), what: res.headers.get('X-Voix') };
+  };
+  const musicQuery = () => {
+    const c = active(), mq = new URLSearchParams({ channel: target().channel, son: c.son });
+    if (c.chanson) mq.set('chanson', c.chanson);
+    if (c.partie !== null) mq.set('partie', c.partie);
+    if (c.montee_chanson !== null) mq.set('montee', c.montee_chanson);
+    return mq;
   };
   const load = async () => {
     const c = s(), t = target(), v = c.voix[t.channel] || {};
     const vq = new URLSearchParams({ channel: t.channel, voice_id: v.voice_id || '', model: v.model || '' });
-    const mq = new URLSearchParams({ channel: t.channel, son: c.son });
-    if (c.chanson) mq.set('chanson', c.chanson);
-    if (c.partie !== null) mq.set('partie', c.partie);
+    const mq = musicQuery();
     const key = vq + '|' + mq;
     if (key === soundKey) return true;
-    stateEl.textContent = c.son === 'intelligente' && !p.reprise.musique ? 'Gemini choisit la musique (une fois, ~30 s)…'
-      : ['intelligente', 'choisie'].includes(c.son) ? "préparation du son… (la 1re fois pour une chanson, son chant est retiré : jusqu'à 3 min)"
+    stateEl.textContent = c.son === 'intelligente' && !chosen ? 'Gemini choisit la musique (une fois, ~30 s)…'
+      : ['intelligente', 'choisie'].includes(c.son) ? "préparation du son… (la 1re fois pour une chanson : jusqu'à 3 min)"
       : 'préparation du son…';
     try {
       const [vo, mu] = await Promise.all([fetchUrl(`/api/adaptations/${pid}/reprise/demo/voix?${vq}`),
@@ -265,6 +377,7 @@ function rpBindSettings(box, p){
       if (mu.url) music.src = mu.url;
       soundKey = key;
       stateEl.textContent = vo.what === 'extrait' ? "Voix : l'extrait de la bibliothèque (sa vraie voix sera faite avec la vidéo)." : 'Voix : celle de la vidéo.';
+      if (c.son === 'intelligente' && !chosen){ chosen = true; stripKey = ''; loadStrip(); }   // Gemini chose it now: its strip
       return true;
     } catch (e){ stateEl.textContent = e.message; return false; }
   };
@@ -284,24 +397,92 @@ function rpBindSettings(box, p){
   voice.ontimeupdate = () => {
     if (!listening) return;
     if (music.src && Math.abs(music.currentTime - voice.currentTime) > 0.15) music.currentTime = voice.currentTime;
-    if (voice.currentTime >= p.reprise.demo_s) stop();
+    if (voice.currentTime >= r.demo_s) stop();
   };
   voice.onended = stop;
   mute.onclick = () => { muted = !muted; mute.textContent = muted ? '🔈 Remettre la musique' : '🔇 Musique'; volume(); };
+
+  // the song's strip: the whole song, the part the video takes; another rise put on the part by a drag or a click
+  const setRise = m => {
+    active().montee_chanson = m; stripKey = '';
+    if (listening) stop();
+    loadStrip();
+  };
+  const drawStrip = w => {
+    const box2 = strip.querySelector('.rp-strip-svg'), txt = strip.querySelector('.rp-strip-txt');
+    const W = Math.max(280, box2.clientWidth || strip.clientWidth || 520), H = 58, D = w.duree || 1;
+    const x = t => (t / D) * W, y = db => (H - 14) * (1 - (Math.max(-60, Math.min(-5, db)) + 60) / 55) + 2;
+    const lv = w.niveau || [];
+    const pts = lv.map((db, i) => `${x(i * w.pas).toFixed(1)},${y(db).toFixed(1)}`).join(' ');
+    const cands = (w.montees || []).map(m => `<circle class="rp-cand ${Math.abs(m - w.montee) < 0.3 ? 'on' : ''}" data-m="${m}" cx="${x(m).toFixed(1)}" cy="${H - 5}" r="4"><title>Montée à ${fmtSec(m)} de la chanson</title></circle>`).join('');
+    box2.innerHTML = `<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+      <polygon class="rp-slv" points="0,${H - 12} ${pts} ${x(lv.length * w.pas).toFixed(1)},${H - 12}"/>
+      <rect class="rp-win" x="${x(w.debut).toFixed(1)}" y="1" width="${Math.max(4, x(w.fin) - x(w.debut)).toFixed(1)}" height="${H - 14}" rx="4"><title>La partie de la chanson prise pour la vidéo — glisse-la</title></rect>
+      ${w.montee != null ? `<line class="rp-wrise" x1="${x(w.montee).toFixed(1)}" x2="${x(w.montee).toFixed(1)}" y1="1" y2="${H - 12}"/>` : ''}
+      ${cands}</svg>`;
+    const pn = rpPartName({ role: w.partie_role, numero: w.partie_numero });
+    txt.innerHTML = `🎵 <b>${esc(w.titre || '')}</b> : prise de ${fmtSec(w.debut)} à ${fmtSec(w.fin)} de la chanson`
+      + (w.montee != null ? ` · sa montée (${fmtSec(w.montee)}) tombe sur <b>${esc(pn)}</b>, à ${fmtSec(w.montee_video)} de la vidéo` : '')
+      + `${w.estime ? ' (estimé avant la voix)' : ''} · ${w.auto ? 'placée automatiquement' : 'placée par toi — <a href="#" class="rp-strip-auto">revenir en automatique</a>'}`
+      + `<br>Glisse la fenêtre bleue ou clique un point ● pour mettre une autre montée de la chanson sur ${esc(pn)}.`;
+    const auto = txt.querySelector('.rp-strip-auto');
+    if (auto) auto.onclick = e => { e.preventDefault(); setRise(null); };
+    box2.querySelectorAll('.rp-cand').forEach(c => c.onclick = () => setRise(Number(c.dataset.m)));
+    const win = box2.querySelector('.rp-win'), svg = box2.querySelector('svg');
+    win.onpointerdown = e => {
+      const x0 = e.clientX, left = Number(win.getAttribute('x'));
+      const k = W / (svg.getBoundingClientRect().width || W);          // screen pixels -> the drawing's units
+      win.setPointerCapture(e.pointerId);
+      win.onpointermove = ev => win.setAttribute('x', Math.max(0, left + (ev.clientX - x0) * k));
+      win.onpointerup = ev => {
+        win.onpointermove = win.onpointerup = null;
+        const moved = (ev.clientX - x0) * k / W * D;
+        if (Math.abs(moved) < 0.3) return;
+        const want = w.montee + moved;                   // the rise kept on the part: the nearest real one
+        const best = (w.montees || []).reduce((b, m) => b == null || Math.abs(m - want) < Math.abs(b - want) ? m : b, null);
+        if (best != null) setRise(best); else drawStrip(w);
+      };
+    };
+    svg.style.touchAction = 'none';
+  };
+  const loadStrip = async () => {
+    const a = active();
+    if (!['intelligente', 'choisie'].includes(a.son)){ strip.style.display = 'none'; return; }
+    const mq = musicQuery(), key = mq.toString();
+    if (key === stripKey) return;
+    stripKey = key;
+    strip.style.display = '';
+    const txt = strip.querySelector('.rp-strip-txt');
+    txt.textContent = 'la chanson…';
+    try {
+      const w = await api(`/api/adaptations/${pid}/reprise/demo/chanson?${mq}`);
+      if (key !== stripKey) return;
+      if (!w){ strip.style.display = 'none'; return; }
+      if (w.attente){ strip.querySelector('.rp-strip-svg').innerHTML = ''; txt.textContent = 'Gemini choisira la chanson au 1er « ▶ Écouter » : sa bande s\'affichera ici.'; return; }
+      drawStrip(w);
+    } catch (e){ txt.textContent = e.message; }
+  };
+
   box.querySelectorAll('.rp-who .seg-opt').forEach(b => b.onclick = () => {
     box.querySelectorAll('.rp-who .seg-opt').forEach(x => x.classList.toggle('active', x === b));
-    who = Number(b.dataset.i); stop(); captions();
+    who = Number(b.dataset.i); stop(); fill(); captions(); loadStrip();
   });
-  const song = box.querySelector('.rp-song'), sel = box.querySelector('.rp-chanson'), sp = box.querySelector('.rp-song-play');
-  const out = box.querySelector('.rp-svol-out');
+  if (apart) apart.onchange = () => {
+    const ch = target().channel;
+    if (apart.checked) st.own[ch] = { ...st.common, sous_titres: st.common.sous_titres ? { ...st.common.sous_titres } : null };
+    else delete st.own[ch];
+    stop(); fill(); captions(); loadStrip();
+  };
   box.querySelectorAll('.rp-r').forEach(el => el.addEventListener('change', () => {
-    song.style.display = s().son === 'choisie' ? 'flex' : 'none';
+    if (el.classList.contains('rp-vid') || el.classList.contains('rp-vmodel')){ if (listening) stop(); return; }
+    read();
+    showFor(active());
     if (el === sel){ const o = sel.selectedOptions[0]; if (o) sp.src = o.dataset.url; }
-    captions();
-    if (listening && !el.classList.contains('rp-svol')){ stop(); }
+    captions(); loadStrip();
+    if (listening && !el.classList.contains('rp-svol')) stop();
   }));
-  box.querySelector('.rp-svol').addEventListener('input', e => { out.textContent = `${e.target.value} dB sous la voix`; volume(); });
-  captions();
+  vol.addEventListener('input', e => { active().volume_db = Number(e.target.value); out.textContent = `${e.target.value} dB sous la voix`; volume(); });
+  fill(); captions(); loadStrip();
   return { stop };
 }
 
@@ -310,20 +491,21 @@ async function rpSettingsCard(p, mode){
   const title = mode === 'avant' ? 'Les réglages de la vidéo' : 'Changer les réglages';
   const meta = mode === 'avant'
     ? "Rien n'est encore fabriqué ni payé. Choisis, regarde et écoute la démo, puis fabrique les vidéos."
-    : "Refaire garde les voix qui ne changent pas (pas de crédits ElevenLabs) ; seule une autre voix ou un autre modèle est refait.";
+    : "Refaire ne refait que les vidéos dont un réglage a changé, et garde les voix qui ne changent pas (pas de crédits ElevenLabs).";
   return `<article class="chcard" id="rpSetCard">
     <div class="chcard-head"><div class="who"><div class="name">${title}</div><div class="meta" style="margin-left:0">${meta}</div></div></div>
-    <div class="chcard-body"><div class="ds-live-wrap"><div>${rpSettingsHtml(p, data)}</div>${rpPhoneHtml(p)}</div></div>
+    <div class="chcard-body">${rpWhoHtml(p)}<div class="ds-live-wrap"><div>${rpSettingsHtml(p, data)}</div>${rpPhoneHtml(p)}</div></div>
     <div class="chcard-foot">${mode === 'avant'
-      ? '<button class="btn primary push" id="rpMake" data-icon="film">Fabriquer les vidéos →</button>'
-      : '<button class="btn secondary small push" id="rpRedo" data-icon="refresh">Refaire les vidéos avec ces réglages</button>'}</div></article>`;
+      ? `<button class="btn primary push" id="rpMake" data-icon="film">${p.reprise.lane && p.reprise.lane.etat !== 'approuve' ? 'Faire les voix (les vidéos après le nettoyage) →' : 'Fabriquer les vidéos →'}</button>`
+      : '<button class="btn secondary small push" id="rpRedo" data-icon="refresh">Refaire les vidéos changées</button>'}</div></article>`;
 }
 
 async function rpSaveSettings(p, then){
   const box = document.getElementById('rpSetCard');
   try {
-    await api(`/api/adaptations/${p.project_id}/reprise/reglages`, { method: 'PATCH', body: JSON.stringify(rpSettingsOf(box)) });
+    const np = await api(`/api/adaptations/${p.project_id}/reprise/reglages`, { method: 'PATCH', body: JSON.stringify(rpSettingsOf(box)) });
     if (then) await api(then, { method: 'POST' });
+    else if (np.status === 'preview_review') toast('Aucun réglage changé : les vidéos restent comme elles sont', 'success');
     adProject = null; loadAdProject();
   } catch (e){ log(e.message, 'error'); }
 }

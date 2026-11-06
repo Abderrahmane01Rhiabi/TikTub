@@ -231,15 +231,23 @@ def _serialize_reprise(p: dict, targets: list) -> dict:
             out["frise"] = None
     sc = r.get("script") or {}
     mus = r.get("musique") or {}
+    import progress
+    lane, job = rp.clean_state(p), progress.get(rp.clean_job(pid)) or {}
+    running = bool(job) and not job.get("done")
     return {
         "son": r.get("son"), "volume_db": r.get("volume_db"), "sons": list(rp.SONS), "chanson": r.get("chanson"),
-        "partie": r.get("partie"), "sous_titres": r.get("sous_titres"), "live_gap": rp.LIVE_GAP, "demo_s": rp.DEMO_S,
+        "partie": r.get("partie"), "montee_chanson": r.get("montee_chanson"), "sous_titres": r.get("sous_titres"),
+        "par_chaine": r.get("par_chaine") or {}, "live_gap": rp.LIVE_GAP, "demo_s": rp.DEMO_S,
         "smart_channels": list(rp.SMART_CHANNELS), "voice_models": list(st.VOICE_MODELS),
         "elements": [{"index": i, **{k: e.get(k) for k in ("type", "description", "action", "raison", "debut", "fin")}}
-                     for i, e in enumerate(r.get("elements") or [])],
+                     for i, e in enumerate(rp.elements_of(p))],
         "original_url": f"/api/adaptations/{pid}/reprise/video/original" if r.get("video") else None,
-        "propre_url": f"/api/adaptations/{pid}/reprise/video/propre" if r.get("clean") else None,
-        "nettoyage": r.get("nettoyage"),
+        "propre_url": f"/api/adaptations/{pid}/reprise/video/propre" if rp.clean_video(p) else None,
+        "nettoyage": lane.get("nettoyage"),
+        "lane": {"etat": lane["etat"], "erreur": lane.get("erreur"),           # the cleaning, beside the steps
+                 "interrompu": lane["etat"] == "en_cours" and not running,       # a restart of the server cut it
+                 "fraction": job.get("fraction") if running else None, "phase": job.get("phase") if running else None,
+                 "eta": job.get("eta_seconds") if running else None},
         "script": {"genre": sc.get("genre"), "reordonne": sc.get("reordonne"), "pourquoi": sc.get("pourquoi"),
                    "titre": sc.get("titre"), "youtube": sc.get("youtube") or {}, "parties": sc.get("parties") or []} if sc else None,
         "musique": {k: mus.get(k) for k in ("titre", "partie", "comment", "pourquoi_chanson", "pourquoi_partie", "attention")}
@@ -921,12 +929,13 @@ def reprise_frame(pid: str, t: float = 0.0):
     """The clean video at `t` s (a timeline image), a small image made once."""
     from adaptation import discours as D, reprise_pipeline as rp
     p = _reprise_or_404(pid)
-    clean = (p.get("reprise") or {}).get("clean")
+    clean = rp.clean_video(p) or (p.get("reprise") or {}).get("video")      # the original's while it is cleaned
     if not clean or not os.path.exists(clean):
-        raise HTTPException(status_code=404, detail="Vidéo propre pas encore prête.")
+        raise HTTPException(status_code=404, detail="Vidéo pas encore prête.")
     t = round(max(0.0, t), 1)
     try:
-        path = D.frame_at(clean, t, os.path.join(rp.work_dir(p, "images"), f"{t:.1f}.jpg"))
+        name = f"{t:.1f}_{int(os.path.getmtime(clean))}.jpg"           # made again once the cleaning is done
+        path = D.frame_at(clean, t, os.path.join(rp.work_dir(p, "images"), name))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e)[:200])
     return FileResponse(path, media_type="image/jpeg")
@@ -943,8 +952,9 @@ def reprise_element(pid: str, index: int, req: RepriseElement):
 def reprise_clean_again(pid: str):
     from adaptation import reprise_pipeline as rp
     _reprise_or_404(pid)
-    p = _adaptation_call(rp.clean_again, pid)
-    _start_adaptation_step(pid, "cleaning")
+    p = _adaptation_call(rp.clean_again, pid)          # the lane starts itself
+    if p["status"] == "scripting":                    # a project from before the lane: on to its script
+        _start_adaptation_step(pid, "scripting")
     return _serialize_adaptation(p)
 
 
@@ -953,7 +963,8 @@ def reprise_approve_cleaning(pid: str):
     from adaptation import reprise_pipeline as rp
     _reprise_or_404(pid)
     p = _adaptation_call(rp.approve_cleaning, pid)
-    _start_adaptation_step(pid, "scripting")
+    if p["status"] in ("scripting", "voicing"):       # before the lane: the script; voices waiting: the videos
+        _start_adaptation_step(pid, p["status"])
     return _serialize_adaptation(p)
 
 
@@ -989,7 +1000,9 @@ class RepriseSettings(BaseModel):
     volume_db: Optional[float] = None
     chanson: Optional[str] = None
     partie: Optional[int] = None
+    montee_chanson: Optional[float] = None
     sous_titres: Optional[dict] = None
+    par_chaine: Optional[dict] = None   # {channel: the settings of that video alone, or None: back to every video's}
     voix: Optional[dict] = None
 
 
@@ -1046,21 +1059,31 @@ def reprise_demo_voice(pid: str, channel: str, voice_id: Optional[str] = None, m
 
 
 @router.get("/api/adaptations/{pid}/reprise/demo/musique")
-def reprise_demo_music(pid: str, channel: str, son: str, chanson: Optional[str] = None, partie: Optional[int] = None):
+def reprise_demo_music(pid: str, channel: str, son: str, chanson: Optional[str] = None, partie: Optional[int] = None,
+                       montee: Optional[float] = None):
     """The demo's music (LIVE_GAP dB under the voice; the page lowers it to the slider). 204: no music."""
     from adaptation import reprise_pipeline as rp
     from fastapi import Response
-    path = _adaptation_call(rp.demo_music, _reprise_or_404(pid), channel, son, chanson, partie)
+    path = _adaptation_call(rp.demo_music, _reprise_or_404(pid), channel, son, chanson, partie, None, montee)
     if not path:
         return Response(status_code=204)
     return FileResponse(path, media_type="audio/wav")
 
 
+@router.get("/api/adaptations/{pid}/reprise/demo/chanson")
+def reprise_demo_song(pid: str, channel: str, son: str, chanson: Optional[str] = None, partie: Optional[int] = None,
+                      montee: Optional[float] = None):
+    """The song's strip for these settings: the whole song, the part the video takes, its rises (null: no song)."""
+    from adaptation import reprise_pipeline as rp
+    return _adaptation_call(rp.demo_song, _reprise_or_404(pid), channel, son, chanson, partie, montee)
+
+
 @router.get("/api/adaptations/{pid}/reprise/video/{which}")
 def reprise_video(pid: str, which: str):
     """The Short as downloaded ("original") or cleaned ("propre"), to compare them."""
-    r = _reprise_or_404(pid).get("reprise") or {}
-    path = {"original": r.get("video"), "propre": r.get("clean")}.get(which)
+    from adaptation import reprise_pipeline as rp
+    p = _reprise_or_404(pid)
+    path = {"original": (p.get("reprise") or {}).get("video"), "propre": rp.clean_video(p)}.get(which)
     if not path or not os.path.exists(path):
         raise HTTPException(status_code=404, detail="Vidéo pas encore prête.")
     return FileResponse(path, media_type="video/mp4")

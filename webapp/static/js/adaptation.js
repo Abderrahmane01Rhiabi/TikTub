@@ -7,11 +7,11 @@ const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'se
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_REPRISE = [['Short', ['analysing', 'cleaning', 'cleaning_review']], ['Script', ['scripting', 'script_review']],
-                          ['Réglages', ['settings_review']], ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
+                          ['Réglages', ['settings_review']], ['Aperçu', ['voicing', 'cleaning_wait', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_DISCOURS = [['Discours', ['analysing']], ['Passage', ['passage_review']], ['Plans', ['searching', 'plans_review']],
                            ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STATUS = { passage_review: 'passage à choisir', plans_review: 'plans à vérifier', cleaning: 'nettoyage (carte graphique)…', cleaning_review: 'nettoyage à vérifier', analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
-  script_review: 'scripts à relire', settings_review: 'réglages à choisir', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
+  script_review: 'scripts à relire', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
 async function openAdaptation(){
@@ -159,7 +159,9 @@ async function loadAdProject(){
         `<button class="ad-vtab ${m.project_id === p.project_id ? 'on' : ''}" data-id="${m.project_id}">
           <b>${esc(m.channels.map(ch => (channels.find(c => c.name === ch) || {}).display_name || ch).join(', '))}</b>
           <span>${esc(m.angle || '')}</span><i>${esc(AD_STATUS[m.status] || m.status)}</i></button>`).join('')}</div>` : ''}`;
-    stage.innerHTML = adStepsHtml(p.status, p.mode, p.idee) + head + '<div id="adBody" class="stack"></div>';
+    stage.innerHTML = adStepsHtml(p.status, p.mode, p.idee) + head + (p.mode === 'reprise' ? '<div id="rpLane"></div>' : '')
+      + '<div id="adBody" class="stack"></div>';
+    if (p.mode === 'reprise') rpLaneKey = '';
     hydrateIcons(stage);
     stage.querySelectorAll('.ad-vtab').forEach(b => b.onclick = () => {
       if (b.dataset.id === p.project_id) return;
@@ -212,7 +214,10 @@ async function loadAdProject(){
     else if (p.status === 'preview_review') renderAdPreviews(body, p);
     else if (p.status === 'done') renderAdDone(body, p);
   }
-  if (AD_BUSY.includes(p.status)) adPoll = setTimeout(() => { if (currentSpace === 'adaptation') safeLoad(loadAdProject, 'adStage'); }, 2000);
+  if (p.mode === 'reprise') rpLane(p);                 // the cleaning, beside the steps (reprise.js)
+  const laneBusy = p.mode === 'reprise' && rpLaneBusy(p);
+  if (AD_BUSY.includes(p.status) || laneBusy)
+    adPoll = setTimeout(() => { if (currentSpace === 'adaptation') safeLoad(loadAdProject, 'adStage'); }, AD_BUSY.includes(p.status) ? 2000 : 5000);
 }
 
 function adBusyHtml(p){

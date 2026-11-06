@@ -210,6 +210,22 @@ def note(bed_path: str, **place) -> Dict:
     return info
 
 
+def placed(src: str, start: float, total: float, pad: float = 0.0, lift_at: Optional[float] = None) -> tuple:
+    """(start, lift_at) as bed() really takes the song: never from its silent start (« Lyrics » videos: seconds of
+    silence first), never past its end (it would start again) — the rise moving with it."""
+    first, last = audible(src)
+    if start < first:
+        lift_at = lift_at - (first - start) if lift_at is not None else None
+        start = first
+    long = min(last + 0.5, float(_run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+                                       src]).stdout or 0) or last + 0.5)
+    if long and start + total - pad > long - 0.5:
+        moved_by = min(start - first, start + total - pad - (long - 0.5))
+        start -= moved_by
+        lift_at = lift_at - moved_by if lift_at is not None else None
+    return start, lift_at
+
+
 def bed(src: str, out: str, total: float, start: float = 0.0, pad: float = 0.0, gap: float = 7.0,
         lift_at: Optional[float] = None, levelled: bool = True, end: bool = True, lift: float = 1.33) -> str:
     """The music under the voice: from `start` s of the song after `pad` s of silence (« entrée »: pad = the moment it
@@ -218,16 +234,7 @@ def bed(src: str, out: str, total: float, start: float = 0.0, pad: float = 0.0, 
     its first sound, the rise coming that much earlier. Where it all landed: note() (<out>.json)."""
     work = out + ".parts"
     os.makedirs(work, exist_ok=True)
-    first, last = audible(src)
-    if start < first:                                            # « Lyrics » videos: seconds of silence first
-        lift_at = lift_at - (first - start) if lift_at is not None else None
-        start = first
-    long = min(last + 0.5, float(_run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
-                                       src]).stdout or 0) or last + 0.5)
-    if long and start + total - pad > long - 0.5:                # the song would end and start again: taken earlier
-        moved_by = min(start - first, start + total - pad - (long - 0.5))
-        start -= moved_by
-        lift_at = lift_at - moved_by if lift_at is not None else None
+    start, lift_at = placed(src, start, total, pad, lift_at)
     raw = os.path.join(work, "brut.wav")
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-stream_loop", "-1", "-i", src, "-af",
           f"atrim=start={start:.2f},asetpts=PTS-STARTPTS,atrim=0:{max(0.5, total - pad):.2f}", "-ar", str(RATE), "-ac", "2",
@@ -237,16 +244,16 @@ def bed(src: str, out: str, total: float, start: float = 0.0, pad: float = 0.0, 
     gain = 10 ** ((VOICE_LUFS - gap - heard) / 20) if heard > -60 else 1.0
     rise = f",volume='if(gte(t,{lift_at - pad:.2f}),{lift},1)':eval=frame" if lift_at is not None and lift_at > pad else ""
     fade_in = 0.12 if pad > 0 else 1.2                                             # « entrée »: it drops in
-    placed = os.path.join(work, "place.wav")
+    laid = os.path.join(work, "place.wav")
     _run(["ffmpeg", "-nostdin", "-v", "error", "-y", "-i", music, "-af",
           f"volume={gain:.4f}{rise},afade=t=in:st=0:d={fade_in},adelay={int(pad * 1000)}:all=1,apad=whole_dur={total:.3f},"
-          f"atrim=0:{total:.3f}" + ("" if end else f",afade=t=out:st={max(0.0, total - 2.0):.2f}:d=2"), placed])
+          f"atrim=0:{total:.3f}" + ("" if end else f",afade=t=out:st={max(0.0, total - 2.0):.2f}:d=2"), laid])
     cut = None
     if end:
-        cut = strong_beat(placed, total - 3.2, total - 1.6) or total - 2.2
-        ending(placed, out, total, cut)
+        cut = strong_beat(laid, total - 3.2, total - 1.6) or total - 2.2
+        ending(laid, out, total, cut)
     else:
-        os.replace(placed, out)
+        os.replace(laid, out)
     for f in os.listdir(work):
         os.remove(os.path.join(work, f))
     os.rmdir(work)

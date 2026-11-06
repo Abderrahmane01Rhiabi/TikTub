@@ -2,33 +2,41 @@
 A « Reprise » project (mode "reprise" of adaptation/pipeline.py), step by step:
 
     analysing        the Short downloaded whole (1080x1920 at best), its thumbnail, Gemini's reading of its plans
-                     (their times read back as seconds) and of what its creator added, then straight on to:
-    cleaning         everything « cacher » erased (reprise.clean, graphics card, 3 to 45 min)   (background)
-    cleaning_review  the person compares the original and the clean video, may turn an element to « garder » /
-                     « cacher » and clean again, then approves
+                     (their times read back as seconds) and of what its creator added; then the cleaning starts in
+                     its own lane (below) and the project goes straight on to:
     scripting        one script, every language of the channels: top (reordered, numbered) or story (background)
     script_review    the person reads / edits / approves each language (mandatory)
     settings_review  the person sets the video before it is made: the sound, the song and where it rises, its
-                     volume, each channel's voice and model, the captions' style — a demo (8 s of the clean video,
-                     the captions in that style, « Écouter » the voice over the music) shows each change at once
+                     volume, each channel's voice and model, the captions' style — for every video, or apart for
+                     one (par_chaine) — a demo (8 s of the montage, the captions in that style, « Écouter » the voice
+                     over the music, the song's strip) shows each change at once
     voicing          per channel: its voice (its model), then the whole video with the sound chosen (background)
+    cleaning_wait    the voices made, the videos waiting for the cleaning to be approved
     preview_review   the person watches the video and its timeline, may change any setting (the voice is kept
-                     when it is not the one changed) and make it again, validates
+                     when it is not the one changed) and make again the videos it changed, validates
     rendering        the validated videos join Publication with their thumbnail                   (background)
     done
+
+The cleaning's lane (clean_state, its own file): everything « cacher » erased (reprise.clean, graphics card, 3 to
+70 min) while the person writes the script and sets the video — en_cours -> a_verifier (the person compares the
+original and the clean video, may turn an element to « garder » / « cacher » and clean again) -> approuve. Only the
+montage waits for it. (cleaning / cleaning_review: the statuses of the projects made before the lane.)
 
 The sound (p["reprise"]["son"]), for every channel: "sa_musique" (the original's music, his voice removed by
 Demucs), "notre_musique" (the channel's track), "intelligente" (a song of the shared list placed on the strong
 moment — only on SMART_CHANNELS for now, the others fall back to their track), "choisie" (a song of the shared
 list the person picked, p["reprise"]["chanson"]: no AI, same channels), "sans_musique"; its level in dB under the
 voice. p["reprise"]["partie"]: the part the song rises on (None: Gemini's, or the 1st point for a picked song).
+p["reprise"]["montee_chanson"]: the rise of the song (s of the song) the person put on that part (None: chosen).
 p["reprise"]["sous_titres"]: this video's captions ({"style": a library style or None for ours, "params"}; None:
-the channel's choice in Réglages → Sous-titres).
+the channel's choice in Réglages → Sous-titres). p["reprise"]["par_chaine"][channel]: all of these (OWN) for that
+channel's video alone, when the person set it apart; opts() gives a video's own.
 """
 
 import json
 import os
 import shutil
+import threading
 from datetime import datetime
 from typing import Callable, Dict, List, Optional
 
@@ -68,9 +76,19 @@ def _codes(p: Dict) -> List[str]:
     return out
 
 
+OWN = ("son", "volume_db", "chanson", "partie", "montee_chanson", "sous_titres")   # what a video may have apart
+
+
+def opts(p: Dict, t: Dict) -> Dict:
+    """This channel's video's settings: its own when the person set it apart (par_chaine), else the project's."""
+    r = p.get("reprise") or {}
+    own = (r.get("par_chaine") or {}).get(t["channel"])
+    return {k: (own if own is not None else r).get(k) for k in OWN}
+
+
 def son_for(p: Dict, t: Dict) -> str:
     """The sound this channel really gets: the smart music only on SMART_CHANNELS; our track when it has one."""
-    r = p.get("reprise") or {}
+    r = opts(p, t)
     son = r.get("son") or "notre_musique"
     if son == "choisie" and not (r.get("chanson") and os.path.exists(os.path.join(SHARED_MUSIC, r["chanson"]))):
         son = "intelligente"                          # the picked song gone from the list: chosen for him again
@@ -91,10 +109,11 @@ def new_project(base: Dict, targets: List[Dict], son: str = "notre_musique", vol
     return {**base, "mode": "reprise", "source_urls": [], "targets": targets,
             "reprise": {"son": son, "volume_db": max(6.0, min(30.0, float(volume_db))), "elements": None,
                         "plans": None, "script": None, "video": None, "clean": None, "miniature": None,
-                        "musique": None, "chanson": None, "partie": None, "sous_titres": None}}
+                        "musique": None, "chanson": None, "partie": None, "montee_chanson": None,
+                        "sous_titres": None, "par_chaine": {}}}
 
 
-# ---------------------------------------------------------------- analysing -> cleaning
+# ---------------------------------------------------------------- analysing -> the script (the cleaning beside)
 
 def run_analysis(pid: str, report: Optional[Report] = None):
     ap = _ap()
@@ -122,13 +141,97 @@ def run_analysis(pid: str, report: Optional[Report] = None):
             report("ce que le créateur a ajouté", 0.2)
             r["elements"] = reprise.find_elements(r["video"])
             ap.save(p)
-        p.update(status="cleaning", error=None, failed_step=None)
+        p.update(status="scripting", error=None, failed_step=None)
         ap.save(p)
     except Exception as e:
         ap.fail(pid, "analysing", e)
         report("terminé", 1.0)
         return
-    run_cleaning(pid, report)
+    start_cleaning(pid)
+    run_scripts(pid, report)
+
+
+# ---------------------------------------------------------------- the cleaning's lane
+
+_CLEAN_LOCK = threading.Lock()
+
+
+def _spawn(fn: Callable[[], None]):
+    threading.Thread(target=fn, daemon=True).start()
+
+
+def clean_job(pid: str) -> str:
+    return f"adapt:{pid}:nettoyage"                  # its progress, apart from the project's step
+
+
+def _clean_file(p: Dict) -> str:
+    return os.path.join(_ap().project_dir(p["project_id"]), "propre", "etat.json")
+
+
+def clean_state(p: Dict) -> Dict:
+    """{"etat": attente | en_cours | a_verifier | approuve | erreur, "choix": {element: action}, "nettoyage",
+    "erreur"}. In its own file: the steps running meanwhile save the project, and would write over it."""
+    try:
+        return json.load(open(_clean_file(p), encoding="utf-8"))
+    except (OSError, ValueError):
+        pass
+    r = p.get("reprise") or {}                       # a project from before the lane
+    etat = {"cleaning": "en_cours", "cleaning_review": "a_verifier"}.get(p.get("status"))
+    return {"etat": etat or ("approuve" if clean_video(p) else "attente"), "choix": {}, "nettoyage": r.get("nettoyage")}
+
+
+def _set_clean_state(p: Dict, **kw) -> Dict:
+    path = _clean_file(p)
+    if not os.path.isdir(os.path.dirname(os.path.dirname(path))):
+        return kw                                    # the project deleted meanwhile
+    with _CLEAN_LOCK:
+        s = {**clean_state(p), **kw}
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        json.dump(s, open(path + ".tmp", "w", encoding="utf-8"), ensure_ascii=False)
+        os.replace(path + ".tmp", path)
+    return s
+
+
+def clean_video(p: Dict) -> Optional[str]:
+    """The clean video as last made (approved or not), or None."""
+    path = os.path.join(_ap().project_dir(p["project_id"]), "propre", "propre.mp4")
+    return path if os.path.exists(path) else None
+
+
+def clean_ready(p: Dict) -> Optional[str]:
+    """The clean video once the person approved it: the only thing the montage waits for."""
+    return clean_video(p) if clean_state(p)["etat"] == "approuve" else None
+
+
+def elements_of(p: Dict) -> List[Dict]:
+    """What the creator added, with the person's « garder » / « cacher »."""
+    choix = clean_state(p).get("choix") or {}
+    return [{**e, "action": choix[str(i)], "raison": "choix de la personne"} if str(i) in choix else e
+            for i, e in enumerate((p.get("reprise") or {}).get("elements") or [])]
+
+
+def clean_running(p: Dict) -> bool:
+    import progress
+    job = progress.get(clean_job(p["project_id"]))
+    return bool(job and not job.get("done"))
+
+
+def start_cleaning(pid: str):
+    """The cleaning started in its own thread (its own progress): nothing else waits for it but the montage."""
+    import progress
+    p = _ap().load(pid)
+    if clean_running(p):
+        return
+    _set_clean_state(p, etat="en_cours", erreur=None)
+    key = clean_job(pid)
+    progress.start(key, kind="adaptation", phase="nettoyage")
+
+    def run():
+        from gemini_ai_generator import usage_context
+        with usage_context(projet=pid):
+            run_cleaning(pid, lambda ph, f: progress.update(key, f, phase=ph))
+        progress.finish(key)
+    _spawn(run)
 
 
 def run_cleaning(pid: str, report: Optional[Report] = None):
@@ -138,45 +241,72 @@ def run_cleaning(pid: str, report: Optional[Report] = None):
     try:
         r = p["reprise"]
         out = os.path.join(work_dir(p, "propre"), "propre.mp4")
+        part = out[:-4] + ".part.mp4"                # the demo keeps the last clean video while the next is made
         import render_slot
-        report("nettoyage (carte graphique)", 0.25)
+        report("nettoyage (carte graphique)", 0.02)
         with render_slot.SLOT:                       # one heavy job at a time in the app
-            done = reprise.clean(r["video"], r["elements"], out, work_dir(p, "propre", "travail"),
-                                 progress=lambda f: report("nettoyage (carte graphique)", 0.25 + 0.7 * f))
-        p = ap.load(pid)
-        p["reprise"].update(clean=out, nettoyage=done)
-        p.update(status="cleaning_review", error=None, failed_step=None)
-        ap.save(p)
+            done = reprise.clean(r["video"], elements_of(p), part, work_dir(p, "propre", "travail"),
+                                 progress=lambda f: report("nettoyage (carte graphique)", 0.02 + 0.97 * f))
+        os.replace(part, out)
+        _set_clean_state(p, etat="a_verifier", nettoyage=done, erreur=None)
     except Exception as e:
-        ap.fail(pid, "cleaning", e)
+        _set_clean_state(p, etat="erreur", erreur=str(e)[:300])
     report("terminé", 1.0)
+
+
+def resume_cleaning(pid: str, report: Optional[Report] = None):
+    """The step « cleaning » (a project from before the lane, or retried after its error): the lane started again,
+    the project on to its script."""
+    ap = _ap()
+    p = ap.load(pid)
+    p.update(status="scripting" if not p["reprise"].get("script") else "script_review", error=None, failed_step=None)
+    ap.save(p)
+    start_cleaning(pid)
+    if p["status"] == "scripting":
+        run_scripts(pid, report)
+
+
+def _reviewing(p: Dict):
+    if p["status"] != "cleaning_review" and clean_state(p)["etat"] not in ("a_verifier", "erreur"):
+        raise RepriseError("Le nettoyage n'est pas à vérifier maintenant.")
 
 
 def set_element(pid: str, index: int, action: str) -> Dict:
     """An element turned to « garder » / « cacher » by the person (cleaned again after)."""
-    ap = _ap()
-    p = ap.load(pid)
-    ap._expect(p, "cleaning_review")
-    els = p["reprise"]["elements"]
-    if not 0 <= index < len(els) or action not in ("garder", "cacher"):
+    p = _ap().load(pid)
+    _reviewing(p)
+    if not 0 <= index < len(p["reprise"]["elements"] or []) or action not in ("garder", "cacher"):
         raise RepriseError("Élément ou choix inconnu.")
-    els[index] = {**els[index], "action": action, "raison": "choix de la personne"}
-    return ap.save(p)
+    _set_clean_state(p, choix={**(clean_state(p).get("choix") or {}), str(index): action})
+    return p
 
 
 def clean_again(pid: str) -> Dict:
+    """Cleaned again (after a change, an error, or a cleaning cut by a restart of the server)."""
     ap = _ap()
     p = ap.load(pid)
-    ap._expect(p, "cleaning_review")
-    p["status"] = "cleaning"
-    return ap.save(p)
+    if clean_running(p):
+        raise RepriseError("Le nettoyage tourne déjà.")
+    if clean_state(p)["etat"] == "approuve" and p["status"] != "cleaning_review":
+        raise RepriseError("Le nettoyage est déjà validé.")
+    if p["status"] == "cleaning_review":            # a project from before the lane: on to its script
+        p.update(status="scripting" if not p["reprise"].get("script") else "script_review")
+        ap.save(p)
+    start_cleaning(pid)
+    return ap.load(pid)
 
 
 def approve_cleaning(pid: str) -> Dict:
+    """The clean video approved: the montage may use it (the voices waiting for it: the videos are made now)."""
     ap = _ap()
     p = ap.load(pid)
-    ap._expect(p, "cleaning_review")
-    p["status"] = "scripting"
+    if clean_state(p)["etat"] != "a_verifier" and p["status"] != "cleaning_review":
+        raise RepriseError("Le nettoyage n'est pas à vérifier maintenant.")
+    _set_clean_state(p, etat="approuve")
+    if p["status"] == "cleaning_review":            # a project from before the lane
+        p["status"] = "scripting"
+    elif p["status"] == "cleaning_wait":
+        p["status"] = "voicing"
     return ap.save(p)
 
 
@@ -254,40 +384,65 @@ def make_videos(pid: str) -> Dict:
     return ap.save(p)
 
 
-def set_settings(pid: str, s: Dict) -> Dict:
-    """The person's settings (any of: son, volume_db, chanson, partie, sous_titres, voix {channel: {voice_id,
-    model}}). Before the videos: kept for them; on the previews: they are made again (a voice only when it changed)."""
-    ap = _ap()
-    p = ap.load(pid)
-    if p["status"] not in ("settings_review", "preview_review"):
-        ap._expect(p, "settings_review")
-    r = p["reprise"]
+def _clean_opts(r: Dict, s: Dict, base: Dict) -> Dict:
+    """base with the settings sent in s (any of OWN), checked."""
+    out = {k: base.get(k) for k in OWN}
     if "son" in s:
         if s["son"] not in SONS:
             raise RepriseError("Choix du son inconnu.")
-        r["son"] = s["son"]
+        out["son"] = s["son"]
     if s.get("volume_db") is not None:
-        r["volume_db"] = max(6.0, min(30.0, float(s["volume_db"])))
+        out["volume_db"] = max(6.0, min(30.0, float(s["volume_db"])))
     if "chanson" in s:
         name = os.path.basename(s["chanson"] or "")
         if name and not os.path.exists(os.path.join(SHARED_MUSIC, name)):
             raise RepriseError("Cette musique n'est pas dans la liste commune.")
-        r["chanson"] = name or None
-    if r.get("son") == "choisie" and not r.get("chanson"):
+        out["chanson"] = name or None
+    if out.get("son") == "choisie" and not out.get("chanson"):
         raise RepriseError("Choisis la musique dans la liste.")
     if "partie" in s:
         n = len((r.get("script") or {}).get("parties") or [])
-        r["partie"] = int(s["partie"]) if s["partie"] is not None and 0 <= int(s["partie"]) < n else None
+        out["partie"] = int(s["partie"]) if s["partie"] is not None and 0 <= int(s["partie"]) < n else None
+    if "montee_chanson" in s:
+        out["montee_chanson"] = round(max(0.0, float(s["montee_chanson"])), 2) if s["montee_chanson"] is not None else None
     if "sous_titres" in s:
         from captions import styles as caption_lib
         c = s["sous_titres"]
         if c is None:
-            r["sous_titres"] = None                   # the channel's choice
+            out["sous_titres"] = None                 # the channel's choice
         else:
             st = caption_lib.get(c.get("style")) if c.get("style") else None
             if c.get("style") and not (st and "reprise" in st.spaces):
                 raise RepriseError("Style de sous-titres inconnu pour une Reprise.")
-            r["sous_titres"] = {"style": st.id if st else None, "params": st.clean(c.get("params")) if st else {}}
+            out["sous_titres"] = {"style": st.id if st else None, "params": st.clean(c.get("params")) if st else {}}
+    if out.get("volume_db") is None:
+        out["volume_db"] = musique.GAP
+    return out
+
+
+def _made_of(p: Dict, t: Dict) -> list:
+    return [opts(p, t), t["voice_id"], model_for(t)]
+
+
+def set_settings(pid: str, s: Dict) -> Dict:
+    """The person's settings (any of OWN for every video; par_chaine {channel: the OWN of that video alone, None: back
+    to every video's}; voix {channel: {voice_id, model}}). Before the videos: kept for them; on the previews: the
+    videos they change are made again (a voice only when it changed), the others kept and still validated."""
+    ap = _ap()
+    p = ap.load(pid)
+    if p["status"] not in ("settings_review", "preview_review", "cleaning_wait"):
+        ap._expect(p, "settings_review")
+    r = p["reprise"]
+    before = {t["channel"]: _made_of(p, t) for t in p["targets"]}
+    r.update(_clean_opts(r, s, r))
+    own = dict(r.get("par_chaine") or {})
+    for ch, o in (s.get("par_chaine") or {}).items():
+        ap.target(p, ch)
+        if o is None:
+            own.pop(ch, None)
+        else:
+            own[ch] = _clean_opts(r, o, own.get(ch) or r)
+    r["par_chaine"] = own
     for ch, v in (s.get("voix") or {}).items():
         t = ap.target(p, ch)
         if v.get("voice_id"):
@@ -298,16 +453,18 @@ def set_settings(pid: str, s: Dict) -> Dict:
             if v["model"] not in settings.VOICE_MODELS:
                 raise RepriseError("Modèle de voix inconnu.")
             t["voice_model"] = v["model"]
-    if p["status"] == "preview_review":
-        for t in p["targets"]:
+    if p["status"] in ("preview_review", "cleaning_wait"):
+        changed = [t for t in p["targets"] if _made_of(p, t) != before[t["channel"]] and not t.get("video_id")]
+        for t in changed:
             t["validated"] = False
-        p["status"] = "voicing"
+        if changed:
+            p["status"] = "voicing"
     return ap.save(p)
 
 
 def captions_for(p: Dict, t: Dict) -> Dict:
     """This video's captions: its own choice (the settings), else the channel's (Réglages → Sous-titres)."""
-    own = (p.get("reprise") or {}).get("sous_titres")
+    own = opts(p, t).get("sous_titres")
     if own is not None:
         return own
     from captions import render as caption_render
@@ -325,8 +482,9 @@ def _music_choice(p: Dict, t: Dict, v: Dict, report: Report) -> Optional[Dict]:
     picked (« choisie »): no AI, it rises on the 1st point (else the hook)."""
     r = p["reprise"]
     if son_for(p, t) == "choisie":
-        path = os.path.join(SHARED_MUSIC, r["chanson"])
-        return {"fichier": r["chanson"], "titre": musique.listen(path).get("titre") or r["chanson"], "montee": None,
+        name = opts(p, t)["chanson"]
+        path = os.path.join(SHARED_MUSIC, name)
+        return {"fichier": name, "titre": musique.listen(path).get("titre") or name, "montee": None,
                 "partie": 1 if len(r["script"]["parties"]) > 1 else 0}
     if r.get("musique"):
         return r["musique"]
@@ -337,7 +495,9 @@ def _music_choice(p: Dict, t: Dict, v: Dict, report: Report) -> Optional[Dict]:
     report("choix de la musique", 0.0)
     ref = p.get("reference") or {}
     r["musique"] = musique.plan(SHARED_MUSIC, ref.get("sujet") or "", ref.get("ton") or "", parts, v["duration"] + 0.8)
-    _ap().save(p)
+    saved = _ap().load(p["project_id"])             # p may be the demo's trial: only the choice is kept
+    saved["reprise"]["musique"] = r["musique"]
+    _ap().save(saved)
     return r["musique"]
 
 
@@ -346,14 +506,14 @@ def bed_for(p: Dict, t: Dict, v: Dict, work: str, report: Report) -> Optional[st
     r = p["reprise"]
     son = son_for(p, t)
     total = v["duration"] + 0.8
-    gap = float(r.get("volume_db") or musique.GAP)
+    gap = float(opts(p, t).get("volume_db") or musique.GAP)
     out = os.path.join(work, f"fond_{son}.wav")
     if son == "sans_musique":
         return None
     from adaptation import mixage                     # levelled, its instrumental when it holds up, a hall at the end
     if son == "sa_musique":
-        from roblox import voix
-        rest = voix.separate(r["clean"], work_dir(p, "demucs"))["reste"]
+        from roblox import voix                       # the cleaning leaves the sound as it is: the Short's own
+        rest = voix.separate(r["video"], work_dir(p, "demucs"))["reste"]
         musique.bed(rest, out, total, gap=gap)
         mixage.note(out, entree=0.0, montee=None, coupe=None, fin=round(total, 2))
         return out
@@ -368,17 +528,100 @@ def song_plan(p: Dict, t: Dict, v: Dict, report: Report) -> tuple:
     """(the shared song, where it starts, when it rises in the video) for this voice's timing: its rise on the part
     chosen (the person's, else Gemini's / the 1st point), the music from the 1st second (its rise earlier rather
     than a silence)."""
+    w = _song_place(p, t, v, report)
+    return w["path"], w["start"], w["rise"] - w["start"]
+
+
+QUIET_OPENING_DB = 18.0       # a video opening this much under the song's usual level: heard as « the music is late »
+_LEVELS: Dict[tuple, List[float]] = {}
+
+
+def song_level(path: str) -> List[float]:
+    """The song's level (dBFS) every 0.5 s, measured once."""
+    from adaptation import mixage
+    key = (path, os.path.getmtime(path))
+    if key not in _LEVELS:
+        _LEVELS[key] = mixage.envelope(path, 0.5)
+    return _LEVELS[key]
+
+
+def rises_of(song: Dict) -> List[float]:
+    """Every rise of the song the person may put on the part: its measured rises and its strong moment."""
+    return sorted({round(float(x), 2) for x in (song.get("montees") or []) + [song["moment_fort"]]})
+
+
+def _opens_loud(path: str, start: float, first: float) -> bool:
+    try:
+        lv = song_level(path)
+    except Exception:                                 # not measurable: taken as it is
+        return True
+    heard = sorted(x for x in lv if x > -60)
+    if not heard:
+        return True
+    usual = heard[len(heard) // 2]
+    i = int(max(start, first) / 0.5)
+    opening = lv[i:i + 4]                             # its first 2 s in the video
+    return not opening or sum(opening) / len(opening) >= usual - QUIET_OPENING_DB
+
+
+def _song_place(p: Dict, t: Dict, v: Dict, report: Report) -> Dict:
+    """Where the song goes in this video: {path, song, total, partie, hit (when that part starts in the video), rise
+    (in the song), start (in the song), auto}. The rise the person chose, else Gemini's / the strong moment's —
+    unless the video would then open on a whisper of the song (a soft intro): then the nearest rise that opens on
+    its real sound."""
+    from adaptation import mixage
     total = v["duration"] + 0.8
+    o = opts(p, t)
     choice = dict(_music_choice(p, t, v, report))
     starts = rm.starts_of(v)
-    part = (p.get("reprise") or {}).get("partie")
+    part = o.get("partie")
     if part is not None and 0 <= part < len(starts) and part != choice["partie"]:
         choice.update(partie=part, montee=None)       # another part: the song's rise found again for it
     hit = starts[choice["partie"]]                    # this language's moment for the chosen part
     path = os.path.join(SHARED_MUSIC, choice["fichier"])
-    rise, _ = musique.peak_for(musique.listen(path), hit, total, choice["montee"])
-    start = max(0.0, rise - hit)
-    return path, start, rise - start
+    song = musique.listen(path)
+    try:
+        first = mixage.audible(path)[0]
+    except Exception:
+        first = 0.0
+    mine = o.get("montee_chanson")
+    if mine is not None and mine >= hit - 2.0:
+        rise, auto = float(mine), False
+    else:
+        rise, auto = musique.peak_for(song, hit, total, choice["montee"])[0], True
+        if not _opens_loud(path, rise - hit, first):
+            fit = [m for m in rises_of(song) if m >= hit - 2.0 and m - hit + total <= song["duree"]
+                   and _opens_loud(path, m - hit, first)]
+            rise = min(fit, key=lambda m: abs(m - rise)) if fit else rise
+    return {"path": path, "song": song, "total": total, "partie": choice["partie"], "hit": hit, "rise": rise,
+            "start": max(0.0, rise - hit), "auto": auto}
+
+
+def song_window(p: Dict, t: Dict, report: Optional[Report] = None) -> Optional[Dict]:
+    """The song's strip in the settings: the whole song (its level), the part of it this video takes (as bed() will
+    take it: from its first sound, kept inside the song), where it rises in the song and in the video, and the other
+    rises the person may put on the part instead. None: no song for this video; {"attente": True}: Gemini has not
+    chosen it yet (the first « Écouter » does)."""
+    from adaptation import mixage
+    son = son_for(p, t)
+    if son not in ("intelligente", "choisie"):
+        return None
+    if son == "intelligente" and not p["reprise"].get("musique"):
+        return {"attente": True}
+    v = timings_of(p, t)
+    w = _song_place(p, t, v, report or (lambda ph, f: None))
+    start, lift, total = w["start"], w["rise"] - w["start"], w["total"]
+    start, lift = mixage.placed(w["path"], start, total, 0.0, lift)
+    hit, song = w["hit"], w["song"]
+    part = (p["reprise"]["script"]["parties"] or [{}])[w["partie"]]
+    return {"titre": song.get("titre"), "duree": song["duree"], "pas": 0.5, "niveau": song_level(w["path"]),
+            "debut": round(start, 2), "fin": round(min(song["duree"], start + total), 2),
+            "montee": round(start + lift, 2) if lift is not None else None,
+            "montee_video": round(lift, 2) if lift is not None else None, "partie": w["partie"],
+            "partie_role": part.get("role"), "partie_numero": part.get("numero"), "partie_debut": round(hit, 2),
+            "auto": w["auto"], "estime": not os.path.exists((t.get("voice") or {}).get("json", "")),
+            "montees": [m for m in rises_of(song)        # only those the song lasts after: else it is moved back
+                        if m >= hit - 2.0 and max(0.0, m - hit) + total <= song["duree"] - 0.5]}
 
 
 def frise(p: Dict, t: Dict) -> Optional[Dict]:
@@ -414,35 +657,48 @@ def frise(p: Dict, t: Dict) -> Optional[Dict]:
     placed = os.path.join(_ap().project_dir(p["project_id"]), "cibles", t["channel"], f"fond_{son}.wav.json")
     if son != "sans_musique" and os.path.exists(placed):
         music = json.load(open(placed, encoding="utf-8"))
-        music["titre"] = ((r.get("musique") or {}).get("titre") if son == "intelligente" else r.get("chanson")
+        music["titre"] = ((r.get("musique") or {}).get("titre") if son == "intelligente" else opts(p, t).get("chanson")
                           if son == "choisie" else "sa musique" if son == "sa_musique"
                           else os.path.basename(t.get("music_path") or ""))
     return {"total": round(total, 2), "parties": parts, "images": images, "musique": music, "son": son}
 
 
-def make_video(p: Dict, t: Dict, report: Report) -> Dict:
-    """The voice (kept while the voice, its model and the texts are the same) and the whole video."""
+def make_voice(p: Dict, t: Dict, report: Report) -> Dict:
+    """This channel's voice (kept while the voice, its model and the texts are the same)."""
     r = p["reprise"]
     code = langs.lang(t["language"])["code"]
-    work = work_dir(p, "cibles", t["channel"])
     key = [t["voice_id"], model_for(t), [x[code] for x in r["script"]["parties"]]]
     v = t.get("voice")
     if not v or v.get("key") != key or not os.path.exists(v.get("mp3", "")):
         report(f"{t['channel']} : voix", 0.1)
-        mp3 = os.path.join(work, "voix.mp3")
+        mp3 = os.path.join(work_dir(p, "cibles", t["channel"]), "voix.mp3")
         rm.voice(r["script"], code, t["voice_id"], mp3, model=model_for(t))
         v = {"mp3": mp3, "json": mp3[:-4] + ".json", "key": key}
         t["voice"] = v
+    return v
+
+
+def make_video(p: Dict, t: Dict, report: Report) -> Dict:
+    """The voice and the whole video, on the clean video approved."""
+    r = p["reprise"]
+    clean = clean_ready(p)
+    if not clean:
+        raise RepriseError("Le nettoyage n'est pas encore validé.")
+    code = langs.lang(t["language"])["code"]
+    work = work_dir(p, "cibles", t["channel"])
+    v = make_voice(p, t, report)
     timings = json.load(open(v["json"], encoding="utf-8"))
     bed = bed_for(p, t, timings, work, report)
     out = os.path.join(work, f"reprise_{t['channel']}.mp4")
     from adaptation import mixage
     from captions import render as caption_render
     captions = captions_for(p, t)                         # this video's own, else the channel's (Réglages)
-    music = [bed is not None, t.get("music_path"), t.get("music_start"), r.get("musique"), r.get("volume_db"),
-             r.get("chanson"), r.get("partie")]
-    key = _ap().render_key("v2", r["clean"], r["plans"], r["script"], code, timings, v["mp3"], music,
-                           rm.caption_y(r["elements"]), captions, son_for(p, t), rm.__file__, mixage.__file__,
+    o = opts(p, t)
+    music = [bed is not None, t.get("music_path"), t.get("music_start"), r.get("musique"), o["volume_db"],
+             o["chanson"], o["partie"], o["montee_chanson"]]
+    els = elements_of(p)
+    key = _ap().render_key("v3", clean, os.path.getmtime(clean), r["plans"], r["script"], code, timings, v["mp3"],
+                           music, rm.caption_y(els), captions, son_for(p, t), rm.__file__, mixage.__file__,
                            caption_render.__file__)
     if _ap().kept_video(t.get("preview"), key):
         return t["preview"]                          # nothing changed since this preview: not made again
@@ -451,8 +707,8 @@ def make_video(p: Dict, t: Dict, report: Report) -> Dict:
     report(f"{t['channel']} : montage", 0.5)
     import render_slot
     with render_slot.SLOT:
-        rm.render(r["clean"], r["plans"], r["script"], code, timings, sound, None, out, os.path.join(work, "parties"),
-                  rm.caption_y(r["elements"]), captions=captions, mastered=True)
+        rm.render(clean, r["plans"], r["script"], code, timings, sound, None, out, os.path.join(work, "parties"),
+                  rm.caption_y(els), captions=captions, mastered=True)
     made = reprise.probe(out)
     ok = abs(made["duree"] - (timings["duration"] + 0.8)) < 1.0
     return {"path": out, "son": son_for(p, t), "duree": round(made["duree"], 1), "cle": key,
@@ -464,10 +720,19 @@ def run_voices(pid: str, report: Optional[Report] = None, only: Optional[str] = 
     report = report or (lambda phase, f: None)
     p = ap.load(pid)
     try:
-        todo = [t for t in p["targets"] if only is None or t["channel"] == only]
+        todo = [t for t in p["targets"] if (only is None or t["channel"] == only) and not t.get("video_id")]
+        if not clean_ready(p):                       # the voices now, the videos once the cleaning is approved
+            for i, t in enumerate(todo):
+                make_voice(p, t, lambda ph, f: report(ph, (i + f) / len(todo)))
+                ap.save(p)
+            p.update(status="cleaning_wait", error=None, failed_step=None)
+            ap.save(p)
+            report("terminé", 1.0)
+            return
         for i, t in enumerate(todo):
-            t["preview"] = make_video(p, t, lambda ph, f: report(ph, (i + f) / len(todo)))
-            t["validated"] = False
+            made = make_video(p, t, lambda ph, f: report(ph, (i + f) / len(todo)))
+            if made is not t.get("preview"):         # a video kept as it was stays validated
+                t["preview"], t["validated"] = made, False
             ap.save(p)
         p.update(status="preview_review", error=None, failed_step=None)
         ap.save(p)
@@ -629,11 +894,11 @@ def timings_of(p: Dict, t: Dict) -> Dict:
 
 def demo_clip(p: Dict) -> str:
     """The demo's picture: the montage's first DEMO_S s — the clean video's plans in the script's order (at their own
-    pace) — light (540 wide, no sound), cut once."""
+    pace; the original's while the cleaning runs) — light (540 wide, no sound), cut once."""
     r = p.get("reprise") or {}
-    clean = r.get("clean")
+    clean = clean_video(p) or r.get("video")
     if not clean or not os.path.exists(clean):
-        raise RepriseError("La vidéo propre n'est pas encore prête.")
+        raise RepriseError("La vidéo n'est pas encore téléchargée.")
     shots, left = [], DEMO_S
     for part in (r.get("script") or {}).get("parties") or []:
         for i in part["plans"]:
@@ -642,7 +907,7 @@ def demo_clip(p: Dict) -> str:
                 shots.append((a, min(b, a + left)))
                 left -= shots[-1][1] - a
     shots = shots or [(0.0, DEMO_S)]
-    out = os.path.join(work_dir(p, "demo"), f"clip_{_key(shots)}.mp4")
+    out = os.path.join(work_dir(p, "demo"), f"clip_{_key(shots, clean)}.mp4")
     if not os.path.exists(out) or os.path.getmtime(out) < os.path.getmtime(clean):
         inputs = [x for a, b in shots for x in ("-ss", f"{a:.3f}", "-t", f"{b - a:.3f}", "-i", clean)]   # each sought
         g = "".join(f"[{k}:v]setpts=PTS-STARTPTS,scale=540:960:force_original_aspect_ratio=increase,crop=540:960,"
@@ -665,7 +930,7 @@ def demo_captions(p: Dict, channel: str, captions: Optional[Dict]) -> str:
     words = [w for w in v["words"] if w["start"] < DEMO_S - 0.3]
     numbers = [x.get("numero") if r["script"].get("genre") == "top" and x.get("role") == "point" else None
                for x in r["script"]["parties"]]
-    y = rm.caption_y(r["elements"])
+    y = rm.caption_y(elements_of(p))
     from captions import render as caption_render
     key = _key(words, rm.starts_of(v), numbers, code, y, captions, os.path.getmtime(rm.__file__),
                os.path.getmtime(caption_render.__file__))
@@ -697,29 +962,43 @@ def demo_voice(p: Dict, channel: str, voice_id: Optional[str] = None, model: Opt
     return out, "voix" if made else "extrait"
 
 
+def trying(p: Dict, channel: str, son: str, chanson: Optional[str], partie: Optional[int],
+           montee: Optional[float] = None) -> Dict:
+    """The project as if this channel's video had these settings (the demo's, not saved)."""
+    if son not in SONS:
+        raise RepriseError("Choix du son inconnu.")
+    t = _ap().target(p, channel)
+    r = p["reprise"]
+    own = {**opts(p, t), "son": son, "chanson": os.path.basename(chanson or "") or opts(p, t).get("chanson"),
+           "partie": partie, "montee_chanson": montee}
+    return {**p, "reprise": {**r, "par_chaine": {**(r.get("par_chaine") or {}), channel: own}}}
+
+
+def demo_song(p: Dict, channel: str, son: str, chanson: Optional[str], partie: Optional[int],
+              montee: Optional[float] = None) -> Optional[Dict]:
+    """The song's strip for these settings (song_window)."""
+    q = trying(p, channel, son, chanson, partie, montee)
+    return song_window(q, _ap().target(q, channel))
+
+
 def demo_music(p: Dict, channel: str, son: str, chanson: Optional[str], partie: Optional[int],
-               report: Optional[Report] = None) -> Optional[str]:
+               report: Optional[Report] = None, montee: Optional[float] = None) -> Optional[str]:
     """This channel's music for « Écouter », placed as the video will have it (its start, its rise on the part chosen),
     LIVE_GAP dB under the voice; None: no music. A smart song not chosen yet is chosen now (Gemini, once)."""
     from adaptation import mixage
-    ap = _ap()
-    t = ap.target(p, channel)
-    if son not in SONS:
-        raise RepriseError("Choix du son inconnu.")
+    q = trying(p, channel, son, chanson, partie, montee)
     r = p["reprise"]
-    q = {**p, "reprise": {**r, "son": son, "chanson": os.path.basename(chanson or "") or r.get("chanson"),
-                          "partie": partie}}
+    t = _ap().target(q, channel)
     son = son_for(q, t)
     if son == "sans_musique":
         return None
     v = timings_of(p, t)
     if son == "intelligente" and not r.get("musique"):
-        _music_choice(p, t, v, report or (lambda ph, f: None))      # saved on the project: the video uses it too
-        q["reprise"]["musique"] = r["musique"]
+        _music_choice(q, t, v, report or (lambda ph, f: None))      # saved on the project: the video uses it too
     total = DEMO_S + 4
     if son == "sa_musique":
         from roblox import voix
-        src, start, lift = voix.separate(r["clean"], work_dir(p, "demucs"))["reste"], 0.0, None
+        src, start, lift = voix.separate(r["video"], work_dir(p, "demucs"))["reste"], 0.0, None
     elif son == "notre_musique":
         src, start, lift = t["music_path"], float(t.get("music_start") or 0.0), None
     else:
@@ -731,5 +1010,5 @@ def demo_music(p: Dict, channel: str, son: str, chanson: Optional[str], partie: 
     return out
 
 
-RUNNERS = {"analysing": run_analysis, "cleaning": run_cleaning, "scripting": run_scripts, "voicing": run_voices,
+RUNNERS = {"analysing": run_analysis, "cleaning": resume_cleaning, "scripting": run_scripts, "voicing": run_voices,
            "rendering": run_final}

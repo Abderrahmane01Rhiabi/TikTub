@@ -724,3 +724,21 @@
 .ds-lsound{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .ds-lmute.on{border-color:var(--accent);color:var(--accent)}
 .ds-lcap{transition:opacity .15s}
+/* Reprise: the cleaning beside the steps, the settings per video, the song's strip */
+.rp-lane{margin:0 0 12px;padding:10px 12px;border:1px solid var(--border);border-radius:10px;background:var(--panel);display:flex;flex-direction:column;gap:6px}
+.rp-lane-ready{border-color:var(--ok)}
+.rp-lane-ready summary{cursor:pointer;list-style:revert}
+.rp-lane-card{margin-top:8px}
+.rp-lane-err{border-color:var(--bad,#e5484d)}
+.rp-lane-ok{margin:0 0 10px;color:var(--ok)}
+.rp-whobar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.rp-apart-l{color:var(--text)}
+.rp-strip{margin-top:8px;padding:6px 8px;background:var(--panel2);border-radius:8px}
+.rp-strip-svg{width:100%;overflow:hidden}
+.rp-strip-svg svg{display:block;width:100%;height:auto}
+.rp-slv{fill:var(--ok);opacity:.45}
+.rp-win{fill:rgba(91,124,250,.28);stroke:var(--accent);stroke-width:2;cursor:grab}
+.rp-win:active{cursor:grabbing}
+.rp-wrise{stroke:var(--ok);stroke-width:2;stroke-dasharray:4 3}
+.rp-cand{fill:var(--muted);cursor:pointer}
+.rp-cand:hover,.rp-cand.on{fill:var(--accent)}
