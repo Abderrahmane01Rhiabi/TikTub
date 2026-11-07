@@ -1508,18 +1508,21 @@ def broll_video(clip_id: str):
 # ---------------------------------------------------------------------------
 
 def _serialize_voice(v: dict) -> dict:
-    from adaptation import settings as ad
+    from adaptation import settings as ad, voix_casting
+    c = voix_casting.card(v)
     return {**{k: v.get(k) for k in ("voice_id", "name", "custom_name", "language", "accent", "gender", "age",
                                        "use_case", "description", "has_preview")},
-            "display_name": ad.display_name(v), "preview_url": f"/api/voices/{v['voice_id']}/preview"}
+            "display_name": ad.display_name(v), "preview_url": f"/api/voices/{v['voice_id']}/preview",
+            **{k: c[k] for k in ("tons", "tons_par", "note", "ajoutee_par", "lu_1an", "lu_7j", "type")}}
 
 
 @app.get("/api/voices")
 def list_voice_library(language: Optional[str] = None):
     import db as _db
     from adaptation.langs import LANGS
+    from adaptation.voix_casting import TONS
     return {"voices": [_serialize_voice(v) for v in _db.list_voices(language)],
-            "languages": {k: v["label"] for k, v in LANGS.items()}}
+            "languages": {k: v["label"] for k, v in LANGS.items()}, "tons": TONS}
 
 
 class VoiceAdd(BaseModel):
@@ -1537,7 +1540,28 @@ def add_voices(req: VoiceAdd):
             added.append(_serialize_voice(ad.add_voice(vid)))
         except Exception as e:
             failed.append({"voice_id": vid, "error": str(e)[:200]})
+    if added:                           # their tones (proposed by the AI) and their reputation, for the casting
+        try:
+            from adaptation import voix_casting
+            voix_casting.enrich([v["voice_id"] for v in added])
+        except Exception as e:
+            print(f"Voix : tons et réputation impossibles ({e})")
     return {"added": added, "failed": failed, **list_voice_library()}
+
+
+class VoiceCasting(BaseModel):
+    tons: Optional[list] = None         # the person's tones (they win over the AI's)
+    note: Optional[int] = None          # out of 10
+    sans_note: bool = False
+
+
+@app.patch("/api/voices/{voice_id}/casting")
+def voice_casting_tags(voice_id: str, req: VoiceCasting):
+    from adaptation import voix_casting
+    v = voix_casting.set_tags(voice_id, req.tons, req.note, req.sans_note)
+    if not v:
+        raise HTTPException(status_code=404, detail="Voix introuvable")
+    return _serialize_voice(v)
 
 
 class VoiceRename(BaseModel):

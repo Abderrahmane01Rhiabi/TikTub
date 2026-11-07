@@ -405,15 +405,18 @@ def approve_stock(pid: str) -> Dict:
 # ---------------------------------------------------------------- 2. voice (and the hook)
 
 def _voice(p: Dict, t: Dict, mp3: str, report: Report, at: float) -> Dict:
+    from adaptation import voix_casting
     model = t.get("voice_model") or voices.MODEL
-    passages = t["script"]["passages"]
-    texts = [x["texte"] for x in passages]
+    clean = [x["texte"] for x in t["script"]["passages"]]
+    manieres = (t.get("manieres") or []) + [""] * len(clean)
+    texts = [voix_casting.tagged(x, m) for x, m in zip(clean, manieres)]   # each sentence's manner, as a v4 tag
     v = t.get("voice") or {}
     if v and v.get("voice_id") == t["voice_id"] and v.get("texts") == texts and v.get("model") == model \
             and os.path.exists(mp3):
         return v                                    # never pay twice for the same narration
     report(f"voix {t['channel']}", at)
-    v = voices.synthesize(passages, t["voice_id"], t["language"], mp3, model=model)
+    v = voices.synthesize([{"texte": x} for x in texts], t["voice_id"], t["language"], mp3, model=model)
+    v = voix_casting.strip_tags(v, clean)           # the tags are said to ElevenLabs, never shown in the captions
     v.update(voice_id=t["voice_id"], texts=texts, model=model)
     return v
 
@@ -864,7 +867,10 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
     return recette.make(
         "adaptation", t["channel"], langue=t["language"], accroche=passages[0]["texte"] if passages else None,
         accroche_s=round(hook.get("end", 0) - hook.get("start", 0), 2) if hook else None, duree_s=round(total, 2),
-        plans=len(edl), musique=musique, voix={"id": t.get("voice_id"), "modele": v.get("model")},
+        plans=len(edl), musique=musique,
+        voix={"id": t.get("voice_id"), "modele": v.get("model"), "choisie_par": t.get("voice_by") or "principale",
+              "pourquoi": t.get("voice_why"), "manieres": [m or "normale" for m in t.get("manieres") or []],
+              "manieres_par": t.get("manieres_by")},
         style={"visuel": t.get("style"), "montage": "pro", "recit": p.get("recit"),
                "dialecte": dialect(t) or ("fusha" if t["language"] == "ar" else None),
                "sous_titres": {"type": "mot par mot, mot dit en couleur", **{k: made["captions"][k] for k in

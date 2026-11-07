@@ -714,6 +714,7 @@ function renderAdPlan(body, p){
         ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
       <div class="chcard-body">
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
+        ${p.pro && t.casting ? adCastingHtml(t) : ''}
         <label class="f">Titre YouTube</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
         <div>${sc.passages.map((ps, i) => { const pl = sb.plans[i] || {}; return `
           <div class="ad-passage ad-plan" data-i="${i}">
@@ -729,6 +730,9 @@ function renderAdPlan(body, p){
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
               <label class="tiny">Mots en couleur dans les sous-titres</label>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
+              ${p.pro && t.casting ? `<label class="tiny">Manière de le dire (voix)</label>
+              <select class="f sc-maniere" style="width:auto">${Object.entries(t.casting.manieres_dispo || {}).map(([k, l]) =>
+                `<option value="${k}" ${((t.casting.manieres || [])[i] || '') === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>` : ''}
               <label class="tiny">Flèche ou cercle sur l'image</label>
               ${adAnnHtml(pl.annotation)}
             </div>
@@ -756,6 +760,14 @@ function renderAdPlan(body, p){
         texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = np; renderAdPlan(body, np); };
+    const cast = async body2 => {
+      try { refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/casting`, { method:'PUT', body: JSON.stringify(body2) })); }
+      catch (e){ log(e.message, 'error'); }
+    };
+    const vsel = card.querySelector('.cast-voice');
+    if (vsel) vsel.onchange = () => cast({ voice_id: vsel.value });
+    card.querySelectorAll('.sc-maniere').forEach(sel => sel.onchange = () =>
+      cast({ manieres: [...card.querySelectorAll('.sc-maniere')].map(x => x.value) }));
     const save = () => adAnnMissing(card) ? Promise.reject(new Error('Flèche ou cercle sans cible'))
       : api(`/api/adaptations/${p.project_id}/targets/${ch}/plan`, { method:'PUT', body: JSON.stringify({ plan: collect() }) });
     card.querySelector('.sc-save').onclick = async () => {
@@ -1129,6 +1141,8 @@ async function renderAdPreviews(body, p){
               <button class="btn secondary small pv-remusic">Refaire avec cette musique</button></div>
             ${t.music_why ? `<div class="tiny">${esc(t.music_why)}</div>` : ''}
             <div class="tiny">Les cuts et la voix sont gardés : seul le rendu est refait (environ 1 min). « · » = hors des catégories de la chaîne.</div></div>` : ''}
+          ${p.pro && t.casting ? `<div class="tiny">Voix : ${t.casting.voix_par === 'toi' ? 'ton choix' : t.casting.voix_par === 'ia' ? 'choisie par l\'IA' : 'la principale'}${t.casting.voix_pourquoi ? ' — ' + esc(t.casting.voix_pourquoi) : ''}</div>
+            <div class="tiny">Manières : ${(t.casting.manieres || []).map((m, i) => `${i + 1}. ${esc((t.casting.manieres_dispo || {})[m] || 'Normale')}`).join(' · ')}</div>` : ''}
           ${(t.corrections || []).map(c => `<div class="tiny">✎ ${esc(c)}</div>`).join('')}
         </div>
       </div></div>
@@ -1220,4 +1234,18 @@ function renderAdStock(body, p){
     try { await api(`/api/adaptations/${p.project_id}/stock-approve`, { method:'POST' }); adProject = null; loadAdProject(); }
     catch (e){ log(e.message, 'error'); go.disabled = false; }
   };
+}
+
+// ---------- Montage pro : the casting of a version (its voice, chosen by the AI or by you) ----------
+
+function adCastingHtml(t){
+  const c = t.casting || {};
+  const opts = c.voix_options || [];
+  const lbl = v => `${v.principale ? '★ ' : ''}${v.nom}${v.accent ? ' (' + v.accent + ')' : ''}${(v.tons || []).length ? ' — ' + v.tons.join(', ') : ''}${v.note ? ' · ' + v.note + '/10' : ''}`;
+  return `<div class="okbox" style="margin-bottom:8px"><b>Casting</b>
+    <div class="ad-row" style="margin-top:4px"><label class="tiny">Voix</label>
+      <select class="f cast-voice" style="width:auto;max-width:100%">${opts.map(v =>
+        `<option value="${v.voice_id}" ${v.voice_id === t.voice_id ? 'selected' : ''}>${esc(lbl(v))}</option>`).join('')}</select></div>
+    <div class="tiny">${c.voix_par === 'toi' ? 'Ton choix.' : c.voix_par === 'ia' ? 'Choisie par l\'IA : ' + esc(c.voix_pourquoi || '') : esc(c.voix_pourquoi || 'La voix principale de la chaîne.')}
+      ${c.mode === 'principale' ? ' (la chaîne garde toujours sa voix principale)' : ''} La manière de dire chaque phrase est sous son texte.</div></div>`;
 }

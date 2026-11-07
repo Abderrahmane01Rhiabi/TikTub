@@ -489,6 +489,11 @@ def write_storyboard(p: Dict, report: Report):
     p = load(p["project_id"])
     p["storyboard"] = b
     _refresh_plan(p)
+    if p.get("pro"):                    # the voice casting: each version's voice and each sentence's manner
+        from adaptation import voix_casting
+        report("choix de la voix et de la manière de parler", 0.95)
+        for t in p["targets"]:
+            voix_casting.cast(p, t)
     p.update(status="plan_review", error=None, failed_step=None)
     save(p)
 
@@ -2302,6 +2307,8 @@ def change_voice(pid: str, channel: str, voice_id: str) -> Dict:
         raise PipelineError("Cette voix n'est pas dans la bibliothèque (Réglages → Voix).")
     t = target(p, channel)
     t.update(voice_id=voice_id, voice=None, validated=False)
+    if p.get("pro"):                    # the voice casting: the person's choice, kept
+        t.update(voice_by="toi", voice_why="choisie par toi")
     p["status"] = "voicing"
     return save(p)
 

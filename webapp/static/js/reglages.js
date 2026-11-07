@@ -285,7 +285,13 @@ async function loadVoiceSettings(){
         <div class="vrow" data-voice="${v.voice_id}">
           <input class="f v-name" value="${esc(v.display_name)}" title="${esc(v.name || '')} — ${esc(v.voice_id)}">
           <div>${accentBadge(v.accent)}</div>
-          <div class="tiny">${esc([v.gender === 'male' ? 'homme' : v.gender === 'female' ? 'femme' : v.gender, v.age && v.age.replace('_', ' ')].filter(Boolean).join(', '))}</div>
+          <div class="tiny">${esc([v.gender === 'male' ? 'homme' : v.gender === 'female' ? 'femme' : v.gender, v.age && v.age.replace('_', ' ')].filter(Boolean).join(', '))}
+            <div class="mc-chips">${Object.entries(data.tons || {}).map(([k, l]) =>
+              `<button class="mc-chip v-ton ${(v.tons || []).includes(k) ? 'on' : ''}" data-ton="${k}">${esc(l)}</button>`).join('')}</div>
+            <div style="margin-top:3px">${v.tons_par === 'toi' ? 'tons choisis par toi' : v.tons_par === 'ia' ? 'tons proposés par l\'IA (clique pour corriger)' : 'tons pas encore proposés'}
+              · <select class="v-note" style="font-size:11px"><option value="">ta note : —</option>${[...Array(10)].map((_, i) =>
+                `<option value="${i + 1}" ${v.note === i + 1 ? 'selected' : ''}>${i + 1}/10</option>`).join('')}</select>
+              ${v.lu_1an != null ? ` · ${v.type === 'pro' ? 'Pro' : 'HQ'} · utilisée par ${Math.round((v.ajoutee_par || 0) / 1000)}k · ${Math.round(v.lu_1an / 1e6)} M car./an` : ''}</div></div>
           ${v.has_preview ? `<audio controls preload="none" src="${v.preview_url}"></audio>` : '<span class="tiny">pas d\'extrait</span>'}
           <button class="btn ghost small v-del" title="Retirer cette voix">✕</button>
         </div>`).join('')}
@@ -297,6 +303,15 @@ async function loadVoiceSettings(){
       try { await api(`/api/voices/${id}`, { method:'PATCH', body: JSON.stringify({ name: e.target.value }) }); toast('Nom enregistré', 'success'); }
       catch (err){ log(err.message, 'error'); }
     };
+    const castTags = async body => {
+      try { await api(`/api/voices/${id}/casting`, { method:'PATCH', body: JSON.stringify(body) }); toast('Enregistré', 'success'); }
+      catch (err){ log(err.message, 'error'); }
+    };
+    row.querySelectorAll('.v-ton').forEach(b => b.onclick = () => {
+      b.classList.toggle('on');
+      castTags({ tons: [...row.querySelectorAll('.v-ton.on')].map(x => x.dataset.ton) });
+    });
+    row.querySelector('.v-note').onchange = e => castTags(e.target.value ? { note: +e.target.value } : { sans_note: true });
     row.querySelector('.v-del').onclick = async () => {
       if (!confirm('Retirer cette voix de la bibliothèque ?')) return;
       try { await api(`/api/voices/${id}`, { method:'DELETE' }); loadVoiceSettings(); } catch (err){ log(err.message, 'error'); }
@@ -405,6 +420,12 @@ function renderAdaptationChannel(card, ch, data){
         `<option value="${v.voice_id}" ${v.voice_id === s.voice_id ? 'selected' : ''}>${esc(voiceLabel(v))}</option>`).join('')}</select>
       ${voice && voice.has_preview ? `<audio controls preload="none" src="${voice.preview_url}" style="width:100%;height:32px"></audio>` :
         (data.voices.length ? '' : `<div class="tiny">Aucune voix dans cette langue : ajoute-en ci-dessus.</div>`)}
+      <label class="f" style="margin-top:6px">Autres voix permises (l'IA peut les prendre quand le sujet le demande)</label>
+      <div class="ad-allowed" style="display:flex;flex-wrap:wrap;gap:4px 12px">${data.voices.filter(v => v.voice_id !== s.voice_id).map(v =>
+        `<label class="tiny" style="display:flex;gap:4px;align-items:center"><input type="checkbox" value="${v.voice_id}" ${(s.voix_permises || []).includes(v.voice_id) ? 'checked' : ''}>${esc(v.display_name.split(' - ')[0])}${v.accent ? ' (' + esc(v.accent) + ')' : ''}</label>`).join('') || '<span class="tiny">aucune autre voix dans cette langue</span>'}</div>
+      <select class="f ad-vmode" style="margin-top:4px"><option value="auto" ${s.voix_mode !== 'principale' ? 'selected' : ''}>L'IA choisit la voix selon le sujet (la principale sauf vraie raison)</option>
+        <option value="principale" ${s.voix_mode === 'principale' ? 'selected' : ''}>Toujours la voix principale ci-dessus</option></select>
+      <div class="tiny">La voix choisie ci-dessus est la voix principale ★ (la signature de la chaîne). En darija, seules les voix marocaines sont prises. « Idée d'abord » pour l'instant.</div>
       <label class="f" style="margin-top:6px">Modèle de voix (ElevenLabs)</label>
       <select class="f ad-model"><option value="" ${s.voice_model ? '' : 'selected'}>Selon le mode (Adaptation : multilingual v2 · Reprise et Roblox : v4)</option>
         ${(data.voice_models || []).map(m => `<option value="${m}" ${m === s.voice_model ? 'selected' : ''}>${m}</option>`).join('')}</select>
@@ -454,6 +475,9 @@ function renderAdaptationChannel(card, ch, data){
   card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
   card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
   card.querySelector('.ad-model').onchange = e => save({ settings: { voice_model: e.target.value || null } });
+  card.querySelectorAll('.ad-allowed input').forEach(cb => cb.onchange = () =>
+    save({ settings: { voix_permises: [...card.querySelectorAll('.ad-allowed input:checked')].map(x => x.value) } }));
+  card.querySelector('.ad-vmode').onchange = e => save({ settings: { voix_mode: e.target.value } });
   card.querySelectorAll('.ad-mcats .mc-chip').forEach(b => b.onclick = () => {
     b.classList.toggle('on');
     save({ settings: { musique_categories: [...card.querySelectorAll('.ad-mcats .mc-chip.on')].map(x => x.dataset.cat) } });

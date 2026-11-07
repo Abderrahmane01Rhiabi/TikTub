@@ -199,6 +199,23 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         for x, t in zip(targets, p.get("targets") or []):
             x["corrections"] = t.get("corrections") or []
             x["montage_plans"] = len((t.get("preview") or {}).get("montage") or [])
+            from adaptation import voix_casting
+            x["casting"] = {"voix_par": t.get("voice_by"), "voix_pourquoi": t.get("voice_why"),
+                            "manieres": t.get("manieres") or [], "manieres_par": t.get("manieres_by"),
+                            "manieres_dispo": {k: v[0] for k, v in voix_casting.MANIERES.items()}}
+            if full and p.get("status") in ("plan_review", "stock_review", "preview_review"):
+                try:
+                    rules = voix_casting.rules_of(t["channel"])
+                    pool = voix_casting.eligible(t["language"], rules["main"], rules["allowed"], rules["dialect"])
+                    if t.get("voice_id") and t["voice_id"] not in {v["voice_id"] for v in pool}:
+                        import db as _db
+                        own = _db.get_voice(t["voice_id"])
+                        pool = pool + ([own] if own else [])
+                    x["casting"]["voix_options"] = [{**voix_casting.card(v), "principale": v["voice_id"] == rules["main"]}
+                                                    for v in pool]
+                    x["casting"]["mode"] = rules["mode"]
+                except Exception:
+                    x["casting"]["voix_options"] = []
             x["music_file"] = os.path.basename(t["music_path"]) if t.get("music_path") else None
             x["music_why"], x["music_by"] = t.get("music_why"), t.get("music_by")
             if full and p.get("status") == "preview_review":       # the preview's music menu
@@ -928,6 +945,19 @@ def keep_adaptation_shot(pid: str, sid: str, req: AdaptationShot):
     from adaptation import montage_pro
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(montage_pro.set_shot, pid, sid, req.garder))
+
+
+class AdaptationCasting(BaseModel):
+    voice_id: Optional[str] = None
+    manieres: Optional[list] = None
+
+
+@router.put("/api/adaptations/{pid}/targets/{channel}/casting")
+def change_adaptation_casting(pid: str, channel: TargetChannel, req: AdaptationCasting):
+    """Montage pro: the voice and the sentences' manners chosen by the person (script screen)."""
+    from adaptation import voix_casting
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(voix_casting.set_casting, pid, channel, req.voice_id, req.manieres))
 
 
 class AdaptationMusic(BaseModel):
