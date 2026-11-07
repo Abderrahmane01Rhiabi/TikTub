@@ -118,7 +118,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
         t = {"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
              "music_path": music if music and os.path.exists(music) else None,
              "music_start": s["music_start"], "style": s["style"], "script": None, "approved": False,
-             "validated": False, "video_id": None, "voice_model": s["voice_model"]}
+             "validated": False, "video_id": None, "voice_model": s["voice_model"], "dialecte": s.get("dialecte")}
         if mode == "discours":
             from adaptation import discours
             t.update(discours=discours.channel_settings(c["profile"]),
@@ -449,7 +449,7 @@ def write_storyboard(p: Dict, report: Report):
             p["recit"] = montage_pro.choose_recit(p["reference"], look,
                                                   montage_pro.recent_recits(p["targets"][0]["channel"]))
             save(p)
-        recit = montage_pro.recit_part(p["recit"], look)
+        recit = montage_pro.recit_part(p["recit"], look) + montage_pro.dialect_part(p["targets"])
     report("écriture du storyboard" + (f" : « {p['angle']['titre']} »" if p.get("angle") else ""), 0.35)
     pro = {"recit": recit} if recit else {}           # only a montage pro passes a narrative style
     b = storyboard.write(p["reference"], codes, angle=p.get("angle"), **pro)
@@ -476,7 +476,7 @@ def write_storyboard(p: Dict, report: Report):
         report("correction", 0.85)
         try:
             fixed = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + FIX_HOW
-                                      + storyboard.length_budgets(b, codes))
+                                      + storyboard.length_budgets(b, codes) + (recit or ""))
         except script.ScriptError:
             break
         now = sum(len(storyboard.problems(fixed, c)) for c in codes)
@@ -544,6 +544,9 @@ def revise_plan(pid: str, channel: str, request: str) -> Dict:
     p = load(pid)
     _expect(p, "plan_review")
     target(p, channel)
+    if p.get("pro"):                    # a request in a few words must not bring the voice back to fusha
+        from adaptation import montage_pro
+        request += montage_pro.dialect_part(p["targets"])
     b = storyboard.revise(p["storyboard"], _codes(p), request)
     p["storyboard"] = b
     _refresh_plan(p)

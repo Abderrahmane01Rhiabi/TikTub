@@ -176,3 +176,15 @@ def test_a_shot_starts_past_the_source_s_blurred_transition(monkeypatch):
     assert mp.sharp_start({"file": "x", "start": 2.7, "end": 5.4}, 1.4) == pytest.approx(3.5)
     monkeypatch.setattr(mp, "sharpness", lambda path, at: 250.0)
     assert mp.sharp_start({"file": "x", "start": 2.7, "end": 5.4}, 1.4) == 2.7      # sharp from the start: kept
+
+
+def test_a_darija_channel_speaks_darija_but_keeps_its_title_in_fusha():
+    from adaptation import settings
+    prof = {"language_hint": "ar", "adaptation": {"dialecte": "darija"}}
+    assert settings.channel_settings(prof)["dialecte"] == "darija"
+    assert settings.channel_settings({"language_hint": "fr", "adaptation": {"dialecte": "darija"}})["dialecte"] is None
+    assert settings.clean_update({"dialecte": "klingon"}) == {"dialecte": None}
+
+    rule = mp.dialect_part([{"language": "ar", "dialecte": "darija"}])
+    assert "DARIJA" in rule and "ARABE STANDARD" in rule and "titre" in rule
+    assert mp.dialect_part([{"language": "ar", "dialecte": None}]) == ""

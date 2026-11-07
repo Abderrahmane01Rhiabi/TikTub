@@ -193,6 +193,24 @@ def choose_recit(reference: Dict, style: Optional[str], recents: List[str], gemi
     return name
 
 
+DIALECT_PART = {"darija": """LANGUE DE LA VOIX (arabe, cette regle REMPLACE la regle "arabe standard" donnee plus
+haut pour les textes dits) : DARIJA MAROCAINE naturelle, comme un presentateur marocain sur YouTube
+(pas l'arabe standard), en lettres arabes, sans voyelles courtes, les chiffres en toutes lettres en darija : c'est vrai pour
+"texte", "bandeau" et "mots_cles". MAIS "titre", "description" et "tags" restent en ARABE STANDARD MODERNE (ce que les
+gens tapent dans la recherche).
+
+"""}
+
+
+def dialect(t: Dict) -> Optional[str]:
+    return t.get("dialecte") if t.get("language") == "ar" else None
+
+
+def dialect_part(targets: List[Dict]) -> str:
+    """The spoken dialect's rule for the storyboard (one Arabic target in a dialect), else nothing."""
+    return next((DIALECT_PART[d] for d in (dialect(t) for t in targets) if d in DIALECT_PART), "")
+
+
 def recit_part(name: str, style: Optional[str]) -> str:
     regle = RECITS[family(style)].get(name) or next(iter(RECITS[family(style)].values()))
     return RECIT_PART.format(regle=regle, ton="factuel et neutre (information)" if family(style) == "actualite"
@@ -425,7 +443,8 @@ def shorter_hook(p: Dict, t: Dict, seconds: float, gemini=None) -> Optional[str]
         r = (gemini or _gemini())._generate_content([{"text": HOOK_PROMPT.format(
             langue=lang["label"], duree=seconds, mots=words, texte=ps[0]["texte"],
             suivante=ps[1]["texte"] if len(ps) > 1 else "", faits="; ".join(facts),
-            regles=LANG_RULES.get(t["language"], LANG_RULES["fr"]))}], max_tokens=1500, timeout=60, temperature=0.4)
+            regles=DIALECT_PART.get(dialect(t)) or LANG_RULES.get(t["language"], LANG_RULES["fr"]))}],
+            max_tokens=1500, timeout=60, temperature=0.4)
         new = " ".join(str((r or {}).get("texte") or "").split())
     except Exception:
         return None
@@ -793,6 +812,7 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
         accroche_s=round(hook.get("end", 0) - hook.get("start", 0), 2) if hook else None, duree_s=round(total, 2),
         plans=len(edl), musique=musique, voix={"id": t.get("voice_id"), "modele": v.get("model")},
         style={"visuel": t.get("style"), "montage": "pro", "recit": p.get("recit"),
+               "dialecte": dialect(t) or ("fusha" if t["language"] == "ar" else None),
                "sous_titres": {"type": "mot par mot, mot dit en couleur", **{k: made["captions"][k] for k in
                                ("position", "y", "taille", "police", "mots_par_ligne", "mot_dit")}},
                "bandeau": made["captions"]["bandeau"], "bandeaux": True, "zoom": "lent par plan",

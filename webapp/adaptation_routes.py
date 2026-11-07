@@ -55,7 +55,7 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
     from youtube_uploader import CATEGORIES
     return {"settings": s, "music_files": music,
             "youtube_category": str(profile.get("youtube_category") or "24"), "categories": CATEGORIES, "voices": [_main()._serialize_voice(v) for v in ad.voices_for(s["language"])],
-            "voice_models": list(ad.VOICE_MODELS),
+            "voice_models": list(ad.VOICE_MODELS), "dialects": ad.DIALECTS,
             "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
 
 

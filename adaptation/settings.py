@@ -22,7 +22,10 @@ PREVIEWS_DIR = "assets/voices"
 # "ton": a fixed tone keeps every video of the channel alike (same effects, same sounds, its own music — a
 # channel's identity, the person's choice for his channels); None: the subject's tone, said by the analysis
 DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique", "ton": None,
-            "voice_model": None}
+            "voice_model": None, "dialecte": None}
+# an Arabic channel's spoken dialect: its voice and captions in it, its title/description/tags kept in Modern
+# Standard Arabic (what people type in the search) — montage pro only for now
+DIALECTS = {"darija": "darija marocaine"}
 # the ElevenLabs models a person may choose (Réglages, the project's Aperçu); None: eleven_v4 in every mode
 VOICE_MODELS = ("eleven_v4", "eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5")
 
@@ -86,6 +89,8 @@ def channel_settings(profile: Optional[Dict]) -> Dict:
     out["ton"] = tone.valid(raw.get("ton"))
     if raw.get("voice_model") in VOICE_MODELS:
         out["voice_model"] = raw["voice_model"]
+    if raw.get("dialecte") in DIALECTS and out["language"] == "ar":
+        out["dialecte"] = raw["dialecte"]
     return out
 
 
@@ -112,6 +117,8 @@ def clean_update(update: Dict) -> Dict:
         out["ton"] = tone.valid(update["ton"])        # None: the subject's tone
     if "voice_model" in update:
         out["voice_model"] = update["voice_model"] if update["voice_model"] in VOICE_MODELS else None
+    if "dialecte" in update:
+        out["dialecte"] = update["dialecte"] if update["dialecte"] in DIALECTS else None
     return out
 
 

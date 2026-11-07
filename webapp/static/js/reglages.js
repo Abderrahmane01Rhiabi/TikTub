@@ -389,6 +389,10 @@ function renderAdaptationChannel(card, ch, data){
       <select class="f ad-model"><option value="" ${s.voice_model ? '' : 'selected'}>Selon le mode (Adaptation : multilingual v2 · Reprise et Roblox : v4)</option>
         ${(data.voice_models || []).map(m => `<option value="${m}" ${m === s.voice_model ? 'selected' : ''}>${m}</option>`).join('')}</select>
       <div class="tiny">v4 : la plus naturelle dans nos essais · flash v2.5 : rapide et moins chère, plus simple. Changeable aussi par projet, à l'aperçu d'une Reprise.</div>
+      ${s.language === 'ar' ? `<label class="f" style="margin-top:6px">Arabe parlé (voix et sous-titres)</label>
+      <select class="f ad-dialect"><option value="" ${s.dialecte ? '' : 'selected'}>Arabe standard (fusha)</option>
+        ${Object.entries(data.dialects || {}).map(([k, l]) => `<option value="${k}" ${k === s.dialecte ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <div class="tiny">En darija : la voix et les sous-titres en darija, le titre, la description et les tags restent en fusha (ce que les gens tapent). Pour l'instant dans « Idée d'abord ».</div>` : ''}
     </div>
     <div class="chcard-body">
       <label class="f">Musique de fond</label>
@@ -422,6 +426,8 @@ function renderAdaptationChannel(card, ch, data){
   card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
   card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
   card.querySelector('.ad-model').onchange = e => save({ settings: { voice_model: e.target.value || null } });
+  const dial = card.querySelector('.ad-dialect');
+  if (dial) dial.onchange = e => save({ settings: { dialecte: e.target.value || null } });
   card.querySelector('.ad-music').onchange = e => save({ settings: { music_file: e.target.value || null } });
   const styleSel = card.querySelector('.ad-style');
   if (styleSel) styleSel.onchange = e => save({ settings: { style: e.target.value } });
