@@ -380,7 +380,7 @@ function wireHomeCards(grid, channelData){
         const label = { expired: 'Expirée', not_connected: 'Non connectée' }[s.state] || 'Erreur';
         pill.className = `pill ${s.state === 'expired' ? 'warn' : 'bad'}`;
         pill.innerHTML = `${label} · <button type="button">reconnecter</button>`;
-        pill.querySelector('button').addEventListener('click', () => goTo(0));
+        pill.querySelector('button').addEventListener('click', () => openChannelSettings(c.channel));
         yt.textContent = s.reason || '';
       }
     } catch (e){

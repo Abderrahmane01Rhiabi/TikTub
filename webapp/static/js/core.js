@@ -101,8 +101,9 @@ const stepBtns = document.querySelectorAll('#stepnav .step');
 // Spaces: two sources of videos (Import, Génération) feeding ONE publishing
 // pipeline (Publication), plus Accueil / Dashboard / one-time Réglages.
 // Numbered screens (data-idx) belong to the space whose range contains them.
-const STEP_SPACES = { settings: [0, 1, 11, 12, 13, 14, 16, 17, 15, 8, 9], import: [2, 3, 4, 10], publication: [5, 6, 7] };
-const lastStep = { settings: 0, import: 2, publication: 5 };
+// Réglages: 3 spaces (reglages_chaines.js) — Chaînes (one page per channel), Bibliothèques, App
+const STEP_SPACES = { settings: [18, 19, 20], import: [2, 3, 4, 10], publication: [5, 6, 7] };
+const lastStep = { settings: 18, import: 2, publication: 5 };
 function spaceOfStep(i){
   return Object.keys(STEP_SPACES).find(k => STEP_SPACES[k].includes(i));
 }
@@ -167,24 +168,16 @@ document.querySelectorAll('.prev').forEach(btn => btn.addEventListener('click', 
 }));
 
 const SCREEN_LOADERS = {
-  0: [() => loadConnectionScreen(), 'connectGrid'],
-  1: [() => loadBackgrounds(), 'backgroundsGrid'],
   2: [() => { pollDownloads(); return refreshDownloadedRow(); }, 'downloadedRow'],
   3: [() => loadSelection(), 'selectionSections'],
   4: [() => loadFrameStep(), 'frameGrid'],
   5: [() => loadResultsScreen(), 'resultsList'],
   6: [() => loadPlanningScreen(), 'scheduleSections'],
   7: [() => loadSummaryFromSchedule(), 'summarySections'],
-  8: [() => loadBackups(), 'backupList'],
-  9: [() => loadStorage(), 'storageView'],
   10: [() => enterMontageStep(), 'montageList'],
-  11: [() => loadMontageSettings(), 'montageSettingsGrid'],
-  12: [() => loadBrollLibrary(), 'brollGrid'],
-  13: [() => loadVoiceSettings(), 'voiceLibrary'],
-  14: [() => loadSfxSettings(), 'sfxList'],
-  15: [() => loadAiModels(), 'aiModelsView'],
-  16: [() => loadCaptionSettings(), 'capGallery'],
-  17: [() => loadDiscoursSettings(), 'dsChannels'],
+  18: [() => loadChannelSettings(), 'rgChannelPage'],
+  19: [() => loadLibraries(), 'voiceLibrary'],
+  20: [() => loadAppSettings(), 'aiModelsView'],
 };
 function onEnterScreen(i){
   const loader = SCREEN_LOADERS[i];

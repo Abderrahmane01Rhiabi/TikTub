@@ -617,6 +617,7 @@ async function dsPreviews(body, p){
 
 async function loadDiscoursSettings(){
   const grid = document.getElementById('dsChannels');
+  if (!grid) return;                     // each channel's card is on its page (Réglages → Chaînes → Avancé)
   grid.innerHTML = channels.map(ch => `<article class="chcard" data-channel="${ch.name}">${spinnerHtml('Chargement...')}</article>`).join('');
   await Promise.all(channels.map(async ch => {
     const card = grid.querySelector(`[data-channel="${ch.name}"]`);

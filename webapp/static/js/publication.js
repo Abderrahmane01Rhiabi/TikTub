@@ -149,9 +149,12 @@ function renderResults(videos){
 
 // ---------- Step 4 : Backgrounds ----------
 
-async function loadBackgrounds(){
-  const grid = document.getElementById('backgroundsGrid');
-  grid.innerHTML = channels.map(ch => `
+let bgTarget = null;
+async function loadBackgrounds(grid, list){
+  if (grid) bgTarget = { grid, list: list || channels };
+  ({ grid, list } = bgTarget || { grid: document.getElementById('backgroundsGrid'), list: channels });
+  if (!grid) return;
+  grid.innerHTML = list.map(ch => `
     <article class="chcard" data-channel="${ch.name}">
       <div class="chcard-head">
         <div class="who"><div class="name"><span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}</div></div>
@@ -773,7 +776,7 @@ function fillPreflightCard(item){
     : `${level === 'ok' ? icon('check', 11) + ' ' : ''}${item.publishable}/${item.videos} publiable${item.publishable > 1 ? 's' : ''}`;
   card.querySelector('[data-role="checks"]').innerHTML = facts.join('');
   const go = card.querySelector('[data-go-settings]');
-  if (go) go.addEventListener('click', ev => { ev.preventDefault(); goTo(0); });
+  if (go) go.addEventListener('click', ev => { ev.preventDefault(); openChannelSettings(); });
 
   card.querySelectorAll('[data-abandon]').forEach(btn => btn.addEventListener('click', async () => {
     const row = btn.closest('.publish-row');

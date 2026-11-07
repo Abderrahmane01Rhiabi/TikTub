@@ -27,17 +27,9 @@
   </div>
   <!-- Steps of the current space only (Import, Publication, Réglages) -->
   <div class="subnav" id="stepnav">
-    <button class="step" data-i="0" data-space="settings">Connexion</button>
-    <button class="step" data-i="1" data-space="settings">Fonds</button>
-    <button class="step" data-i="11" data-space="settings">Montage</button>
-    <button class="step" data-i="12" data-space="settings">Drones</button>
-    <button class="step" data-i="13" data-space="settings">Voix</button>
-    <button class="step" data-i="14" data-space="settings">Effets sonores</button>
-    <button class="step" data-i="16" data-space="settings">Sous-titres</button>
-    <button class="step" data-i="17" data-space="settings">Discours</button>
-    <button class="step" data-i="15" data-space="settings">Modèles d'IA</button>
-    <button class="step" data-i="8" data-space="settings">Sauvegardes</button>
-    <button class="step" data-i="9" data-space="settings">Stockage</button>
+    <button class="step" data-i="18" data-space="settings">Chaînes</button>
+    <button class="step" data-i="19" data-space="settings">Bibliothèques</button>
+    <button class="step" data-i="20" data-space="settings">App</button>
     <button class="step" data-i="2" data-space="import">1 · URLs</button>
     <button class="step" data-i="3" data-space="import">2 · Sélection</button>
     <button class="step" data-i="4" data-space="import">3 · Cadrage</button>
@@ -153,71 +145,136 @@
     <div id="rbStage"></div>
   </section>
 
-  <!-- Screen 0 : Connect channels -->
-  <section class="screen" data-idx="0">
+
+
+
+
+  <!-- Réglages 1/3 : Chaînes — one channel, every setting of it on one page (webapp/static/js/reglages_chaines.js) -->
+  <section class="screen" data-idx="18">
     <div class="page-head">
       <div>
-        <h1 class="h1">Connexion des chaînes YouTube</h1>
-        <p class="sub">Une seule fois par chaîne. Vérifie que le nom YouTube affiché est le bon quand un compte Google gère plusieurs chaînes.</p>
+        <h1 class="h1">Chaînes</h1>
+        <p class="sub">Choisis une chaîne à gauche : tout son réglage est sur une seule page. En haut, la chaîne en une ligne ; chaque section en règle un morceau.</p>
       </div>
       <div class="actions"><button class="btn primary" id="addChannelBtn">+ Ajouter une chaîne</button></div>
     </div>
-    <div class="grid-3" id="connectGrid"></div>
     <dialog id="addChannelDialog"></dialog>
-    <div class="navbar">
-      <button class="btn secondary" disabled>← Précédent</button>
-      <span class="progress-text">Réglages · 1 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
+    <div class="rg-layout">
+      <aside class="rg-list" id="rgChannelList" aria-label="Mes chaînes"></aside>
+      <div class="rg-page" id="rgChannelPage"></div>
     </div>
   </section>
 
-  <!-- Screen 1 : Backgrounds (set up before anything gets processed with them) -->
-  <section class="screen" data-idx="1">
+  <!-- Réglages 2/3 : Bibliothèques — what every channel shares -->
+  <section class="screen" data-idx="19">
     <div class="page-head">
       <div>
-        <h1 class="h1">Fond par défaut de chaque chaîne</h1>
-        <p class="sub">Remplit les bordures autour des vidéos. Sans image, un fond noir uni est utilisé. À régler avant de traiter des vidéos.</p>
+        <h1 class="h1">Bibliothèques</h1>
+        <p class="sub">Ce qui est partagé par toutes les chaînes. Chaque chaîne choisit ensuite dans ces listes (Chaînes → sa page).</p>
       </div>
     </div>
-    <div class="grid-3" id="backgroundsGrid"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 2 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
+    <div class="seg rg-tabs" id="libTabs">
+      <button class="seg-opt active" data-tab="voix">Voix</button>
+      <button class="seg-opt" data-tab="musiques">Musiques</button>
+      <button class="seg-opt" data-tab="sfx">Effets sonores</button>
+      <button class="seg-opt" data-tab="drones">Fonds et drones</button>
+      <button class="seg-opt" data-tab="soustitres">Sous-titres</button>
+    </div>
+
+    <div class="rg-panel" data-panel="voix">
+      <p class="sub">Les voix ElevenLabs de l'app : leurs tons (proposés par l'IA, clique pour corriger), ta note et leur réputation. Une chaîne prend sa voix principale et ses voix permises ici.</p>
+      <article class="chcard">
+        <div class="chcard-head"><div class="who"><div class="name">Ajouter des voix</div>
+          <div class="meta" style="margin-left:0">Colle un ou plusieurs identifiants ElevenLabs (un par ligne) : le nom, la langue, l'accent, l'extrait, les tons et la réputation sont récupérés tout seuls.</div></div></div>
+        <div class="chcard-body"><textarea class="f" id="voiceIds" rows="3" placeholder="pCKbQ4EPGE06zpEPGNvS"></textarea></div>
+        <div class="chcard-foot"><button class="btn primary small" id="voiceAddBtn" data-icon="mic">Ajouter</button><span class="note" id="voiceAddNote"></span></div>
+      </article>
+      <div class="stack" id="voiceLibrary"></div>
+    </div>
+
+    <div class="rg-panel" data-panel="musiques" hidden>
+      <p class="sub">Les musiques communes, avec leurs catégories (actu, tension, triste…) et si elles ont des paroles : l'IA les propose en écoutant, tu corriges d'un clic. Chaque chaîne choisit ses catégories sur sa page.</p>
+      <article class="chcard">
+        <div class="chcard-head"><div class="who"><div class="name">Ajouter une musique</div>
+          <div class="meta" style="margin-left:0">Par son lien YouTube ou un fichier. Chaque morceau est écouté une fois par l'IA (quelques centimes).</div></div></div>
+        <div class="chcard-body"><div class="ad-row"><input class="f" id="songLink" placeholder="Lien YouTube de la chanson"><button class="btn primary small" id="songLinkBtn" data-icon="upload">Ajouter</button></div>
+          <div class="ad-row"><input type="file" id="songFile" accept="audio/*"><span class="note" id="songNote"></span></div></div>
+      </article>
+      <div class="stack" id="songList"></div>
+    </div>
+
+    <div class="rg-panel" data-panel="sfx" hidden>
+      <p class="sub">Les sons que le montage d'une Adaptation pose sur ce que fait l'image. Pas d'IA : des règles. Chaque règle joue un type de son, en prenant ses variantes à tour de rôle.</p>
+      <article class="chcard">
+        <div class="chcard-head"><div class="who"><div class="name">Ajouter un son</div>
+          <div class="meta" style="margin-left:0">Choisis le type : il dit à quel moment le montage le jouera. Le silence du début est coupé, le volume mis au niveau des autres, 4 s au plus. Vérifie qu'il est libre de droits (CC0 ou équivalent).</div></div></div>
+        <div class="chcard-body" style="flex-direction:row;flex-wrap:wrap;align-items:flex-end">
+          <div><label class="f">Type</label><select class="f" id="sfxKind"></select></div>
+          <div style="flex:1 1 200px"><label class="f">Source (lien)</label><input class="f" id="sfxSource" placeholder="https://freesound.org/…"></div>
+          <div><label class="f">Licence</label><input class="f" id="sfxLicence" value="CC0" style="width:110px"></div>
+          <input type="file" id="sfxFile" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac,audio/*" hidden>
+          <button class="btn primary small" id="sfxAddBtn" data-icon="upload">Choisir le fichier…</button>
+        </div>
+        <div class="chcard-foot"><span class="note" id="sfxRuleNote"></span></div>
+      </article>
+      <div class="stack" id="sfxList"></div>
+    </div>
+
+    <div class="rg-panel" data-panel="drones" hidden>
+      <p class="sub">Les plans de drone (paysages vus du ciel) que le Montage auto glisse avant la chute. Gratuits (Pixabay). Supprime ceux qui ne te plaisent pas ; chaque chaîne évite de réutiliser ses derniers. Le fond de chaque chaîne se règle sur sa page.</p>
+      <div class="toolbar">
+        <input class="f" id="brollTheme" placeholder="Thème en anglais, ex : drone mountain lake" style="max-width:320px">
+        <button class="btn primary small" id="brollFetchBtn" data-icon="download">Ajouter 3 plans</button>
+        <span class="spacer"></span>
+        <span class="tiny" id="brollCount"></span>
+      </div>
+      <div class="toolbar" id="brollThemes"></div>
+      <div id="brollHealth"></div>
+      <div id="brollGrid" class="broll-grid"></div>
+    </div>
+
+    <div class="rg-panel" data-panel="soustitres" hidden>
+      <p class="sub">Tous les styles de sous-titres de l'app, à voir bouger. Le style de chaque chaîne se choisit sur sa page (section Look → Avancé).</p>
+      <div class="toolbar">
+        <div class="seg" id="capLangSeg">
+          <button class="seg-opt active" data-l="fr">Français</button>
+          <button class="seg-opt" data-l="ar">Arabe</button>
+          <button class="seg-opt" data-l="en">Anglais</button>
+        </div>
+        <span class="spacer"></span>
+        <select class="f" id="capGroupSel" style="width:auto"></select>
+      </div>
+      <div class="cap-gallery" id="capGallery"></div>
     </div>
   </section>
 
-  <!-- Screen 8 : Backups (Réglages, after Fonds) -->
-  <section class="screen" data-idx="8">
+  <!-- Réglages 3/3 : App — rarely touched -->
+  <section class="screen" data-idx="20">
     <div class="page-head">
       <div>
-        <h1 class="h1">Sauvegardes</h1>
-        <p class="sub">Copie de la base (vidéos, plannings, historique des stats) et des réglages des chaînes. Les identifiants YouTube n'y sont pas copiés.</p>
-      </div>
-      <div class="actions"><button class="btn primary" id="backupNowBtn" data-icon="download">Sauvegarder maintenant</button></div>
-    </div>
-    <div class="toolbar"><div class="fact" id="backupStatus"></div></div>
-    <div class="stack" id="backupList"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 10 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
-
-  <!-- Screen 9 : Storage (Réglages, last) -->
-  <section class="screen" data-idx="9">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Stockage</h1>
-        <p class="sub">La place prise par les vidéos, et ce qui peut être effacé sans risque.</p>
+        <h1 class="h1">App</h1>
+        <p class="sub">Ce qui concerne toute l'app. On y vient rarement.</p>
       </div>
     </div>
-    <div class="stack" id="storageView"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 11 sur 11</span>
-      <button class="btn primary next">Terminé ✓</button>
+    <div class="seg rg-tabs" id="appTabs">
+      <button class="seg-opt active" data-tab="ia">Modèles d'IA</button>
+      <button class="seg-opt" data-tab="sauvegardes">Sauvegardes</button>
+      <button class="seg-opt" data-tab="stockage">Stockage</button>
+    </div>
+    <div class="rg-panel" data-panel="ia">
+      <div class="toolbar"><p class="sub" style="margin:0;flex:1">Le modèle de chaque étape. ★ = recommandé. Une étape qui regarde une image ou une vidéo, ou cherche sur Google, reste sur Gemini 🔒. Si le modèle choisi échoue, Gemini prend le relais tout seul.</p>
+        <button class="btn secondary" id="aiModelsResetBtn" data-icon="refresh">Revenir aux réglages recommandés</button></div>
+      <div class="stack" id="aiModelsView"></div>
+    </div>
+    <div class="rg-panel" data-panel="sauvegardes" hidden>
+      <div class="toolbar"><p class="sub" style="margin:0;flex:1">Copie de la base (vidéos, plannings, historique des stats) et des réglages des chaînes. Les identifiants YouTube n'y sont pas copiés.</p>
+        <button class="btn primary" id="backupNowBtn" data-icon="download">Sauvegarder maintenant</button></div>
+      <div class="toolbar"><div class="fact" id="backupStatus"></div></div>
+      <div class="stack" id="backupList"></div>
+    </div>
+    <div class="rg-panel" data-panel="stockage" hidden>
+      <p class="sub">La place prise par les vidéos, et ce qui peut être effacé sans risque.</p>
+      <div class="stack" id="storageView"></div>
     </div>
   </section>
 
@@ -290,166 +347,13 @@
     </div>
   </section>
 
-  <!-- Screen 11 : Montage auto defaults per channel (Réglages) -->
-  <section class="screen" data-idx="11">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Montage auto de chaque chaîne</h1>
-        <p class="sub">Le style par défaut de chaque chaîne. Une vidéo peut toujours s'en écarter, au Cadrage ou à l'étape Montage.</p>
-      </div>
-    </div>
-    <div class="grid-3" id="montageSettingsGrid"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 3 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
-
-  <!-- Screen 12 : drone-shot library (Réglages) -->
-  <section class="screen" data-idx="12">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Plans de drone</h1>
-        <p class="sub">Les paysages vus du ciel que le Montage auto glisse avant la chute. Gratuits (Pixabay). Supprime ceux qui ne te plaisent pas ; chaque chaîne évite de réutiliser ses derniers.</p>
-      </div>
-    </div>
-    <div class="toolbar">
-      <input class="f" id="brollTheme" placeholder="Thème en anglais, ex : drone mountain lake" style="max-width:320px">
-      <button class="btn primary small" id="brollFetchBtn" data-icon="download">Ajouter 3 plans</button>
-      <span class="spacer"></span>
-      <span class="tiny" id="brollCount"></span>
-    </div>
-    <div class="toolbar" id="brollThemes"></div>
-    <div id="brollHealth"></div>
-    <div id="brollGrid" class="broll-grid"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 4 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
-
-  <!-- Screen 13 : voice library + each channel's language / voice / music (Réglages) -->
-  <section class="screen" data-idx="13">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Voix et langues</h1>
-        <p class="sub">Les voix ElevenLabs utilisables par l'Adaptation, avec leur accent et un extrait à écouter (gratuit). Puis, pour chaque chaîne : sa langue, sa voix et sa musique.</p>
-      </div>
-    </div>
-    <article class="chcard">
-      <div class="chcard-head"><div class="who"><div class="name">Ajouter des voix</div>
-        <div class="meta" style="margin-left:0">Colle un ou plusieurs identifiants ElevenLabs (un par ligne) : le nom, la langue, l'accent et l'extrait sont récupérés tout seuls.</div></div></div>
-      <div class="chcard-body"><textarea class="f" id="voiceIds" rows="3" placeholder="pCKbQ4EPGE06zpEPGNvS"></textarea></div>
-      <div class="chcard-foot"><button class="btn primary small" id="voiceAddBtn" data-icon="mic">Ajouter</button><span class="note" id="voiceAddNote"></span></div>
-    </article>
-    <div class="stack" id="voiceLibrary"></div>
-    <h2 class="h1" style="font-size:16px;margin-top:6px">Chaque chaîne</h2>
-    <div class="grid-3" id="adChannelGrid"></div>
-    <h2 class="h1" style="font-size:16px;margin-top:6px">Musiques communes</h2>
-    <article class="chcard">
-      <div class="chcard-head"><div class="who"><div class="name">Ajouter une musique</div>
-        <div class="meta" style="margin-left:0">Utilisables par toutes les chaînes. La « musique intelligente » de la Reprise choisit parmi elles et cale sa montée sur le moment fort (C'est pour ça et لهذا السبب pour l'instant). Chaque morceau est écouté une fois par l'IA (quelques centimes).</div></div></div>
-      <div class="chcard-body"><div class="ad-row"><input class="f" id="songLink" placeholder="Lien YouTube de la chanson"><button class="btn primary small" id="songLinkBtn" data-icon="upload">Ajouter</button></div>
-        <div class="ad-row"><input type="file" id="songFile" accept="audio/*"><span class="note" id="songNote"></span></div></div>
-    </article>
-    <div class="stack" id="songList"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 5 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
-
-  <!-- Screen 14 : the sound effects the montage plays (Réglages) -->
-  <section class="screen" data-idx="14">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Effets sonores</h1>
-        <p class="sub">Les sons que le montage d'une Adaptation pose sur ce que fait l'image. Pas d'IA : des règles. Chaque règle joue un type de son, en prenant ses variantes à tour de rôle.</p>
-      </div>
-    </div>
-    <article class="chcard">
-      <div class="chcard-head"><div class="who"><div class="name">Ajouter un son</div>
-        <div class="meta" style="margin-left:0">Choisis le type : il dit à quel moment le montage le jouera. Le silence du début est coupé, le volume mis au niveau des autres, 4 s au plus. Vérifie qu'il est libre de droits (CC0 ou équivalent).</div></div></div>
-      <div class="chcard-body" style="flex-direction:row;flex-wrap:wrap;align-items:flex-end">
-        <div><label class="f">Type</label><select class="f" id="sfxKind"></select></div>
-        <div style="flex:1 1 200px"><label class="f">Source (lien)</label><input class="f" id="sfxSource" placeholder="https://freesound.org/…"></div>
-        <div><label class="f">Licence</label><input class="f" id="sfxLicence" value="CC0" style="width:110px"></div>
-        <input type="file" id="sfxFile" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac,audio/*" hidden>
-        <button class="btn primary small" id="sfxAddBtn" data-icon="upload">Choisir le fichier…</button>
-      </div>
-      <div class="chcard-foot"><span class="note" id="sfxRuleNote"></span></div>
-    </article>
-    <div class="stack" id="sfxList"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 6 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
 
 
-  <!-- Screen 16 : the caption library — gallery + each channel's style (Réglages) -->
-  <section class="screen" data-idx="16">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Sous-titres</h1>
-        <p class="sub">Tous les styles de sous-titres de l'app, à voir bouger. Puis, pour chaque chaîne, son style et ses réglages : ils servent à l'Adaptation et à la Reprise (le Montage auto et la Génération ont aussi tous ces styles dans leur propre choix).</p>
-      </div>
-    </div>
-    <div class="toolbar">
-      <div class="seg" id="capLangSeg">
-        <button class="seg-opt active" data-l="fr">Français</button>
-        <button class="seg-opt" data-l="ar">Arabe</button>
-        <button class="seg-opt" data-l="en">Anglais</button>
-      </div>
-      <span class="spacer"></span>
-      <select class="f" id="capGroupSel" style="width:auto"></select>
-    </div>
-    <div class="cap-gallery" id="capGallery"></div>
-    <h2 class="h1" style="font-size:16px;margin-top:10px">Chaque chaîne</h2>
-    <div class="grid-3" id="capChannels"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 7 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
 
-  <!-- Screen 17 : each channel's « style Discours » and whether its cut-aways may be films (Réglages) -->
-  <section class="screen" data-idx="17">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Discours</h1>
-        <p class="sub">Le style des vidéos « Discours » de chaque chaîne : le cadre, le fond, les sous-titres, la musique. Chaque vidéo peut s'en écarter à son aperçu. Et si ses plans de coupe peuvent être des extraits de films.</p>
-      </div>
-    </div>
-    <div class="grid-3" id="dsChannels"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 8 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
 
-  <!-- Screen 15 : which AI model does each step (Réglages) -->
-  <section class="screen" data-idx="15">
-    <div class="page-head">
-      <div>
-        <h1 class="h1">Modèles d'IA</h1>
-        <p class="sub">Le modèle de chaque étape. ★ = recommandé (celui d'aujourd'hui). Une étape qui regarde une image ou une vidéo, ou cherche sur Google, reste sur Gemini 🔒. Si le modèle choisi échoue (clé absente, limite, réponse illisible), Gemini prend le relais tout seul. Le changement compte dès la prochaine étape, sans redémarrer.</p>
-      </div>
-      <div class="actions"><button class="btn secondary" id="aiModelsResetBtn" data-icon="refresh">Revenir aux réglages recommandés</button></div>
-    </div>
-    <div class="stack" id="aiModelsView"></div>
-    <div class="navbar">
-      <button class="btn secondary prev">← Précédent</button>
-      <span class="progress-text">Réglages · 9 sur 11</span>
-      <button class="btn primary next">Suivant →</button>
-    </div>
-  </section>
+
+
+
 
   <!-- Screen 5 : AI Results -->
   <section class="screen" data-idx="5">
@@ -539,6 +443,7 @@ const PAGE_BUILD = '__TIKTUB_BUILD__';
 <script src="/static/js/ajout_chaine.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/reglages.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/sous_titres.js?v=__TIKTUB_BUILD__"></script>
+<script src="/static/js/reglages_chaines.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/adaptation.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/reprise.js?v=__TIKTUB_BUILD__"></script>
 <script src="/static/js/discours.js?v=__TIKTUB_BUILD__"></script>

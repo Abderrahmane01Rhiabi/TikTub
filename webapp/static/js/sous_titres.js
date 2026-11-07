@@ -14,7 +14,7 @@ async function loadCaptionSettings(){
     b.onclick = () => { capLang = b.dataset.l; document.querySelectorAll('#capLangSeg .seg-opt').forEach(x => x.classList.toggle('active', x === b)); renderCapGallery(); };
   });
   renderCapGallery();
-  await renderCapChannels();
+  if (document.getElementById('capChannels')) await renderCapChannels();   // each channel's card: on its page
 }
 
 function capPreviewUrl(id, lang, params, channel){

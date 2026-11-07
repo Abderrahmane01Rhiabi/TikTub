@@ -97,7 +97,7 @@ async function renderNewAdaptation(){
     </article>`;
   hydrateIcons(stage);
   dsBindCreation(document.getElementById('adDsBox'));
-  document.getElementById('adToVoices').onclick = () => goTo(13);
+  document.getElementById('adToVoices').onclick = () => openChannelSettings();
   const syncVersions = () => {
     const reprise = ['reprise', 'discours'].includes((stage.querySelector('input[name="adMode"]:checked') || {}).value);   // one script, every language
     document.getElementById('adVersionsBox').style.display = !reprise && stage.querySelectorAll('.ad-target:checked').length > 1 ? '' : 'none';

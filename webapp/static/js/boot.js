@@ -3,7 +3,7 @@
 // ---------- Alerts (polled; also shown as Windows notifications if allowed) ----------
 const ALERT_POLL_MS = 60000;
 const ALERT_ACTIONS = {
-  connection: { label: 'Reconnecter', run: () => goTo(0) },
+  connection: { label: 'Reconnecter', run: () => openChannelSettings() },
   publish: { label: 'Voir Publier', run: () => goTo(7) },
   deleted: { label: 'Voir le Dashboard', run: a => { if (a.channel) dashboardChannel = a.channel; openSpace('dashboard'); } },
 };

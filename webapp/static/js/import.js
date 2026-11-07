@@ -23,6 +23,7 @@ function connectionCardHtml(ch){
 
 async function loadConnectionScreen(){
   const grid = document.getElementById('connectGrid');
+  if (!grid) return;                     // Réglages → Chaînes shows each channel's connection on its own page
   grid.innerHTML = channels.map(connectionCardHtml).join('');
 
   await Promise.all(channels.filter(ch => ch.has_credentials).map(async ch => {

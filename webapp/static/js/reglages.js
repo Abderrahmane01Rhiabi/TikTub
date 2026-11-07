@@ -2,6 +2,7 @@
 
 async function loadMontageSettings(){
   const grid = document.getElementById('montageSettingsGrid');
+  if (!grid) return;                     // each channel's card is on its page (Réglages → Chaînes → Avancé)
   if (!channels.length){ grid.innerHTML = emptyState('Aucune chaîne', 'Ajoute une chaîne dans config.yaml.', 'settings'); return; }
   grid.innerHTML = channels.map(ch => `<article class="chcard" data-channel="${ch.name}">${spinnerHtml('Chargement...')}</article>`).join('');
   await Promise.all(channels.map(async ch => {
@@ -317,8 +318,6 @@ async function loadVoiceSettings(){
       try { await api(`/api/voices/${id}`, { method:'DELETE' }); loadVoiceSettings(); } catch (err){ log(err.message, 'error'); }
     };
   });
-  await loadAdaptationChannels();
-  await loadSongs();
 }
 
 // the shared songs (assets/musiques), any channel's; the smart music picks among them
@@ -396,118 +395,6 @@ document.getElementById('voiceAddBtn').addEventListener('click', async () => {
   } catch (e){ log(e.message, 'error'); }
   finally { btn.disabled = false; btn.innerHTML = 'Ajouter'; hydrateIcons(btn); }
 });
-
-async function loadAdaptationChannels(){
-  const grid = document.getElementById('adChannelGrid');
-  grid.innerHTML = channels.map(ch => `<article class="chcard" data-channel="${ch.name}">${spinnerHtml('Chargement...')}</article>`).join('');
-  await Promise.all(channels.map(async ch => {
-    const card = grid.querySelector(`[data-channel="${ch.name}"]`);
-    try { renderAdaptationChannel(card, ch, await api(`/api/channels/${ch.name}/adaptation`)); }
-    catch (e){ showLoadError(card, e, () => loadAdaptationChannels()); }
-  }));
-}
-
-function renderAdaptationChannel(card, ch, data){
-  const s = data.settings;
-  const voice = data.voices.find(v => v.voice_id === s.voice_id);
-  const musicUrl = f => `/api/channels/${ch.name}/assets/music/${encodeURIComponent(f)}`;
-  card.innerHTML = `
-    <div class="chcard-head"><div class="who"><div class="name"><span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}</div></div>
-      <select class="f ad-lang" style="width:auto">${Object.entries(voiceLanguages).map(([k, l]) => `<option value="${k}" ${k === s.language ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
-    <div class="chcard-body">
-      <label class="f">Voix</label>
-      <select class="f ad-voice"><option value="">— aucune —</option>${data.voices.map(v =>
-        `<option value="${v.voice_id}" ${v.voice_id === s.voice_id ? 'selected' : ''}>${esc(voiceLabel(v))}</option>`).join('')}</select>
-      ${voice && voice.has_preview ? `<audio controls preload="none" src="${voice.preview_url}" style="width:100%;height:32px"></audio>` :
-        (data.voices.length ? '' : `<div class="tiny">Aucune voix dans cette langue : ajoute-en ci-dessus.</div>`)}
-      <label class="f" style="margin-top:6px">Autres voix permises (l'IA peut les prendre quand le sujet le demande)</label>
-      <div class="ad-allowed" style="display:flex;flex-wrap:wrap;gap:4px 12px">${data.voices.filter(v => v.voice_id !== s.voice_id).map(v =>
-        `<label class="tiny" style="display:flex;gap:4px;align-items:center"><input type="checkbox" value="${v.voice_id}" ${(s.voix_permises || []).includes(v.voice_id) ? 'checked' : ''}>${esc(v.display_name.split(' - ')[0])}${v.accent ? ' (' + esc(v.accent) + ')' : ''}</label>`).join('') || '<span class="tiny">aucune autre voix dans cette langue</span>'}</div>
-      <select class="f ad-vmode" style="margin-top:4px"><option value="auto" ${s.voix_mode !== 'principale' ? 'selected' : ''}>L'IA choisit la voix selon le sujet (la principale sauf vraie raison)</option>
-        <option value="principale" ${s.voix_mode === 'principale' ? 'selected' : ''}>Toujours la voix principale ci-dessus</option></select>
-      <div class="tiny">La voix choisie ci-dessus est la voix principale ★ (la signature de la chaîne). En darija, seules les voix marocaines sont prises. « Idée d'abord » pour l'instant.</div>
-      <label class="f" style="margin-top:6px">Modèle de voix (ElevenLabs)</label>
-      <select class="f ad-model"><option value="" ${s.voice_model ? '' : 'selected'}>Selon le mode (Adaptation : multilingual v2 · Reprise et Roblox : v4)</option>
-        ${(data.voice_models || []).map(m => `<option value="${m}" ${m === s.voice_model ? 'selected' : ''}>${m}</option>`).join('')}</select>
-      <div class="tiny">v4 : la plus naturelle dans nos essais · flash v2.5 : rapide et moins chère, plus simple. Changeable aussi par projet, à l'aperçu d'une Reprise.</div>
-      ${s.language === 'ar' ? `<label class="f" style="margin-top:6px">Arabe parlé (voix et sous-titres)</label>
-      <select class="f ad-dialect"><option value="" ${s.dialecte ? '' : 'selected'}>Arabe standard (fusha)</option>
-        ${Object.entries(data.dialects || {}).map(([k, l]) => `<option value="${k}" ${k === s.dialecte ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-      <div class="tiny">En darija : la voix et les sous-titres en darija, le titre, la description et les tags restent en fusha (ce que les gens tapent). Pour l'instant dans « Idée d'abord ».</div>` : ''}
-    </div>
-    <div class="chcard-body">
-      <label class="f">Musique de fond</label>
-      <select class="f ad-music"><option value="">— aucune —</option>${data.music_files.map(f => `<option ${f === s.music_file ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
-      ${s.music_file ? `<audio class="ad-audio" controls preload="none" src="${musicUrl(s.music_file)}" style="width:100%;height:32px"></audio>
-        <div class="entry-row"><input class="f ad-start" type="number" min="0" step="0.5" value="${s.music_start}"><span class="tiny">s : départ de la musique (${fmtSec(s.music_start)})</span>
-        <button class="btn secondary small ad-take">Prendre l'instant du lecteur</button></div>` :
-        '<div class="tiny">Les morceaux viennent du dossier musique de la chaîne (Réglages → Montage → Ajouter).</div>'}
-    </div>
-    <div class="chcard-body">
-      <label class="f">Musique choisie par l'IA parmi (vide = toutes les catégories)</label>
-      <div class="mc-chips ad-mcats">${Object.entries(data.music_categories || {}).map(([k, l]) =>
-        `<button class="mc-chip ${(s.musique_categories || []).includes(k) ? 'on' : ''}" data-cat="${k}">${esc(l)}</button>`).join('')}</div>
-      <label class="tiny" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" class="ad-nolyrics" ${s.musique_sans_paroles ? 'checked' : ''}>
-        Seulement des musiques sans paroles (rien ne chante sous la voix)</label>
-      <div class="tiny">Pour chaque vidéo « Idée d'abord », l'IA prend la musique qui colle à l'ambiance, parmi tes musiques classées ; tu peux la changer à l'aperçu.</div>
-    </div>
-    <div class="chcard-body">
-      <label class="f">Famille de récit (comment ses vidéos racontent)</label>
-      <select class="f ad-famille" style="width:auto">${Object.entries(data.familles || {}).map(([k, f]) =>
-        `<option value="${k}" ${k === s.famille_recit ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select>
-      <div class="mc-chips ad-styles">${Object.entries(((data.familles || {})[s.famille_recit] || {}).styles || {}).map(([k, l]) =>
-        `<button class="mc-chip ${(s.styles_exclus || []).includes(k) ? '' : 'on'}" data-style="${k}">${esc(l)}</button>`).join('')}</div>
-      <div class="tiny">Pour chaque vidéo, l'IA choisit le style qui raconte le mieux le sujet parmi ceux allumés (pas un des 3 derniers si un autre convient) ; tu le changes à l'écran du script. Idée d'abord, Script d'abord, Sources d'abord et Reprise.</div>
-    </div>
-    <div class="chcard-body">
-      <label class="f">Style visuel (bandeaux et sous-titres de toutes ses vidéos Adaptation)</label>
-      <select class="f ad-style" style="width:auto">${(data.styles || []).map(st => `<option value="${st.name}" ${st.name === s.style ? 'selected' : ''}>${esc(st.label)}</option>`).join('')}</select>
-      <img class="ad-style-prev" src="/api/adaptation/styles/${s.style}/preview?lang=${s.language}" alt="" style="width:100%;max-width:540px;border-radius:8px;display:block">
-      <label class="f" style="margin-top:8px">Ton du montage</label>
-      <select class="f ad-tone" style="width:auto">
-        <option value="" ${s.ton ? '' : 'selected'}>Selon le sujet (l'IA le devine, la musique peut changer)</option>
-        ${[['calme', 'Calme'], ['explicatif', 'Explicatif'], ['spectaculaire', 'Spectaculaire'], ['drole', 'Drôle']].map(([v, l]) =>
-          `<option value="${v}" ${s.ton === v ? 'selected' : ''}>Toujours ${l}</option>`).join('')}</select>
-      <div class="tiny">Un ton fixe garde la même musique, les mêmes effets et les mêmes sons à chaque vidéo : la signature de la chaîne.</div>
-    </div>
-    <div class="chcard-body">
-      <label class="f">Catégorie YouTube (toutes ses vidéos publiées)</label>
-      <select class="f ad-cat" style="width:auto">${Object.entries(data.categories || {}).map(([k, l]) =>
-        `<option value="${k}" ${k === data.youtube_category ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
-      <div class="tiny">YouTube reçoit aussi la langue de la chaîne (celle de ses titres) ; la langue parlée seulement quand la voix est la nôtre.</div>
-    </div>`;
-  const save = async body => {
-    try { renderAdaptationChannel(card, ch, await api(`/api/channels/${ch.name}/adaptation`, { method:'PUT', body: JSON.stringify(body) })); }
-    catch (e){ log(e.message, 'error'); }
-  };
-  card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
-  card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
-  card.querySelector('.ad-model').onchange = e => save({ settings: { voice_model: e.target.value || null } });
-  card.querySelector('.ad-famille').onchange = e => save({ settings: { famille_recit: e.target.value, styles_exclus: [] } });
-  card.querySelectorAll('.ad-styles .mc-chip').forEach(b => b.onclick = () => {
-    b.classList.toggle('on');
-    save({ settings: { styles_exclus: [...card.querySelectorAll('.ad-styles .mc-chip:not(.on)')].map(x => x.dataset.style) } });
-  });
-  card.querySelectorAll('.ad-allowed input').forEach(cb => cb.onchange = () =>
-    save({ settings: { voix_permises: [...card.querySelectorAll('.ad-allowed input:checked')].map(x => x.value) } }));
-  card.querySelector('.ad-vmode').onchange = e => save({ settings: { voix_mode: e.target.value } });
-  card.querySelectorAll('.ad-mcats .mc-chip').forEach(b => b.onclick = () => {
-    b.classList.toggle('on');
-    save({ settings: { musique_categories: [...card.querySelectorAll('.ad-mcats .mc-chip.on')].map(x => x.dataset.cat) } });
-  });
-  card.querySelector('.ad-nolyrics').onchange = e => save({ settings: { musique_sans_paroles: e.target.checked } });
-  const dial = card.querySelector('.ad-dialect');
-  if (dial) dial.onchange = e => save({ settings: { dialecte: e.target.value || null } });
-  card.querySelector('.ad-music').onchange = e => save({ settings: { music_file: e.target.value || null } });
-  const styleSel = card.querySelector('.ad-style');
-  if (styleSel) styleSel.onchange = e => save({ settings: { style: e.target.value } });
-  card.querySelector('.ad-cat').onchange = e => save({ youtube_category: e.target.value });
-  const toneSel = card.querySelector('.ad-tone');
-  if (toneSel) toneSel.onchange = e => save({ settings: { ton: e.target.value || null } });
-  const start = card.querySelector('.ad-start'), audio = card.querySelector('.ad-audio');
-  if (start) start.onchange = () => save({ settings: { music_start: parseFloat(start.value) || 0 } });
-  if (start && audio) card.querySelector('.ad-take').onclick = () => save({ settings: { music_start: Math.round(audio.currentTime * 2) / 2 } });
-}
 
 // Réglages → Modèles d'IA: each step's model, chosen from the ones it may use
 function aiCost(e){ return e.appels_30j ? `${e.cout_30j.toFixed(2).replace('.', ',')} $ sur 30 jours (${e.appels_30j} appel${e.appels_30j > 1 ? 's' : ''})` : 'pas utilisé ces 30 jours'; }

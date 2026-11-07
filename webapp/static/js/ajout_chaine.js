@@ -180,7 +180,7 @@ function renderConfirmStep(){
       log(`Chaîne « ${created.display_name} » ajoutée (YouTube : ${created.youtube_title})`, 'success');
       channels = await api('/api/channels');           // everywhere in the app, no restart
       renderUrlsGrid();
-      loadConnectionScreen();
+      openChannelSettings(created.name);
     } catch (e){ addError(e.message); btn.disabled = false; }
   });
 }
