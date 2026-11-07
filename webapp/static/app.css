@@ -752,3 +752,8 @@
 .pro-badges{position:absolute;top:4px;left:4px;display:flex;gap:4px;font-size:11px;}
 .pro-badges b,.pro-badges i{background:rgba(0,0,0,.72);color:#fff;border-radius:4px;padding:1px 5px;font-style:normal;}
 .pro-desc{display:block;font-size:10.5px;line-height:1.25;color:var(--muted,#aaa);padding:4px 6px;max-height:40px;overflow:hidden;background:var(--card,#16181d);}
+
+/* music casting: categories as chips */
+.mc-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px;}
+.mc-chip{font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border,#333);background:transparent;color:var(--muted,#aaa);cursor:pointer;}
+.mc-chip.on{background:var(--accent,#6b7cff);border-color:var(--accent,#6b7cff);color:#fff;}

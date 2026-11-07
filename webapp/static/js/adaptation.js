@@ -1122,6 +1122,13 @@ async function renderAdPreviews(body, p){
             ${cur && cur.has_preview ? `<audio class="pv-sample" controls preload="none" src="${cur.preview_url}" style="width:100%;height:32px;margin-top:6px"></audio>` : ''}</div>
           ${t.music ? `<div class="tiny">Musique : ${esc(t.music)}</div>` : '<div class="tiny">Sans musique (Réglages → Voix pour en choisir une).</div>'}
           ${p.pro ? `<div class="tiny">Montage pro : ${t.montage_plans || '?'} plans${p.recit ? ` · récit « ${esc(p.recit_label)} »` : ''}</div>` : ''}
+          ${p.pro && t.musiques ? `<div><label class="f">Musique ${t.music_by === 'toi' ? '(ton choix)' : '(choisie par l\'IA)'}</label>
+            <div class="ad-row"><select class="f pv-music">
+              <option value="" ${t.music_file ? '' : 'selected'}>— sans musique —</option>
+              ${t.musiques.map(m => `<option value="${esc(m.fichier)}" ${m.fichier === t.music_file ? 'selected' : ''}>${m.permise ? '' : '· '}${esc(m.titre)}${m.paroles ? ' (paroles)' : ''}${(m.categories || []).length ? ' — ' + esc(m.categories.join(', ')) : ''}</option>`).join('')}</select>
+              <button class="btn secondary small pv-remusic">Refaire avec cette musique</button></div>
+            ${t.music_why ? `<div class="tiny">${esc(t.music_why)}</div>` : ''}
+            <div class="tiny">Les cuts et la voix sont gardés : seul le rendu est refait (environ 1 min). « · » = hors des catégories de la chaîne.</div></div>` : ''}
           ${(t.corrections || []).map(c => `<div class="tiny">✎ ${esc(c)}</div>`).join('')}
         </div>
       </div></div>
@@ -1145,6 +1152,12 @@ async function renderAdPreviews(body, p){
     };
     card.querySelector('.pv-revoice').onclick = async () => {
       try { await api(`/api/adaptations/${p.project_id}/targets/${ch}/voice`, { method:'PATCH', body: JSON.stringify({ voice_id: sel.value }) });
+            adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
+    };
+    const rm = card.querySelector('.pv-remusic');
+    if (rm) rm.onclick = async () => {
+      try { await api(`/api/adaptations/${p.project_id}/targets/${ch}/music`, { method:'POST',
+              body: JSON.stringify({ fichier: card.querySelector('.pv-music').value || null }) });
             adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
     };
     const val = card.querySelector('.pv-validate');

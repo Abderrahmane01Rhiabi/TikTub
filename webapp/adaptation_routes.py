@@ -56,6 +56,7 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
     return {"settings": s, "music_files": music,
             "youtube_category": str(profile.get("youtube_category") or "24"), "categories": CATEGORIES, "voices": [_main()._serialize_voice(v) for v in ad.voices_for(s["language"])],
             "voice_models": list(ad.VOICE_MODELS), "dialects": ad.DIALECTS,
+            "music_categories": __import__("adaptation.musique_casting", fromlist=["CATEGORIES"]).CATEGORIES,
             "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
 
 
@@ -198,6 +199,11 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
         for x, t in zip(targets, p.get("targets") or []):
             x["corrections"] = t.get("corrections") or []
             x["montage_plans"] = len((t.get("preview") or {}).get("montage") or [])
+            x["music_file"] = os.path.basename(t["music_path"]) if t.get("music_path") else None
+            x["music_why"], x["music_by"] = t.get("music_why"), t.get("music_by")
+            if full and p.get("status") == "preview_review":       # the preview's music menu
+                x["musiques"] = [{k: s.get(k) for k in ("fichier", "titre", "categories", "paroles", "permise")}
+                                 for s in montage_pro.music_choices(t)]
         if full and p.get("stock"):
             used = {e["plan"] for t in p["targets"] for e in (t.get("preview") or {}).get("montage") or []}
             base["stock"] = [{k: s.get(k) for k in ("id", "source", "desc", "montre", "force", "pertinence",
@@ -924,6 +930,20 @@ def keep_adaptation_shot(pid: str, sid: str, req: AdaptationShot):
     return _serialize_adaptation(_adaptation_call(montage_pro.set_shot, pid, sid, req.garder))
 
 
+class AdaptationMusic(BaseModel):
+    fichier: Optional[str] = None       # None: no music
+
+
+@router.post("/api/adaptations/{pid}/targets/{channel}/music")
+def change_adaptation_music(pid: str, channel: TargetChannel, req: AdaptationMusic):
+    """Montage pro: another music at the preview — the voice and the cuts are kept, only the render is made again."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    p = _adaptation_call(montage_pro.set_music, pid, channel, req.fichier)
+    _start_adaptation_step(pid, "voicing", only=channel)
+    return _serialize_adaptation(p)
+
+
 @router.post("/api/adaptations/{pid}/stock-approve")
 def approve_adaptation_stock(pid: str):
     """The stock reviewed: voice, edit and render (a few minutes)."""
@@ -1474,6 +1494,8 @@ def _analyse_song_later(path: str):
             from gemini_ai_generator import usage_context
             with usage_context(projet="musiques"):
                 musique.listen(path)
+                from adaptation import musique_casting
+                musique_casting.classify(path)         # its categories and lyrics, proposed by the AI
         except Exception as e:                  # shown as « pas encore écoutée »; tried again at its first use
             print(f"Musique {os.path.basename(path)} : écoute impossible ({e})")
     threading.Thread(target=run, daemon=True).start()
@@ -1487,9 +1509,26 @@ def list_songs():
         cache = musique._cache(path)
         a = json.load(open(cache, encoding="utf-8")) if os.path.exists(cache) else None
         name = os.path.basename(path)
+        from adaptation import musique_casting
+        info = musique_casting.song_info(path)
         out.append({"fichier": name, "url": f"/api/musiques/{quote(name)}/audio",
-                    "analyse": {k: a.get(k) for k in ("titre", "humeur", "convient_a", "moment_fort", "montees", "duree")} if a else None})
-    return {"musiques": out, "chaines_intelligentes": list(rp.SMART_CHANNELS)}
+                    "analyse": {k: a.get(k) for k in ("titre", "humeur", "convient_a", "moment_fort", "montees", "duree")} if a else None,
+                    "categories": info["categories"], "paroles": info["paroles"], "classee_par": info["par"]})
+    from adaptation.musique_casting import CATEGORIES
+    return {"musiques": out, "chaines_intelligentes": list(rp.SMART_CHANNELS), "categories": CATEGORIES}
+
+
+class SongTags(BaseModel):
+    categories: Optional[list] = None
+    paroles: Optional[bool] = None
+
+
+@router.patch("/api/musiques/{name}")
+def tag_song(name: str, req: SongTags):
+    """The person's own categories / lyrics for a song: they win over the AI's."""
+    from adaptation import musique_casting
+    musique_casting.set_tags(_song_path(name), req.categories, req.paroles)
+    return list_songs()
 
 
 @router.get("/api/musiques/{name}/audio")

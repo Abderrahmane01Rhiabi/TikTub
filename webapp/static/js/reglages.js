@@ -312,12 +312,32 @@ async function loadSongs(data){
   const d = data || await api('/api/musiques');
   box.innerHTML = d.musiques.length ? `<article class="chcard"><div class="chcard-body" style="gap:0">${d.musiques.map(m => {
       const a = m.analyse;
+      const cats = d.categories || {};
       return `<div class="vrow" data-song="${esc(m.fichier)}" style="grid-template-columns:2fr 2fr 1.5fr auto">
-        <div><b>${esc((a && a.titre) || m.fichier)}</b></div>
+        <div><b>${esc((a && a.titre) || m.fichier)}</b>
+          <div class="mc-chips">${Object.entries(cats).map(([k, l]) =>
+            `<button class="mc-chip ${(m.categories || []).includes(k) ? 'on' : ''}" data-cat="${k}">${esc(l)}</button>`).join('')}</div>
+          <select class="f s-lyrics" style="width:auto;margin-top:4px;font-size:12px">
+            <option value="" ${m.paroles == null ? 'selected' : ''}>paroles : ?</option>
+            <option value="0" ${m.paroles === false ? 'selected' : ''}>sans paroles (instrumental)</option>
+            <option value="1" ${m.paroles === true ? 'selected' : ''}>avec paroles</option></select>
+          <span class="tiny">${m.classee_par === 'toi' ? 'classée par toi' : m.classee_par === 'ia' ? 'classée par l\'IA (clique pour corriger)' : 'pas encore classée'}</span></div>
         <div class="tiny">${a ? `${esc(a.humeur || '')}${a.montees && a.montees.length ? ` · montées à ${a.montees.map(fmtSec).join(', ')}` : ''}` : 'pas encore écoutée…'}</div>
         <audio controls preload="none" src="${m.url}"></audio>
         <button class="btn ghost small s-del" title="Retirer cette musique">✕</button></div>`;
     }).join('')}</div></article>` : emptyState('Aucune musique commune', 'Ajoute une chanson par son lien ou un fichier audio.', 'mic');
+  const tag = async (row, body) => {
+    try { loadSongs(await api(`/api/musiques/${encodeURIComponent(row.dataset.song)}`, { method:'PATCH', body: JSON.stringify(body) })); }
+    catch (e){ log(e.message, 'error'); }
+  };
+  box.querySelectorAll('.mc-chip').forEach(b => b.onclick = () => {
+    const row = b.closest('.vrow');
+    b.classList.toggle('on');
+    tag(row, { categories: [...row.querySelectorAll('.mc-chip.on')].map(x => x.dataset.cat) });
+  });
+  box.querySelectorAll('.s-lyrics').forEach(sel => sel.onchange = () => {
+    if (sel.value !== '') tag(sel.closest('.vrow'), { paroles: sel.value === '1' });
+  });
   box.querySelectorAll('.s-del').forEach(b => b.onclick = async () => {
     const name = b.closest('.vrow').dataset.song;
     if (!confirm(`Retirer « ${name} » des musiques communes ?`)) return;
@@ -403,6 +423,14 @@ function renderAdaptationChannel(card, ch, data){
         '<div class="tiny">Les morceaux viennent du dossier musique de la chaîne (Réglages → Montage → Ajouter).</div>'}
     </div>
     <div class="chcard-body">
+      <label class="f">Musique choisie par l'IA parmi (vide = toutes les catégories)</label>
+      <div class="mc-chips ad-mcats">${Object.entries(data.music_categories || {}).map(([k, l]) =>
+        `<button class="mc-chip ${(s.musique_categories || []).includes(k) ? 'on' : ''}" data-cat="${k}">${esc(l)}</button>`).join('')}</div>
+      <label class="tiny" style="display:flex;gap:6px;align-items:center;margin-top:4px"><input type="checkbox" class="ad-nolyrics" ${s.musique_sans_paroles ? 'checked' : ''}>
+        Seulement des musiques sans paroles (rien ne chante sous la voix)</label>
+      <div class="tiny">Pour chaque vidéo « Idée d'abord », l'IA prend la musique qui colle à l'ambiance, parmi tes musiques classées ; tu peux la changer à l'aperçu.</div>
+    </div>
+    <div class="chcard-body">
       <label class="f">Style visuel (bandeaux et sous-titres de toutes ses vidéos Adaptation)</label>
       <select class="f ad-style" style="width:auto">${(data.styles || []).map(st => `<option value="${st.name}" ${st.name === s.style ? 'selected' : ''}>${esc(st.label)}</option>`).join('')}</select>
       <img class="ad-style-prev" src="/api/adaptation/styles/${s.style}/preview?lang=${s.language}" alt="" style="width:100%;max-width:540px;border-radius:8px;display:block">
@@ -426,6 +454,11 @@ function renderAdaptationChannel(card, ch, data){
   card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
   card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
   card.querySelector('.ad-model').onchange = e => save({ settings: { voice_model: e.target.value || null } });
+  card.querySelectorAll('.ad-mcats .mc-chip').forEach(b => b.onclick = () => {
+    b.classList.toggle('on');
+    save({ settings: { musique_categories: [...card.querySelectorAll('.ad-mcats .mc-chip.on')].map(x => x.dataset.cat) } });
+  });
+  card.querySelector('.ad-nolyrics').onchange = e => save({ settings: { musique_sans_paroles: e.target.checked } });
   const dial = card.querySelector('.ad-dialect');
   if (dial) dial.onchange = e => save({ settings: { dialecte: e.target.value || null } });
   card.querySelector('.ad-music').onchange = e => save({ settings: { music_file: e.target.value || null } });

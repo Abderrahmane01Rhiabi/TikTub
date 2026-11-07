@@ -657,7 +657,8 @@ def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: Lis
             labels.append(f"w{k}")
             n += 1
     if music and music[0] and os.path.exists(music[0]):
-        inputs += ["-ss", f"{max(0.0, float(music[1] or 0)):.2f}", "-i", music[0]]
+        # looped: a track shorter than the Short (a 28 s jingle) goes round instead of stopping before the end
+        inputs += ["-stream_loop", "-1", "-ss", f"{max(0.0, float(music[1] or 0)):.2f}", "-i", music[0]]
         mix.append(f"[{n}:a]volume={MUSIC_GAIN},afade=t=in:d=0.6,afade=t=out:st={max(0.0, total - 1.2):.2f}:d=1.2[m]")
         labels.append("m")
         n += 1
@@ -689,33 +690,79 @@ def _music_folders(t: Dict) -> List[str]:
     return [d for d in dict.fromkeys(out) if os.path.isdir(d)]
 
 
-def choose_music(p: Dict, t: Dict) -> None:
-    """Like the other videos: a track of the channel's library or the shared songs, chosen by the AI for the
-    Short's tone, from its strongest part. A track chosen by hand (or already chosen) is kept."""
-    from adaptation import pipeline as ap, tone, script as sc_mod
-    if t.get("music_chosen") and t.get("music_path"):
-        return
-    tracks = [os.path.join(d, f) for d in _music_folders(t) for f in sorted(os.listdir(d))
-              if f.lower().endswith((".mp3", ".wav", ".m4a"))]
-    t["music_chosen"] = True
-    if not tracks:
-        return
-    if len(tracks) == 1:
-        t.update(music_path=tracks[0], music_start=ap._track_info(tracks[0])["debut_fort"])
-        return
+def channel_music_rules(t: Dict) -> Dict:
+    """The channel's music casting as set now in Réglages (allowed categories, lyrics or not)."""
     try:
-        infos = [ap._track_info(x) for x in tracks]
-        listing = "\n".join(f"{n}. {os.path.basename(x)} / {i['bpm'] or '?'} BPM / energie {i['energie']}"
-                            for n, (x, i) in enumerate(zip(tracks, infos), 1))
-        sc = t.get("script") or {}
-        r = sc_mod._gemini()._generate_content([{"text": ap.MOOD_PROMPT.format(
-            titre=sc.get("titre", ""), resume=" ".join(x["texte"] for x in sc.get("passages") or [])[:600],
-            morceaux=listing, ton=tone.music_hint(ap._tone(p, t)))}], max_tokens=1000, timeout=60, temperature=0.2)
-        n = int(r.get("morceau")) - 1
+        from channel_manager import ChannelManager
+        from adaptation import settings
+        s = settings.channel_settings(ChannelManager().get_channel_profile(t["channel"]))
+        return {"categories": s["musique_categories"], "sans_paroles": s["musique_sans_paroles"]}
     except Exception:
+        return {"categories": [], "sans_paroles": False}
+
+
+def music_choices(t: Dict) -> List[Dict]:
+    """Every song a version may use, the channel's allowed ones flagged (for the preview's menu)."""
+    from adaptation import musique_casting as mc
+    rules = channel_music_rules(t)
+    songs = mc.library(_music_folders(t))
+    ok = {s["chemin"] for s in mc.allowed(songs, rules["categories"], rules["sans_paroles"])}
+    return [{**s, "permise": s["chemin"] in ok} for s in songs]
+
+
+def choose_music(p: Dict, t: Dict) -> None:
+    """The music casting: among the songs the channel allows (its categories, without lyrics if it asks), the one
+    whose mood fits this Short, from its strongest moment. A song chosen by the person (or already) is kept."""
+    from adaptation import musique_casting as mc, pipeline as ap
+    if t.get("music_chosen"):
         return
-    if 0 <= n < len(tracks):
-        t.update(music_path=tracks[n], music_start=infos[n]["debut_fort"], music_why=str(r.get("pourquoi") or "")[:200])
+    t["music_chosen"] = True
+    songs = mc.library(_music_folders(t))
+    if not songs:
+        return
+    if any(s["par"] is None for s in songs):        # a song never classified: the AI listens to it once
+        for s in songs:
+            if s["par"] is None:
+                try:
+                    mc.classify(s["chemin"])
+                except Exception:
+                    pass
+        songs = mc.library(_music_folders(t))
+    rules = channel_music_rules(t)
+    pool = mc.allowed(songs, rules["categories"], rules["sans_paroles"])
+    note = ""
+    if not pool:                        # nothing fits the channel's rules: say it, and take the best of all
+        pool, note = songs, " (aucune musique ne respecte les règles de la chaîne : choisie parmi toutes)"
+    sc = t.get("script") or {}
+    r = mc.choose(pool, sc.get("titre", ""), " ".join(x["texte"] for x in sc.get("passages") or []),
+                  ap._tone(p, t), p.get("recit"))
+    song = r["song"]
+    start = song.get("moment_fort")
+    if start is None:
+        start = ap._track_info(song["chemin"])["debut_fort"]
+    t.update(music_path=song["chemin"], music_start=float(start or 0.0), music_by="ia",
+             music_why=(r["pourquoi"] + note)[:240], music_cats=song["categories"], music_lyrics=song["paroles"])
+
+
+def set_music(pid: str, channel: str, fichier: Optional[str]) -> Dict:
+    """The person changes the music at the preview (None: no music): the voice and the edit are kept, only the
+    render is made again."""
+    from adaptation import musique_casting as mc, pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "preview_review")
+    t = ap.target(p, channel)
+    if fichier:
+        song = next((s for s in mc.library(_music_folders(t)) if s["fichier"] == fichier), None)
+        if not song:
+            raise ap.PipelineError("Musique introuvable.")
+        start = song.get("moment_fort")
+        t.update(music_path=song["chemin"], music_start=float(start if start is not None else 0.0),
+                 music_why="choisie par toi", music_cats=song["categories"], music_lyrics=song["paroles"])
+    else:
+        t.update(music_path=None, music_start=0.0, music_why="sans musique (ton choix)", music_cats=[], music_lyrics=None)
+    t.update(music_chosen=True, music_by="toi", keep_edit=True, validated=False)
+    p["status"] = "voicing"
+    return ap.save(p)
 
 
 # ---------------------------------------------------------------- the step: voice + hook + edit + render
@@ -737,10 +784,15 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
             t["script"]["passages"][0]["texte"] = new
             t["voice"] = _voice(p, t, mp3, report, offset + share * 0.15)
     shots = [s for s in p.get("stock") or [] if s.get("garde")]
-    report(f"montage {t['channel']}", offset + share * 0.25)
-    raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], shots)}],
-                                                  max_tokens=16000, timeout=240, temperature=0.4)
-    edl = build_edit(raw if isinstance(raw, dict) else {}, t["voice"], shots)
+    old = (t.get("preview") or {}).get("montage") or []
+    kept_ids = {s["id"] for s in shots}
+    if t.pop("keep_edit", False) and old and all(e["plan"] in kept_ids for e in old):
+        edl = old                       # only the music changed: the same cuts, no new edit asked
+    else:
+        report(f"montage {t['channel']}", offset + share * 0.25)
+        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], shots)}],
+                                                      max_tokens=16000, timeout=240, temperature=0.4)
+        edl = build_edit(raw if isinstance(raw, dict) else {}, t["voice"], shots)
     choose_music(p, t)
     style_name = t.get("style") or "classique"
     style = render.style_of(style_name)
@@ -806,6 +858,8 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
     if t.get("music_path"):
         musique = {"fichier": os.path.basename(t["music_path"]), "debut_s": t.get("music_start"),
                    "pourquoi": t.get("music_why"), "volume": MUSIC_GAIN, "niveau": "constant sous la voix",
+                   "categories": t.get("music_cats") or [], "paroles": t.get("music_lyrics"),
+                   "choisie_par": t.get("music_by") or "ia",
                    "archive": recette.archive(t["music_path"], "musique")}
     return recette.make(
         "adaptation", t["channel"], langue=t["language"], accroche=passages[0]["texte"] if passages else None,
