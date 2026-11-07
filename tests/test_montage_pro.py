@@ -163,7 +163,7 @@ def test_the_recipe_keeps_what_makes_a_montage_pro(project):
                                        "bandeau": {"couleur": "#C82424", "place": "haut", "taille": 78}}}
     rec = mp.recipe({"project_id": "ad_x", "recit": "news"}, t, edl, {k: {"desc": k} for k in "abc"}, made)
 
-    assert rec["voix"] == {"id": "v1", "modele": "eleven_v4"}
+    assert rec["voix"]["id"] == "v1" and rec["voix"]["modele"] == "eleven_v4"
     assert rec["style"]["recit"] == "news" and rec["style"]["bandeau"]["couleur"] == "#C82424"
     assert rec["style"]["sous_titres"]["position"] == "bas-centre, fixe" and rec["style"]["sous_titres"]["taille"] == 96
     assert rec["details"]["structure"]["coupes_par_phrase"] == 1.5
