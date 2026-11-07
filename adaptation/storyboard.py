@@ -156,16 +156,18 @@ def angles(reference: Dict, n: int = 3, avoid: Optional[List[str]] = None, gemin
     return out
 
 
-def write(reference: Dict, codes: List[str], gemini=None, angle: Optional[Dict] = None) -> Dict:
+def write(reference: Dict, codes: List[str], gemini=None, angle: Optional[Dict] = None,
+          recit: Optional[str] = None) -> Dict:
     """{"plans": [...], "meta": {lang: {...}}} — one storyboard, texts for every language;
-    angle: {"titre", "idee"} this version follows, so that it differs from the reference."""
+    angle: {"titre", "idee"} this version follows, so that it differs from the reference;
+    recit: a narrative style's rules (montage pro), they win over the general ones."""
     exemple = ", ".join(f'"{c}": {{"bandeau": "", "texte": "", "mots_cles": [""]}}' for c in codes)
     exemple_meta = ", ".join(f'"{c}": {{"titre": "", "description": "", "tags": [""]}}' for c in codes)
     prompt = WRITE_PROMPT.format(sujet=reference.get("sujet"), question=reference.get("question"),
                                  plans=_plans_listing(reference), faits="; ".join(reference.get("faits") or []),
                                  douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
                                  pub=reference.get("publicite") or "aucune", langues=_languages_listing(codes),
-                                 angle=(ANGLE_PART.format(**angle) if angle else "")
+                                 angle=(recit or "") + (ANGLE_PART.format(**angle) if angle else "")
                                  + (STRICT_FACTS if reference.get("origine") == "idee" else ""),
                                  exemple=exemple, exemple_meta=exemple_meta)
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.7)
@@ -203,14 +205,15 @@ def illustration(bundle: Dict, code: str, gemini=None, only: Optional[List[int]]
             for k, a in zip(ks, verdicts) if a["note"] == "non" or (a["note"] == "moyen" and k == 0)]
 
 
-def critique(bundle: Dict, codes: List[str], gemini=None) -> Dict:
+def critique(bundle: Dict, codes: List[str], gemini=None, recit: Optional[str] = None) -> Dict:
     """The stronger model re-reads for retention, language, images and facts;
     on failure (or if it broke the structure) the bundle comes back unchanged."""
     regles = " ; ".join(f"{c} : {LANG_RULES.get(c, LANG_RULES['fr'])}" for c in codes)
     try:
         r = (gemini or _gemini())._generate_content(
             [{"text": CRITIQUE_PROMPT.format(bundle=json.dumps(_public(bundle), ensure_ascii=False, indent=1),
-                                             regles=regles)}], max_tokens=24000, timeout=240, temperature=0.3)
+                                             regles=regles) + ("\n" + recit if recit else "")}],
+            max_tokens=24000, timeout=240, temperature=0.3)
         fixed = normalise(r, codes)
     except Exception:
         return {**bundle, "corrections": []}

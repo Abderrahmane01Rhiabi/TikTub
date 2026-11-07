@@ -96,14 +96,14 @@ def fakes(monkeypatch):
         return [{"titre": t, "idee": "idée " + t} for t in names[:n]]
     monkeypatch.setattr(sb, "angles", angles)
 
-    def write(ref, codes, angle=None):
+    def write(ref, codes, angle=None, **kw):
         calls["write"] += 1
         calls["written_with"].append((angle or {}).get("titre"))
         b = json.loads(json.dumps(GOOD))
         b["plans"][0]["textes"]["fr"]["texte"] = "Pourquoi les conducteurs de tramway restent-ils impassibles face à un crash ?"
         return sb.normalise(b, codes)
     monkeypatch.setattr(sb, "write", write)
-    monkeypatch.setattr(sb, "critique", lambda b, codes: {**b, "corrections": ["relu"]})
+    monkeypatch.setattr(sb, "critique", lambda b, codes, **kw: {**b, "corrections": ["relu"]})
     monkeypatch.setattr(sb, "illustration", lambda b, code, **kw: calls.setdefault("illustrated", []).append(code) or [])
 
     def revise(b, codes, request):

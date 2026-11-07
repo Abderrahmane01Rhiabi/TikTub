@@ -137,7 +137,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
             "source_urls": urls, "reference": None, "suggestions": None, "sources": [], "clips": {},
             "credits": "", "credits_auto": "", "error": None, "failed_step": None, "remake_of": remake_of}
     if idea:
-        base["idee"] = idea
+        base.update(idee=idea, pro=True)     # « Idée d'abord » = montage pro (adaptation/montage_pro.py)
     if mode == "reprise":
         from adaptation import musique, reprise_pipeline
         return save(reprise_pipeline.new_project({**base, "project_id": _new_pid()}, targets, son,
@@ -440,11 +440,22 @@ def _plan_number(message: str) -> int:
 
 def write_storyboard(p: Dict, report: Report):
     codes = _codes(p)
+    recit = None
+    if p.get("pro"):                    # montage pro: the channel's narrative style that tells this subject best
+        from adaptation import montage_pro
+        look = p["targets"][0].get("style")
+        if not p.get("recit"):
+            report("choix du style de récit", 0.3)
+            p["recit"] = montage_pro.choose_recit(p["reference"], look,
+                                                  montage_pro.recent_recits(p["targets"][0]["channel"]))
+            save(p)
+        recit = montage_pro.recit_part(p["recit"], look)
     report("écriture du storyboard" + (f" : « {p['angle']['titre']} »" if p.get("angle") else ""), 0.35)
-    b = storyboard.write(p["reference"], codes, angle=p.get("angle"))
+    pro = {"recit": recit} if recit else {}           # only a montage pro passes a narrative style
+    b = storyboard.write(p["reference"], codes, angle=p.get("angle"), **pro)
     draft, facts = b, p["reference"].get("faits") or []
     report("relecture (rétention, langue, images)", 0.65)
-    b = storyboard.critique(b, codes)
+    b = storyboard.critique(b, codes, **pro)
     judged = None                       # (each plan's image and words, the problems found) at the last look
     for attempt in (1, 2):              # what the re-read missed is fixed (twice at most), then shown
         hard = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)]
@@ -810,6 +821,12 @@ def run_images(pid: str, report: Optional[Report] = None):
         p = load(pid)
         p.update(suggestions=sug, picks=finder.auto_pick(sug, plans), status="images_review", error=None,
                  failed_step=None)
+        if p.get("pro"):                # montage pro: the best checked videos become a stock of shots, reviewed
+            p["status"] = "fetching"
+            save(p)
+            from adaptation import montage_pro
+            montage_pro.run_stock(pid, lambda ph, f: report(ph, 0.98 + 0.02 * f))
+            return
         save(p)
     except Exception as e:
         fail(pid, "searching", e)
@@ -1401,6 +1418,9 @@ def back_to_script(pid: str) -> Dict:
     """From the previews back to the scripts: a clip to change, a sentence to
     fix. The narration is kept and only made again if a sentence changes."""
     p = load(pid)
+    if p.get("pro"):                    # montage pro: the script was approved before the search; back to the stock
+        from adaptation import montage_pro
+        return montage_pro.back_to_stock(pid)
     if not (p["status"] == "error" and p.get("failed_step") in ("voicing", "rendering")):   # a failed render too
         _expect(p, "preview_review")
     if any(t.get("video_id") for t in p["targets"]):
@@ -2348,7 +2368,7 @@ def run_final(pid: str, report: Optional[Report] = None):
     try:
         todo = [t for t in p["targets"] if t["validated"] and not t.get("video_id")]
         for i, t in enumerate(todo):
-            made = _make(p, t, False, report, 1 / len(todo), i / len(todo))
+            made = t["preview"] if p.get("pro") else _make(p, t, False, report, 1 / len(todo), i / len(todo))
             if not made["checks"]["ok"]:
                 raise PipelineError(f"{t['channel']} : " + " ".join(made["checks"]["problems"]))
             dest = os.path.join("processed_videos", f"{t['channel']}_{pid}.mp4")
@@ -2357,7 +2377,8 @@ def run_final(pid: str, report: Optional[Report] = None):
             rec = publication_record(p, t, dest)
             try:                        # the common shape (recette.py), the Adaptation's own one inside
                 import recette
-                rec["recette"] = recette.from_adaptation(made.get("recette") or {}, t.get("music_path"))
+                rec["recette"] = made["recette"] if p.get("pro") else \
+                    recette.from_adaptation(made.get("recette") or {}, t.get("music_path"))
             except Exception:
                 rec["recette"] = made.get("recette")
             thumb = _thumbnail(made, dest)
@@ -2390,7 +2411,11 @@ def _reprise(p: Dict):
 
 
 def runner_for(pid: str, step: str) -> Callable:
-    rp = _reprise(load(pid))
+    p = load(pid)
+    rp = _reprise(p)
+    if p.get("pro") and step in ("fetching", "voicing"):     # montage pro: the stock, then voice + edit + render
+        from adaptation import montage_pro
+        return {"fetching": montage_pro.run_stock, "voicing": montage_pro.run_montage}[step]
     return (rp.RUNNERS if rp else RUNNERS)[step]
 
 

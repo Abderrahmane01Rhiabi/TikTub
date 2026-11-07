@@ -46,6 +46,8 @@ STYLES = {
              "key": "#00E5FF", "words": ["#00E5FF", "#FF3DF5", "#B6FF3B"], "text": "#FFFFFF", "outline": "#000000"},
     "or": {"label": "Or", "box": (16, 22, 40, 245), "border": (232, 190, 92, 255), "head": "white",
            "key": "#F2C94C", "words": ["#F2C94C", "#F2994A", "#FFFFFF"], "text": "#FFFFFF", "outline": "#101828"},
+    "actu": {"label": "Actu (bande rouge en haut)", "box": (200, 36, 36, 255), "border": (200, 36, 36, 255), "head": "white",
+             "key": "#FFE500", "words": ["#FFE500", "#FFE500", "#FFE500"], "text": "#FFFFFF", "outline": "#000000"},
     "clair": {"label": "Clair", "box": (255, 255, 255, 245), "border": (20, 20, 20, 255), "head": "#111111",
               "key": "#2563EB", "words": ["#60A5FA", "#F472B6", "#34D399"], "text": "#FFFFFF", "outline": "#0B1220"},
 }

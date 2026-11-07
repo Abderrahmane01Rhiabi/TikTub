@@ -8,10 +8,12 @@ const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']]
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_REPRISE = [['Short', ['analysing', 'cleaning', 'cleaning_review']], ['Script', ['scripting', 'script_review']],
                           ['Réglages', ['settings_review']], ['Aperçu', ['voicing', 'cleaning_wait', 'preview_review']], ['Rendu', ['rendering', 'done']]];
+const AD_STEPS_PRO = [['Idée', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'fetching', 'stock_review']],
+                      ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_DISCOURS = [['Discours', ['analysing']], ['Passage', ['passage_review']], ['Plans', ['searching', 'plans_review']],
                            ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STATUS = { passage_review: 'passage à choisir', plans_review: 'plans à vérifier', cleaning: 'nettoyage (carte graphique)…', cleaning_review: 'nettoyage à vérifier', analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
-  script_review: 'scripts à relire', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
+  script_review: 'scripts à relire', stock_review: 'stock de plans à vérifier', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
 async function openAdaptation(){
@@ -41,8 +43,8 @@ async function loadAdaptationList(){
 }
 document.getElementById('adNewBtn').addEventListener('click', () => { adCurrent = ''; clearTimeout(adPoll); loadAdaptationList(); });
 
-function adStepsHtml(status, mode, idea){
-  const steps = (mode === 'reprise' ? AD_STEPS_REPRISE : mode === 'discours' ? AD_STEPS_DISCOURS : mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS).map(([l, sts], i) => [i === 0 && idea ? 'Idée' : l, sts]);
+function adStepsHtml(status, mode, idea, pro){
+  const steps = (pro ? AD_STEPS_PRO : mode === 'reprise' ? AD_STEPS_REPRISE : mode === 'discours' ? AD_STEPS_DISCOURS : mode === 'script' ? AD_STEPS_SCRIPT : AD_STEPS).map(([l, sts], i) => [i === 0 && idea ? 'Idée' : l, sts]);
   const at = steps.findIndex(([, sts]) => sts.includes(status));
   return `<div class="ad-steps">${steps.map(([l], i) =>
     `<div class="ad-step ${i < at || status === 'done' ? 'done' : i === at ? 'active' : ''}"><div class="bar"></div><div class="lbl">${i + 1} · ${l}</div></div>`).join('')}</div>`;
@@ -159,7 +161,7 @@ async function loadAdProject(){
         `<button class="ad-vtab ${m.project_id === p.project_id ? 'on' : ''}" data-id="${m.project_id}">
           <b>${esc(m.channels.map(ch => (channels.find(c => c.name === ch) || {}).display_name || ch).join(', '))}</b>
           <span>${esc(m.angle || '')}</span><i>${esc(AD_STATUS[m.status] || m.status)}</i></button>`).join('')}</div>` : ''}`;
-    stage.innerHTML = adStepsHtml(p.status, p.mode, p.idee) + head + (p.mode === 'reprise' ? '<div id="rpLane"></div>' : '')
+    stage.innerHTML = adStepsHtml(p.status, p.mode, p.idee, p.pro) + head + (p.mode === 'reprise' ? '<div id="rpLane"></div>' : '')
       + '<div id="adBody" class="stack"></div>';
     if (p.mode === 'reprise') rpLaneKey = '';
     hydrateIcons(stage);
@@ -208,6 +210,7 @@ async function loadAdProject(){
     else if (p.mode === 'discours' && renderDiscours(body, p)) { /* discours.js */ }
     else if (p.status === 'sources_search') renderAdSearch(body, p);
     else if (p.status === 'plan_review') renderAdPlan(body, p);
+    else if (p.status === 'stock_review') renderAdStock(body, p);
     else if (p.status === 'images_review') renderAdImages(body, p);
     else if (p.status === 'sources_review') renderAdSources(body, p);
     else if (p.status === 'script_review') renderAdScripts(body, p);
@@ -222,7 +225,9 @@ async function loadAdProject(){
 
 function adBusyHtml(p){
   const pct = Math.round(((p.progress && p.progress.fraction) || 0) * 100);
-  const label = p.mode === 'discours' && p.status === 'voicing' ? 'montage des vidéos…'
+  const label = p.pro && p.status === 'fetching' ? 'téléchargement et découpage des sources…'
+    : p.pro && p.status === 'voicing' ? 'voix, montage et rendu…'
+    : p.mode === 'discours' && p.status === 'voicing' ? 'montage des vidéos…'
     : p.mode === 'discours' && p.status === 'searching' ? 'plans de coupe et sous-titres…' : AD_STATUS[p.status];
   return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${spin('')} ${esc(label)}</div>
       <div class="meta" style="margin-left:0">${esc((p.progress && p.progress.phase) || 'préparation…')} — tu peux changer d'écran, ça continue.</div></div>
@@ -692,6 +697,8 @@ function renderAdPlan(body, p){
         <input class="f" id="adAngleCustom" placeholder="Décris ton angle (ex. le test honnête, ça vaut le coup ?)" style="display:none;flex:1;min-width:220px">
         <button class="btn secondary small" id="adAngleGo" data-icon="refresh" title="Le storyboard est réécrit avec cet angle (environ 1 minute)">Réécrire avec cet angle</button></div>
     </div></article>` : '') + `<article class="chcard"><div class="chcard-body">${p.idee ? adFactsHtml(p.reference || {}) : ''}<div class="tiny">
+      ${p.pro && p.recit ? `<div style="margin-bottom:6px"><span class="pill ok">Style de récit : ${esc(p.recit_label)}</span>
+        <span class="tiny">choisi par l'IA parmi les styles de la chaîne, pour ce sujet</span></div>` : ''}
       ${icon('sparkle', 12)} Le script est écrit <b>avant</b> les images, pour garder les gens jusqu'à la fin :
       <b>accroche</b> (2-3 s) → <b>promesse</b> → <b>montée</b> → <b>réponse</b>. Pour chaque phrase, <b>🎬 l'image voulue</b> sera cherchée ensuite :
       elle est <b>commune à toutes les langues</b>, la modifier demande de revalider chaque langue.
@@ -707,7 +714,7 @@ function renderAdPlan(body, p){
         ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
       <div class="chcard-body">
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
-        <label class="f">Titre</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
+        <label class="f">Titre YouTube</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
         <div>${sc.passages.map((ps, i) => { const pl = sb.plans[i] || {}; return `
           <div class="ad-passage ad-plan" data-i="${i}">
             <div class="ad-plan-side"><b>${i + 1}</b><span class="pill ${pl.role === 'accroche' || pl.role === 'reponse' ? 'ok' : 'wait'}">${esc(AD_ROLE[pl.role] || pl.role || '')}</span>
@@ -716,9 +723,13 @@ function renderAdPlan(body, p){
             <div class="fields">
               <label class="tiny">🎬 Image voulue (commune à toutes les langues)</label>
               <textarea class="f sc-image" rows="2" style="min-height:40px;font-size:12.5px">${esc(pl.image || '')}</textarea>
+              <label class="tiny">Bandeau (texte en haut de l'écran)</label>
               <input class="f sc-banner" ${dir} value="${esc(ps.bandeau)}" placeholder="Bandeau">
+              <label class="tiny">Texte de la voix</label>
               <textarea class="f sc-text" ${dir}>${esc(ps.texte)}</textarea>
+              <label class="tiny">Mots en couleur dans les sous-titres</label>
               <input class="f sc-keys" ${dir} value="${esc((ps.mots_cles || []).join(', '))}" placeholder="Mots en couleur, séparés par des virgules" style="font-size:12px">
+              <label class="tiny">Flèche ou cercle sur l'image</label>
               ${adAnnHtml(pl.annotation)}
             </div>
           </div>`; }).join('')}</div>
@@ -1110,12 +1121,14 @@ async function renderAdPreviews(body, p){
               <button class="btn secondary small pv-revoice">Refaire avec cette voix</button></div>
             ${cur && cur.has_preview ? `<audio class="pv-sample" controls preload="none" src="${cur.preview_url}" style="width:100%;height:32px;margin-top:6px"></audio>` : ''}</div>
           ${t.music ? `<div class="tiny">Musique : ${esc(t.music)}</div>` : '<div class="tiny">Sans musique (Réglages → Voix pour en choisir une).</div>'}
+          ${p.pro ? `<div class="tiny">Montage pro : ${t.montage_plans || '?'} plans${p.recit ? ` · récit « ${esc(p.recit_label)} »` : ''}</div>` : ''}
+          ${(t.corrections || []).map(c => `<div class="tiny">✎ ${esc(c)}</div>`).join('')}
         </div>
       </div></div>
       <div class="chcard-foot">${t.video_id ? '' : `<button class="btn primary small push pv-validate" data-icon="check" ${ok && !t.validated ? '' : 'disabled'}>Valider cet aperçu</button>`}</div>
     </article>`;
   }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} aperçu(s) validé(s)</span>
-      ${p.targets.some(t => t.video_id) ? '<span></span>' : '<button class="btn ghost small" id="adBackScript" data-icon="eye" title="Changer un clip, une phrase, un effet : la voix est gardée si les phrases ne changent pas">← Revenir au script</button>'}
+      ${p.targets.some(t => t.video_id) ? '<span></span>' : p.pro ? '<button class="btn ghost small" id="adBackScript" data-icon="eye" title="Garder ou retirer des plans, puis refaire le montage (la voix est gardée)">← Revenir au stock</button>' : '<button class="btn ghost small" id="adBackScript" data-icon="eye" title="Changer un clip, une phrase, un effet : la voix est gardée si les phrases ne changent pas">← Revenir au script</button>'}
       <button class="btn primary" id="adRender" ${anyValidated ? '' : 'disabled'} data-icon="film">Rendu final des aperçus validés →</button></div>`;
   hydrateIcons(body);
   const backScript = document.getElementById('adBackScript');
@@ -1153,4 +1166,45 @@ function renderAdDone(body, p){
     </div><div class="chcard-foot"><button class="btn primary push" id="adToPub" data-icon="rocket">Aller à Publication →</button></div></article>`;
   hydrateIcons(body);
   document.getElementById('adToPub').onclick = () => openSpace('publication');
+}
+
+// ---------- Montage pro (« Idée d'abord ») : the stock of shots, reviewed before the edit ----------
+
+function renderAdStock(body, p){
+  const stock = p.stock || [];
+  const kept = stock.filter(s => s.garde).length;
+  const bySource = {};
+  stock.forEach(s => { (bySource[s.source] = bySource[s.source] || []).push(s); });
+  body.innerHTML = `<article class="chcard"><div class="chcard-body"><div class="tiny">
+      ${icon('sparkle', 12)} L'app a téléchargé les meilleures vidéos trouvées (seulement leurs bons moments), les a découpées en
+      <b>${stock.length} plans</b> et les a décrits. Le <b>monteur IA</b> choisira parmi les plans <b>gardés</b> : 2-3 coupes par phrase,
+      l'image la plus forte en accroche, jamais deux fois le même plan. Clique sur un plan pour le retirer ou le remettre ;
+      ceux marqués <i>hors sujet</i> ont été écartés tout seuls.</div></div></article>` +
+    Object.keys(bySource).map(k => {
+      const shots = bySource[k], first = shots[0];
+      return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name" style="font-size:13px">
+          ${esc((first.titre_source || '').slice(0, 90))}</div><div class="meta" style="margin-left:0">${esc(first.credit || '')} ·
+          ${shots.filter(s => s.garde).length}/${shots.length} gardés${first.url ? ` · <a href="${esc(first.url)}" target="_blank" rel="noopener">voir la source ↗</a>` : ''}</div></div></div>
+        <div class="chcard-body"><div class="pro-stock">${shots.map(s => `
+          <button class="pro-shot ${s.garde ? 'on' : 'off'}" data-sid="${s.id}" title="${esc(s.desc || '')}">
+            <img src="${s.thumb_url}" alt="" loading="lazy">
+            <span class="pro-badges"><b>${s.force ?? '?'}</b>${s.probleme ? '<i>⚠</i>' : ''}${s.ecarte ? `<i>${esc(s.ecarte)}</i>` : ''}</span>
+            <span class="pro-desc">${esc(s.desc || '')}</span>
+          </button>`).join('')}</div></div></article>`;
+    }).join('') +
+    `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
+      <button class="btn primary" id="adMontage" ${kept >= 6 ? '' : 'disabled'} data-icon="film" title="Voix, montage et rendu : quelques minutes">Monter la vidéo →</button></div>`;
+  hydrateIcons(body);
+  body.querySelectorAll('.pro-shot').forEach(b => b.onclick = async () => {
+    const s = stock.find(x => x.id === b.dataset.sid);
+    try { const np = await api(`/api/adaptations/${p.project_id}/stock/${s.id}`, { method:'POST', body: JSON.stringify({ garder: !s.garde }) });
+          adProject = np; renderAdStock(body, np); }
+    catch (e){ log(e.message, 'error'); }
+  });
+  const go = document.getElementById('adMontage');
+  if (go) go.onclick = async () => {
+    go.disabled = true;
+    try { await api(`/api/adaptations/${p.project_id}/stock-approve`, { method:'POST' }); adProject = null; loadAdProject(); }
+    catch (e){ log(e.message, 'error'); go.disabled = false; }
+  };
 }

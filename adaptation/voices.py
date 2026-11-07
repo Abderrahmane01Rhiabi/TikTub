@@ -13,7 +13,8 @@ from typing import Dict, List, Optional
 import requests
 
 API = "https://api.elevenlabs.io"
-MODEL = "eleven_multilingual_v2"
+MODEL = "eleven_v4"                     # every voiced channel by default (user's call, 2026-11-07)
+FALLBACK = "eleven_multilingual_v2"     # what a refused model falls back to
 
 
 class VoiceError(RuntimeError):
@@ -80,8 +81,8 @@ def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str
                       timeout=300, json={"text": text, "model_id": model, "language_code": lang_code.split("-")[0],
                                          "voice_settings": {"stability": 0.5, "similarity_boost": 0.8,
                                                             "style": 0.15, "speed": 1.0}})
-    if r.status_code != 200 and model != MODEL and 400 <= r.status_code < 500:     # a newer model refused: the usual one
-        return synthesize(passages, voice_id, lang_code, out_mp3)
+    if r.status_code != 200 and model != FALLBACK and 400 <= r.status_code < 500:  # a model refused: the older one
+        return synthesize(passages, voice_id, lang_code, out_mp3, model=FALLBACK)
     if r.status_code != 200:
         raise VoiceError(f"ElevenLabs HTTP {r.status_code} : {r.text[:300]}")
     d = r.json()

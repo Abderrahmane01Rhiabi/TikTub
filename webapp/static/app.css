@@ -742,3 +742,13 @@
 .rp-wrise{stroke:var(--ok);stroke-width:2;stroke-dasharray:4 3}
 .rp-cand{fill:var(--muted);cursor:pointer}
 .rp-cand:hover,.rp-cand.on{fill:var(--accent)}
+
+/* montage pro: the stock of shots */
+.pro-stock{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:8px;}
+.pro-shot{position:relative;padding:0;border:2px solid var(--ok,#22c55e);border-radius:8px;overflow:hidden;background:#000;cursor:pointer;text-align:left;}
+.pro-shot img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;}
+.pro-shot.off{border-color:transparent;opacity:.38;}
+.pro-shot.off img{filter:grayscale(1);}
+.pro-badges{position:absolute;top:4px;left:4px;display:flex;gap:4px;font-size:11px;}
+.pro-badges b,.pro-badges i{background:rgba(0,0,0,.72);color:#fff;border-radius:4px;padding:1px 5px;font-style:normal;}
+.pro-desc{display:block;font-size:10.5px;line-height:1.25;color:var(--muted,#aaa);padding:4px 6px;max-height:40px;overflow:hidden;background:var(--card,#16181d);}

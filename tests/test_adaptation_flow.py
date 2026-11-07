@@ -111,7 +111,7 @@ def test_full_project_from_link_to_publication(project, fakes):
     ap.start_voices(p["project_id"])
     ap.run_voices(p["project_id"])
     p = ap.load(p["project_id"])
-    assert p["status"] == "preview_review" and fakes["synth"] == 2 and fakes["model"] == "eleven_multilingual_v2"
+    assert p["status"] == "preview_review" and fakes["synth"] == 2 and fakes["model"] == "eleven_v4"   # v4 by default (2026-11-07)
 
     ap.validate_preview(p["project_id"], "chanA")
     ap.start_render(p["project_id"])

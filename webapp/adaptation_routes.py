@@ -190,6 +190,21 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "voice_model": t.get("voice_model"),
         })
     base["targets"] = targets
+    if p.get("pro"):                    # montage pro (« Idée d'abord »): the narrative style, the stock of shots
+        from adaptation import montage_pro
+        base["pro"] = True
+        base["recit"] = p.get("recit")
+        base["recit_label"] = (p.get("recit") or "").replace("_", " ")
+        for x, t in zip(targets, p.get("targets") or []):
+            x["corrections"] = t.get("corrections") or []
+            x["montage_plans"] = len((t.get("preview") or {}).get("montage") or [])
+        if full and p.get("stock"):
+            used = {e["plan"] for t in p["targets"] for e in (t.get("preview") or {}).get("montage") or []}
+            base["stock"] = [{k: s.get(k) for k in ("id", "source", "desc", "montre", "force", "pertinence",
+                                                    "probleme", "garde", "ecarte", "credit", "titre_source", "url")}
+                             | {"duree": round(s["end"] - s["start"], 1), "utilise": s["id"] in used,
+                                "thumb_url": f"/api/adaptations/{p['project_id']}/stock/{s['id']}/thumb"}
+                             for s in p["stock"]]
     if p.get("mode") == "reprise":
         base["reprise"] = _serialize_reprise(p, targets)
     if p.get("mode") == "discours":
@@ -885,6 +900,38 @@ def validate_adaptation_preview(pid: str, channel: TargetChannel):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     return _serialize_adaptation(_adaptation_call(ap.validate_preview, pid, channel))
+
+
+# ---- montage pro: the stock of shots (« Idée d'abord »)
+
+@router.get("/api/adaptations/{pid}/stock/{sid}/thumb")
+def adaptation_stock_thumb(pid: str, sid: str):
+    p = _adaptation_or_404(pid)
+    shot = next((s for s in p.get("stock") or [] if s["id"] == sid), None)
+    if not shot or not os.path.exists(shot.get("thumb") or ""):
+        raise HTTPException(status_code=404, detail="Image introuvable")
+    return FileResponse(shot["thumb"], media_type="image/jpeg")
+
+
+class AdaptationShot(BaseModel):
+    garder: bool
+
+
+@router.post("/api/adaptations/{pid}/stock/{sid}")
+def keep_adaptation_shot(pid: str, sid: str, req: AdaptationShot):
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(montage_pro.set_shot, pid, sid, req.garder))
+
+
+@router.post("/api/adaptations/{pid}/stock-approve")
+def approve_adaptation_stock(pid: str):
+    """The stock reviewed: voice, edit and render (a few minutes)."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    p = _adaptation_call(montage_pro.approve_stock, pid)
+    _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
 
 
 @router.post("/api/adaptations/{pid}/render")

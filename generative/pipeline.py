@@ -259,7 +259,7 @@ class GenerativePipeline:
                 video["script_text"],
                 voice_id=voice,
                 out_mp3_path=narration_path,
-                model_id=profile.get("tts_model_id", "eleven_v3"),
+                model_id=profile.get("tts_model_id") or "eleven_v4",
             )
             with open(words_path, "w", encoding="utf-8") as f:
                 json.dump(words, f)

@@ -23,8 +23,7 @@ PREVIEWS_DIR = "assets/voices"
 # channel's identity, the person's choice for his channels); None: the subject's tone, said by the analysis
 DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique", "ton": None,
             "voice_model": None}
-# the ElevenLabs models a person may choose (Réglages, the project's Aperçu); None: each mode's own (Adaptation
-# eleven_multilingual_v2, Reprise and Roblox eleven_v4)
+# the ElevenLabs models a person may choose (Réglages, the project's Aperçu); None: eleven_v4 in every mode
 VOICE_MODELS = ("eleven_v4", "eleven_v3", "eleven_multilingual_v2", "eleven_flash_v2_5")
 
 
