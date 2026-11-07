@@ -44,7 +44,7 @@ def fakes(monkeypatch, tmp_path):
         open(out, "wb").write(b"x")
         return {"images": 2100, "relues": 0}
     monkeypatch.setattr(reprise, "clean", clean)
-    monkeypatch.setattr(rm, "write_script", lambda ref, codes: json.loads(json.dumps(SCRIPT)))
+    monkeypatch.setattr(rm, "write_script", lambda ref, codes, **kw: json.loads(json.dumps(SCRIPT)))
 
     def voice(script, code, voice_id, mp3, model=rm.MODEL):
         calls["voices"].append((code, voice_id, model))

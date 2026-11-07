@@ -124,7 +124,9 @@ ni la fin du modele.
 """
 
 
-def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None, angle: Optional[Dict] = None) -> Dict:
+def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None, angle: Optional[Dict] = None,
+          recit: Optional[str] = None) -> Dict:
+    """recit: the narrative style's rule (adaptation/recits.py), it wins over the general rules."""
     lang = lang_of(lang_code)
     plans = " | ".join(f"[{p.get('role')}] {p.get('visuel')} -> \"{p.get('paroles')}\"" for p in reference.get("plans", []))
     prompt = PROMPT.format(langue=lang["label"], sujet=reference.get("sujet"), question=reference.get("question"),
@@ -132,7 +134,8 @@ def write(reference: Dict, clips: Dict[str, Dict], lang_code: str, gemini=None, 
                            douteux="; ".join(reference.get("faits_douteux") or []) or "aucun",
                            pub=reference.get("publicite") or "aucune",
                            clips=clip_listing(clips), regles=LANG_RULES.get(lang["code"], LANG_RULES["fr"]),
-                           cps=lang["chars_per_second"], angle=ANGLE_PART.format(**angle) if angle else "")
+                           cps=lang["chars_per_second"],
+                           angle=(recit or "") + (ANGLE_PART.format(**angle) if angle else ""))
     r = (gemini or _gemini())._generate_content([{"text": prompt}], max_tokens=16000, timeout=180, temperature=0.6)
     return normalise(r, clips)
 

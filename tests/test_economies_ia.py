@@ -68,8 +68,8 @@ def test_the_second_round_judges_only_the_plans_the_fix_changed(project, monkeyp
     p = ap.create("https://youtube.com/shorts/x", [], [channel(project, "chanA", "fr", "v_fr")], mode="script")
     p["reference"] = {"sujet": "trams", "question": "?", "plans": [{}]}
     ap.save(p)
-    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None: sb.normalise(json.loads(json.dumps(GOOD)), codes))
-    monkeypatch.setattr(sb, "critique", lambda b, codes: b)
+    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None, **kw: sb.normalise(json.loads(json.dumps(GOOD)), codes))
+    monkeypatch.setattr(sb, "critique", lambda b, codes, **kw: b)
     judged = []
 
     def match(sc, clips, code, gemini=None, stills=None):

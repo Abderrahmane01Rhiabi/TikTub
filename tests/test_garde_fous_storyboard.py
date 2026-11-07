@@ -24,7 +24,7 @@ def total(b, code="fr"):
 
 
 def test_a_storyboard_too_long_is_asked_with_a_length_per_plan_then_once_more_firmly(project, fakes, monkeypatch):
-    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None: long_bundle(codes))
+    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None, **kw: long_bundle(codes))
     asked = []
 
     def revise(b, codes, request):
@@ -46,7 +46,7 @@ def test_a_storyboard_too_long_is_asked_with_a_length_per_plan_then_once_more_fi
 
 
 def test_still_too_long_after_the_firm_request_the_best_is_kept_and_the_warning_stays(project, fakes, monkeypatch):
-    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None: long_bundle(codes))
+    monkeypatch.setattr(sb, "write", lambda ref, codes, angle=None, **kw: long_bundle(codes))
     asked = []
     monkeypatch.setattr(sb, "revise", lambda b, codes, request: asked.append(request) or json.loads(json.dumps(b)))
     p = new_project(project)
@@ -104,12 +104,12 @@ def test_what_a_good_fix_does_is_not_refused():
 
 
 def test_a_lost_number_is_sent_to_the_automatic_fix_once(project, fakes, monkeypatch):
-    def write(ref, codes, angle=None):
+    def write(ref, codes, angle=None, **kw):
         b = json.loads(json.dumps(GOOD))
         b["plans"][2]["textes"]["fr"]["texte"] = "Quarante tonnes d'acier freinent sur 120 mètres sous la pluie."
         return sb.normalise(b, codes)
 
-    def critique(b, codes):
+    def critique(b, codes, **kw):
         out = json.loads(json.dumps(b))
         out["plans"][2]["textes"]["fr"]["texte"] = "Quarante tonnes d'acier freinent sur 100 mètres sous la pluie."
         return {**out, "corrections": ["relu"]}

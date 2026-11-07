@@ -47,39 +47,9 @@ BANNER_MARGIN = 250
 MUSIC_GAIN = 0.12
 WHOOSH = "assets/sfx/whoosh_little_2.mp3"
 
-# The narrative styles a channel may use: its family is chosen by its look (« actu » = a news channel)
-RECITS = {
-    "actualite": {
-        "news": "NEWS : la phrase 1 dit QUI + QUOI + OU tout de suite (jamais une question sans le sujet) ; puis dans "
-                "l'ordre : quand et quoi exactement, pourquoi, ce qui est concerne et ce qui ne l'est pas, la suite.",
-        "decryptage": "DECRYPTAGE : la nouvelle en une phrase (qui, quoi, ou), puis ce qu'elle change concretement et "
-                      "pourquoi c'est important ; la fin dit la consequence principale.",
-        "vrai_faux": "VRAI OU FAUX : part d'une affirmation qui circule sur le sujet, puis les faits verifies un par "
-                     "un, et le verdict clair a la fin (vrai, faux, ou en partie).",
-        "pour_les_gens": "CE QUE CA CHANGE POUR LES GENS : la nouvelle en une phrase, puis ses effets concrets sur la vie "
-                         "de tous les jours (prix, transport, ecole...), la fin dit ce qu'il faut retenir.",
-    },
-    "explicatif": {
-        "mystere": "MYSTERE / REVELATION : une accroche intrigante, des indices qui avancent, la revelation a la fin.",
-        "fait_surprenant": "FAIT SURPRENANT : le fait peu connu des la 1re phrase, puis pourquoi il est vrai, preuve par preuve.",
-        "origine": "ORIGINE : d'ou vient la chose (objet, invention, habitude), raconte dans l'ordre jusqu'a aujourd'hui.",
-        "explication": "EXPLICATION : le phenomene montre, puis comment il marche etape par etape, la fin resume en une phrase.",
-    },
-}
-
-RECIT_PART = """STYLE DE RECIT IMPOSE (il prime sur les regles generales quand elles different) : {regle}
-L'accroche (plan 1) tient en 2 a 3 secondes de voix et NOMME le sujet. Ton {ton}.
-
-"""
-
-CHOOSE_PROMPT = """Sujet d'un YouTube Short : {sujet}
-Question : {question}
-Faits : {faits}
-Styles de recit possibles pour cette chaine :
-{styles}
-Deja utilises recemment (a eviter si un autre convient aussi bien) : {recents}
-Choisis le style qui raconte le MIEUX ce sujet avec ces faits.
-JSON uniquement : {{"style": "nom", "pourquoi": "une phrase"}}"""
+# The narrative styles: the app's one catalogue (adaptation/recits.py), each family's rules by style name
+from adaptation import recits as _recits
+RECITS = {f: {k: v[2] for k, v in x["styles"].items()} for f, x in _recits.FAMILLES.items()}
 
 DESCRIBE = """Tu es monteur video. Voici {n} images, une par plan de rushs (dans l'ordre, ids : {ids}).
 Sujet du Short a monter : {sujet}
@@ -162,35 +132,17 @@ def pro_dir(pid: str) -> str:
 # ---------------------------------------------------------------- narrative style
 
 def family(style: Optional[str]) -> str:
-    return "actualite" if style == "actu" else "explicatif"
+    return _recits.default_family(style)
 
 
 def recent_recits(channel: str, n: int = 3) -> List[str]:
-    """The narrative styles of the channel's last montage-pro videos (newest first)."""
-    import db
-    out = []
-    for v in db.query_videos(channel=channel):
-        r = (((v.get("recette") or {}).get("style") or {}).get("recit"))
-        if r:
-            out.append((v.get("added_at") or "", r))
-    return [r for _, r in sorted(out, reverse=True)[:n]]
+    return _recits.recent(channel, n)
 
 
-def choose_recit(reference: Dict, style: Optional[str], recents: List[str], gemini=None) -> str:
-    """The style of the family that tells this subject best, not one of the last ones when another fits."""
-    fam = RECITS[family(style)]
-    try:
-        r = (gemini or _gemini())._generate_content([{"text": CHOOSE_PROMPT.format(
-            sujet=reference.get("sujet"), question=reference.get("question"),
-            faits="; ".join(reference.get("faits") or [])[:1500],
-            styles="\n".join(f"- {k} : {v}" for k, v in fam.items()), recents=", ".join(recents) or "aucun")}],
-            max_tokens=800, timeout=60, temperature=0.3)
-        name = str((r or {}).get("style") or "").strip()
-    except Exception:
-        name = ""
-    if name not in fam:
-        name = next((k for k in fam if k not in recents), next(iter(fam)))
-    return name
+def choose_recit(reference: Dict, style: Optional[str], recents: List[str], gemini=None,
+                 famille: Optional[str] = None, exclus: Optional[List[str]] = None) -> str:
+    """The style of the channel's family (else the one its look says) that tells this subject best."""
+    return _recits.choose(reference, famille or family(style), exclus, recents, gemini=gemini)
 
 
 DIALECT_PART = {"darija": """LANGUE DE LA VOIX (arabe, cette regle REMPLACE la regle "arabe standard" donnee plus
@@ -211,10 +163,8 @@ def dialect_part(targets: List[Dict]) -> str:
     return next((DIALECT_PART[d] for d in (dialect(t) for t in targets) if d in DIALECT_PART), "")
 
 
-def recit_part(name: str, style: Optional[str]) -> str:
-    regle = RECITS[family(style)].get(name) or next(iter(RECITS[family(style)].values()))
-    return RECIT_PART.format(regle=regle, ton="factuel et neutre (information)" if family(style) == "actualite"
-                             else "pose et intrigant")
+def recit_part(name: str, style: Optional[str] = None) -> str:
+    return _recits.part(name)
 
 
 # ---------------------------------------------------------------- 1. the stock
@@ -871,7 +821,8 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
         voix={"id": t.get("voice_id"), "modele": v.get("model"), "choisie_par": t.get("voice_by") or "principale",
               "pourquoi": t.get("voice_why"), "manieres": [m or "normale" for m in t.get("manieres") or []],
               "manieres_par": t.get("manieres_by")},
-        style={"visuel": t.get("style"), "montage": "pro", "recit": p.get("recit"),
+        style={"visuel": t.get("style"), "montage": "pro", "recit": p.get("recit"), "famille_recit": p.get("famille_recit"),
+               "recit_par": p.get("recit_par"),
                "dialecte": dialect(t) or ("fusha" if t["language"] == "ar" else None),
                "sous_titres": {"type": "mot par mot, mot dit en couleur", **{k: made["captions"][k] for k in
                                ("position", "y", "taille", "police", "mots_par_ligne", "mot_dit")}},

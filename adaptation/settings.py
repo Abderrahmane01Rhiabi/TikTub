@@ -23,7 +23,7 @@ PREVIEWS_DIR = "assets/voices"
 # channel's identity, the person's choice for his channels); None: the subject's tone, said by the analysis
 DEFAULTS = {"voice_id": None, "music_file": None, "music_start": 0.0, "style": "classique", "ton": None,
             "voice_model": None, "dialecte": None, "musique_categories": [], "musique_sans_paroles": False,
-            "voix_permises": [], "voix_mode": "auto"}
+            "voix_permises": [], "voix_mode": "auto", "famille_recit": None, "styles_exclus": []}
 # an Arabic channel's spoken dialect: its voice and captions in it, its title/description/tags kept in Modern
 # Standard Arabic (what people type in the search) — montage pro only for now
 DIALECTS = {"darija": "darija marocaine"}
@@ -97,6 +97,10 @@ def channel_settings(profile: Optional[Dict]) -> Dict:
     out["musique_sans_paroles"] = bool(raw.get("musique_sans_paroles"))
     out["voix_permises"] = [str(v) for v in raw.get("voix_permises") or [] if isinstance(v, str) and v.strip()]
     out["voix_mode"] = raw.get("voix_mode") if raw.get("voix_mode") in ("auto", "principale") else "auto"
+    from adaptation import recits
+    out["famille_recit"] = raw.get("famille_recit") if raw.get("famille_recit") in recits.FAMILLES \
+        else recits.default_family(out["style"])
+    out["styles_exclus"] = [x for x in raw.get("styles_exclus") or [] if recits.find(x)]
     return out
 
 
@@ -134,6 +138,12 @@ def clean_update(update: Dict) -> Dict:
         out["voix_permises"] = [str(v).strip() for v in dict.fromkeys(update["voix_permises"] or []) if str(v).strip()]
     if "voix_mode" in update:
         out["voix_mode"] = update["voix_mode"] if update["voix_mode"] in ("auto", "principale") else "auto"
+    if "famille_recit" in update:
+        from adaptation import recits
+        out["famille_recit"] = update["famille_recit"] if update["famille_recit"] in recits.FAMILLES else None
+    if "styles_exclus" in update:
+        from adaptation import recits
+        out["styles_exclus"] = [x for x in dict.fromkeys(update["styles_exclus"] or []) if recits.find(x)]
     return out
 
 

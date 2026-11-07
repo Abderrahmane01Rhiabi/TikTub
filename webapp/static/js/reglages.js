@@ -452,6 +452,14 @@ function renderAdaptationChannel(card, ch, data){
       <div class="tiny">Pour chaque vidéo « Idée d'abord », l'IA prend la musique qui colle à l'ambiance, parmi tes musiques classées ; tu peux la changer à l'aperçu.</div>
     </div>
     <div class="chcard-body">
+      <label class="f">Famille de récit (comment ses vidéos racontent)</label>
+      <select class="f ad-famille" style="width:auto">${Object.entries(data.familles || {}).map(([k, f]) =>
+        `<option value="${k}" ${k === s.famille_recit ? 'selected' : ''}>${esc(f.label)}</option>`).join('')}</select>
+      <div class="mc-chips ad-styles">${Object.entries(((data.familles || {})[s.famille_recit] || {}).styles || {}).map(([k, l]) =>
+        `<button class="mc-chip ${(s.styles_exclus || []).includes(k) ? '' : 'on'}" data-style="${k}">${esc(l)}</button>`).join('')}</div>
+      <div class="tiny">Pour chaque vidéo, l'IA choisit le style qui raconte le mieux le sujet parmi ceux allumés (pas un des 3 derniers si un autre convient) ; tu le changes à l'écran du script. Idée d'abord, Script d'abord, Sources d'abord et Reprise.</div>
+    </div>
+    <div class="chcard-body">
       <label class="f">Style visuel (bandeaux et sous-titres de toutes ses vidéos Adaptation)</label>
       <select class="f ad-style" style="width:auto">${(data.styles || []).map(st => `<option value="${st.name}" ${st.name === s.style ? 'selected' : ''}>${esc(st.label)}</option>`).join('')}</select>
       <img class="ad-style-prev" src="/api/adaptation/styles/${s.style}/preview?lang=${s.language}" alt="" style="width:100%;max-width:540px;border-radius:8px;display:block">
@@ -475,6 +483,11 @@ function renderAdaptationChannel(card, ch, data){
   card.querySelector('.ad-lang').onchange = e => save({ language: e.target.value, settings: { voice_id: null } });
   card.querySelector('.ad-voice').onchange = e => save({ settings: { voice_id: e.target.value || null } });
   card.querySelector('.ad-model').onchange = e => save({ settings: { voice_model: e.target.value || null } });
+  card.querySelector('.ad-famille').onchange = e => save({ settings: { famille_recit: e.target.value, styles_exclus: [] } });
+  card.querySelectorAll('.ad-styles .mc-chip').forEach(b => b.onclick = () => {
+    b.classList.toggle('on');
+    save({ settings: { styles_exclus: [...card.querySelectorAll('.ad-styles .mc-chip:not(.on)')].map(x => x.dataset.style) } });
+  });
   card.querySelectorAll('.ad-allowed input').forEach(cb => cb.onchange = () =>
     save({ settings: { voix_permises: [...card.querySelectorAll('.ad-allowed input:checked')].map(x => x.value) } }));
   card.querySelector('.ad-vmode').onchange = e => save({ settings: { voix_mode: e.target.value } });

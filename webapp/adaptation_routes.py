@@ -57,6 +57,8 @@ def _adaptation_channel_payload(channel_name: str) -> dict:
             "youtube_category": str(profile.get("youtube_category") or "24"), "categories": CATEGORIES, "voices": [_main()._serialize_voice(v) for v in ad.voices_for(s["language"])],
             "voice_models": list(ad.VOICE_MODELS), "dialects": ad.DIALECTS,
             "music_categories": __import__("adaptation.musique_casting", fromlist=["CATEGORIES"]).CATEGORIES,
+            "familles": {f: {"label": x["label"], "styles": {k: v[0] for k, v in x["styles"].items()}}
+                         for f, x in __import__("adaptation.recits", fromlist=["FAMILLES"]).FAMILLES.items()},
             "styles": [{"name": k, "label": v["label"]} for k, v in STYLES.items()]}
 
 
@@ -191,11 +193,17 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "voice_model": t.get("voice_model"),
         })
     base["targets"] = targets
-    if p.get("pro"):                    # montage pro (« Idée d'abord »): the narrative style, the stock of shots
+    if p.get("recit"):                  # the narrative style (adaptation/recits.py), changeable on the script screen
+        from adaptation import recits
+        base["recit"], base["recit_label"] = p["recit"], recits.label(p["recit"])
+        base["famille_recit"], base["recit_par"] = p.get("famille_recit") or recits.find(p["recit"]), p.get("recit_par")
+        fam = base["famille_recit"] or "explicatif"
+        excl = recits.channel_rules(p["targets"][0]["channel"])["exclus"] if p.get("targets") else []
+        base["styles_dispo"] = {k: v[0] for k, v in recits.allowed(fam, excl).items()}
+        base["famille_label"] = recits.FAMILLES.get(fam, {}).get("label")
+    if p.get("pro"):                    # montage pro (« Idée d'abord »): the stock of shots, the casting
         from adaptation import montage_pro
         base["pro"] = True
-        base["recit"] = p.get("recit")
-        base["recit_label"] = (p.get("recit") or "").replace("_", " ")
         for x, t in zip(targets, p.get("targets") or []):
             x["corrections"] = t.get("corrections") or []
             x["montage_plans"] = len((t.get("preview") or {}).get("montage") or [])
@@ -599,6 +607,20 @@ def change_adaptation_angle(pid: str, req: AdaptationAngle):
 
 class AdaptationNewVersion(BaseModel):
     channel: str
+
+
+class AdaptationRecit(BaseModel):
+    style: str
+
+
+@router.post("/api/adaptations/{pid}/recit")
+def change_adaptation_recit(pid: str, req: AdaptationRecit):
+    """Another narrative style: the storyboard is written again in it (about a minute)."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    p = _adaptation_call(ap.change_recit, pid, req.style)
+    _start_adaptation_step(pid, "analysing")
+    return _serialize_adaptation(p)
 
 
 @router.post("/api/adaptations/{pid}/targets/{channel}/angle")

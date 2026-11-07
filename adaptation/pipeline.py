@@ -212,6 +212,17 @@ def change_angle(pid: str, index: Optional[int] = None, custom: Optional[str] = 
     return save(p)
 
 
+def change_recit(pid: str, name: str) -> Dict:
+    """Another narrative style, chosen by the person on the script screen: the storyboard is written again (background)."""
+    from adaptation import recits
+    p = load(pid)
+    _expect(p, "plan_review")
+    if not recits.find(name):
+        raise PipelineError("Style de récit inconnu.")
+    p.update(recit=name, recit_par="toi", famille_recit=recits.find(name), status="analysing")
+    return save(p)
+
+
 def fail(pid: str, step: str, err: Exception):
     p = load(pid)
     p.update(status="error", error=str(err)[:500], failed_step=step)
@@ -440,16 +451,17 @@ def _plan_number(message: str) -> int:
 
 def write_storyboard(p: Dict, report: Report):
     codes = _codes(p)
-    recit = None
-    if p.get("pro"):                    # montage pro: the channel's narrative style that tells this subject best
+    # the narrative style (adaptation/recits.py): the channel's family, the AI picks the style that tells this subject
+    # best (or the person did, on this screen); a montage pro also gets its spoken dialect
+    from adaptation import recits
+    if not p.get("recit"):
+        report("choix du style de récit", 0.3)
+        recits.for_project(p)
+        save(p)
+    recit = recits.part(p["recit"])
+    if p.get("pro"):
         from adaptation import montage_pro
-        look = p["targets"][0].get("style")
-        if not p.get("recit"):
-            report("choix du style de récit", 0.3)
-            p["recit"] = montage_pro.choose_recit(p["reference"], look,
-                                                  montage_pro.recent_recits(p["targets"][0]["channel"]))
-            save(p)
-        recit = montage_pro.recit_part(p["recit"], look) + montage_pro.dialect_part(p["targets"])
+        recit += montage_pro.dialect_part(p["targets"])
     report("écriture du storyboard" + (f" : « {p['angle']['titre']} »" if p.get("angle") else ""), 0.35)
     pro = {"recit": recit} if recit else {}           # only a montage pro passes a narrative style
     b = storyboard.write(p["reference"], codes, angle=p.get("angle"), **pro)
@@ -1722,13 +1734,18 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
             for i, t in enumerate(p["targets"]):
                 t.setdefault("angle", p["angles"][i % len(p["angles"])])
             save(p)
+        from adaptation import recits       # the narrative style of the channel's family (once per project)
+        if not p.get("recit"):
+            recits.for_project(p)
+            save(p)
+        recit = recits.part(p["recit"])
         todo = [t for t in p["targets"] if only is None or t["channel"] == only]
         n = len(todo)
 
         def one(i, t):                  # every channel's script at the same time
             label = langs.lang(t["language"])["label"]
             report(f"script {label}" + (f" : « {t['angle']['titre']} »" if t.get("angle") else ""), (i + 0.1) / n)
-            sc = script.write(p["reference"], clips, t["language"], angle=t.get("angle"))
+            sc = script.write(p["reference"], clips, t["language"], angle=t.get("angle"), **({"recit": recit} if recit else {}))
             report(f"relecture {label}", (i + 0.6) / n)
             sc = script.critique(sc, t["language"], clips)
             seen = annotate.review(sc["passages"], p["clips"], os.path.join(project_dir(pid), "work", t["channel"]))
@@ -2053,6 +2070,7 @@ def _recipe(p: Dict, t: Dict, rendered: Dict) -> Dict:
     return {
         "projet": p["project_id"], "mode": "idee" if p.get("idee") else p.get("mode") or "sources", "angle": (t.get("angle") or p.get("angle") or {}).get("titre"),
         "inspire_de": p.get("remake_of"), "idee": p.get("idee"), "ton": _tone(p, t), "ton_de_la_chaine": bool(_channel_tone(t)),
+        "recit": p.get("recit"), "famille_recit": p.get("famille_recit"), "recit_par": p.get("recit_par"),
         "langue": t["language"], "chaine": t["channel"], "voix": t.get("voice_id"), "style": rendered.get("style"),
         "musique": {"fichier": os.path.basename(t.get("music_path") or "") or None, "debut_s": t.get("music_start"),
                     "pourquoi": t.get("music_why"), "tempo": rendered.get("tempo_musique"),

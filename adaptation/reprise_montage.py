@@ -104,7 +104,8 @@ def youtube_of(y, short: str) -> Dict:
     return {"titre": title, "description": str(y.get("description") or title).strip(), "tags": tags[:15]}
 
 
-def write_script(analyse: Dict, codes: List[str], gemini=None) -> Dict:
+def write_script(analyse: Dict, codes: List[str], gemini=None, recit: Optional[str] = None) -> Dict:
+    """recit: the channel's narrative style (adaptation/recits.py) — its tone and its hook, the model's top or story kept."""
     from adaptation.sources import _gemini
     g = gemini or _gemini()
     plans = analyse.get("plans") or []
@@ -115,6 +116,9 @@ def write_script(analyse: Dict, codes: List[str], gemini=None) -> Dict:
                                               f"{WPS.get(c, (2.0, 2.5))[1]} mots par seconde" for c in codes),
                            cles=", ".join(f'"{c}": "..."' for c in codes),
                            cles_youtube=", ".join(f'"{c}": {{"titre": "", "description": "", "tags": [""]}}' for c in codes))
+    if recit:
+        prompt += ("\n" + recit + "Garde le genre du Short (un top reste un top, une histoire une histoire) : le style "
+                   "donne le ton, l'accroche et la facon de raconter.")
     for _ in range(3):
         r = check_script(g._generate_content([{"text": prompt}], max_tokens=8000, timeout=180, temperature=0.6),
                          len(plans), codes)

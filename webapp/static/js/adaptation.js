@@ -697,8 +697,12 @@ function renderAdPlan(body, p){
         <input class="f" id="adAngleCustom" placeholder="Décris ton angle (ex. le test honnête, ça vaut le coup ?)" style="display:none;flex:1;min-width:220px">
         <button class="btn secondary small" id="adAngleGo" data-icon="refresh" title="Le storyboard est réécrit avec cet angle (environ 1 minute)">Réécrire avec cet angle</button></div>
     </div></article>` : '') + `<article class="chcard"><div class="chcard-body">${p.idee ? adFactsHtml(p.reference || {}) : ''}<div class="tiny">
-      ${p.pro && p.recit ? `<div style="margin-bottom:6px"><span class="pill ok">Style de récit : ${esc(p.recit_label)}</span>
-        <span class="tiny">choisi par l'IA parmi les styles de la chaîne, pour ce sujet</span></div>` : ''}
+      ${p.recit ? `<div class="ad-row" style="margin-bottom:6px;align-items:center">
+        <span class="pill ok">${esc(p.famille_label || '')} · ${esc(p.recit_label)}</span>
+        <span class="tiny">${p.recit_par === 'toi' ? 'ton choix' : 'choisi par l\'IA parmi les styles de la chaîne, pour ce sujet'}</span>
+        <select class="f" id="adRecit" style="width:auto">${Object.entries(p.styles_dispo || {}).map(([k, l]) =>
+          `<option value="${k}" ${k === p.recit ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+        <button class="btn secondary small" id="adRecitGo" data-icon="refresh" title="Le script est réécrit dans ce style (environ 1 minute)">Réécrire dans ce style</button></div>` : ''}
       ${icon('sparkle', 12)} Le script est écrit <b>avant</b> les images, pour garder les gens jusqu'à la fin :
       <b>accroche</b> (2-3 s) → <b>promesse</b> → <b>montée</b> → <b>réponse</b>. Pour chaque phrase, <b>🎬 l'image voulue</b> sera cherchée ensuite :
       elle est <b>commune à toutes les langues</b>, la modifier demande de revalider chaque langue.
@@ -760,6 +764,12 @@ function renderAdPlan(body, p){
         texte: row.querySelector('.sc-text').value, annotation: adAnnOf(row),
         mots_cles: row.querySelector('.sc-keys').value.split(',').map(x => x.trim()).filter(Boolean) })) });
     const refresh = np => { adProject = np; renderAdPlan(body, np); };
+    const rgo = document.getElementById('adRecitGo');
+    if (rgo && !rgo.dataset.bound){ rgo.dataset.bound = '1'; rgo.onclick = async () => {
+      rgo.disabled = true;
+      try { await api(`/api/adaptations/${p.project_id}/recit`, { method:'POST', body: JSON.stringify({ style: document.getElementById('adRecit').value }) });
+            adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); rgo.disabled = false; }
+    }; }
     const cast = async body2 => {
       try { refresh(await api(`/api/adaptations/${p.project_id}/targets/${ch}/casting`, { method:'PUT', body: JSON.stringify(body2) })); }
       catch (e){ log(e.message, 'error'); }

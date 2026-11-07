@@ -319,7 +319,11 @@ def run_scripts(pid: str, report: Optional[Report] = None, only: Optional[str] =
     try:
         report("écriture du script", 0.1)
         ref = {**(p.get("reference") or {}), "plans": p["reprise"]["plans"]}
-        p["reprise"]["script"] = rm.write_script(ref, _codes(p))
+        from adaptation import recits       # the channel's narrative style (once per project)
+        if not p.get("recit"):
+            recits.for_project(p)
+            ap.save(p)
+        p["reprise"]["script"] = rm.write_script(ref, _codes(p), **({"recit": recits.part(p["recit"])} if p.get("recit") else {}))
         p["reprise"]["musique"] = None               # its parts may differ: the song's rise placed again
         for t in p["targets"]:
             t.update(approved=False, validated=False, voice=None, preview=None)
@@ -811,7 +815,8 @@ def publication_record(p: Dict, t: Dict, path: str) -> Dict:
     return {"video_id": vid, "batch_id": p["project_id"], "channel": t["channel"], "url": p["reference_url"],
             "status": "ready_for_upload", "priority": "normal", "source": "adaptation",
             "adaptation_project": p["project_id"], "original_title": title, "video_path": path, "ai_data": ai,
-            "recette": {"type": "adaptation", "mode": "reprise", "son": son_for(p, t),
+            "recette": {"type": "adaptation", "mode": "reprise", "son": son_for(p, t), "recit": p.get("recit"),
+                        "famille_recit": p.get("famille_recit"),
                         "musique": (p["reprise"].get("musique") or {}).get("fichier") if son_for(p, t) == "intelligente" else None,
                         "voix": t["voice_id"], "modele_voix": model_for(t)},
             "added_at": now, "updated_at": now}

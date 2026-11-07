@@ -54,7 +54,7 @@ def fakes(monkeypatch):
         calls["analysed"].append(i)
         return [dict(c) for c in CLIPS.values() if c["source"] == i]
     monkeypatch.setattr(sources, "analyse_source", analyse_source)
-    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: json.loads(json.dumps(SCRIPT)))
+    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None, **kw: json.loads(json.dumps(SCRIPT)))
     monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "corrections": ["fin complète"]})
 
     def synth(passages, voice_id, lang, out, model=voices.MODEL):
@@ -458,7 +458,7 @@ def test_sources_first_versions_give_each_channel_its_angle_on_the_same_clips(pr
     from adaptation import script, storyboard
     monkeypatch.setattr(storyboard, "angles", lambda ref, n=3, avoid=None: [{"titre": f"Angle {k}", "idee": "i"} for k in range(n)])
     seen = []
-    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None: seen.append((lang, (angle or {}).get("titre")))
+    monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None, **kw: seen.append((lang, (angle or {}).get("titre")))
                         or json.loads(json.dumps(SCRIPT)))
     p = ap.create("https://youtube.com/shorts/x", ["https://tiktok.com/a", "https://tiktok.com/b"],
                   [channel(project), channel(project, "chanB", "ar", "v_ar")], versions=True)
