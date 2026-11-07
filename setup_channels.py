@@ -211,7 +211,7 @@ def migrate_single_channel(manager: ChannelManager):
     print("\n🔄 MIGRATE SINGLE-CHANNEL SETUP")
     print("=" * 40)
     print("ℹ️ Plus de migration automatique vers une chaîne « default ».")
-    print("   Ajoute la chaîne depuis l'app : Réglages → Connexion → « Ajouter une chaîne »")
+    print("   Ajoute la chaîne depuis l'app : Réglages → Chaînes → « Ajouter une chaîne »")
     print("   (dépose le credentials.json de la racine comme « nouveau projet »).")
     return
 

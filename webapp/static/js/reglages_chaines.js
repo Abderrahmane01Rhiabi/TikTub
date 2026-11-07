@@ -128,6 +128,7 @@ async function renderChannelPage(ch){
           <div class="tiny">Aucune ambiance allumée = toutes. Les musiques et leurs catégories : Bibliothèques → Musiques.</div>
           <label class="f">Musique de la chaîne (Adaptation, Sources et Script d'abord)</label>
           <select class="f ad-music"><option value="">— aucune —</option>${d.music_files.map(f => `<option ${f === s.music_file ? 'selected' : ''}>${esc(f)}</option>`).join('')}</select>
+          ${d.music_files.length ? '' : '<div class="tiny">Aucun morceau propre à la chaîne : c\'est normal. En « Idée d\'abord », l\'IA choisit dans Bibliothèques → Musiques. Pour un morceau fixe, ajoute-le dans Avancé → Montage auto → Ajouter.</div>'}
           ${s.music_file ? `<audio class="ad-audio" controls preload="none" src="${musicUrl(s.music_file)}" style="width:100%;height:32px"></audio>
             <div class="entry-row"><input class="f ad-start" type="number" min="0" step="0.5" value="${s.music_start}"><span class="tiny">s : départ (${fmtSec(s.music_start)})</span>
             <button class="btn secondary small ad-take">Prendre l'instant du lecteur</button></div>` : ''}

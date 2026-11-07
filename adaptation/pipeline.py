@@ -113,7 +113,7 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
     for c in channels:
         s = settings.channel_settings(c["profile"])
         if not s["voice_id"] and mode != "discours":        # a Discours keeps the speaker's voice
-            raise PipelineError(f"La chaîne {c['channel']} n'a pas de voix : choisis-en une dans Réglages → Voix.")
+            raise PipelineError(f"La chaîne {c['channel']} n'a pas de voix : choisis-en une dans Réglages → Chaînes (section Voix).")
         music = os.path.join(c["music_dir"], s["music_file"]) if s["music_file"] else None
         t = {"channel": c["channel"], "language": s["language"], "voice_id": s["voice_id"],
              "music_path": music if music and os.path.exists(music) else None,
@@ -2322,7 +2322,7 @@ def change_voice(pid: str, channel: str, voice_id: str) -> Dict:
         return rp.change_voice(pid, channel, voice_id)
     _expect(p, "preview_review")
     if not db.get_voice(voice_id):
-        raise PipelineError("Cette voix n'est pas dans la bibliothèque (Réglages → Voix).")
+        raise PipelineError("Cette voix n'est pas dans la bibliothèque (Réglages → Bibliothèques → Voix).")
     t = target(p, channel)
     t.update(voice_id=voice_id, voice=None, validated=False)
     if p.get("pro"):                    # the voice casting: the person's choice, kept

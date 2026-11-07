@@ -88,7 +88,7 @@ def connection_state(channel: str, state: str, reason: Optional[str] = None):
     key = f"connection:{channel}"
     if state == "expired":
         raise_alert(key, "connection", f"{_display(channel)} : connexion YouTube expirée",
-                    "Plus rien ne peut être publié sur cette chaîne — reconnecte-la dans Réglages → Connexion."
+                    "Plus rien ne peut être publié sur cette chaîne — reconnecte-la dans Réglages → Chaînes (sa page)."
                     + (f" ({reason})" if reason else ""), channel)
     elif state == "connected":
         resolve(key)

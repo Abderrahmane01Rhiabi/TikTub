@@ -32,7 +32,7 @@ function dsSoundPicker(son, chanson){
     <div class="ds-song" style="display:${son === 'choisie' ? 'flex' : 'none'};gap:8px;align-items:center;margin-top:4px">
       <select class="f ds-chanson" style="width:auto;max-width:320px">${songs.map(s =>
         `<option value="${esc(s.fichier)}" data-url="${s.url}" ${s.fichier === chanson ? 'selected' : ''}>${esc((s.analyse || {}).titre || s.fichier)}${(s.analyse || {}).humeur ? ' — ' + esc(s.analyse.humeur) : ''}</option>`).join('')
-        || '<option value="">aucune musique (Réglages → Voix → Musiques)</option>'}</select>
+        || '<option value="">aucune musique (Réglages → Bibliothèques → Musiques)</option>'}</select>
       <audio class="ds-song-play" controls preload="none" style="height:32px" src="${songs.length ? (songs.find(s => s.fichier === chanson) || songs[0]).url : ''}"></audio></div>`;
 }
 

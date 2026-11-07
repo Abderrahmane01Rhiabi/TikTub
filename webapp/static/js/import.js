@@ -463,7 +463,7 @@ function montageStyleHtml(v){
         <option value="">Autre style…</option>${v.caption_library.map(x =>
           `<option value="${esc(x.id)}" ${x.id === s.caption_style ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select>` : ''}</div>
     <div class="mstyle-row"><span>Musique</span>${segHtml('ms-vol', MONTAGE_VOLUME_LABELS, s.volume)}
-      <span class="tiny">${s.music_file ? `${esc(s.music_file)} · à ${fmtSec(s.music_entry)}` : 'aucune (Réglages → Montage)'}</span></div>
+      <span class="tiny">${s.music_file ? `${esc(s.music_file)} · à ${fmtSec(s.music_entry)}` : 'aucune (Réglages → Chaînes → Avancé → Montage auto)'}</span></div>
     ${custom ? '<div class="mstyle-row"><span></span><button class="btn ghost small ms-reset">↺ Revenir au style de la chaîne</button></div>' : ''}
   </div>`;
 }

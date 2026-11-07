@@ -783,7 +783,7 @@ def authenticate_youtube(channel_name=None, interactive=True):
     # Check if credentials file exists
     if not os.path.exists(credentials_file):
         print(f"❌ Credentials not found for channel '{channel_name}': {credentials_file}")
-        print("Ajoute la chaîne depuis l'app : Réglages → Connexion → « Ajouter une chaîne »")
+        print("Ajoute la chaîne depuis l'app : Réglages → Chaînes → « Ajouter une chaîne »")
         return None
         
     creds = None
@@ -813,8 +813,10 @@ def authenticate_youtube(channel_name=None, interactive=True):
 # Tags that say nothing about a video: YouTube matches tags to searches, and nobody searches "viral"
 GENERIC_TAGS = {"viral", "trending", "tiktok", "fyp", "foryou", "foryoupage", "entertainment", "explore"}
 # The YouTube categories a channel can pick (Réglages → Adaptation, its card) — 24 when it picked none
-CATEGORIES = {"24": "Divertissement", "27": "Éducation", "20": "Jeux vidéo", "23": "Humour",
-              "22": "Personnes et blogs", "1": "Films et animation", "10": "Musique"}
+CATEGORIES = {"24": "Divertissement", "25": "Actualités et politique", "27": "Éducation", "28": "Science et technologie",
+              "20": "Jeux vidéo", "23": "Humour", "17": "Sport", "15": "Animaux", "26": "Vie pratique et style",
+              "19": "Voyages et événements", "2": "Auto et véhicules", "22": "Personnes et blogs",
+              "1": "Films et animation", "10": "Musique"}
 # videos whose voice we made, in the channel's language — an imported clip's speech is unknown
 VOICED_SOURCES = ("adaptation", "roblox", "generated")
 
@@ -1280,8 +1282,8 @@ def upload_channel_schedule(channel_name: str, auto_confirm: bool = True, on_res
     health = get_connection_health(channel_name)
     if health["state"] != "connected":
         messages = {
-            "expired": "Connexion YouTube expirée — reconnecte la chaîne dans ⚙️ Réglages → Connexion.",
-            "not_connected": "Chaîne jamais connectée — connecte-la dans ⚙️ Réglages → Connexion.",
+            "expired": "Connexion YouTube expirée — reconnecte la chaîne dans ⚙️ Réglages → Chaînes (sa page).",
+            "not_connected": "Chaîne jamais connectée — connecte-la dans ⚙️ Réglages → Chaînes (sa page).",
             "missing_credentials": "Pas de credentials.json pour cette chaîne.",
         }
         results.extend(skip_all(videos_to_upload, messages.get(health["state"], f"Connexion impossible : {health['reason']}")))

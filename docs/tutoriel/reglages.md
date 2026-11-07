@@ -1,6 +1,6 @@
 # Tutoriel — Les Réglages
 
-> À jour au 7 novembre 2026. Ce guide est mis à jour à chaque changement des Réglages.
+> À jour au 8 novembre 2026. Ce guide est mis à jour à chaque changement des Réglages.
 
 Les Réglages sont rangés en **3 espaces**, en haut de l'écran Réglages :
 
@@ -45,7 +45,7 @@ Chaque section ci-dessous règle **un morceau** de cette ligne.
 - **Nom affiché dans l'app** : le nom que tu vois partout dans TikTub.
 - **Langue** : celle de ses titres **et** de sa voix. La changer enlève la voix principale (il faut en choisir une dans la nouvelle langue).
 - **Arabe parlé** *(chaînes arabes seulement)* : *arabe standard (fusha)* ou *darija marocaine*. En darija, la voix et les sous-titres sont en darija ; le titre, la description et les tags restent en fusha, parce que c'est ce que les gens tapent dans la recherche.
-- **Catégorie YouTube** : envoyée à YouTube avec chaque vidéo publiée (Divertissement, Éducation, Actualités…).
+- **Catégorie YouTube** : envoyée à YouTube avec chaque vidéo publiée. Au choix : Divertissement, Actualités et politique, Éducation, Science et technologie, Jeux vidéo, Humour, Sport, Animaux, Vie pratique et style, Voyages et événements, Auto et véhicules, Personnes et blogs, Films et animation, Musique.
 
 ### 1.3 Récit — comment ses vidéos racontent
 
@@ -91,6 +91,7 @@ Pour ajouter une voix : **Bibliothèques → Voix**.
 - **Les ambiances permises** : allume les ambiances qui conviennent à la chaîne (Actu, Tension, Calme, Épique, Triste…). **Aucune allumée = toutes.**
 - **Seulement des musiques sans paroles** : coche-la pour qu'aucune voix ne chante sous la narration.
 - **Musique de la chaîne** : le morceau fixe utilisé par Adaptation, Sources d'abord et Script d'abord, avec l'instant de départ (« Prendre l'instant du lecteur » prend l'endroit où tu as mis le lecteur en pause).
+  Le menu est vide (« — aucune — ») quand la chaîne n'a **pas de morceau à elle** : c'est normal. En Idée d'abord, l'IA choisit dans **Bibliothèques → Musiques** ; pour un morceau fixe, ajoute-le dans **Avancé → Montage auto → Ajouter**.
 
 **Ce qui se passe ensuite** *(Idée d'abord)* : pour chaque vidéo, l'IA prend la musique qui colle à l'ambiance, parmi tes musiques classées et permises. À l'aperçu, le menu **Musique** et **« Refaire avec cette musique »** la changent ; la voix et les coupes sont gardées, seul le rendu est refait (environ 1 minute).
 

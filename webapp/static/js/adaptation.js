@@ -89,10 +89,10 @@ async function renderNewAdaptation(){
           const d = settingsByChannel[ch.name], s = d && d.settings, v = d && d.voices.find(x => x.voice_id === s.voice_id);
           return `<label class="switch" style="color:var(--text)"><input type="checkbox" class="ad-target" value="${ch.name}" data-voice="${v ? 1 : 0}" ${v ? '' : 'disabled'}>
             <span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}
-            <span class="tiny">${s ? esc(voiceLanguages[s.language] || s.language) : ''} · ${v ? esc(v.display_name) : 'pas de voix (Réglages → Voix)'}</span></label>`;
+            <span class="tiny">${s ? esc(voiceLanguages[s.language] || s.language) : ''} · ${v ? esc(v.display_name) : 'pas de voix (Réglages → Chaînes)'}</span></label>`;
         }).join('')}</div>
       </div>
-      <div class="chcard-foot"><button class="btn ghost small" id="adToVoices" data-icon="mic">Réglages → Voix</button>
+      <div class="chcard-foot"><button class="btn ghost small" id="adToVoices" data-icon="mic">Réglages → Chaînes</button>
         <button class="btn primary push" id="adCreate" data-icon="globe">Analyser →</button></div>
     </article>`;
   hydrateIcons(stage);
@@ -147,7 +147,7 @@ async function loadAdProject(){
   if (statusMoved) api('/api/adaptations').then(renderAdChips).catch(() => {});   // keep the project chips' status current
   if (changed){
     const toneSel = ['reprise', 'discours'].includes(p.mode) ? '' : p.ton_chaine
-      ? `<span class="tiny" title="Réglé pour la chaîne dans Réglages → Voix : même musique et même style à chaque vidéo">Ton : ${esc((p.tons.find(o => o.ton === p.ton_chaine) || {}).label || p.ton_chaine)} (celui de la chaîne)</span>`
+      ? `<span class="tiny" title="Réglé pour la chaîne dans Réglages → Chaînes (section Look) : même musique et même style à chaque vidéo">Ton : ${esc((p.tons.find(o => o.ton === p.ton_chaine) || {}).label || p.ton_chaine)} (celui de la chaîne)</span>`
       : p.reference && !AD_BUSY.includes(p.status)
       ? `<label class="tiny" title="Le ton règle la musique, la quantité d'effets et les sons (au prochain aperçu)" style="display:flex;gap:6px;align-items:center">Ton
           <select class="f" id="adTone" style="width:auto;padding:4px 8px;font-size:12px">${p.ton ? '' : '<option value="">à deviner</option>'}
@@ -187,7 +187,7 @@ async function loadAdProject(){
       box.innerHTML = free.length ? `<div class="ad-row" style="margin:8px 0">Pour quelle chaîne ?
           <select class="f" id="adNvChannel" style="width:auto">${free.map(c => `<option value="${c.name}">${esc(c.display_name)}</option>`).join('')}</select>
           <button class="btn primary small" id="adNvGo">Créer la version (nouvel angle)</button></div>`
-        : '<div class="tiny" style="margin:8px 0">Toutes tes chaînes avec une voix ont déjà leur version (Réglages → Voix pour en régler une autre).</div>';
+        : '<div class="tiny" style="margin:8px 0">Toutes tes chaînes avec une voix ont déjà leur version (Réglages → Chaînes pour en régler une autre).</div>';
       const go = document.getElementById('adNvGo');
       if (go) go.onclick = async () => {
         go.disabled = true;
@@ -1142,7 +1142,7 @@ async function renderAdPreviews(body, p){
             <div class="ad-row"><select class="f pv-voice">${vs.map(v => `<option value="${v.voice_id}" ${v.voice_id === t.voice_id ? 'selected' : ''}>${esc(voiceLabel(v))}</option>`).join('')}</select>
               <button class="btn secondary small pv-revoice">Refaire avec cette voix</button></div>
             ${cur && cur.has_preview ? `<audio class="pv-sample" controls preload="none" src="${cur.preview_url}" style="width:100%;height:32px;margin-top:6px"></audio>` : ''}</div>
-          ${t.music ? `<div class="tiny">Musique : ${esc(t.music)}</div>` : '<div class="tiny">Sans musique (Réglages → Voix pour en choisir une).</div>'}
+          ${t.music ? `<div class="tiny">Musique : ${esc(t.music)}</div>` : '<div class="tiny">Sans musique (Réglages → Chaînes → section Musique).</div>'}
           ${p.pro ? `<div class="tiny">Montage pro : ${t.montage_plans || '?'} plans${p.recit ? ` · récit « ${esc(p.recit_label)} »` : ''}</div>` : ''}
           ${p.pro && t.musiques ? `<div><label class="f">Musique ${t.music_by === 'toi' ? '(ton choix)' : '(choisie par l\'IA)'}</label>
             <div class="ad-row"><select class="f pv-music">

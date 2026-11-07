@@ -451,7 +451,7 @@ def set_settings(pid: str, s: Dict) -> Dict:
         t = ap.target(p, ch)
         if v.get("voice_id"):
             if not db.get_voice(v["voice_id"]):
-                raise RepriseError("Cette voix n'est pas dans la bibliothèque (Réglages → Voix).")
+                raise RepriseError("Cette voix n'est pas dans la bibliothèque (Réglages → Bibliothèques → Voix).")
             t["voice_id"] = v["voice_id"]
         if v.get("model"):
             if v["model"] not in settings.VOICE_MODELS:
@@ -752,7 +752,7 @@ def change_voice(pid: str, channel: str, voice_id: Optional[str] = None, model: 
     t = ap.target(p, channel)
     if voice_id:
         if not db.get_voice(voice_id):
-            raise RepriseError("Cette voix n'est pas dans la bibliothèque (Réglages → Voix).")
+            raise RepriseError("Cette voix n'est pas dans la bibliothèque (Réglages → Bibliothèques → Voix).")
         t["voice_id"] = voice_id
     if model:
         if model not in settings.VOICE_MODELS:
@@ -957,7 +957,7 @@ def demo_voice(p: Dict, channel: str, voice_id: Optional[str] = None, model: Opt
         and (model or model_for(t)) == (v.get("key") or [None, None])[1]
     src = v["mp3"] if made else settings.preview_path(voice_id)
     if not os.path.exists(src):
-        raise RepriseError("Pas d'extrait pour cette voix (Réglages → Voix).")
+        raise RepriseError("Pas d'extrait pour cette voix (Réglages → Bibliothèques → Voix).")
     out = os.path.join(work_dir(p, "demo"), f"voix_{_key(src, os.path.getmtime(src), os.path.getmtime(mixage.__file__))}.wav")
     if not os.path.exists(out):
         cut = out + ".cut.wav"

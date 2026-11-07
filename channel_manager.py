@@ -63,7 +63,7 @@ class ChannelManager:
             os.path.exists("credentials.json") or os.path.exists("token.json")
         ):
             print("ℹ️ credentials.json à la racine ignoré : ajoute la chaîne depuis l'app "
-                  "(Réglages → Connexion → « Ajouter une chaîne »).")
+                  "(Réglages → Chaînes → « Ajouter une chaîne »).")
 
     def get_config(self) -> Dict:
         """Load channel configuration"""
