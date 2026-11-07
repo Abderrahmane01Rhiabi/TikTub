@@ -112,6 +112,8 @@ def test_arabic_captions_keep_their_reading_order_and_one_fixed_place(tmp_path):
     assert all("\\an2\\pos(540," in l for l in lines)                    # one fixed place: never pushed up
     assert all(l.split(",,", 1)[1].count("{\\c") == l.count(" ") - l.split(",,", 1)[0].count(" ") + 1 for l in lines)
     assert "🍅" not in text and "أزمة طماطم" in text                     # no emoji in the banner (libass)
+    banners = [l for l in text.splitlines() if ",Bandeau," in l]
+    assert all("\\an8\\pos(540," in l for l in banners)               # the banner too: one fixed place
     assert info["bandeau"] == {"couleur": "#C82424", "place": "haut", "taille": 78}
 
 
@@ -165,3 +167,12 @@ def test_the_recipe_keeps_what_makes_a_montage_pro(project):
     assert rec["style"]["recit"] == "news" and rec["style"]["bandeau"]["couleur"] == "#C82424"
     assert rec["style"]["sous_titres"]["position"] == "bas-centre, fixe" and rec["style"]["sous_titres"]["taille"] == 96
     assert rec["details"]["structure"]["coupes_par_phrase"] == 1.5
+
+
+def test_a_shot_starts_past_the_source_s_blurred_transition(monkeypatch):
+    blur = {2.8: 20.0, 3.1: 13.0, 3.5: 180.0, 3.9: 240.0}
+    monkeypatch.setattr(mp, "sharpness", lambda path, at: blur.get(round(at, 1), 250.0))
+
+    assert mp.sharp_start({"file": "x", "start": 2.7, "end": 5.4}, 1.4) == pytest.approx(3.5)
+    monkeypatch.setattr(mp, "sharpness", lambda path, at: 250.0)
+    assert mp.sharp_start({"file": "x", "start": 2.7, "end": 5.4}, 1.4) == 2.7      # sharp from the start: kept

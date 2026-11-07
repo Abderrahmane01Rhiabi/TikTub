@@ -537,10 +537,13 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
         f"Style: Sous,{font},96,{white},{white},&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,7,3,2,70,70,0,{enc}",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     ev, words = [], v["words"]
-    for vp, sp in zip(v["passages"], passages):
+    nexts = [x["start"] for x in v["passages"][1:]] + [None]
+    for vp, sp, nxt in zip(v["passages"], passages, nexts):
         text = banner_text(sp.get("bandeau") or "")
-        if text:
-            ev.append(f"Dialogue: 0,{_ass_time(vp['start'])},{_ass_time(vp['end'] + 0.25)},Bandeau,,0,0,0,,{up(text)}")
+        if text:                        # until the next sentence starts, at one place: never two banners stacked
+            end = nxt if nxt is not None else vp["end"] + 0.25
+            ev.append(f"Dialogue: 0,{_ass_time(vp['start'])},{_ass_time(end)},Bandeau,,0,0,0,,"
+                      f"{{\\an8\\pos({W // 2},{BANNER_MARGIN})}}{up(text)}")
         idx = vp["words"]
         groups = [idx[i:i + 3] for i in range(0, len(idx), 3)]
         for gi, g in enumerate(groups):
@@ -558,11 +561,44 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
                                                  "taille": 78}}
 
 
+def sharpness(path: str, at: float) -> float:
+    """How sharp the picture is at this second (variance of the Laplacian; ~250 sharp, ~15 a blurred transition)."""
+    import cv2
+    cap = cv2.VideoCapture(path)
+    try:
+        cap.set(cv2.CAP_PROP_POS_MSEC, max(0.0, at) * 1000)
+        ok, frame = cap.read()
+        return float(cv2.Laplacian(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), cv2.CV_64F).var()) if ok else 0.0
+    finally:
+        cap.release()
+
+
+def sharp_start(s: Dict, need: float) -> float:
+    """Where the shot really starts: past the source's own blurred transition (the scene detection misses a
+    blur or a fade — El Guerguerat's and Cariane's hooks opened on one), keeping room for `need` seconds."""
+    a, b = s["start"], s["end"]
+    times = [a + d for d in (0.1, 0.4, 0.8, 1.2) if a + d < b - 0.3]
+    if len(times) < 2:
+        return a
+    try:
+        scores = [sharpness(s["file"], t) for t in times] + [sharpness(s["file"], (a + b) / 2)]
+    except Exception:
+        return a
+    best = max(scores)
+    for t, v in zip(times, scores):
+        if v >= 0.4 * best:
+            return t if t > a + 0.15 else a
+    return a
+
+
 def _piece(e: Dict, s: Dict, out: str) -> str:
     """One shot of the edit: cut from its source, cropped to 9:16 around its subject, a slow push-in, no sound."""
     need = max(0.2, e["fin"] - e["debut"])
     dur_src, w, h = _probe(s["file"])
-    start = min(s["start"], max(0.0, dur_src - need - 0.05))
+    # past a blurred transition, then a little inside the shot: its first frames are often the source's own cut
+    first = sharp_start(s, need)
+    start = first + min(0.4, max(0.0, (s["end"] - first - need) / 2))
+    start = min(start, max(0.0, dur_src - need - 0.05))
     cw = min(w, int(round(h * 9 / 16)) // 2 * 2)
     cx = min(max(0, int(round((s.get("x") or 0.5) * w - cw / 2))), w - cw)
     frames = max(1, round(need * FPS))
