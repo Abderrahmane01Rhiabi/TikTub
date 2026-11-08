@@ -228,6 +228,9 @@ def test_the_screen_is_in_reglages():
     html = open(os.path.join(static, "index.html"), encoding="utf-8").read()
     core = open(os.path.join(static, "js", "core.js"), encoding="utf-8").read()
     js = open(os.path.join(static, "js", "reglages.js"), encoding="utf-8").read()
-    assert 'data-idx="15"' in html and 'data-i="15" data-space="settings">Modèles d\'IA' in html
-    assert "15: [() => loadAiModels()" in core and "settings: [0, 1, 11, 12, 13, 14, 16, 17, 15, 8, 9]" in core
+    # Réglages in 3 spaces (2026-11-07): the models are a tab of « App »
+    assert 'data-idx="20"' in html and 'data-tab="ia">Modèles d\'IA' in html and 'id="aiModelsView"' in html
+    assert "settings: [18, 19, 20]" in core and "20: [() => loadAppSettings()" in core
+    chaines = open(os.path.join(static, "js", "reglages_chaines.js"), encoding="utf-8").read()
+    assert "ia: () => loadAiModels()" in chaines
     assert "async function loadAiModels" in js and "esc(" in js.split("async function loadAiModels")[1][:3000]
