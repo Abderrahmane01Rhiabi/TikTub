@@ -584,7 +584,7 @@ def _piece(e: Dict, s: Dict, out: str) -> str:
 
 def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: List[Dict], code: str, style: Dict,
                  voice_mp3: str, out: str, work: str, music: Optional[Tuple[str, float]] = None,
-                 report: Optional[Report] = None) -> Dict:
+                 report: Optional[Report] = None, whispered: Optional[List[int]] = None) -> Dict:
     report = report or (lambda phase, f: None)
     os.makedirs(work, exist_ok=True)
     pieces = []
@@ -604,6 +604,8 @@ def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: Lis
     starts = [ps["start"] for ps in v["passages"][1:]]
     if os.path.exists(WHOOSH):
         for k, t0 in enumerate(starts):             # a short whoosh on each new sentence (not on every cut)
+            if k + 1 in (whispered or []):          # it covered a whisper's start (the orcas, 2026-11-08)
+                continue
             ms = int(max(0.0, t0 - 0.25) * 1000)
             inputs += ["-i", os.path.abspath(WHOOSH)]
             mix.append(f"[{n}:a]volume=0.35,adelay={ms}|{ms}[w{k}]")
@@ -754,7 +756,8 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     made = render_video(edl, by_id, t["voice"], t["script"]["passages"], t["language"], style, mp3, out,
                         os.path.join(base, "pro_work"),
                         music=(t["music_path"], t.get("music_start") or 0.0) if t.get("music_path") else None,
-                        report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)))
+                        report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)),
+                        whispered=[k for k, m in enumerate(t.get("manieres") or []) if m == "chuchote"])
     starts = []
     for ph in range(1, len(t["voice"]["passages"]) + 1):
         starts.append(next(e["debut"] for e in edl if e["phrase"] == ph))
