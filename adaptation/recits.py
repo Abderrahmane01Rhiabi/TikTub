@@ -137,8 +137,10 @@ def label(name: Optional[str]) -> str:
 
 
 def choose(reference: Dict, family: str, excluded: Optional[List[str]] = None, recents: Optional[List[str]] = None,
-           genre: Optional[str] = None, gemini=None) -> str:
-    """The style of the channel's family that tells this subject best, not one of the last ones when another fits."""
+           genre: Optional[str] = None, gemini=None, project: Optional[Dict] = None) -> str:
+    """The style of the channel's family that tells this subject best, not one of the last ones when another fits.
+    When the AI gives none, the first one not used lately — said on the project if given (adaptation/secours)."""
+    from adaptation import secours
     styles = allowed(family, excluded, genre)
     recents = recents or []
     try:
@@ -148,11 +150,15 @@ def choose(reference: Dict, family: str, excluded: Optional[List[str]] = None, r
             faits="; ".join(reference.get("faits") or [])[:1500],
             styles="\n".join(f"- {k} : {v[2]}" for k, v in styles.items()), recents=", ".join(recents) or "aucun")}],
             max_tokens=800, timeout=60, temperature=0.3)
-        name = str((r or {}).get("style") or "").strip()
-    except Exception:
-        name = ""
+    except Exception as e:
+        r = {"error": str(e)}
+    name = "" if secours.failed(r) else str(r.get("style") or "").strip()
+    secours.mark(project, "recit")
     if name not in styles:
         name = next((k for k in styles if k not in recents), next(iter(styles)))
+        if secours.failed(r):
+            secours.mark(project, "recit", f"choisi sans l'IA ({secours.why(r)}) : « {styles[name][0]} », "
+                                           "change-le si un autre raconte mieux le sujet.")
     return name
 
 
@@ -194,7 +200,7 @@ def for_project(p: Dict, genre: Optional[str] = None) -> str:
         return p["recit"]
     channel = p["targets"][0]["channel"]
     rules = channel_rules(channel)
-    p["recit"] = choose(p.get("reference") or {}, rules["famille"], rules["exclus"], recent(channel), genre)
+    p["recit"] = choose(p.get("reference") or {}, rules["famille"], rules["exclus"], recent(channel), genre, project=p)
     p["famille_recit"] = rules["famille"]
     p.setdefault("recit_par", "ia")
     return p["recit"]

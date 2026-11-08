@@ -129,10 +129,12 @@ def choose(songs: List[Dict], titre: str, resume: str, ton: str, recit: Optional
     """{"song": the chosen one, "pourquoi"} among `songs` (one: it, no question)."""
     if len(songs) == 1:
         return {"song": songs[0], "pourquoi": "la seule musique permise pour cette chaîne"}
+    from adaptation import secours
     from adaptation.script import _gemini
     listing = "\n".join(f"{k}. {s['titre']} — {', '.join(CATEGORIES[c] for c in s['categories']) or '?'} — "
                         f"{s.get('humeur') or '?'} — {'avec paroles' if s['paroles'] else 'sans paroles' if s['paroles'] is False else '?'}"
                         for k, s in enumerate(songs, 1))
+    r = None
     try:
         r = (gemini or _gemini())._generate_content([{"text": CHOOSE.format(
             titre=titre, resume=resume[:600], ton=ton, recit=recit or "-", musiques=listing)}],
@@ -142,4 +144,6 @@ def choose(songs: List[Dict], titre: str, resume: str, ton: str, recit: Optional
             return {"song": songs[n], "pourquoi": str(r.get("pourquoi") or "")[:200]}
     except Exception:
         pass
-    return {"song": songs[0], "pourquoi": "la première musique permise (l'IA n'a pas su choisir)"}
+    # the fallback, said at the preview (adaptation/secours)
+    return {"song": songs[0], "pourquoi": "la première musique permise (l'IA n'a pas su choisir)",
+            "secours": secours.why(r) if secours.failed(r) else "l'IA n'a pas su choisir"}

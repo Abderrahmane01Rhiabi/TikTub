@@ -717,6 +717,7 @@ function renderAdPlan(body, p){
         ${esc((channels.find(c => c.name === t.channel) || {}).display_name || t.channel)} · ${esc(t.language_label)}</div></div>
         ${t.approved ? `<span class="pill ok">${icon('check', 11)} validé</span>` : '<span class="pill warn">à relire</span>'}</div>
       <div class="chcard-body">
+        ${adSecoursHtml(p, t)}
         ${t.problems.length ? `<div class="errbox">${t.problems.map(esc).join('<br>')}</div>` : ''}
         ${p.pro && t.casting ? adCastingHtml(t) : ''}
         <label class="f">Titre YouTube</label><input class="f sc-title" ${dir} value="${esc(sc.titre || '')}">
@@ -1136,6 +1137,7 @@ async function renderAdPreviews(body, p){
       <div class="chcard-body"><div class="ad-preview">
         <div>${t.preview_url ? `<video src="${t.preview_url}?v=${Date.now()}" controls playsinline></video>` : ''}</div>
         <div class="stack" style="gap:10px">
+          ${adSecoursHtml(p, t)}
           ${ok ? `<div class="okbox">${icon('check', 12)} Contrôle automatique : son complet, chaque phrase à sa place, volume ${t.checks.measures.lufs} LUFS.</div>`
                : `<div class="errbox">${((t.checks || {}).problems || ['Pas encore contrôlé']).map(esc).join('<br>')}</div>`}
           <div><label class="f">Voix</label>
@@ -1244,6 +1246,15 @@ function renderAdStock(body, p){
     try { await api(`/api/adaptations/${p.project_id}/stock-approve`, { method:'POST' }); adProject = null; loadAdProject(); }
     catch (e){ log(e.message, 'error'); go.disabled = false; }
   };
+}
+
+// ---------- An AI step that could not answer and was done « en secours » (adaptation/secours.py) ----------
+
+function adSecoursHtml(p, t){
+  const all = [...(p.secours || []), ...(t.secours || [])];
+  if (!all.length) return '';
+  return `<div class="warnbox ad-secours"><b>${icon('alert', 12)} Fait en secours, l'IA n'a pas répondu :</b>
+    <ul style="margin:4px 0 0 18px;padding:0">${all.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>`;
 }
 
 // ---------- Montage pro : the casting of a version (its voice, chosen by the AI or by you) ----------

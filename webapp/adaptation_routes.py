@@ -148,7 +148,7 @@ def ap_wanting(p: dict):
 
 def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     import progress
-    from adaptation import langs
+    from adaptation import langs, secours
     job = progress.get(_adaptation_job(p["project_id"])) or {}
     base = {k: p.get(k) for k in ("project_id", "status", "reference_url", "credits", "error", "failed_step",
                                    "created_at", "updated_at")}
@@ -191,8 +191,10 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             "checks": prev.get("checks"), "final_checks": fin.get("checks"),
             "duration": (prev.get("summary") or {}).get("duration") or prev.get("duree"),
             "voice_model": t.get("voice_model"),
+            "secours": secours.listing(t),
         })
     base["targets"] = targets
+    base["secours"] = secours.listing(p, p.get("storyboard"))     # an AI step that fell back (adaptation/secours)
     if p.get("recit"):                  # the narrative style (adaptation/recits.py), changeable on the script screen
         from adaptation import recits
         base["recit"], base["recit_label"] = p["recit"], recits.label(p["recit"])

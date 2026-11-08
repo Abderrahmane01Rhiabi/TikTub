@@ -200,14 +200,17 @@ def cast(p: Dict, t: Dict, gemini=None) -> None:
     regle = ("garde la voix ★ SAUF si le sujet demande vraiment une autre voix (une histoire racontee par une femme, "
              "un ton que la ★ ne sait pas porter) : dis pourquoi." if choose_voice else
              f"c'est forcement {main} (la chaine garde sa voix).")
+    from adaptation import secours
     try:
         r = (gemini or _gemini())._generate_content([{"text": CAST.format(
             phrases="\n".join(f"{k}. {x.get('texte')}" for k, x in enumerate(passages, 1)), recit=p.get("recit") or "-",
             ton=ap._tone(p, t), voix=listing or "-", regle_voix=regle,
             manieres=", ".join(f'"{k}"' for k in manieres_for(p) if k))}], max_tokens=3000, timeout=90, temperature=0.3)
-    except Exception:
-        r = {}
-    r = r if isinstance(r, dict) else {}
+    except Exception as e:
+        r = {"error": str(e)}
+    secours.mark(t, "casting", f"faits sans l'IA ({secours.why(r)}) : la voix principale, ton normal partout."
+                 if secours.failed(r) else None)
+    r = {} if secours.failed(r) else r
     if choose_voice:
         pick = str(r.get("voix") or "")
         ok = pick in {v["voice_id"] for v in pool}
@@ -238,6 +241,8 @@ def set_casting(pid: str, channel: str, voice_id: Optional[str] = None, manieres
             raise ap.PipelineError("Cette manière de dire n'est pas permise pour la famille de récit de la chaîne.")
         t["manieres"] = ([m if m in MANIERES else "" for m in manieres] + [""] * n)[:n]
         t["manieres_by"] = "toi"
+        from adaptation import secours
+        secours.mark(t, "casting")              # the person chose them
     return ap.save(p)
 
 

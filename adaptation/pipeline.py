@@ -214,12 +214,13 @@ def change_angle(pid: str, index: Optional[int] = None, custom: Optional[str] = 
 
 def change_recit(pid: str, name: str) -> Dict:
     """Another narrative style, chosen by the person on the script screen: the storyboard is written again (background)."""
-    from adaptation import recits
+    from adaptation import recits, secours
     p = load(pid)
     _expect(p, "plan_review")
     if not recits.find(name):
         raise PipelineError("Style de récit inconnu.")
     p.update(recit=name, recit_par="toi", famille_recit=recits.find(name), status="analysing")
+    secours.mark(p, "recit")                # the person chose: no more « chosen without the AI »
     return save(p)
 
 

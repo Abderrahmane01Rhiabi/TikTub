@@ -30,7 +30,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
-from adaptation import checks, finder, render, sources, voices
+from adaptation import checks, finder, render, secours, sources, voices
 from adaptation.langs import lang as lang_of
 
 Report = Callable[[str, float], None]
@@ -392,6 +392,8 @@ def shorter_hook(p: Dict, t: Dict, seconds: float, gemini=None) -> Optional[str]
     lang = lang_of(t["language"])
     facts = (p.get("reference") or {}).get("faits") or []
     words = max(4, int(len(ps[0]["texte"].split()) * 3.0 / max(seconds, 0.1)))
+    secours.mark(t, "accroche")
+    new = ""
     try:
         r = (gemini or _gemini())._generate_content([{"text": HOOK_PROMPT.format(
             langue=lang["label"], duree=seconds, mots=words, texte=ps[0]["texte"],
@@ -399,7 +401,10 @@ def shorter_hook(p: Dict, t: Dict, seconds: float, gemini=None) -> Optional[str]
             regles=DIALECT_PART.get(dialect(t)) or LANG_RULES.get(t["language"], LANG_RULES["fr"]))}],
             max_tokens=1500, timeout=60, temperature=0.4)
         new = " ".join(str((r or {}).get("texte") or "").split())
-    except Exception:
+    except Exception as e:
+        r = {"error": str(e)}
+    if secours.failed(r):
+        secours.mark(t, "accroche", f"trop longue ({seconds:.1f} s), pas raccourcie ({secours.why(r)}).")
         return None
     if not new or len(new.split()) >= len(ps[0]["texte"].split()) or check_facts(new, facts, gemini):
         return None
@@ -697,6 +702,8 @@ def choose_music(p: Dict, t: Dict) -> None:
         start = ap._track_info(song["chemin"])["debut_fort"]
     t.update(music_path=song["chemin"], music_start=float(start or 0.0), music_by="ia",
              music_why=(r["pourquoi"] + note)[:240], music_cats=song["categories"], music_lyrics=song["paroles"])
+    secours.mark(t, "musique", f"la première musique permise ({r['secours']}) : choisis-en une autre ci-dessous."
+                 if r.get("secours") else None)
 
 
 def set_music(pid: str, channel: str, fichier: Optional[str]) -> Dict:
@@ -716,6 +723,7 @@ def set_music(pid: str, channel: str, fichier: Optional[str]) -> Dict:
     else:
         t.update(music_path=None, music_start=0.0, music_why="sans musique (ton choix)", music_cats=[], music_lyrics=None)
     t.update(music_chosen=True, music_by="toi", keep_edit=True, validated=False)
+    secours.mark(t, "musique")
     p["status"] = "voicing"
     return ap.save(p)
 
@@ -747,7 +755,10 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
         report(f"montage {t['channel']}", offset + share * 0.25)
         raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], shots)}],
                                                       max_tokens=16000, timeout=240, temperature=0.4)
-        edl = build_edit(raw if isinstance(raw, dict) else {}, t["voice"], shots)
+        lost = secours.failed(raw) or not (raw or {}).get("montage")
+        secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
+                                   "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)
+        edl = build_edit({} if lost else raw, t["voice"], shots)
     choose_music(p, t)
     style_name = t.get("style") or "classique"
     style = render.style_of(style_name)

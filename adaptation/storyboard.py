@@ -304,7 +304,10 @@ JSON uniquement : {{"fautes": [{{"plan": 1, "langue": "ar", "quoi": "ce qui n'es
 
 def fact_check(bundle: Dict, codes: List[str], facts: List[str], gemini=None) -> Dict[Tuple[int, str], str]:
     """{(plan index, language): what a sentence says beyond the verified facts} — every sentence of every language
-    in ONE call (cheap: a fraction of a cent). Empty without facts, or when the check itself fails."""
+    in ONE call (about 1 cent, made again after each rewrite). Empty without facts, or when the check itself fails —
+    then the bundle says so (adaptation/secours: « not checked », not « no fault »)."""
+    from adaptation import secours
+    secours.mark(bundle, "faits")
     if not facts:
         return {}
     lines = [f"{k} | {c} | {((p.get('textes') or {}).get(c) or {}).get('texte', '')}"
@@ -313,7 +316,10 @@ def fact_check(bundle: Dict, codes: List[str], facts: List[str], gemini=None) ->
         r = (gemini or _gemini())._generate_content([{"text": FACTS_PROMPT.format(
             faits="\n".join(f"- {f}" for f in facts), phrases="\n".join(lines))}], max_tokens=4000, timeout=90,
             temperature=0.0)
-    except Exception:
+    except Exception as e:
+        r = {"error": str(e)}
+    if secours.failed(r) or "fautes" not in r:
+        secours.mark(bundle, "faits", f"pas faite ({secours.why(r)}) : relis toi-même les chiffres et les noms.")
         return {}
     out = {}
     for f in ((r or {}).get("fautes") or []) if isinstance(r, dict) else []:

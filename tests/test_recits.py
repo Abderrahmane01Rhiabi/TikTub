@@ -49,7 +49,7 @@ def test_a_reprise_keeps_its_model_s_genre():
 
 def test_the_project_keeps_its_style_and_the_person_changes_it(project, monkeypatch):
     monkeypatch.setattr(recits, "channel_rules", lambda ch: {"famille": "hype", "exclus": []})
-    monkeypatch.setattr(recits, "choose", lambda ref, fam, exc, rec, genre=None, gemini=None: "montee")
+    monkeypatch.setattr(recits, "choose", lambda ref, fam, exc, rec, genre=None, gemini=None, project=None: "montee")
     p = {"targets": [{"channel": "chanA"}], "reference": {}}
 
     assert recits.for_project(p) == "montee" and p["famille_recit"] == "hype" and p["recit_par"] == "ia"
