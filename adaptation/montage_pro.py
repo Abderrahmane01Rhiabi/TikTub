@@ -736,7 +736,9 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
         # looped: a track shorter than the Short (a 28 s jingle) goes round instead of stopping before the end
         fade = float(m.get("fondu") if m.get("fondu") is not None else 1.2)
         inputs += ["-stream_loop", "-1", "-ss", f"{max(0.0, float(m.get('debut') or 0)):.2f}", "-i", m["fichier"]]
-        mix.append(f"[{n}:a]volume='{music_level(m, total)}':eval=frame,afade=t=in:d=0.6"
+        # asetpts: one clock through the loops (the song going round restarted it, and a zone after that point —
+        # 0 % at 14.5 s on the orcas — was never applied)
+        mix.append(f"[{n}:a]asetpts=N/SR/TB,volume='{music_level(m, total)}':eval=frame,afade=t=in:d=0.6"
                    + (f",afade=t=out:st={max(0.0, total - fade):.2f}:d={fade:.2f}" if fade > 0 else "") + "[m]")
         labels.append("m")
         n += 1

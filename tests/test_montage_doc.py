@@ -117,3 +117,20 @@ def test_one_banner_or_one_group_of_captions_can_be_set_apart(tmp_path):
     assert f"\\pos(540,{mp.CAPTION_PLACES['haut']})" in depuis and "\\fs134" in depuis
     assert not any(",Sous," in l and "RÉALITÉ" in l for l in lines)        # drawn by the karaoke style instead
     assert [g["style"] for g in mp.caption_groups(VOICE, d)] == [None, None, "karaoke"]
+
+
+def test_a_music_zone_after_the_song_loops_is_applied(tmp_path):
+    """A song shorter than its start + the video goes round: its clock restarted, and a zone after that point was
+    never applied (the orcas: a zone at 0 % from 14.5 s, the song looping at 13 s)."""
+    import subprocess
+    song, out = tmp_path / "song.wav", tmp_path / "m.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=6", str(song)], check=True)
+    m = {"fichier": str(song), "debut": 4.0, "volume": 100, "zones": [{"debut": 5.0, "fin": 8.0, "volume": 0}], "fondu": 0}
+    level = mp.music_level(m, 10.0)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-stream_loop", "-1", "-ss", "4", "-i", str(song), "-filter_complex",
+                    f"[0:a]asetpts=N/SR/TB,volume='{level}':eval=frame[m]", "-map", "[m]", "-t", "10", str(out)], check=True)
+    r = subprocess.run(["ffmpeg", "-ss", "5.5", "-to", "7.5", "-i", str(out), "-af", "volumedetect", "-f", "null", "-"],
+                       capture_output=True, text=True).stderr
+    assert "-91.0 dB" in r
+    with open(mp.__file__, encoding="utf-8") as f:
+        assert "asetpts=N/SR/TB,volume='{music_level(m, total)}'" in f.read()
