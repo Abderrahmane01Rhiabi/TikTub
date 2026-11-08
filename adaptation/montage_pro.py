@@ -654,6 +654,13 @@ def _piece(e: Dict, s: Dict, out: str) -> str:
     return out
 
 
+def music_from(start) -> str:
+    """The filters taking a looped song (-stream_loop -1, no -ss) from `start` s on, with one clock through its loops.
+    Decoded from its beginning, not sought: a seek with a loop in an mp3 gave 43 s for 27 asked and restarted its
+    clock at each loop (a music zone after the loop was never applied, the timeline drew the song shifted)."""
+    return f"asetpts=N/SR/TB,atrim=start={max(0.0, float(start or 0)):.3f},asetpts=N/SR/TB"
+
+
 def music_level(m: Dict, total: float) -> str:
     """The music's volume through the video: its level, the person's zones (a 0.2 s ramp in and out of each)."""
     level = f"{MUSIC_GAIN * (m.get('volume') or 100) / 100:.4f}"
@@ -735,10 +742,8 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
     if m.get("fichier") and os.path.exists(m["fichier"]):
         # looped: a track shorter than the Short (a 28 s jingle) goes round instead of stopping before the end
         fade = float(m.get("fondu") if m.get("fondu") is not None else 1.2)
-        inputs += ["-stream_loop", "-1", "-ss", f"{max(0.0, float(m.get('debut') or 0)):.2f}", "-i", m["fichier"]]
-        # asetpts: one clock through the loops (the song going round restarted it, and a zone after that point —
-        # 0 % at 14.5 s on the orcas — was never applied)
-        mix.append(f"[{n}:a]asetpts=N/SR/TB,volume='{music_level(m, total)}':eval=frame,afade=t=in:d=0.6"
+        inputs += ["-stream_loop", "-1", "-i", m["fichier"]]
+        mix.append(f"[{n}:a]{music_from(m.get('debut'))},volume='{music_level(m, total)}':eval=frame,afade=t=in:d=0.6"
                    + (f",afade=t=out:st={max(0.0, total - fade):.2f}:d={fade:.2f}" if fade > 0 else "") + "[m]")
         labels.append("m")
         n += 1
@@ -829,6 +834,27 @@ def music_choices(t: Dict) -> List[Dict]:
     return [{**s, "permise": s["chemin"] in ok} for s in songs]
 
 
+OUTRO_S = 8.0                   # the last seconds of a song: it often dies away there
+
+
+def _need(t: Dict) -> float:
+    """How long the music must last: the video (the voice and a little after it)."""
+    vp = (t.get("voice") or {}).get("passages") or []
+    return (vp[-1]["end"] + 1.0) if vp else 40.0
+
+
+def fit_start(path: str, start: float, need: float) -> float:
+    """Where the song starts so that the whole video is said before it ends and dies away (the orcas: its strongest
+    moment was found at 83 s of a 99 s song — the music faded to nothing at 0:07 and came back at 0:15)."""
+    try:
+        dur = float(_run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path]).stdout)
+    except Exception:
+        return start
+    if dur <= 0 or start + need <= dur - OUTRO_S:
+        return start
+    return round(max(0.0, min(start, dur - need - OUTRO_S if dur - need - OUTRO_S > 0 else dur - need)), 2)
+
+
 def choose_music(p: Dict, t: Dict) -> None:
     """The music casting: among the songs the channel allows (its categories, without lyrics if it asks), the one
     whose mood fits this Short, from its strongest moment. A song chosen by the person (or already) is kept."""
@@ -859,7 +885,8 @@ def choose_music(p: Dict, t: Dict) -> None:
     start = song.get("moment_fort")
     if start is None:
         start = ap._track_info(song["chemin"])["debut_fort"]
-    t.update(music_path=song["chemin"], music_start=float(start or 0.0), music_by="ia",
+    start = fit_start(song["chemin"], float(start or 0.0), _need(t))
+    t.update(music_path=song["chemin"], music_start=start, music_by="ia",
              music_why=(r["pourquoi"] + note)[:240], music_cats=song["categories"], music_lyrics=song["paroles"])
     secours.mark(t, "musique", f"la première musique permise ({r['secours']}) : choisis-en une autre ci-dessous."
                  if r.get("secours") else None)
@@ -877,7 +904,8 @@ def set_music(pid: str, channel: str, fichier: Optional[str]) -> Dict:
         if not song:
             raise ap.PipelineError("Musique introuvable.")
         start = song.get("moment_fort")
-        t.update(music_path=song["chemin"], music_start=float(start if start is not None else 0.0),
+        start = fit_start(song["chemin"], float(start if start is not None else 0.0), _need(t))
+        t.update(music_path=song["chemin"], music_start=start,
                  music_why="choisie par toi", music_cats=song["categories"], music_lyrics=song["paroles"])
     else:
         t.update(music_path=None, music_start=0.0, music_why="sans musique (ton choix)", music_cats=[], music_lyrics=None)
@@ -1106,8 +1134,8 @@ def undo_montage(pid: str, channel: str) -> Dict:
 def music_envelope(path: str, start: float, total: float, per_s: int = 4) -> List[float]:
     """The song's loudness from where it starts, `per_s` values a second (0-1), for the timeline's music track."""
     import numpy as np
-    raw = subprocess.run(["ffmpeg", "-v", "error", "-stream_loop", "-1", "-ss", f"{start:.2f}", "-t", f"{total:.2f}",
-                          "-i", path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"], capture_output=True).stdout
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-stream_loop", "-1", "-i", path, "-af", music_from(start),
+                          "-t", f"{total:.2f}", "-ac", "1", "-ar", "8000", "-f", "f32le", "-"], capture_output=True).stdout
     y = np.frombuffer(raw, np.float32)
     n = max(1, int(total * per_s))
     if not len(y):

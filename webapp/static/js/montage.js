@@ -135,7 +135,7 @@ function mtPanel(ch){
   if (!sel) return `<div class="tiny">Clique un élément de la timeline pour le modifier. Tu peux aussi <b>glisser</b> un losange d'effet,
     la coupe entre deux plans, ou une zone de musique, et <b>déposer</b> un plan du stock sur la piste Images.</div>
     <div class="mt-p-row"><button type="button" class="btn ghost small mt-add-fx">+ Ajouter un son au curseur</button>
-      <button type="button" class="btn ghost small mt-add-zone">+ Baisser la musique au curseur</button>
+      <button type="button" class="btn ghost small mt-add-zone">+ Baisser ou monter la musique au curseur</button>
       <button type="button" class="btn ghost small mt-pick-music">Musique de la vidéo…</button></div>`;
   const i = Number(sel.i);
   if (sel.kind === 'images'){

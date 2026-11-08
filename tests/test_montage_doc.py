@@ -127,10 +127,30 @@ def test_a_music_zone_after_the_song_loops_is_applied(tmp_path):
     subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=6", str(song)], check=True)
     m = {"fichier": str(song), "debut": 4.0, "volume": 100, "zones": [{"debut": 5.0, "fin": 8.0, "volume": 0}], "fondu": 0}
     level = mp.music_level(m, 10.0)
-    subprocess.run(["ffmpeg", "-v", "error", "-y", "-stream_loop", "-1", "-ss", "4", "-i", str(song), "-filter_complex",
-                    f"[0:a]asetpts=N/SR/TB,volume='{level}':eval=frame[m]", "-map", "[m]", "-t", "10", str(out)], check=True)
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-stream_loop", "-1", "-i", str(song), "-filter_complex",
+                    f"[0:a]{mp.music_from(4)},volume='{level}':eval=frame[m]", "-map", "[m]", "-t", "10", str(out)], check=True)
     r = subprocess.run(["ffmpeg", "-ss", "5.5", "-to", "7.5", "-i", str(out), "-af", "volumedetect", "-f", "null", "-"],
                        capture_output=True, text=True).stderr
     assert "-91.0 dB" in r
     with open(mp.__file__, encoding="utf-8") as f:
-        assert "asetpts=N/SR/TB,volume='{music_level(m, total)}'" in f.read()
+        assert "{music_from(m.get('debut'))},volume='{music_level(m, total)}'" in f.read()
+
+
+def test_the_timeline_draws_the_song_as_long_as_the_video_from_where_it_starts(tmp_path):
+    """The song's shape was drawn from 43 s of sound squeezed into 27 (a seek + a loop ignored the length asked)."""
+    import subprocess
+    song = tmp_path / "song.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-f", "lavfi",
+                    "-i", "anullsrc=r=44100:cl=mono", "-filter_complex", "[1:a]atrim=0:4[s];[0:a][s]concat=n=2:v=0:a=1",
+                    str(song)], check=True)                               # 4 s of sound, then 4 s of silence
+    env = mp.music_envelope(str(song), 2.0, 8.0, per_s=1)               # from 2 s: sound, silence, then round again
+    assert len(env) == 8 and min(env[:2]) > 0.5 and max(env[2:6]) < 0.05 and min(env[6:]) > 0.5
+
+
+def test_the_music_starts_early_enough_for_the_video_to_end_before_the_song_dies_away(tmp_path):
+    import subprocess
+    song = tmp_path / "s.wav"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "sine=duration=99", str(song)], check=True)
+    assert mp.fit_start(str(song), 83.0, 28.0) == 63.0          # 99 s song, 28 s video: before its last 8 s
+    assert mp.fit_start(str(song), 20.0, 28.0) == 20.0          # room enough: the strong moment kept
+    assert mp.fit_start(str(song), 10.0, 120.0) == 0.0          # a song shorter than the video: from its start
