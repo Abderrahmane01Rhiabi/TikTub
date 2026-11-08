@@ -22,6 +22,7 @@ banner's colour and place, the number of cuts per sentence — to learn later wh
 """
 
 import base64
+import copy
 import json
 import os
 import re
@@ -30,7 +31,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
-from adaptation import checks, finder, render, secours, sources, voices
+from adaptation import checks, finder, montage_doc, render, secours, sources, voices
 from adaptation.langs import lang as lang_of
 
 Report = Callable[[str, float], None]
@@ -505,13 +506,31 @@ def banner_text(bandeau: str) -> str:
                     if any(c.isalnum() or "؀" <= c <= "ۿ" for c in w))
 
 
-def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dict) -> Dict:
+CAPTION_PLACES = {"bas": CAPTION_Y, "milieu": H // 2 + 160, "haut": BANNER_MARGIN + 330}
+
+
+def doc_words(v: Dict, doc: Optional[Dict]) -> List[Dict]:
+    """The voice's words with the person's fixes (the times stay the voice's)."""
+    fixes = ((doc or {}).get("sous_titres") or {}).get("mots") or {}
+    return [{**w, "w": fixes.get(str(k), w["w"])} for k, w in enumerate(v["words"])]
+
+
+def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dict, doc: Optional[Dict] = None) -> Dict:
     """Banner (top, one per sentence) + captions 3 words at a time, the spoken word in the key colour, at ONE
     fixed place (\\pos: libass would push a line up when it overlaps the previous one). Arabic: every word its
-    own colour run and the styles right-to-left (render.captions_ass's recipe), else the words come out of order."""
+    own colour run and the styles right-to-left (render.captions_ass's recipe), else the words come out of order.
+    doc (montage_doc): the person's banners and box, the words fixed, the captions' place and size — or no words at
+    all when a caption library style draws them."""
     lang = lang_of(code)
     font, enc = lang["caption_font"], -1 if lang["rtl"] else 1
     white, key, box = _ass_colour(style["text"]), _ass_colour(style["key"]), _ass_colour(style["box"])
+    btext = white
+    cadre = montage_doc.CADRES.get((doc or {}).get("bandeau_cadre") or "")
+    if cadre:
+        box, btext = _ass_colour(cadre[0]), _ass_colour(cadre[1])
+    st = (doc or {}).get("sous_titres") or {}
+    size, y = int(96 * (st.get("taille") or 100) / 100), CAPTION_PLACES.get(st.get("position") or "bas", CAPTION_Y)
+    bans = (doc or {}).get("bandeaux") or []
     up = (lambda s: s.upper()) if lang["upper"] else (lambda s: s)
     head = [
         "[Script Info]", "ScriptType: v4.00+", f"PlayResX: {W}", f"PlayResY: {H}", "WrapStyle: 0", "",
@@ -519,18 +538,19 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
         "MarginR, MarginV, Encoding",
-        f"Style: Bandeau,{font},78,{white},{white},{box},{box},1,0,0,0,100,100,0,0,3,18,0,8,60,60,{BANNER_MARGIN},{enc}",
-        f"Style: Sous,{font},96,{white},{white},&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,7,3,2,70,70,0,{enc}",
+        f"Style: Bandeau,{font},78,{btext},{btext},{box},{box},1,0,0,0,100,100,0,0,3,18,0,8,60,60,{BANNER_MARGIN},{enc}",
+        f"Style: Sous,{font},{size},{white},{white},&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,7,3,2,70,70,0,{enc}",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
-    ev, words = [], v["words"]
+    ev, words = [], doc_words(v, doc)
     nexts = [x["start"] for x in v["passages"][1:]] + [None]
-    for vp, sp, nxt in zip(v["passages"], passages, nexts):
-        text = banner_text(sp.get("bandeau") or "")
+    for k, (vp, sp, nxt) in enumerate(zip(v["passages"], passages, nexts)):
+        b = bans[k] if k < len(bans) else {}
+        text = "" if b.get("cache") else banner_text(b["texte"] if b.get("texte") is not None else sp.get("bandeau") or "")
         if text:                        # until the next sentence starts, at one place: never two banners stacked
             end = nxt if nxt is not None else vp["end"] + 0.25
             ev.append(f"Dialogue: 0,{_ass_time(vp['start'])},{_ass_time(end)},Bandeau,,0,0,0,,"
                       f"{{\\an8\\pos({W // 2},{BANNER_MARGIN})}}{up(text)}")
-        idx = vp["words"]
+        idx = [] if st.get("style") else vp["words"]
         groups = [idx[i:i + 3] for i in range(0, len(idx), 3)]
         for gi, g in enumerate(groups):
             for j, w in enumerate(g):
@@ -539,12 +559,13 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
                 b = words[nxt]["start"] if nxt is not None else words[g[-1]]["end"] + 0.12
                 line = " ".join(("{\\c" + (key if x == w else white) + "&}") + up(words[x]["w"].replace("{", "").replace("}", ""))
                                 for x in g)
-                ev.append(f"Dialogue: 1,{_ass_time(a)},{_ass_time(b)},Sous,,0,0,0,,{{\\an2\\pos({W // 2},{CAPTION_Y})}}{line}")
+                ev.append(f"Dialogue: 1,{_ass_time(a)},{_ass_time(b)},Sous,,0,0,0,,{{\\an2\\pos({W // 2},{y})}}{line}")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(head + ev) + "\n")
-    return {"position": "bas-centre, fixe", "y": CAPTION_Y, "taille": 96, "police": font, "mots_par_ligne": 3,
-            "mot_dit": style["key"], "bandeau": {"couleur": "#%02X%02X%02X" % tuple(style["box"][:3]), "place": "haut",
-                                                 "taille": 78}}
+    return {"position": f"{st.get('position') or 'bas'}-centre, fixe", "y": y, "taille": size, "police": font,
+            "mots_par_ligne": 3, "mot_dit": style["key"], "style_bibliotheque": st.get("style"),
+            "bandeau": {"couleur": cadre[0] if cadre else "#%02X%02X%02X" % tuple(style["box"][:3]), "place": "haut",
+                        "taille": 78}}
 
 
 def sharpness(path: str, at: float) -> float:
@@ -577,18 +598,30 @@ def sharp_start(s: Dict, need: float) -> float:
     return a
 
 
+def _piece_key(e: Dict, s: Dict) -> str:
+    import hashlib
+    raw = repr((s["file"], s["start"], s["end"], s.get("x"), round(e["fin"] - e["debut"], 3), e.get("zoom") or 1.0,
+                e.get("centre")))
+    return hashlib.sha1(raw.encode()).hexdigest()[:16]
+
+
 def _piece(e: Dict, s: Dict, out: str) -> str:
-    """One shot of the edit: cut from its source, cropped to 9:16 around its subject, a slow push-in, no sound."""
+    """One shot of the edit: cut from its source, cropped to 9:16 around its subject (or where the person centred
+    it, as close as they zoomed), a slow push-in, no sound."""
     need = max(0.2, e["fin"] - e["debut"])
     dur_src, w, h = _probe(s["file"])
     # past a blurred transition, then a little inside the shot: its first frames are often the source's own cut
     first = sharp_start(s, need)
     start = first + min(0.4, max(0.0, (s["end"] - first - need) / 2))
     start = min(start, max(0.0, dur_src - need - 0.05))
-    cw = min(w, int(round(h * 9 / 16)) // 2 * 2)
-    cx = min(max(0, int(round((s.get("x") or 0.5) * w - cw / 2))), w - cw)
+    zoom = max(1.0, float(e.get("zoom") or 1.0))
+    ch = int(h / zoom) // 2 * 2
+    cw = min(w, int(round(ch * 9 / 16)) // 2 * 2)
+    centre = e["centre"] if e.get("centre") is not None else (s.get("x") or 0.5)
+    cx = min(max(0, int(round(centre * w - cw / 2))), w - cw)
+    cy = (h - ch) // 2
     frames = max(1, round(need * FPS))
-    vf = [f"crop={cw}:{h}:{cx}:0", f"scale={int(W * 1.5)}:{int(H * 1.5)}", f"fps={FPS}",
+    vf = [f"crop={cw}:{ch}:{cx}:{cy}", f"scale={int(W * 1.5)}:{int(H * 1.5)}", f"fps={FPS}",
           f"zoompan=z='1+0.10*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={W}x{H}:fps={FPS}",
           "setsar=1", "eq=contrast=1.06:saturation=1.10"]
     _run(["ffmpeg", "-v", "error", "-y", "-ss", f"{start:.2f}", "-t", f"{need:.3f}", "-i", s["file"], "-an",
@@ -596,47 +629,96 @@ def _piece(e: Dict, s: Dict, out: str) -> str:
     return out
 
 
-def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: List[Dict], code: str, style: Dict,
-                 voice_mp3: str, out: str, work: str, music: Optional[Tuple[str, float]] = None,
-                 report: Optional[Report] = None, effets: Optional[List[Dict]] = None) -> Dict:
+def music_level(m: Dict, total: float) -> str:
+    """The music's volume through the video: its level, the person's zones (a 0.2 s ramp in and out of each)."""
+    level = f"{MUSIC_GAIN * (m.get('volume') or 100) / 100:.4f}"
+    for z in m.get("zones") or []:
+        a, b, g = z["debut"], z["fin"], z["volume"] / 100
+        level += f"*(1+{g - 1:.3f}*clip((t-{a:.3f})/0.2,0,1)*clip(({b:.3f}-t)/0.2,0,1))"
+    return level
+
+
+def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict], code: str, style: Dict,
+               voice_mp3: str, out: str, work: str, report: Optional[Report] = None) -> Dict:
+    """The video from its montage document (montage_doc), in three parts each kept while it does not change: the
+    shots (one file per shot, the same cut and framing reused), the picture with its texts, the sound — so a change
+    of the music or the effects only makes the sound again (~10 s instead of ~1 min)."""
+    import hashlib
     report = report or (lambda phase, f: None)
-    os.makedirs(work, exist_ok=True)
+    os.makedirs(os.path.join(work, "plans"), exist_ok=True)
+    edl, total = doc["plans"], montage_doc.total(doc)
     pieces = []
     for k, e in enumerate(edl):
-        report(f"plan {k + 1}/{len(edl)}", k / len(edl))
-        pieces.append(_piece(e, shots[e["plan"]], os.path.join(work, f"piece_{k:02d}.mp4")))
-    lst = os.path.join(work, "pieces.txt")
-    with open(lst, "w") as f:
-        f.write("".join(f"file '{os.path.abspath(x)}'\n" for x in pieces))
-    silent = os.path.join(work, "image.mp4")
-    _run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", silent])
+        report(f"plan {k + 1}/{len(edl)}", 0.7 * k / len(edl))
+        path = os.path.join(work, "plans", _piece_key(e, shots[e["plan"]]) + ".mp4")
+        pieces.append(path if os.path.exists(path) else _piece(e, shots[e["plan"]], path))
     ass = os.path.join(work, "textes.ass")
-    caps = captions_ass(v, passages, ass, code, style)
-    total = edl[-1]["fin"] if edl else v["duration"]
-    inputs, mix, n = ["-i", voice_mp3], ["[1:a]volume=1.0[v0]"], 2
+    caps = captions_ass(v, passages, ass, code, style, doc)
+    lib = (doc.get("sous_titres") or {}).get("style")
+    with open(ass, encoding="utf-8") as f:
+        key = hashlib.sha1(repr((pieces, f.read(), lib, (doc.get("sous_titres") or {}), [w["w"] for w in doc_words(v, doc)])
+                                ).encode()).hexdigest()[:16]
+    picture = os.path.join(work, f"image_{key}.mp4")
+    from adaptation.render import _filter_path
+    from adaptation.langs import FONTS_DIR
+    if not os.path.exists(picture):
+        report("textes", 0.75)
+        lst = os.path.join(work, "pieces.txt")
+        with open(lst, "w") as f:
+            f.write("".join(f"file '{os.path.abspath(x)}'\n" for x in pieces))
+        silent = os.path.join(work, "image.mp4")
+        _run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", silent])
+        inputs = ["-i", silent]
+
+        def add_input(*args) -> int:
+            inputs.extend(args)
+            return sum(1 for x in inputs if x == "-i") - 1
+        g = [f"[0:v]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex[b]"]
+        cur = "b"
+        if lib:                                     # a style of the caption library draws the words
+            from captions import render as caption_render
+            words = [(w["w"], w["start"], w["end"]) for w in doc_words(v, doc)]
+            ctx = caption_render.context(code, (0, 0, W, H), words, None)
+            st = doc.get("sous_titres") or {}
+            ctx.native_y = caps["y"]                    # a style drawn round the middle: moved to the place chosen
+            built = caption_render.build(lib, words, ctx, {"taille": st.get("taille") or 100,
+                                                           "position": st.get("position") or "bas"})
+            cap_f, cur, _ = caption_render.filters(built, "b", add_input, os.path.join(work, "captions_lib"), (W, H), fps=FPS)
+            g += cap_f
+        g.append(f"[{cur}]format=yuv420p[vout]")
+        _run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", "[vout]", "-an",
+              "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-t", f"{total:.3f}", picture])
+        for old in os.listdir(work):                # the picture before this one stays (« Annuler »), not the others
+            if old.startswith("image_") and old != os.path.basename(picture):
+                full = os.path.join(work, old)
+                if os.path.getmtime(full) < os.path.getmtime(picture) - 3600:
+                    os.remove(full)
+    report("son", 0.9)
+    inputs, mix, n = ["-i", voice_mp3], ["[0:a]volume=1.0[v0]"], 1
     labels = ["v0"]
-    for k, e in enumerate(effets or []):            # sound_moments: the story's moments, the library's sounds
+    for k, e in enumerate(doc.get("effets") or []):
         ms = int(e["start"] * 1000)
         inputs += ["-i", os.path.abspath(e["file"])]
         mix.append(f"[{n}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={e['gain']},adelay={ms}|{ms}[w{k}]")
         labels.append(f"w{k}")
         n += 1
-    if music and music[0] and os.path.exists(music[0]):
+    m = doc.get("musique") or {}
+    if m.get("fichier") and os.path.exists(m["fichier"]):
         # looped: a track shorter than the Short (a 28 s jingle) goes round instead of stopping before the end
-        inputs += ["-stream_loop", "-1", "-ss", f"{max(0.0, float(music[1] or 0)):.2f}", "-i", music[0]]
-        mix.append(f"[{n}:a]volume={MUSIC_GAIN},afade=t=in:d=0.6,afade=t=out:st={max(0.0, total - 1.2):.2f}:d=1.2[m]")
+        fade = float(m.get("fondu") if m.get("fondu") is not None else 1.2)
+        inputs += ["-stream_loop", "-1", "-ss", f"{max(0.0, float(m.get('debut') or 0)):.2f}", "-i", m["fichier"]]
+        mix.append(f"[{n}:a]volume='{music_level(m, total)}':eval=frame,afade=t=in:d=0.6"
+                   + (f",afade=t=out:st={max(0.0, total - fade):.2f}:d={fade:.2f}" if fade > 0 else "") + "[m]")
         labels.append("m")
         n += 1
     mix.append("".join(f"[{x}]" for x in labels) + f"amix=inputs={len(labels)}:normalize=0:duration=first,"
                f"apad,atrim=0:{total:.3f},loudnorm=I=-14:TP=-1.5[a]")
-    from adaptation.render import _filter_path
-    from adaptation.langs import FONTS_DIR
-    report("assemblage", 0.95)
-    _run(["ffmpeg", "-v", "error", "-y", "-i", silent] + inputs +
-         ["-filter_complex", f"[0:v]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex,"
-          f"format=yuv420p[vout];" + ";".join(mix),
-          "-map", "[vout]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
-          "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", out])
+    sound = os.path.join(work, "son.m4a")
+    _run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(mix), "-map", "[a]",
+          "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", sound])
+    report("assemblage", 0.97)
+    _run(["ffmpeg", "-v", "error", "-y", "-i", picture, "-i", sound, "-map", "0:v", "-map", "1:a", "-c", "copy",
+          "-movflags", "+faststart", "-t", f"{total:.3f}", out])
     return {"captions": caps, "duree": round(total, 2)}
 
 
@@ -793,11 +875,10 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
             t["script"]["passages"][0]["texte"] = new
             t["voice"] = _voice(p, t, mp3, report, offset + share * 0.15)
     shots = [s for s in p.get("stock") or [] if s.get("garde")]
-    old = (t.get("preview") or {}).get("montage") or []
     kept_ids = {s["id"] for s in shots}
-    if t.pop("keep_edit", False) and old and all(e["plan"] in kept_ids for e in old):
-        edl = old                       # only the music changed: the same cuts, no new edit asked
-    else:
+    old = (t.get("montage") or {}).get("plans") or (t.get("preview") or {}).get("montage") or []
+    keep = t.pop("keep_edit", False) and old and all(e["plan"] in kept_ids for e in old)
+    if not keep:
         report(f"montage {t['channel']}", offset + share * 0.25)
         raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], shots)}],
                                                       max_tokens=16000, timeout=240, temperature=0.4)
@@ -806,21 +887,33 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
                                    "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)
         edl = build_edit({} if lost else raw, t["voice"], shots)
     choose_music(p, t)
-    style_name = t.get("style") or "classique"
-    style = render.style_of(style_name)
-    out = os.path.join(base, "preview.mp4")
+    if keep and t.get("montage"):       # only the music changed: the person's montage kept, its song replaced
+        doc = copy.deepcopy(t["montage"])
+        doc["musique"].update(fichier=t.get("music_path"), debut=float(t.get("music_start") or 0.0))
+        montage_doc.push(t, doc)
+    else:                               # a new montage by the AI: a new document, no history
+        doc = montage_doc.new(old if keep else edl, len(t["voice"]["passages"]), t.get("music_path"),
+                              t.get("music_start") or 0.0, sound_effects(p, t))
+        t["montage"], t["montage_versions"] = doc, []
+    return render_target(p, t, report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)))
+
+
+def render_target(p: Dict, t: Dict, report: Optional[Report] = None) -> Dict:
+    """The preview of a version from its montage document, checked (its sound, each sentence at its place)."""
+    from adaptation import pipeline as ap
+    base = os.path.join(ap.project_dir(p["project_id"]), t["channel"])
+    mp3 = os.path.join(base, "voice.mp3")
+    doc, out = t["montage"], os.path.join(base, "preview.mp4")
+    edl = doc["plans"]
+    style = render.style_of(t.get("style") or "classique")
     by_id = {s["id"]: s for s in p.get("stock") or []}
-    effets = sound_effects(p, t)
-    made = render_video(edl, by_id, t["voice"], t["script"]["passages"], t["language"], style, mp3, out,
-                        os.path.join(base, "pro_work"),
-                        music=(t["music_path"], t.get("music_start") or 0.0) if t.get("music_path") else None,
-                        report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)),
-                        effets=effets)
-    starts = []
-    for ph in range(1, len(t["voice"]["passages"]) + 1):
-        starts.append(next(e["debut"] for e in edl if e["phrase"] == ph))
+    made = render_doc(doc, by_id, t["voice"], t["script"]["passages"], t["language"], style, mp3, out,
+                      os.path.join(base, "pro_work"), report=report)
+    starts = [next((e["debut"] for e in edl if e["phrase"] == ph), vp["start"])
+              for ph, vp in enumerate(t["voice"]["passages"], 1)]
     c = checks.verify(out, mp3, t["voice"]["passages"], starts)
     credits = list(dict.fromkeys(by_id[e["plan"]].get("credit") for e in edl if by_id[e["plan"]].get("credit")))
+    effets = doc.get("effets") or []
     return {"path": out, "checks": c, "montage": edl, "credits": credits, "duree": made["duree"],
             # the cover (pipeline._thumbnail): the hook's image, with its banner
             "summary": {"segments": [{"impact": min(1.0, edl[0]["fin"] / 2), "end": edl[0]["fin"]}]},
@@ -869,12 +962,16 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
     total = made.get("duree") or (edl[-1]["fin"] if edl else 0)
     hook = v["passages"][0] if v.get("passages") else {}
     musique = None
-    if t.get("music_path"):
-        musique = {"fichier": os.path.basename(t["music_path"]), "debut_s": t.get("music_start"),
-                   "pourquoi": t.get("music_why"), "volume": MUSIC_GAIN, "niveau": "constant sous la voix",
+    doc = t.get("montage") or {}
+    m = doc.get("musique") or {"fichier": t.get("music_path"), "debut": t.get("music_start"), "volume": 100, "zones": []}
+    if m.get("fichier"):
+        musique = {"fichier": os.path.basename(m["fichier"]), "debut_s": m.get("debut"),
+                   "pourquoi": t.get("music_why"), "volume": round(MUSIC_GAIN * (m.get("volume") or 100) / 100, 4),
+                   "niveau": "constant sous la voix" + (", zones réglées par toi" if m.get("zones") else ""),
+                   "zones": m.get("zones") or [],
                    "categories": t.get("music_cats") or [], "paroles": t.get("music_lyrics"),
                    "choisie_par": t.get("music_by") or "ia",
-                   "archive": recette.archive(t["music_path"], "musique")}
+                   "archive": recette.archive(m["fichier"], "musique")}
     return recette.make(
         "adaptation", t["channel"], langue=t["language"], accroche=passages[0]["texte"] if passages else None,
         accroche_s=round(hook.get("end", 0) - hook.get("start", 0), 2) if hook else None, duree_s=round(total, 2),
@@ -897,4 +994,10 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
                  "plans": [{"phrase": e["phrase"], "debut": e["debut"], "fin": e["fin"],
                             "image": shots[e["plan"]].get("desc"), "source": shots[e["plan"]].get("url"),
                             "force": shots[e["plan"]].get("force")} for e in edl],
-                 "corrections": t.get("corrections") or []})
+                 "corrections": t.get("corrections") or [],
+                 # the person's own changes in the timeline (montage_doc): how many renders, and what the last one has
+                 "montage_par": "toi" if t.get("montage_versions") else "ia",
+                 "modifications": len(t.get("montage_versions") or []),
+                 "cadrages": [{"plan": k + 1, "zoom": e.get("zoom"), "centre": e.get("centre")} for k, e in enumerate(edl)
+                              if (e.get("zoom") or 1.0) != 1.0 or e.get("centre") is not None],
+                 "bandeau_cadre": doc.get("bandeau_cadre"), "sous_titres_regles": doc.get("sous_titres")})
