@@ -19,7 +19,7 @@ async function mtLoad(p, box){
     const data = await api(`/api/adaptations/${p.project_id}/targets/${ch}/montage`);
     if (!data || !data.doc){ box.innerHTML = ''; return; }
     mtState[ch] = { data, doc: mtCopy(data.doc), orig: mtCopy(data.doc), sel: null, pid: p.project_id,
-                    target: p.targets.find(t => t.channel === ch) || {}, avant: false };
+                    target: p.targets.find(t => t.channel === ch) || {}, avant: false, voix: {} };
     mtDraw(box);
   } catch (e){
     box.innerHTML = `<div class="errbox">Timeline : ${esc(e.message)}</div>`;
@@ -36,8 +36,9 @@ function mtSnap(data, t){ return mtStarts(data).reduce((b, s) => Math.abs(s - t)
 // ---------------- what changed (the counter, and whether the picture must be made again)
 
 function mtChanges(ch){
-  const { doc, orig } = mtState[ch], out = [];
+  const { doc, orig, voix } = mtState[ch], out = [];
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  if (Object.keys(voix).length) out.push('voix');
   if (!same(doc.plans, orig.plans)) out.push('images');
   if (!same(doc.bandeaux, orig.bandeaux) || doc.bandeau_cadre !== orig.bandeau_cadre) out.push('bandeaux');
   if (!same(doc.sous_titres, orig.sous_titres)) out.push('sous-titres');
@@ -82,12 +83,16 @@ function mtTracks(ch){
     return mtBlock('images', i, e.debut, e.fin, `<b>${i + 1}</b>${framed ? ' ⌖' : ''}`,
       s.thumb_url ? `background-image:url('${s.thumb_url}')` : '', `Plan ${i + 1} : ${s.desc || e.plan}`, i > 0);
   }).join('');
-  const voix = data.phrases.map((ph, i) => mtBlock('voix', i, ph.debut, ph.fin,
-    `<b>${i + 1}</b> ${esc(ph.maniere)}`, '', ph.texte)).join('');
+  const edits = mtState[ch].voix;
+  const voix = data.phrases.map((ph, i) => {
+    const e = edits[i];
+    const label = e ? (data.manieres_dispo[e.maniere] || 'Normale') : ph.maniere;
+    return mtBlock('voix', i, ph.debut, ph.fin, `<b>${i + 1}</b> ${esc(label)}${e ? ' ✎' : ''}`, e ? 'border-color:#f5c56d' : '', e ? e.texte : ph.texte);
+  }).join('');
   const bans = data.phrases.map((ph, i) => {
     const b = doc.bandeaux[i] || {}, end = i + 1 < data.phrases.length ? data.phrases[i + 1].debut : ph.fin + 0.25;
     const text = b.cache ? '— aucun —' : (b.texte != null ? b.texte : ph.bandeau);
-    const c = MT_CADRES[doc.bandeau_cadre];
+    const c = b.cadre === 'style' ? null : MT_CADRES[b.cadre || doc.bandeau_cadre];
     return mtBlock('bandeau', i, ph.debut, end, esc(text), (b.cache ? 'opacity:.45;' : '') + (c ? `background:${c[0]};color:${c[1]}` : ''), text);
   }).join('');
   const caps = mtCaptionGroups(data, doc).map((g, i) => mtBlock('sous', i, g.a, g.b, esc(g.text), '', g.text)).join('');
@@ -148,34 +153,44 @@ function mtPanel(ch){
         <button type="button" class="btn ghost small mt-del-plan" ${doc.plans.length < 2 ? 'disabled' : ''}>Supprimer ce plan (le voisin s'allonge)</button></div>`;
   }
   if (sel.kind === 'voix'){
-    const ph = data.phrases[i];
-    return `<div class="mt-p-title"><b>Phrase ${i + 1}</b> · ${esc(ph.maniere)} · ${fmtSec(ph.debut)} → ${fmtSec(ph.fin)}</div>
-      <div class="tiny">« ${esc(ph.texte)} »</div>
-      <div class="tiny">Changer la voix d'une phrase (sa manière, son texte) arrive à la prochaine étape.</div>`;
+    const ph = data.phrases[i], e = mtState[ch].voix[i] || { texte: ph.texte, maniere: ph.maniere_id };
+    return `<div class="mt-p-title"><b>Phrase ${i + 1}</b> · ${fmtSec(ph.debut)} → ${fmtSec(ph.fin)}</div>
+      <label class="f">Texte dit par la voix</label>
+      <textarea class="f mt-v-txt" rows="2" maxlength="400" ${data.rtl ? 'dir="rtl"' : ''}>${esc(e.texte)}</textarea>
+      <label class="f">Manière de dire (celles permises pour la famille de la chaîne)</label>
+      <div class="mt-p-row">${Object.entries(data.manieres_dispo).map(([k, l]) =>
+        `<button type="button" class="chipbtn mt-v-man ${k === e.maniere ? 'on' : ''}" data-v="${k}">${esc(l)}</button>`).join('')}</div>
+      <div class="warnbox">La voix est refaite en entier chez ElevenLabs (quelques centimes, ≈ 1 min) ; les coupes, les sons et les zones
+        de musique se recalent tout seuls sur la nouvelle voix. Un nouveau texte n'est pas revérifié contre les faits : relis-le.</div>
+      ${mtState[ch].voix[i] ? '<div class="mt-p-row"><button type="button" class="btn ghost small mt-v-undo">Garder la phrase d\'origine</button></div>' : ''}`;
   }
   if (sel.kind === 'bandeau'){
     const b = doc.bandeaux[i] || {}, ph = data.phrases[i];
     return `<div class="mt-p-title"><b>Bandeau de la phrase ${i + 1}</b></div>
       <label class="f">Texte</label><input class="f mt-ban-txt" value="${esc(b.texte != null ? b.texte : ph.bandeau)}" maxlength="60" ${b.cache ? 'disabled' : ''}>
       <label class="switch"><input type="checkbox" class="mt-ban-hide" ${b.cache ? 'checked' : ''}> Pas de bandeau sur cette phrase</label>
-      <label class="f">Cadre des bandeaux (toute la vidéo)</label>
-      <div class="mt-p-row"><button type="button" class="chipbtn mt-cadre ${!doc.bandeau_cadre ? 'on' : ''}" data-v="">Celui du style</button>
-        ${Object.entries(MT_CADRES).map(([k, [bg, fg, l]]) => `<button type="button" class="chipbtn mt-cadre ${doc.bandeau_cadre === k ? 'on' : ''}" data-v="${k}">
-          <span class="mt-sw" style="background:${bg};color:${fg}">${l}</span></button>`).join('')}</div>`;
+      <label class="f">Cadre de ce bandeau</label>
+      <div class="mt-p-row"><button type="button" class="chipbtn mt-cadre ${(b.cadre || doc.bandeau_cadre || 'style') === 'style' ? 'on' : ''}" data-v="">Celui du style</button>
+        ${Object.entries(MT_CADRES).map(([k, [bg, fg, l]]) => `<button type="button" class="chipbtn mt-cadre ${(b.cadre || doc.bandeau_cadre) === k ? 'on' : ''}" data-v="${k}">
+          <span class="mt-sw" style="background:${bg};color:${fg}">${l}</span></button>`).join('')}</div>
+      <div class="mt-p-row"><button type="button" class="btn ghost small mt-cadre-all">Appliquer ce cadre à tous les bandeaux</button></div>`;
   }
   if (sel.kind === 'sous'){
-    const g = mtCaptionGroups(data, doc)[i], st = doc.sous_titres || {};
+    const g = mtCaptionGroups(data, doc)[i], st = doc.sous_titres || {}, own = (st.groupes || {})[String(g.idx[0])] || {};
+    const look = { style: 'style' in own ? own.style : st.style, position: own.position || st.position, taille: own.taille || st.taille || 100 };
     return `<div class="mt-p-title"><b>Sous-titres</b> · ${fmtSec(g.a)} → ${fmtSec(g.b)}</div>
       <label class="f">Corriger les mots (le moment de chacun reste celui de la voix)</label>
       <div class="mt-p-row">${g.idx.map(w => `<input class="f mt-word" data-w="${w}" value="${esc((st.mots || {})[String(w)] || data.mots[w][0])}" style="width:auto;flex:1;min-width:90px">`).join('')}</div>
       <div class="mt-p-grid">
-        <div><label class="f">Style (toute la vidéo)</label><select class="f mt-cap-style">
+        <div><label class="f">Style de ce groupe</label><select class="f mt-cap-style">
           <option value="">Nos sous-titres (mot dit en couleur)</option>
-          ${data.styles_sous_titres.map(x => `<option value="${x.id}" ${st.style === x.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></div>
-        <div><label class="f">Position</label><select class="f mt-cap-pos">${data.positions.map(x => `<option value="${x}" ${st.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
-        <div><label class="f">Taille : <span class="mt-cap-size-out">${st.taille || 100}</span> %</label>
-          <input type="range" class="mt-cap-size" min="60" max="160" step="5" value="${st.taille || 100}"></div>
-      </div>`;
+          ${data.styles_sous_titres.map(x => `<option value="${x.id}" ${look.style === x.id ? 'selected' : ''}>${esc(x.label)}</option>`).join('')}</select></div>
+        <div><label class="f">Position</label><select class="f mt-cap-pos">${data.positions.map(x => `<option value="${x}" ${look.position === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+        <div><label class="f">Taille : <span class="mt-cap-size-out">${look.taille}</span> %</label>
+          <input type="range" class="mt-cap-size" min="60" max="160" step="5" value="${look.taille}"></div>
+      </div>
+      <div class="mt-p-row"><button type="button" class="btn ghost small mt-cap-all">Appliquer ce style, cette position et cette taille à tous les sous-titres</button>
+        ${Object.keys(own).length ? '<button type="button" class="btn ghost small mt-cap-reset">Comme le reste de la vidéo</button>' : ''}</div>`;
   }
   if (sel.kind === 'musique' || sel.kind === 'zone'){
     const m = doc.musique || {}, z = sel.kind === 'zone' ? m.zones[i] : null;
@@ -223,7 +238,7 @@ function mtDraw(box){
       ${t.preview_before_url ? `<button type="button" class="btn ghost small mt-avant">${st.avant ? 'Voir l\'après' : 'Voir l\'avant'}</button>` : ''}
       ${versions ? '<button type="button" class="btn ghost small mt-undo" title="Revenir au montage d\'avant le dernier rendu">Annuler le dernier rendu</button>' : ''}
       ${changes.length ? '<button type="button" class="btn ghost small mt-reset">Oublier mes changements</button>' : ''}
-      <button type="button" class="btn primary small mt-go" ${changes.length ? '' : 'disabled'}>Refaire l'aperçu${changes.length ? (mtSoundOnly(changes) ? ' (≈ 5 s)' : ' (≈ 30 s)') : ''}</button></div>
+      <button type="button" class="btn primary small mt-go" ${changes.length ? '' : 'disabled'}>Refaire l'aperçu${changes.length ? (changes.includes('voix') ? ' (≈ 1 min, voix ElevenLabs)' : mtSoundOnly(changes) ? ' (≈ 5 s)' : ' (≈ 30 s)') : ''}</button></div>
     ${mtTracks(ch)}
     <div class="mt-panel">${mtPanel(ch)}</div>`;
   if (st.sel) box.querySelectorAll(`.mt-track [data-kind="${st.sel.kind}"][data-i="${st.sel.i}"]`).forEach(el => el.classList.add('on'));
@@ -318,12 +333,25 @@ function mtBind(box){
   });
   mtBindPanel(box, now);
   mtBindHead(box);
+  mtDemo(box);
 }
 
 function mtBindPanel(box, now){
   const ch = box.dataset.channel, st = mtState[ch], { data, doc } = st;
   const i = st.sel ? Number(st.sel.i) : null;
   const on = (sel, ev, fn) => box.querySelectorAll(sel).forEach(el => el[ev] = () => fn(el));
+  // the voice of a sentence
+  const vEdit = () => {
+    const ph = data.phrases[i];
+    return st.voix[i] = st.voix[i] || { texte: ph.texte, maniere: ph.maniere_id };
+  };
+  const vClean = () => {
+    const ph = data.phrases[i], e = st.voix[i];
+    if (e && e.texte.trim() === ph.texte && e.maniere === ph.maniere_id) delete st.voix[i];
+  };
+  on('.mt-v-txt', 'onchange', el => { vEdit().texte = el.value.replace(/\s+/g, ' ').trim(); vClean(); mtChanged(box); });
+  on('.mt-v-man', 'onclick', b => { vEdit().maniere = b.dataset.v; vClean(); mtChanged(box); });
+  on('.mt-v-undo', 'onclick', () => { delete st.voix[i]; mtChanged(box); });
   // the shot
   on('.mt-panel .mt-shot', 'onclick', b => { doc.plans[i].plan = b.dataset.shot; mtChanged(box); });
   on('.mt-zoom', 'oninput', el => { box.querySelector('.mt-zoom-out').textContent = Number(el.value).toFixed(2); });
@@ -348,17 +376,48 @@ function mtBindPanel(box, now){
   // the banners
   on('.mt-ban-txt', 'onchange', el => { doc.bandeaux[i].texte = el.value.trim() || null; mtChanged(box); });
   on('.mt-ban-hide', 'onchange', el => { doc.bandeaux[i].cache = el.checked; mtChanged(box); });
-  on('.mt-cadre', 'onclick', b => { doc.bandeau_cadre = b.dataset.v || null; mtChanged(box); });
+  on('.mt-cadre', 'onclick', b => {
+    const want = b.dataset.v || 'style', video = doc.bandeau_cadre || 'style';
+    if (want === video) delete doc.bandeaux[i].cadre; else doc.bandeaux[i].cadre = want;   // only this banner
+    mtChanged(box);
+  });
+  on('.mt-cadre-all', 'onclick', () => {
+    const c = doc.bandeaux[i].cadre || doc.bandeau_cadre;
+    doc.bandeau_cadre = c && c !== 'style' ? c : null;
+    doc.bandeaux.forEach(x => delete x.cadre);
+    mtChanged(box);
+  });
   // the captions
   on('.mt-word', 'onchange', el => {
     const w = el.dataset.w, mots = doc.sous_titres.mots = doc.sous_titres.mots || {};
     if (!el.value.trim() || el.value.trim() === data.mots[w][0]) delete mots[w]; else mots[w] = el.value.trim();
     mtChanged(box);
   });
-  on('.mt-cap-style', 'onchange', el => { doc.sous_titres.style = el.value || null; mtChanged(box); });
-  on('.mt-cap-pos', 'onchange', el => { doc.sous_titres.position = el.value; mtChanged(box); });
+  // a group of captions: its own look (sous_titres.groupes, keyed by its first word), or the video's for all
+  const capGroup = () => {
+    const st = doc.sous_titres, key = String(mtCaptionGroups(data, doc)[i].idx[0]);
+    st.groupes = st.groupes || {};
+    return { st, key, own: st.groupes[key] = st.groupes[key] || {} };
+  };
+  const capTidy = ({ st, key, own }) => {
+    if ('style' in own && (own.style || null) === (st.style || null)) delete own.style;
+    if (own.position === st.position) delete own.position;
+    if (own.taille === (st.taille || 100)) delete own.taille;
+    if (!Object.keys(own).length) delete st.groupes[key];
+    if (!Object.keys(st.groupes).length) delete st.groupes;
+  };
+  on('.mt-cap-style', 'onchange', el => { const g = capGroup(); g.own.style = el.value || null; capTidy(g); mtChanged(box); });
+  on('.mt-cap-pos', 'onchange', el => { const g = capGroup(); g.own.position = el.value; capTidy(g); mtChanged(box); });
   on('.mt-cap-size', 'oninput', el => { box.querySelector('.mt-cap-size-out').textContent = el.value; });
-  on('.mt-cap-size', 'onchange', el => { doc.sous_titres.taille = Number(el.value); mtChanged(box); });
+  on('.mt-cap-size', 'onchange', el => { const g = capGroup(); g.own.taille = Number(el.value); capTidy(g); mtChanged(box); });
+  on('.mt-cap-all', 'onclick', () => {
+    const g = capGroup(), look = { style: 'style' in g.own ? g.own.style : g.st.style, position: g.own.position || g.st.position,
+                                   taille: g.own.taille || g.st.taille || 100 };
+    Object.assign(g.st, look);
+    delete g.st.groupes;
+    mtChanged(box);
+  });
+  on('.mt-cap-reset', 'onclick', () => { const g = capGroup(); delete g.st.groupes[g.key]; capTidy({ ...g, own: {} }); mtChanged(box); });
   // the music
   const m = doc.musique;
   on('.mt-song', 'onchange', el => { m.fichier = el.value || null; mtChanged(box); });
@@ -410,13 +469,14 @@ function mtBindHead(box){
   if (go) go.onclick = async () => {
     go.disabled = true;
     try {
-      await api(`/api/adaptations/${st.pid}/targets/${ch}/montage`, { method:'POST', body: JSON.stringify({ doc: st.doc }) });
+      const voix = Object.entries(st.voix).map(([i, e]) => ({ i: Number(i), texte: e.texte, maniere: e.maniere }));
+      await api(`/api/adaptations/${st.pid}/targets/${ch}/montage`, { method:'POST', body: JSON.stringify({ doc: st.doc, voix }) });
       toast('Aperçu en cours de rendu…', 'success');
       adProject = null; loadAdProject();
     } catch (e){ toast(e.message, 'error'); go.disabled = false; }
   };
   const reset = box.querySelector('.mt-reset');
-  if (reset) reset.onclick = () => { st.doc = mtCopy(st.orig); st.sel = null; mtDraw(box); };
+  if (reset) reset.onclick = () => { st.doc = mtCopy(st.orig); st.voix = {}; st.sel = null; mtDraw(box); };
   const undo = box.querySelector('.mt-undo');
   if (undo) undo.onclick = async () => {
     if (mtChanges(ch).length && !confirm('Tes changements pas encore appliqués seront oubliés. Annuler le dernier rendu ?')) return;
@@ -431,6 +491,7 @@ function mtBindHead(box){
     v.addEventListener('loadedmetadata', () => { v.currentTime = t; if (playing) v.play().catch(() => {}); }, { once: true });
     v.closest('.ad-preview').classList.toggle('mt-is-avant', st.avant);
     avant.textContent = st.avant ? "Voir l'après" : "Voir l'avant";
+    mtDemo(box);
   };
 }
 
@@ -440,4 +501,113 @@ function mtJump(card, t){
   if (!v || t == null) return;
   const go = () => { v.currentTime = Math.max(0, t - 0.5); };
   if (v.readyState >= 1) go(); else v.addEventListener('loadedmetadata', go, { once: true });
+}
+
+// ---------------- the instant demo: the changes not yet rendered, drawn over the playing video
+// Exact for the banners, close for the captions and the zoom; a replaced shot shows as its still picture; added or
+// moved sounds are played at their moment. A music zone or a new voice is heard only after « Refaire l'aperçu ».
+
+function mtGroupsLook(data, doc){
+  const st = doc.sous_titres || {}, own = st.groupes || {};
+  return mtCaptionGroups(data, doc).map(g => {
+    const x = own[String(g.idx[0])] || {};
+    return { ...g, style: 'style' in x ? x.style : st.style, position: x.position || st.position || 'bas',
+             taille: x.taille || st.taille || 100 };
+  });
+}
+
+function mtBannerLook(data, doc, k){
+  const b = doc.bandeaux[k] || {}, ph = data.phrases[k];
+  const cadre = b.cadre === 'style' ? null : (b.cadre || doc.bandeau_cadre);
+  return { text: b.cache ? '' : (b.texte != null ? b.texte : ph.bandeau), cadre: cadre || null };
+}
+
+function mtDemo(box){
+  const ch = box.dataset.channel, st = mtState[ch], v = mtVideo(box);
+  if (!v) return;
+  const holder = v.parentElement;
+  holder.style.position = 'relative';
+  holder.style.overflow = 'hidden';
+  let layer = holder.querySelector('.mt-demo');
+  if (!layer){ layer = document.createElement('div'); layer.className = 'mt-demo'; holder.appendChild(layer); }
+  if (st.demoStop) st.demoStop();
+  const { data } = st, look = data.look || {};
+  const changes = mtChanges(ch).filter(c => c !== 'voix');
+  if (!changes.length || st.avant || !look.w){ layer.innerHTML = ''; v.style.transform = ''; return; }
+  const doc = st.doc, orig = st.orig;
+  const groupsNew = mtGroupsLook(data, doc), groupsOld = mtGroupsLook(data, orig);
+  const heard = new Set((orig.effets || []).map(e => `${e.file}@${e.start}`));
+  const extra = (doc.effets || []).filter(e => !heard.has(`${e.file}@${e.start}`));
+  const up = s => (look.majuscules ? String(s).toUpperCase() : String(s));
+  const planAt = (plans, t) => plans.find(e => t >= e.debut && t < e.fin) || plans[plans.length - 1];
+  let last = v.currentTime, raf = null;
+
+  const draw = () => {
+    const t = v.currentTime;
+    const s = v.clientWidth / look.w, top = v.offsetTop, left = v.offsetLeft;
+    const parts = [`<span class="mt-demo-tag" title="Un aperçu rapide de tes changements : clique « Refaire l'aperçu » pour la vraie vidéo">DÉMO</span>`];
+    // the shot: replaced (its still picture) or zoomed
+    const pn = planAt(doc.plans, t), po = planAt(orig.plans, t);
+    const swapped = pn && po && pn.plan !== po.plan;
+    const zoom = (pn && pn.zoom || 1) / (po && !swapped ? (po.zoom || 1) : 1);
+    if (swapped){
+      const shot = data.stock.find(x => x.id === pn.plan) || {};
+      parts.push(`<img class="mt-demo-shot" src="${shot.thumb_url || ''}" style="transform:scale(${pn.zoom || 1});transform-origin:${(pn.centre == null ? 0.5 : pn.centre) * 100}% 50%">`);
+      v.style.transform = '';
+    } else {
+      v.style.transformOrigin = `${(pn && pn.centre != null ? pn.centre : 0.5) * 100}% 50%`;
+      v.style.transform = Math.abs(zoom - 1) > 0.001 ? `scale(${zoom})` : '';
+    }
+    // the banner of the sentence being said
+    let k = 0;
+    data.phrases.forEach((ph, i) => { if (ph.debut <= t + 0.02) k = i; });
+    const bn = mtBannerLook(data, doc, k), bo = mtBannerLook(data, orig, k);
+    if (swapped || bn.text !== bo.text || bn.cadre !== bo.cadre){
+      if (!swapped) parts.push(`<div class="mt-demo-mask" style="top:${look.bandeau_y * s - 14 * s}px;height:${150 * s}px"></div>`);
+      if (bn.text){
+        const c = bn.cadre ? look.cadres[bn.cadre] : [look.box, look.text];
+        parts.push(`<div class="mt-demo-ban" style="top:${look.bandeau_y * s}px;font-size:${78 * s}px;padding:${10 * s}px ${18 * s}px;
+          background:${c[0]};color:${c[1]}">${esc(up(bn.text))}</div>`);
+      }
+    }
+    // the captions being said
+    const gi = groupsNew.findIndex(g => t >= g.a && t < g.b);
+    if (gi >= 0){
+      const gn = groupsNew[gi], go = groupsOld[gi];
+      const differs = gn.text !== go.text || gn.position !== go.position || gn.taille !== go.taille || (gn.style || '') !== (go.style || '');
+      if (swapped || differs){
+        if (!swapped && !go.style) parts.push(`<div class="mt-demo-mask" style="top:${(look.places[go.position] - 96 * go.taille / 100 * 1.35) * s}px;height:${96 * go.taille / 100 * 1.5 * s}px"></div>`);
+        const said = gn.idx.filter(w => data.mots[w][1] <= t + 0.02).pop();
+        const fixes = (doc.sous_titres || {}).mots || {};
+        const words = gn.idx.map(w => `<span style="color:${w === said ? look.key : look.text}">${esc(up(fixes[String(w)] || data.mots[w][0]))}</span>`).join(' ');
+        parts.push(`<div class="mt-demo-cap" style="bottom:${(look.h - look.places[gn.position]) * s}px;font-size:${96 * gn.taille / 100 * s}px">${words}${
+          gn.style ? `<small class="mt-demo-note">style ${esc(gn.style)} après Refaire</small>` : ''}</div>`);
+      }
+    }
+    layer.style.cssText = `left:${left}px;top:${top}px;width:${v.clientWidth}px;height:${v.clientHeight}px`;
+    layer.innerHTML = parts.join('');
+    // the sounds added or moved, heard at their moment while it plays
+    if (!v.paused && t > last && t - last < 1){
+      extra.forEach(e => {
+        if (e.start > last && e.start <= t){
+          const a = new Audio(`/api/sfx/${encodeURIComponent(e.file.split(/[\\/]/).pop())}/audio`);
+          a.volume = Math.min(1, (e.gain || 0.3) * 2.5);
+          a.play().catch(() => {});
+        }
+      });
+    }
+    last = t;
+  };
+  const loop = () => { draw(); raf = v.paused ? null : requestAnimationFrame(loop); };
+  const onPlay = () => { if (!raf) raf = requestAnimationFrame(loop); };
+  v.addEventListener('play', onPlay);
+  v.addEventListener('seeked', draw);
+  v.addEventListener('pause', draw);
+  st.demoStop = () => {
+    v.removeEventListener('play', onPlay); v.removeEventListener('seeked', draw); v.removeEventListener('pause', draw);
+    if (raf) cancelAnimationFrame(raf);
+    st.demoStop = null;
+  };
+  draw();
+  if (!v.paused) onPlay();
 }

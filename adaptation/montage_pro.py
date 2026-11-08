@@ -515,12 +515,29 @@ def doc_words(v: Dict, doc: Optional[Dict]) -> List[Dict]:
     return [{**w, "w": fixes.get(str(k), w["w"])} for k, w in enumerate(v["words"])]
 
 
+def caption_groups(v: Dict, doc: Optional[Dict]) -> List[Dict]:
+    """The captions' groups of 3 words, sentence by sentence, each with the look it has: the video's (style,
+    position, taille) unless the person set this group apart (sous_titres.groupes, keyed by its first word)."""
+    st = (doc or {}).get("sous_titres") or {}
+    own = st.get("groupes") or {}
+    out = []
+    for k, vp in enumerate(v["passages"]):
+        idx = vp["words"]
+        for i in range(0, len(idx), 3):
+            g = idx[i:i + 3]
+            x = own.get(str(g[0]), {})
+            out.append({"mots": g, "phrase": k, "style": x["style"] if "style" in x else st.get("style"),
+                        "position": x.get("position") or st.get("position") or "bas",
+                        "taille": x.get("taille") or st.get("taille") or 100})
+    return out
+
+
 def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dict, doc: Optional[Dict] = None) -> Dict:
     """Banner (top, one per sentence) + captions 3 words at a time, the spoken word in the key colour, at ONE
     fixed place (\\pos: libass would push a line up when it overlaps the previous one). Arabic: every word its
     own colour run and the styles right-to-left (render.captions_ass's recipe), else the words come out of order.
-    doc (montage_doc): the person's banners and box, the words fixed, the captions' place and size — or no words at
-    all when a caption library style draws them."""
+    doc (montage_doc): the person's banners and their boxes (each its own or the video's), the words fixed, each group
+    of captions at its place and size — or left to a caption library style that draws it."""
     lang = lang_of(code)
     font, enc = lang["caption_font"], -1 if lang["rtl"] else 1
     white, key, box = _ass_colour(style["text"]), _ass_colour(style["key"]), _ass_colour(style["box"])
@@ -548,18 +565,26 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
         text = "" if b.get("cache") else banner_text(b["texte"] if b.get("texte") is not None else sp.get("bandeau") or "")
         if text:                        # until the next sentence starts, at one place: never two banners stacked
             end = nxt if nxt is not None else vp["end"] + 0.25
+            own = montage_doc.CADRES.get(b.get("cadre") or "") or (               # "style": the look's, whatever the video's
+                (style["box"] if isinstance(style["box"], str) else "#%02X%02X%02X" % tuple(style["box"][:3]), style["text"])
+                if b.get("cadre") == "style" else None)
+            tint = (f"\\1c{_ass_colour(own[1])}&\\3c{_ass_colour(own[0])}&\\4c{_ass_colour(own[0])}&" if own else "")
             ev.append(f"Dialogue: 0,{_ass_time(vp['start'])},{_ass_time(end)},Bandeau,,0,0,0,,"
-                      f"{{\\an8\\pos({W // 2},{BANNER_MARGIN})}}{up(text)}")
-        idx = [] if st.get("style") else vp["words"]
-        groups = [idx[i:i + 3] for i in range(0, len(idx), 3)]
-        for gi, g in enumerate(groups):
-            for j, w in enumerate(g):
-                a = words[w]["start"]
-                nxt = g[j + 1] if j + 1 < len(g) else (groups[gi + 1][0] if gi + 1 < len(groups) else None)
-                b = words[nxt]["start"] if nxt is not None else words[g[-1]]["end"] + 0.12
-                line = " ".join(("{\\c" + (key if x == w else white) + "&}") + up(words[x]["w"].replace("{", "").replace("}", ""))
-                                for x in g)
-                ev.append(f"Dialogue: 1,{_ass_time(a)},{_ass_time(b)},Sous,,0,0,0,,{{\\an2\\pos({W // 2},{y})}}{line}")
+                      f"{{\\an8\\pos({W // 2},{BANNER_MARGIN}){tint}}}{up(text)}")
+    groups = caption_groups(v, doc)
+    for gi, grp in enumerate(groups):
+        if grp["style"]:                # a caption library style draws this group (render_doc)
+            continue
+        g, gy = grp["mots"], CAPTION_PLACES.get(grp["position"], CAPTION_Y)
+        fs = "" if grp["taille"] == (st.get("taille") or 100) else f"\\fs{int(96 * grp['taille'] / 100)}"
+        for j, w in enumerate(g):
+            a = words[w]["start"]
+            follows = gi + 1 < len(groups) and groups[gi + 1]["phrase"] == grp["phrase"]
+            nxt = g[j + 1] if j + 1 < len(g) else (groups[gi + 1]["mots"][0] if follows else None)
+            b = words[nxt]["start"] if nxt is not None else words[g[-1]]["end"] + 0.12
+            line = " ".join(("{\\c" + (key if x == w else white) + "&}") + up(words[x]["w"].replace("{", "").replace("}", ""))
+                            for x in g)
+            ev.append(f"Dialogue: 1,{_ass_time(a)},{_ass_time(b)},Sous,,0,0,0,,{{\\an2\\pos({W // 2},{gy}){fs}}}{line}")
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(head + ev) + "\n")
     return {"position": f"{st.get('position') or 'bas'}-centre, fixe", "y": y, "taille": size, "police": font,
@@ -654,9 +679,8 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
         pieces.append(path if os.path.exists(path) else _piece(e, shots[e["plan"]], path))
     ass = os.path.join(work, "textes.ass")
     caps = captions_ass(v, passages, ass, code, style, doc)
-    lib = (doc.get("sous_titres") or {}).get("style")
     with open(ass, encoding="utf-8") as f:
-        key = hashlib.sha1(repr((pieces, f.read(), lib, (doc.get("sous_titres") or {}), [w["w"] for w in doc_words(v, doc)])
+        key = hashlib.sha1(repr((pieces, f.read(), (doc.get("sous_titres") or {}), [w["w"] for w in doc_words(v, doc)])
                                 ).encode()).hexdigest()[:16]
     picture = os.path.join(work, f"image_{key}.mp4")
     from adaptation.render import _filter_path
@@ -675,16 +699,21 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
             return sum(1 for x in inputs if x == "-i") - 1
         g = [f"[0:v]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex[b]"]
         cur = "b"
-        if lib:                                     # a style of the caption library draws the words
+        parts = {}                                  # the groups a caption library style draws, by look
+        for grp in caption_groups(v, doc):
+            if grp["style"]:
+                parts.setdefault((grp["style"], grp["position"], grp["taille"]), []).extend(grp["mots"])
+        if parts:
             from captions import render as caption_render
-            words = [(w["w"], w["start"], w["end"]) for w in doc_words(v, doc)]
-            ctx = caption_render.context(code, (0, 0, W, H), words, None)
-            st = doc.get("sous_titres") or {}
-            ctx.native_y = caps["y"]                    # a style drawn round the middle: moved to the place chosen
-            built = caption_render.build(lib, words, ctx, {"taille": st.get("taille") or 100,
-                                                           "position": st.get("position") or "bas"})
-            cap_f, cur, _ = caption_render.filters(built, "b", add_input, os.path.join(work, "captions_lib"), (W, H), fps=FPS)
-            g += cap_f
+            all_words = doc_words(v, doc)
+            for n_part, ((lib_style, pos, size), idx) in enumerate(sorted(parts.items(), key=lambda x: min(x[1]))):
+                words = [(all_words[k]["w"], all_words[k]["start"], all_words[k]["end"]) for k in sorted(idx)]
+                ctx = caption_render.context(code, (0, 0, W, H), words, None)
+                ctx.native_y = CAPTION_PLACES.get(pos, CAPTION_Y)     # a style drawn round the middle: moved there
+                built = caption_render.build(lib_style, words, ctx, {"taille": size, "position": pos})
+                cap_f, cur, _ = caption_render.filters(built, cur, add_input, os.path.join(work, "captions_lib"), (W, H),
+                                                       fps=FPS, tag=f"cap{n_part}")
+                g += cap_f
         g.append(f"[{cur}]format=yuv420p[vout]")
         _run(["ffmpeg", "-v", "error", "-y", *inputs, "-filter_complex", ";".join(g), "-map", "[vout]", "-an",
               "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p", "-t", f"{total:.3f}", picture])
@@ -929,6 +958,7 @@ def run_montage(pid: str, report: Optional[Report] = None, only: Optional[str] =
         todo = [t for t in p["targets"] if (only is None or t["channel"] == only)]
         for i, t in enumerate(todo):
             if t.pop("rerender", False) and t.get("montage"):      # the person's montage: only the render again
+                revoice(p, t, report)                               # (and the voice, when they changed a sentence)
                 t["preview"] = render_target(p, t, report)
             else:
                 t["preview"] = make_target(p, t, report, 1 / len(todo), i / len(todo))
@@ -955,9 +985,36 @@ def _before(p: Dict, t: Dict) -> None:
         shutil.copyfile(cur, os.path.join(base, "preview_avant.mp4"))
 
 
-def set_montage(pid: str, channel: str, doc: Dict) -> Dict:
+def _voice_edits(p: Dict, t: Dict, voix: Optional[List[Dict]]) -> List[Dict]:
+    """The sentences the person changed in the timeline ({i, texte, maniere}), checked: a known sentence, a text,
+    a manner the channel's family allows. Only the real changes are kept."""
+    from adaptation import pipeline as ap, voix_casting
+    passages, manieres = t["script"]["passages"], (t.get("manieres") or []) + [""] * len(t["script"]["passages"])
+    allowed, out = voix_casting.manieres_for(p), []
+    for x in voix or []:
+        try:
+            i = int(x.get("i"))
+        except (TypeError, ValueError):
+            continue
+        if not 0 <= i < len(passages):
+            raise ap.PipelineError("Cette phrase n'existe pas.")
+        texte = " ".join(str(x.get("texte") if x.get("texte") is not None else passages[i]["texte"]).split())
+        maniere = x.get("maniere") if x.get("maniere") is not None else manieres[i]
+        if not texte:
+            raise ap.PipelineError(f"Phrase {i + 1} : le texte ne peut pas être vide.")
+        if len(texte) > 400:
+            raise ap.PipelineError(f"Phrase {i + 1} : trop longue.")
+        if maniere not in allowed:
+            raise ap.PipelineError(f"Phrase {i + 1} : cette manière n'est pas permise pour la famille de récit de la chaîne.")
+        if texte != passages[i]["texte"] or maniere != manieres[i]:
+            out.append({"i": i, "texte": texte, "maniere": maniere})
+    return out
+
+
+def set_montage(pid: str, channel: str, doc: Dict, voix: Optional[List[Dict]] = None) -> Dict:
     """The person's montage from the timeline: made safe, kept (the one before for « Annuler »), then rendered
-    again in the background — the voice and the AI's choices are not asked again."""
+    again in the background — the AI's choices are not asked again. voix: sentences whose text or manner changed
+    (the narration is then said again by ElevenLabs and the montage moved onto it, see revoice)."""
     from adaptation import pipeline as ap, sfx
     p = ap.load(pid)
     ap._expect(p, "preview_review")
@@ -970,15 +1027,49 @@ def set_montage(pid: str, channel: str, doc: Dict) -> Dict:
         new_doc = montage_doc.clean(doc, t["voice"], shot_ids, files)
     except montage_doc.MontageError as e:
         raise ap.PipelineError(str(e))
-    if new_doc == t["montage"]:
+    edits = _voice_edits(p, t, voix)
+    if new_doc == t["montage"] and not edits:
         raise ap.PipelineError("Rien n'a changé.")
-    t["montage_jump"] = montage_doc.changed_at(t["montage"], new_doc)
-    t["montage_son"] = montage_doc.sound_only(t["montage"], new_doc)
+    t["voix_edits"] = edits
+    jumps = ([montage_doc.changed_at(t["montage"], new_doc)] if new_doc != t["montage"] else []) + \
+        [t["voice"]["passages"][e["i"]]["start"] for e in edits]
+    t["montage_jump"] = min(jumps) if jumps else 0.0
+    t["montage_son"] = montage_doc.sound_only(t["montage"], new_doc) and not edits
     _before(p, t)
     montage_doc.push(t, new_doc)
     t.update(rerender=True, validated=False)
     p["status"] = "voicing"
     return ap.save(p)
+
+
+def revoice(p: Dict, t: Dict, report: Optional[Report] = None) -> None:
+    """The sentences the person changed said again: the whole narration by ElevenLabs (one voice, one take), then the
+    montage moved onto it — every cut, sound and music zone at the same place of its sentence."""
+    from adaptation import pipeline as ap
+    edits = t.pop("voix_edits", None) or []
+    if not edits:
+        return
+    n = len(t["script"]["passages"])
+    manieres = ((t.get("manieres") or []) + [""] * n)[:n]
+    old = t["voice"]
+    mp3 = os.path.join(ap.project_dir(p["project_id"]), t["channel"], "voice.mp3")
+    versions = t.get("montage_versions") or []
+    if versions and os.path.exists(mp3):            # the voice before, kept with the montage it fits (« Annuler »)
+        import shutil
+        kept = os.path.join(os.path.dirname(mp3), f"voice_{len(versions)}.mp3")
+        shutil.copyfile(mp3, kept)
+        versions[-1]["_voix"] = {"textes": [x["texte"] for x in t["script"]["passages"]],
+                                 "manieres": list(t.get("manieres") or []), "voice": old, "mp3": kept}
+    for e in edits:
+        t["script"]["passages"][e["i"]]["texte"] = e["texte"]
+        manieres[e["i"]] = e["maniere"]
+    t.update(manieres=manieres, manieres_by="toi")
+    t["voice"] = _voice(p, t, mp3, report or (lambda phase, f: None), 0.1)
+    shot_ids = [s["id"] for s in p.get("stock") or [] if s.get("garde")]
+    moved = montage_doc.retime(t["montage"], old, t["voice"], [e["i"] for e in edits])
+    t["montage"] = montage_doc.clean(moved, t["voice"], shot_ids)
+    t.setdefault("corrections", []).append("Voix refaite (timeline) : " + ", ".join(
+        f"phrase {e['i'] + 1}" for e in edits))
 
 
 def undo_montage(pid: str, channel: str) -> Dict:
@@ -992,6 +1083,16 @@ def undo_montage(pid: str, channel: str) -> Dict:
         back = montage_doc.undo(t)
     except montage_doc.MontageError as e:
         raise ap.PipelineError(str(e))
+    snap = back.pop("_voix", None)
+    if snap:                                        # that montage was made on the voice before: it comes back too
+        import shutil
+        mp3 = os.path.join(ap.project_dir(p["project_id"]), t["channel"], "voice.mp3")
+        if os.path.exists(snap["mp3"]):
+            shutil.copyfile(snap["mp3"], mp3)
+        for x, texte in zip(t["script"]["passages"], snap["textes"]):
+            x["texte"] = texte
+        t.update(voice=snap["voice"], manieres=snap["manieres"])
+    t.pop("voix_edits", None)
     t["montage_jump"] = montage_doc.changed_at(cur, back)
     t["montage_son"] = montage_doc.sound_only(cur, back)
     _before(p, t)
@@ -1040,8 +1141,15 @@ def timeline(p: Dict, t: Dict) -> Dict:
         "doc": doc, "total": total, "versions": len(t.get("montage_versions") or []),
         "phrases": [{"debut": vp["start"], "fin": vp["end"], "texte": sp.get("texte"), "bandeau": banner_text(sp.get("bandeau") or ""),
                      "maniere": voix_casting.MANIERES.get(manieres[k] if k < len(manieres) else "", ("Normale",))[0] or "Normale",
-                     "mots": vp["words"]}
+                     "maniere_id": manieres[k] if k < len(manieres) else "", "mots": vp["words"]}
                     for k, (vp, sp) in enumerate(zip(v["passages"], t["script"]["passages"]))],
+        "manieres_dispo": {k: voix_casting.MANIERES[k][0] for k in voix_casting.manieres_for(p)},
+        "rtl": lang_of(t["language"])["rtl"],
+        # the look's colours and places, for the instant demo drawn over the video before « Refaire l'aperçu »
+        "look": {k: (lambda c: c if isinstance(c, str) else "#%02X%02X%02X" % tuple(c[:3]))(
+                     render.style_of(t.get("style") or "classique")[k]) for k in ("text", "key", "box")}
+                | {"cadres": montage_doc.CADRES, "places": CAPTION_PLACES, "bandeau_y": BANNER_MARGIN, "w": W, "h": H,
+                   "majuscules": lang_of(t["language"])["upper"]},
         "mots": [[w["w"], w["start"], w["end"]] for w in v["words"]],
         "stock": stock,
         "sons": {k: [{"file": f, "nom": os.path.basename(f)} for f in x] for k, x in sfx.library().items() if x},

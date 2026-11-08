@@ -6,8 +6,10 @@ One document per version, t["montage"], says everything the render needs — the
 
   plans         the edit: [{phrase, plan (stock id), debut, fin, zoom (1 = as the AI framed it), centre (0-1, None =
                 the shot's subject)}], back to back from 0, each cut on a word
-  bandeaux      per sentence: {texte (None = the script's), cache}; bandeau_cadre: its box colours (None = the look's)
-  sous_titres   {style (None = ours, else a caption library style), position, taille (%), mots {word index: text}}
+  bandeaux      per sentence: {texte (None = the script's), cache, cadre (its own box, else bandeau_cadre)};
+                bandeau_cadre: every banner's box colours (None = the look's)
+  sous_titres   {style (None = ours, else a caption library style), position, taille (%), mots {word index: text},
+                groupes {first word index: {style, position, taille}} — one group of 3 words set apart}
   musique       {fichier, debut (in the song), volume (%), zones [{debut, fin, volume (%)}], fondu (s)}
   effets        [{kind, file, start (when the file begins), gain, pourquoi, par}]
 
@@ -84,15 +86,32 @@ def clean(doc: Dict, voice: Dict, shot_ids: List[str], sfx_files: Optional[List[
     n = len(voice.get("passages") or [])
     bs = (d.get("bandeaux") or [])[:n]
     d["bandeaux"] = [{"texte": None if b.get("texte") is None else str(b["texte"])[:60], "cache": bool(b.get("cache"))}
+                     | ({"cadre": b["cadre"]} if b.get("cadre") in CADRES or b.get("cadre") == "style" else {})   # its own box
                      for b in bs] + [{"texte": None, "cache": False}] * (n - len(bs))
     if d.get("bandeau_cadre") not in CADRES:
         d["bandeau_cadre"] = None
     st = d.get("sous_titres") or {}
+    nw = len(voice.get("words") or [])
     d["sous_titres"] = {"style": st.get("style") or None,
                         "position": st.get("position") if st.get("position") in POSITIONS else "bas",
                         "taille": int(_num(st.get("taille"), 60, 160, 100)),
                         "mots": {str(int(k)): str(v)[:40] for k, v in (st.get("mots") or {}).items()
-                                 if str(k).isdigit() and int(k) < len(voice.get("words") or []) and str(v).strip()}}
+                                 if str(k).isdigit() and int(k) < nw and str(v).strip()}}
+    groups = {}                                     # one group of words (key: its first word) set apart from the rest
+    for k, g in (st.get("groupes") or {}).items():
+        if not str(k).isdigit() or int(k) >= nw or not isinstance(g, dict):
+            continue
+        x = {}
+        if "style" in g:
+            x["style"] = g["style"] or None
+        if g.get("position") in POSITIONS:
+            x["position"] = g["position"]
+        if g.get("taille") is not None:
+            x["taille"] = int(_num(g["taille"], 60, 160, 100))
+        if x:
+            groups[str(int(k))] = x
+    if groups:
+        d["sous_titres"]["groupes"] = groups
     m = d.get("musique") or {}
     zones = []
     for z in m.get("zones") or []:
@@ -153,3 +172,40 @@ def undo(t: Dict) -> Dict:
     t["montage"] = versions.pop()
     t["montage_versions"] = versions
     return t["montage"]
+
+
+def _remap(t: float, old: List[Dict], new: List[Dict]) -> float:
+    """A moment of the old voice at the same place of the same sentence in the new voice (a sentence said again
+    lasts a little more or less: what was a third into it stays a third into it)."""
+    o = [p["start"] for p in old] + [old[-1]["end"] + 0.6]
+    n = [p["start"] for p in new] + [new[-1]["end"] + 0.6]
+    k = max((i for i in range(len(old)) if o[i] <= t), default=0)
+    r = (t - o[k]) / max(0.01, o[k + 1] - o[k])
+    return round(n[k] + max(0.0, min(1.0, r)) * (n[k + 1] - n[k]), 3)
+
+
+def retime(doc: Dict, old_voice: Dict, new_voice: Dict, changed: List[int]) -> Dict:
+    """The montage moved onto a new narration (one sentence's text or manner changed: the whole voice is made again):
+    cuts, sounds and music zones at the same place of their sentence; the word fixes kept where the sentence did
+    not change (a changed sentence's words are new). Cuts are snapped on the new words by clean()."""
+    old, new = old_voice["passages"], new_voice["passages"]
+    if len(old) != len(new):
+        raise MontageError("La voix refaite n'a plus le même nombre de phrases.")
+    d = copy.deepcopy(doc)
+    for e in d["plans"]:
+        e["debut"] = _remap(e["debut"], old, new)
+    for e in d.get("effets") or []:
+        e["start"] = _remap(e["start"], old, new)
+    for z in (d.get("musique") or {}).get("zones") or []:
+        z["debut"], z["fin"] = _remap(z["debut"], old, new), _remap(z["fin"], old, new)
+    fixes = (d.get("sous_titres") or {}).get("mots") or {}
+    kept = {}
+    for k, (po, pn) in enumerate(zip(old, new)):
+        if k in changed or len(po["words"]) != len(pn["words"]):
+            continue
+        for wo, wn in zip(po["words"], pn["words"]):
+            if str(wo) in fixes:
+                kept[str(wn)] = fixes[str(wo)]
+    if d.get("sous_titres") is not None:
+        d["sous_titres"]["mots"] = kept
+    return d

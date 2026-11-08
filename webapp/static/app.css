@@ -824,3 +824,12 @@
 .mt-sw{display:inline-block;padding:1px 7px;border-radius:3px;font-weight:700;font-size:10.5px}
 .mt-panel .chipbtn.on{border-color:var(--accent);color:#fff;background:rgba(109,141,253,.28);font-weight:600}
 .mt-is-avant video{outline:3px solid #f5c56d;outline-offset:-3px}
+/* the timeline's instant demo, over the video (montage.js) */
+.mt-demo{position:absolute;pointer-events:none;overflow:hidden;border-radius:inherit}
+.mt-demo-tag{position:absolute;left:6px;top:6px;z-index:3;background:#f5c56d;color:#111;font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px}
+.mt-demo-shot{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.mt-demo-mask{position:absolute;left:0;right:0;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px);background:rgba(10,12,16,.35)}
+.mt-demo-ban{position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;font-weight:800;font-family:"Montserrat","Arial Black",sans-serif;letter-spacing:.01em;z-index:2}
+.mt-demo-cap{position:absolute;left:4%;right:4%;text-align:center;font-weight:900;font-family:"Montserrat","Arial Black",sans-serif;line-height:1.1;
+  text-shadow:0 0 4px #000,0 0 2px #000,2px 2px 3px #000;z-index:2}
+.mt-demo-note{display:block;font-size:10px;font-weight:600;color:#f5c56d;text-shadow:none}

@@ -98,3 +98,22 @@ def test_the_music_level_follows_the_zones_and_a_framing_change_makes_its_shot_a
     s = {"file": "f.mp4", "start": 0, "end": 5, "x": 0.5}
     assert mp._piece_key(EDL[0], s) == mp._piece_key(dict(EDL[0]), s)
     assert mp._piece_key({**EDL[0], "zoom": 1.3}, s) != mp._piece_key(EDL[0], s)
+
+
+def test_one_banner_or_one_group_of_captions_can_be_set_apart(tmp_path):
+    passages = [{"bandeau": "ORQUES"}, {"bandeau": "MYSTÈRE"}, {"bandeau": "RÉVÉLATION"}]
+    style = {"text": (255, 255, 255), "key": (255, 214, 10), "box": (17, 17, 17)}
+    d = doc()
+    d["bandeaux"][2]["cadre"] = "rouge"                                     # only the reveal's banner is red
+    d["sous_titres"]["groupes"] = {"2": {"position": "haut", "taille": 140}, "4": {"style": "karaoke"}}
+    d = md.clean(d, VOICE, ["a", "b", "c"])
+    assert d["bandeaux"][2] == {"texte": None, "cache": False, "cadre": "rouge"} and "cadre" not in d["bandeaux"][0]
+    path = tmp_path / "t.ass"
+    mp.captions_ass(VOICE, passages, str(path), "fr", style, d)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    ban = {l.split("}")[-1]: l for l in lines if ",Bandeau," in l}
+    assert "\\3c&H002828D6&" in ban["RÉVÉLATION"] and "\\3c" not in ban["ORQUES"]
+    depuis = next(l for l in lines if ",Sous," in l and "DEPUIS" in l)
+    assert f"\\pos(540,{mp.CAPTION_PLACES['haut']})" in depuis and "\\fs134" in depuis
+    assert not any(",Sous," in l and "RÉALITÉ" in l for l in lines)        # drawn by the karaoke style instead
+    assert [g["style"] for g in mp.caption_groups(VOICE, d)] == [None, None, "karaoke"]

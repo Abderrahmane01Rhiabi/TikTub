@@ -108,3 +108,54 @@ def test_the_check_looks_for_each_sentence_where_the_voice_says_it_not_at_a_move
     monkeypatch.setattr(mp, "recipe", lambda *a, **k: {})
     mp.render_target(p, t)
     assert seen["starts"] == [0.0, 3.0]
+
+
+NEW_VOICE = {"passages": [{"start": 0.0, "end": 2.8, "words": [0, 1]}, {"start": 3.0, "end": 8.5, "words": [2, 3, 4]}],
+             "words": [{"w": w, "start": s, "end": s + 0.4} for w, s in [("Pourquoi", 0.0), ("700", 1.2), ("Depuis", 3.0),
+                                                                         ("bien", 4.6), ("quatre", 6.0)]], "texts": ["x"]}
+
+
+def test_a_new_voice_keeps_every_cut_sound_and_zone_at_its_place_in_its_sentence():
+    d = md.new(EDL, 2, None, 0.0, [{"kind": "pop", "file": "f", "start": 4.75, "gain": 0.3}])
+    d["plans"][1]["debut"] = 4.4                                  # half-way into sentence 2 (3.0 -> 7.1)
+    d["musique"]["zones"] = [{"debut": 3.0, "fin": 7.1, "volume": 40}]
+    out = md.retime(d, VOICE, NEW_VOICE, [1])
+    assert out["plans"][1]["debut"] == pytest.approx(3.0 + (1.4 / 4.1) * 6.1, abs=0.01)
+    assert out["effets"][0]["start"] == pytest.approx(3.0 + (1.75 / 4.1) * 6.1, abs=0.01)
+    assert out["musique"]["zones"][0] == {"debut": 3.0, "fin": 9.1, "volume": 40}
+
+
+def test_a_sentence_s_new_text_or_manner_is_checked():
+    save()
+    with pytest.raises(ap.PipelineError, match="vide"):
+        mp.set_montage("ad_t", "chanA", md.new(EDL, 2, None, 0.0, []), [{"i": 1, "texte": "  "}])
+    with pytest.raises(ap.PipelineError, match="pas permise"):
+        mp.set_montage("ad_t", "chanA", md.new(EDL, 2, None, 0.0, []), [{"i": 1, "maniere": "excite"}])
+    t = ap.target(mp.set_montage("ad_t", "chanA", md.new(EDL, 2, None, 0.0, []), [{"i": 1, "texte": "Depuis bien quatre"}]),
+                  "chanA")
+    assert t["voix_edits"] == [{"i": 1, "texte": "Depuis bien quatre", "maniere": ""}] and t["montage_jump"] == 3.0
+
+
+def test_the_voice_is_said_again_the_montage_moved_onto_it_and_annuler_brings_the_old_voice_back(monkeypatch, tmp_path):
+    save()
+    p = ap.load("ad_t")
+    import os
+    os.makedirs(os.path.join(ap.project_dir("ad_t"), "chanA"), exist_ok=True)
+    mp3 = os.path.join(ap.project_dir("ad_t"), "chanA", "voice.mp3")
+    open(mp3, "w").write("old voice")
+    mp.set_montage("ad_t", "chanA", md.new(EDL, 2, None, 0.0, []), [{"i": 1, "texte": "Depuis bien quatre"}])
+    said = []
+    def fake_voice(p, t, path, report, at):
+        said.append(t["script"]["passages"][1]["texte"])
+        open(path, "w").write("new voice")
+        return NEW_VOICE
+    monkeypatch.setattr(mp, "_voice", fake_voice)
+    monkeypatch.setattr(mp, "render_target", lambda p, t, report=None: {"path": "x", "credits": []})
+    mp.run_montage("ad_t")
+    assert ap.load("ad_t")["status"] == "preview_review", ap.load("ad_t").get("error")
+    t = ap.load("ad_t")["targets"][0]
+    assert said == ["Depuis bien quatre"] and t["voice"] == NEW_VOICE and t["manieres_by"] == "toi"
+    assert t["montage"]["plans"][-1]["fin"] == 9.1 and open(mp3).read() == "new voice"
+    t2 = ap.target(mp.undo_montage("ad_t", "chanA"), "chanA")
+    assert t2["script"]["passages"][1]["texte"] == "b" and t2["voice"]["passages"][1]["end"] == 6.5
+    assert open(mp3).read() == "old voice" and "_voix" not in t2["montage"]

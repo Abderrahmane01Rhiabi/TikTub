@@ -1008,6 +1008,7 @@ def change_adaptation_music(pid: str, channel: TargetChannel, req: AdaptationMus
 
 class AdaptationMontage(BaseModel):
     doc: dict                           # the montage document as changed in the timeline (adaptation/montage_doc)
+    voix: Optional[list] = None         # sentences said again: [{i, texte, maniere}] (ElevenLabs)
 
 
 @router.get("/api/adaptations/{pid}/targets/{channel}/montage")
@@ -1027,7 +1028,7 @@ def change_adaptation_montage(pid: str, channel: TargetChannel, req: AdaptationM
     """Montage pro: the person's montage from the timeline — checked, kept, rendered again (sound only: seconds)."""
     from adaptation import montage_pro
     _adaptation_or_404(pid)
-    p = _adaptation_call(montage_pro.set_montage, pid, channel, req.doc)
+    p = _adaptation_call(montage_pro.set_montage, pid, channel, req.doc, req.voix)
     _start_adaptation_step(pid, "voicing", only=channel)
     return _serialize_adaptation(p)
 
