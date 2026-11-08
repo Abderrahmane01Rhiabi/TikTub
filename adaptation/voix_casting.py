@@ -24,6 +24,12 @@ TONS = {"posee": "Posée", "energique": "Énergique", "dramatique": "Dramatique"
 MANIERES = {"": ("Normale", ""), "calme": ("Calme", "[calm]"), "serieux": ("Sérieux", "[serious]"),
             "chuchote": ("Chuchoté", "[whispers]"), "excite": ("Excité", "[excited]"),
             "curieux": ("Curieux", "[curious]"), "triste": ("Triste", "[sad]")}
+# the manners a family may use (2026-11-08: a news whispered sounded like gossip and its sanction said [excited] sounded
+# glad of it), and at most MAX_SPECIAL sentences said in a special manner, so that it stays natural
+MANIERES_FAMILLE = {"actualite": ["", "serieux", "calme"], "explicatif": ["", "curieux", "serieux", "chuchote"],
+                    "humour": ["", "excite", "curieux"], "hype": ["", "excite", "serieux"],
+                    "motivation": ["", "calme", "triste"], "satisfying": ["", "calme", "chuchote"]}
+MAX_SPECIAL = 2
 MODES = ("auto", "principale")
 TAG = re.compile(r"^\[[a-z ]+\]$")
 
@@ -38,10 +44,28 @@ Style de recit : {recit}. Ton de la video : {ton}.
 Voix possibles (★ = la voix principale de la chaine, sa signature) :
 {voix}
 1. "voix" : {regle_voix}
-2. "manieres" : pour CHAQUE phrase, la maniere de la dire parmi {manieres} ("" = normale). Peu de changements : la
-   plupart des phrases normales ; une accroche serieuse ou curieuse, une revelation chuchotee, une chute excitee
-   ou triste quand le texte le demande vraiment.
+2. "manieres" : pour CHAQUE phrase, la maniere de la dire parmi {manieres} ("" = normale) — les seules permises pour
+   cette chaine. 2 phrases speciales AU PLUS, les autres normales : seulement quand le texte le demande vraiment.
 JSON uniquement : {{"voix": "id", "pourquoi": "une phrase", "manieres": [""]}}"""
+
+
+def manieres_for(p: Dict) -> List[str]:
+    """The manners the project's narrative family allows ("" = said plainly)."""
+    from adaptation import recits
+    fam = p.get("famille_recit") or recits.find(p.get("recit")) or "explicatif"
+    return MANIERES_FAMILLE.get(fam, list(MANIERES))
+
+
+def clean_manieres(manieres: List[str], allowed: List[str], n: int) -> List[str]:
+    """Only allowed manners, at most MAX_SPECIAL of them (the first ones: the hook keeps its), n long."""
+    out, special = [], 0
+    for m in (list(manieres or []) + [""] * n)[:n]:
+        if m and m in allowed and special < MAX_SPECIAL:
+            out.append(m)
+            special += 1
+        else:
+            out.append("")
+    return out
 
 
 def tons_of(v: Dict) -> List[str]:
@@ -180,7 +204,7 @@ def cast(p: Dict, t: Dict, gemini=None) -> None:
         r = (gemini or _gemini())._generate_content([{"text": CAST.format(
             phrases="\n".join(f"{k}. {x.get('texte')}" for k, x in enumerate(passages, 1)), recit=p.get("recit") or "-",
             ton=ap._tone(p, t), voix=listing or "-", regle_voix=regle,
-            manieres=", ".join(f'"{k}"' for k in MANIERES if k))}], max_tokens=3000, timeout=90, temperature=0.3)
+            manieres=", ".join(f'"{k}"' for k in manieres_for(p) if k))}], max_tokens=3000, timeout=90, temperature=0.3)
     except Exception:
         r = {}
     r = r if isinstance(r, dict) else {}
@@ -190,8 +214,7 @@ def cast(p: Dict, t: Dict, gemini=None) -> None:
         t.update(voice_id=pick if ok else main, voice_by="ia" if ok and pick != main else "principale",
                  voice_why=str(r.get("pourquoi") or "")[:240] if ok and pick != main else "la voix principale de la chaîne")
     if t.get("manieres_by") != "toi":
-        got = [m if m in MANIERES else "" for m in (r.get("manieres") or [])]
-        t["manieres"] = (got + [""] * len(passages))[:len(passages)]
+        t["manieres"] = clean_manieres(r.get("manieres") or [], manieres_for(p), len(passages))
         t["manieres_by"] = "ia"
 
 
@@ -210,6 +233,9 @@ def set_casting(pid: str, channel: str, voice_id: Optional[str] = None, manieres
             t.update(voice_id=voice_id, voice=None, voice_by="toi", voice_why="choisie par toi", validated=False)
     if manieres is not None:
         n = len((t.get("script") or {}).get("passages") or [])
+        allowed = manieres_for(p)
+        if any(m in MANIERES and m and m not in allowed for m in manieres):     # an unknown one is just ignored
+            raise ap.PipelineError("Cette manière de dire n'est pas permise pour la famille de récit de la chaîne.")
         t["manieres"] = ([m if m in MANIERES else "" for m in manieres] + [""] * n)[:n]
         t["manieres_by"] = "toi"
     return ap.save(p)

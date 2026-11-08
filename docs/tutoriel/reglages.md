@@ -68,6 +68,8 @@ Chaque section ci-dessous règle **un morceau** de cette ligne.
 
 **Tu peux changer le style d'une vidéo** à l'écran de son script : menu des styles, puis **« Réécrire dans ce style »** (environ 1 minute).
 
+**Les faits sont vérifiés** *(Idée d'abord)* : après l'écriture et après chaque réécriture (la tienne ou celle de l'IA), chaque phrase est comparée aux faits trouvés sur le web. Une phrase qui invente ou contredit un fait est corrigée automatiquement une fois ; si elle reste fausse, elle apparaît **en rouge** à l'écran du script et tu ne peux pas valider avant de la corriger. En **Actualité**, le script donne aussi l'autre version quand les faits la contiennent (un syndicat, une réponse…), sans mots accusateurs, et l'accroche garde le chiffre clé.
+
 Concerne : Idée d'abord, Script d'abord, Sources d'abord et Reprise.
 
 ### 1.4 Voix
@@ -80,7 +82,17 @@ Concerne : Idée d'abord, Script d'abord, Sources d'abord et Reprise.
   - *L'IA choisit selon le sujet* : elle garde la ★, sauf si elle a une vraie raison (qu'elle écrit). Exemple : une histoire racontée par une femme ;
   - *Toujours la voix principale* : la ★ à chaque vidéo.
 
-**Ce qui se passe ensuite** *(Idée d'abord)* : après l'écriture du script, l'IA choisit la voix **et la manière de dire chaque phrase** (normale, calme, sérieuse, chuchotée, excitée, curieuse, triste). Tu vois et changes les deux à l'écran du script (bloc **Casting**, et le menu **« Manière de le dire »** sous chaque phrase), ou à l'aperçu.
+**Ce qui se passe ensuite** *(Idée d'abord)* : après l'écriture du script, l'IA choisit la voix **et la manière de dire chaque phrase**, parmi celles que permet la **famille de récit** de la chaîne, avec **au plus 2 phrases spéciales** par vidéo :
+
+| Famille | Manières permises |
+|---|---|
+| Actualité | normale, sérieux, calme |
+| Explicatif | normale, curieux, sérieux, chuchoté |
+| Humour | normale, excité, curieux |
+| Hype / épique | normale, excité, sérieux |
+| Motivation | normale, calme, triste |
+| Satisfying | normale, calme, chuchoté |
+ Tu vois et changes les deux à l'écran du script (bloc **Casting**, et le menu **« Manière de le dire »** sous chaque phrase), ou à l'aperçu.
 
 Pour ajouter une voix : **Bibliothèques → Voix**.
 

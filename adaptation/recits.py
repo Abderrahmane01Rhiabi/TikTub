@@ -85,9 +85,18 @@ FAMILLES: Dict[str, Dict] = {
 }
 
 RECIT_PART = """STYLE DE RECIT IMPOSE (il prime sur les regles generales quand elles different) : {regle}
-L'accroche (plan 1) tient en 2 a 3 secondes de voix et NOMME le sujet. Ton {ton}.
-
+L'accroche (plan 1) tient en 2 a 3 secondes de voix et NOMME le sujet ; si les faits ont un chiffre frappant
+("10 presents sur 160"), l'accroche le dit. Ton {ton}.
+{famille}
 """
+
+# what a whole family must respect, whatever its style (the Ouahbi news, 2026-11-08: one side only, "they all cheat",
+# "the ministry settled it" for an announcement)
+FAMILY_RULES = {
+    "actualite": "INFORMATION NEUTRE : si les faits donnent l'autre version (un syndicat, une reponse, un dementi, une "
+                 "opposition), dis-la dans une phrase ; jamais de generalisation (\"les employes trichent\") ni de mot "
+                 "accusateur ou moqueur ; une annonce reste une annonce (\"le ministere annonce\", pas \"a tranche\").",
+}
 
 CHOOSE = """Sujet d'un YouTube Short : {sujet}
 Question : {question}
@@ -152,7 +161,7 @@ def part(name: str) -> str:
     f = find(name)
     if not f:
         return ""
-    return RECIT_PART.format(regle=FAMILLES[f]["styles"][name][2], ton=TONS[f])
+    return RECIT_PART.format(regle=FAMILLES[f]["styles"][name][2], ton=TONS[f], famille=FAMILY_RULES.get(f, ""))
 
 
 def recent(channel: str, n: int = 3) -> List[str]:

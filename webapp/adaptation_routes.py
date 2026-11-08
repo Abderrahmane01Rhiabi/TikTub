@@ -210,7 +210,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             from adaptation import voix_casting
             x["casting"] = {"voix_par": t.get("voice_by"), "voix_pourquoi": t.get("voice_why"),
                             "manieres": t.get("manieres") or [], "manieres_par": t.get("manieres_by"),
-                            "manieres_dispo": {k: v[0] for k, v in voix_casting.MANIERES.items()}}
+                            "manieres_dispo": {k: voix_casting.MANIERES[k][0] for k in voix_casting.manieres_for(p)}}
             if full and p.get("status") in ("plan_review", "stock_review", "preview_review"):
                 try:
                     rules = voix_casting.rules_of(t["channel"])

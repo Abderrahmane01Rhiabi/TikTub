@@ -498,6 +498,9 @@ def write_storyboard(p: Dict, report: Report):
             break                                                   # nor one that drops a sourced number
         b = {**fixed, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
     b = _fit_length(b, codes, draft, facts)
+    if p["reference"].get("origine") == "idee":     # every sentence against the verified facts, after every rewrite
+        report("vérification des faits", 0.92)
+        b = _checked_facts(b, codes, facts, recit)
     p = load(p["project_id"])
     p["storyboard"] = b
     _refresh_plan(p)
@@ -528,6 +531,29 @@ def _fit_length(b: Dict, codes: List[str], draft: Optional[Dict] = None, facts: 
     return b
 
 
+FACTS_FIX = ("Ces phrases disent une chose absente des faits verifies, ou qui les contredit : {fautes}. Reecris SEULEMENT "
+             "ces phrases (toutes leurs langues), avec les faits verifies, a la meme longueur ; ne change rien d'autre.")
+
+
+def _checked_facts(b: Dict, codes: List[str], facts: List[str], extra: Optional[str] = None) -> Dict:
+    """An « Idée d'abord » storyboard checked sentence by sentence against its verified facts (a re-read that matches
+    a sentence to its image once invented « they fooled the cameras » when the facts said the cameras could not be
+    used): fixed once automatically, kept only if it has fewer faults; what is still wrong is marked on its plan and
+    blocks the approval until the person corrects it."""
+    found = storyboard.fact_check(b, codes, facts)
+    if found:
+        listing = " ; ".join(f"plan {k + 1} [{c}] : {q}" for (k, c), q in found.items())
+        try:
+            fixed = storyboard.revise(b, codes, FACTS_FIX.format(fautes=listing) + (extra or ""))
+            again = storyboard.fact_check(fixed, codes, facts)
+            if len(again) < len(found):
+                b = {**fixed, "corrections": b.get("corrections", []) + [f"Faits vérifiés : corrigé — {listing}"]}
+                found = again
+        except script.ScriptError:
+            pass
+    return storyboard.mark_facts(b, found)
+
+
 def edit_plan(pid: str, channel: str, new: Dict) -> Dict:
     """new: {titre, description, tags, passages: [{image, bandeau, texte, mots_cles}]} — the
     images belong to every language: changing one asks every language to be approved again."""
@@ -550,6 +576,8 @@ def edit_plan(pid: str, channel: str, new: Dict) -> Dict:
     b["meta"][code] = {"titre": str(new.get("titre") or "").strip()[:100], "description": str(new.get("description") or "").strip(),
                        "tags": [str(x).strip() for x in new.get("tags") or [] if str(x).strip()][:15]}
     approved = {x["channel"] for x in p["targets"] if x.get("approved")} - {channel}
+    if (p.get("reference") or {}).get("origine") == "idee" and any((pl.get("hors_faits") or {}) for pl in b["plans"]):
+        storyboard.mark_facts(b, storyboard.fact_check(b, _codes(p), p["reference"].get("faits") or []))
     _refresh_plan(p)
     if not images_changed:              # only this language's text changed: the others stay approved
         for x in p["targets"]:
@@ -565,6 +593,8 @@ def revise_plan(pid: str, channel: str, request: str) -> Dict:
         from adaptation import montage_pro
         request += montage_pro.dialect_part(p["targets"])
     b = storyboard.revise(p["storyboard"], _codes(p), request)
+    if (p.get("reference") or {}).get("origine") == "idee":     # the AI's rewrite checked against the facts too
+        storyboard.mark_facts(b, storyboard.fact_check(b, _codes(p), p["reference"].get("faits") or []))
     p["storyboard"] = b
     _refresh_plan(p)
     return save(p)

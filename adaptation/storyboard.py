@@ -287,7 +287,54 @@ def durations(bundle: Dict, codes: List[str]) -> None:
 
 
 LENGTH_AIM = 33.0                 # seconds of voice a too long storyboard is cut down to (TOTAL_S: aim 25-35)
-LENGTH_FIX = "DUREE IMPOSEE : la voix doit tenir en 25 a 35 secondes, raccourcis les phrases."
+LENGTH_FIX = ("DUREE IMPOSEE : la voix doit tenir en 25 a 35 secondes, raccourcis les phrases. Raccourcir l'accroche ne "
+              "supprime JAMAIS son chiffre frappant (\"10 presents sur 160\") : enleve plutot un autre mot.")
+
+FACTS_PROMPT = """Faits verifies (les SEULS vrais pour cette video, chacun vient d'une page web) :
+{faits}
+
+Phrases d'un script de Short (plan | langue | phrase) :
+{phrases}
+
+Pour CHAQUE phrase : affirme-t-elle un fait, un chiffre, une cause, une action ou un nom qui n'est PAS dans les faits
+verifies, ou qui les CONTREDIT (ex. les faits disent que les cameras n'ont pas pu etre utilisees, la phrase dit qu'ils
+ont trompe les cameras) ? Une formulation, une image, une question ou un resume fidele ne sont pas des fautes.
+JSON uniquement : {{"fautes": [{{"plan": 1, "langue": "ar", "quoi": "ce qui n'est pas dans les faits, en francais"}}]}}"""
+
+
+def fact_check(bundle: Dict, codes: List[str], facts: List[str], gemini=None) -> Dict[Tuple[int, str], str]:
+    """{(plan index, language): what a sentence says beyond the verified facts} — every sentence of every language
+    in ONE call (cheap: a fraction of a cent). Empty without facts, or when the check itself fails."""
+    if not facts:
+        return {}
+    lines = [f"{k} | {c} | {((p.get('textes') or {}).get(c) or {}).get('texte', '')}"
+             for k, p in enumerate(bundle.get("plans") or [], 1) for c in codes]
+    try:
+        r = (gemini or _gemini())._generate_content([{"text": FACTS_PROMPT.format(
+            faits="\n".join(f"- {f}" for f in facts), phrases="\n".join(lines))}], max_tokens=4000, timeout=90,
+            temperature=0.0)
+    except Exception:
+        return {}
+    out = {}
+    for f in ((r or {}).get("fautes") or []) if isinstance(r, dict) else []:
+        try:
+            k, c = int(f.get("plan")) - 1, str(f.get("langue") or codes[0])
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= k < len(bundle.get("plans") or []) and c in codes and str(f.get("quoi") or "").strip():
+            out[(k, c)] = str(f["quoi"]).strip()[:200]
+    return out
+
+
+def mark_facts(bundle: Dict, found: Dict[Tuple[int, str], str]) -> Dict:
+    """The check's faults written on their plans ("hors_faits": {language: what}), the old ones cleared."""
+    for k, p in enumerate(bundle.get("plans") or []):
+        marks = {c: q for (i, c), q in found.items() if i == k}
+        if marks:
+            p["hors_faits"] = marks
+        else:
+            p.pop("hors_faits", None)
+    return bundle
 
 
 def total_seconds(bundle: Dict, code: str) -> float:
@@ -401,6 +448,8 @@ def problems(bundle: Dict, code: str) -> List[str]:
             out.append(f"Plan 1 : accroche trop longue ({s} s de voix, viser 2 à 3 s).")
         elif s > PLAN_MAX_S:
             out.append(f"Plan {k} : phrase trop longue ({s} s de voix) : une image aussi longue est rare, coupe-la en deux.")
+        if (p.get("hors_faits") or {}).get(code):
+            out.append(f"Plan {k} : dit une chose absente des faits vérifiés ({p['hors_faits'][code]}) : corrige la phrase.")
         image = (p.get("image") or "").strip()
         if len(image.split()) < 4:
             out.append(f"Plan {k} : décris l'image voulue (qui, quoi, où), elle servira à la chercher.")
