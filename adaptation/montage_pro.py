@@ -909,9 +909,9 @@ def render_target(p: Dict, t: Dict, report: Optional[Report] = None) -> Dict:
     by_id = {s["id"]: s for s in p.get("stock") or []}
     made = render_doc(doc, by_id, t["voice"], t["script"]["passages"], t["language"], style, mp3, out,
                       os.path.join(base, "pro_work"), report=report)
-    starts = [next((e["debut"] for e in edl if e["phrase"] == ph), vp["start"])
-              for ph, vp in enumerate(t["voice"]["passages"], 1)]
-    c = checks.verify(out, mp3, t["voice"]["passages"], starts)
+    # the voice is laid as it was said, whatever the cuts (a cut moved away from a sentence's start once made the
+    # check look for that sentence at the cut: « introuvable »)
+    c = checks.verify(out, mp3, t["voice"]["passages"], [vp["start"] for vp in t["voice"]["passages"]])
     credits = list(dict.fromkeys(by_id[e["plan"]].get("credit") for e in edl if by_id[e["plan"]].get("credit")))
     effets = doc.get("effets") or []
     return {"path": out, "checks": c, "montage": edl, "credits": credits, "duree": made["duree"],
@@ -928,7 +928,10 @@ def run_montage(pid: str, report: Optional[Report] = None, only: Optional[str] =
     try:
         todo = [t for t in p["targets"] if (only is None or t["channel"] == only)]
         for i, t in enumerate(todo):
-            t["preview"] = make_target(p, t, report, 1 / len(todo), i / len(todo))
+            if t.pop("rerender", False) and t.get("montage"):      # the person's montage: only the render again
+                t["preview"] = render_target(p, t, report)
+            else:
+                t["preview"] = make_target(p, t, report, 1 / len(todo), i / len(todo))
             t["validated"] = False
             used = [c for x in p["targets"] for c in (x.get("preview") or {}).get("credits") or []]
             p["credits"] = p["credits_auto"] = " · ".join(dict.fromkeys(used))
@@ -938,6 +941,116 @@ def run_montage(pid: str, report: Optional[Report] = None, only: Optional[str] =
     except Exception as e:
         ap.fail(pid, "voicing", e)
     report("terminé", 1.0)
+
+
+# ---------------------------------------------------------------- the person's montage (the timeline)
+
+def _before(p: Dict, t: Dict) -> None:
+    """The preview about to be replaced, kept for « Avant / Après »."""
+    from adaptation import pipeline as ap
+    base = os.path.join(ap.project_dir(p["project_id"]), t["channel"])
+    cur = os.path.join(base, "preview.mp4")
+    if os.path.exists(cur):
+        import shutil
+        shutil.copyfile(cur, os.path.join(base, "preview_avant.mp4"))
+
+
+def set_montage(pid: str, channel: str, doc: Dict) -> Dict:
+    """The person's montage from the timeline: made safe, kept (the one before for « Annuler »), then rendered
+    again in the background — the voice and the AI's choices are not asked again."""
+    from adaptation import pipeline as ap, sfx
+    p = ap.load(pid)
+    ap._expect(p, "preview_review")
+    t = ap.target(p, channel)
+    if not t.get("montage"):
+        raise ap.PipelineError("Ce montage date d'avant la timeline : refais l'aperçu une fois.")
+    shot_ids = [s["id"] for s in p.get("stock") or [] if s.get("garde")]
+    files = [f for x in sfx.library().values() for f in x]
+    try:
+        new_doc = montage_doc.clean(doc, t["voice"], shot_ids, files)
+    except montage_doc.MontageError as e:
+        raise ap.PipelineError(str(e))
+    if new_doc == t["montage"]:
+        raise ap.PipelineError("Rien n'a changé.")
+    t["montage_jump"] = montage_doc.changed_at(t["montage"], new_doc)
+    t["montage_son"] = montage_doc.sound_only(t["montage"], new_doc)
+    _before(p, t)
+    montage_doc.push(t, new_doc)
+    t.update(rerender=True, validated=False)
+    p["status"] = "voicing"
+    return ap.save(p)
+
+
+def undo_montage(pid: str, channel: str) -> Dict:
+    """« Annuler »: the montage before the last render, rendered again."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "preview_review")
+    t = ap.target(p, channel)
+    cur = t.get("montage")
+    try:
+        back = montage_doc.undo(t)
+    except montage_doc.MontageError as e:
+        raise ap.PipelineError(str(e))
+    t["montage_jump"] = montage_doc.changed_at(cur, back)
+    t["montage_son"] = montage_doc.sound_only(cur, back)
+    _before(p, t)
+    t.update(rerender=True, validated=False)
+    p["status"] = "voicing"
+    return ap.save(p)
+
+
+def music_envelope(path: str, start: float, total: float, per_s: int = 4) -> List[float]:
+    """The song's loudness from where it starts, `per_s` values a second (0-1), for the timeline's music track."""
+    import numpy as np
+    raw = subprocess.run(["ffmpeg", "-v", "error", "-stream_loop", "-1", "-ss", f"{start:.2f}", "-t", f"{total:.2f}",
+                          "-i", path, "-ac", "1", "-ar", "8000", "-f", "f32le", "-"], capture_output=True).stdout
+    y = np.frombuffer(raw, np.float32)
+    n = max(1, int(total * per_s))
+    if not len(y):
+        return [0.0] * n
+    chunks = np.array_split(np.abs(y), n)
+    v = np.array([float(np.sqrt(np.mean(c ** 2))) if len(c) else 0.0 for c in chunks])
+    return [round(float(x), 3) for x in v / (v.max() or 1.0)]
+
+
+def timeline(p: Dict, t: Dict) -> Dict:
+    """Everything the timeline shows and offers for one version: its montage document, the sentences and words,
+    the kept shots, the sounds, the caption styles, the music's shape."""
+    from adaptation import sfx, voix_casting
+    from captions import styles as caption_lib
+    doc = t.get("montage")
+    if not doc:
+        return {}
+    v = t["voice"]
+    pid = p["project_id"]
+    total = montage_doc.total(doc)
+    stock = [{"id": s["id"], "desc": s.get("desc"), "duree": round(s["end"] - s["start"], 1), "force": s.get("force"),
+              "thumb_url": f"/api/adaptations/{pid}/stock/{s['id']}/thumb"}
+             for s in p.get("stock") or [] if s.get("garde")]
+    m = doc.get("musique") or {}
+    env = []
+    if m.get("fichier") and os.path.exists(m["fichier"]):
+        try:
+            env = music_envelope(m["fichier"], float(m.get("debut") or 0), total)
+        except Exception:
+            env = []
+    manieres = t.get("manieres") or []
+    return {
+        "doc": doc, "total": total, "versions": len(t.get("montage_versions") or []),
+        "phrases": [{"debut": vp["start"], "fin": vp["end"], "texte": sp.get("texte"), "bandeau": banner_text(sp.get("bandeau") or ""),
+                     "maniere": voix_casting.MANIERES.get(manieres[k] if k < len(manieres) else "", ("Normale",))[0] or "Normale",
+                     "mots": vp["words"]}
+                    for k, (vp, sp) in enumerate(zip(v["passages"], t["script"]["passages"]))],
+        "mots": [[w["w"], w["start"], w["end"]] for w in v["words"]],
+        "stock": stock,
+        "sons": {k: [{"file": f, "nom": os.path.basename(f)} for f in x] for k, x in sfx.library().items() if x},
+        "gains": sfx.GAIN,
+        "styles_sous_titres": [{"id": x.id, "label": x.label} for x in caption_lib.STYLES.values() if "adaptation" in x.spaces],
+        "cadres": list(montage_doc.CADRES), "positions": list(montage_doc.POSITIONS),
+        "musiques": [{"fichier": s["chemin"], "titre": s["titre"], "permise": s["permise"]} for s in music_choices(t)],
+        "enveloppe": env, "saut": t.get("montage_jump"), "son_seulement": t.get("montage_son"),
+    }
 
 
 def back_to_stock(pid: str) -> Dict:

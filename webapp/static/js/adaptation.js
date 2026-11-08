@@ -1157,7 +1157,8 @@ async function renderAdPreviews(body, p){
             <div class="tiny">Manières : ${(t.casting.manieres || []).map((m, i) => `${i + 1}. ${esc((t.casting.manieres_dispo || {})[m] || 'Normale')}`).join(' · ')}</div>` : ''}
           ${(t.corrections || []).map(c => `<div class="tiny">✎ ${esc(c)}</div>`).join('')}
         </div>
-      </div></div>
+      </div>
+      ${p.pro && t.has_timeline && !t.video_id ? `<div class="mt-box" data-channel="${t.channel}"><div class="tiny">Chargement de la timeline…</div></div>` : ''}</div>
       <div class="chcard-foot">${t.video_id ? '' : `<button class="btn primary small push pv-validate" data-icon="check" ${ok && !t.validated ? '' : 'disabled'}>Valider cet aperçu</button>`}</div>
     </article>`;
   }).join('') + `<div class="navbar"><span class="progress-text">${p.targets.filter(t => t.validated).length}/${p.targets.length} aperçu(s) validé(s)</span>
@@ -1166,6 +1167,8 @@ async function renderAdPreviews(body, p){
   hydrateIcons(body);
   const backScript = document.getElementById('adBackScript');
   if (backScript) backScript.onclick = async () => {
+    const edited = p.pro && p.targets.some(t => t.montage_versions);
+    if (edited && !confirm("Revenir au stock refait un montage neuf par l'IA : tes changements dans la timeline seront perdus. Continuer ?")) return;
     try { await api(`/api/adaptations/${p.project_id}/back-to-script`, { method:'POST' }); adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
   };
   body.querySelectorAll('.ad-prev-card').forEach(card => {
@@ -1186,6 +1189,10 @@ async function renderAdPreviews(body, p){
               body: JSON.stringify({ fichier: card.querySelector('.pv-music').value || null }) });
             adProject = null; loadAdProject(); } catch (e){ log(e.message, 'error'); }
     };
+    const tl = card.querySelector('.mt-box');
+    if (tl) mtLoad(p, tl);
+    const tg = p.targets.find(t => t.channel === ch);
+    if (tg && tg.montage_versions) mtJump(card, tg.montage_jump);
     const val = card.querySelector('.pv-validate');
     if (val) val.onclick = async () => {
       try { await api(`/api/adaptations/${p.project_id}/targets/${ch}/validate`, { method:'POST' }); adProject = null; loadAdProject(); }

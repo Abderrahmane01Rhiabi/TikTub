@@ -52,21 +52,26 @@ def sentence_offsets(out_path: str, voice_path: str, passages: List[Dict],
     """Where each sentence of the narration really starts in the render,
     minus where it should: cosine match of its first 1.2 s (skipping the
     quiet attack), searched ±0.5 s around the planned spot."""
-    offsets, t = [], 0.0
+    spots, t = [], 0.0
     for k, p in enumerate(passages):
         a, b = max(0.0, p["start"] - 0.04), p["end"] + 0.10
         if starts and k < len(starts):     # the pauses may differ (cuts on the music's beats): where the render put it
             t = starts[k]
+        spots.append((a, t))
+        t += (b - a) + GAP
+
+    def one(spot):
+        a, t = spot
         ref = _pcm(voice_path, a + 0.2, 1.2)
         win = _pcm(out_path, t - 0.3, 2.0)
         if len(ref) and len(win) > len(ref):
             best, at = _match(win, ref)
             found = (t - 0.3 if t >= 0.3 else 0.0) + at / 8000
-            offsets.append(round(found - (t + 0.2), 3) if best > 0.5 else None)
-        else:
-            offsets.append(None)
-        t += (b - a) + GAP
-    return offsets
+            return round(found - (t + 0.2), 3) if best > 0.5 else None
+        return None
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(4) as pool:          # each sentence on its own: ~3x faster (the timeline's renders)
+        return list(pool.map(one, spots))
 
 
 def verify(out_path: str, voice_path: str, passages: List[Dict], starts: Optional[List[float]] = None) -> Dict:
@@ -77,10 +82,13 @@ def verify(out_path: str, voice_path: str, passages: List[Dict], starts: Optiona
     v, a = d.get("video", 0.0), d.get("audio", 0.0)
     if abs(v - a) > 0.15:
         problems.append(f"Le son ({a:.1f} s) ne dure pas autant que l'image ({v:.1f} s).")
-    lufs = loudness(out_path)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(1) as pool:          # the loudness measured while the sentences are looked for
+        lufs_job = pool.submit(loudness, out_path)
+        offs = sentence_offsets(out_path, voice_path, passages, starts)
+        lufs = lufs_job.result()
     if not (-17.0 <= lufs <= -11.0):
         problems.append(f"Volume global hors norme : {lufs:.1f} LUFS (attendu entre -17 et -11).")
-    offs = sentence_offsets(out_path, voice_path, passages, starts)
     for k, o in enumerate(offs):
         if o is None:
             problems.append(f"Phrase {k + 1} introuvable dans le son de la vidéo.")

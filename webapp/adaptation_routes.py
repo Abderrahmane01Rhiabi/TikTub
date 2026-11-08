@@ -226,6 +226,13 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
                     x["casting"]["mode"] = rules["mode"]
                 except Exception:
                     x["casting"]["voix_options"] = []
+            x["montage_versions"] = len(t.get("montage_versions") or [])        # the timeline (montage_doc)
+            x["montage_jump"] = t.get("montage_jump")
+            pv = (t.get("preview") or {}).get("path")
+            before = os.path.join(os.path.dirname(pv), "preview_avant.mp4") if pv else None
+            x["preview_before_url"] = (_main().video_media_url({"video_path": before})
+                                       if before and x["montage_versions"] and os.path.exists(before) else None)
+            x["has_timeline"] = bool(t.get("montage"))
             x["music_file"] = os.path.basename(t["music_path"]) if t.get("music_path") else None
             x["music_why"], x["music_by"] = t.get("music_why"), t.get("music_by")
             if full and p.get("status") == "preview_review":       # the preview's music menu
@@ -957,7 +964,8 @@ def adaptation_stock_thumb(pid: str, sid: str):
     shot = next((s for s in p.get("stock") or [] if s["id"] == sid), None)
     if not shot or not os.path.exists(shot.get("thumb") or ""):
         raise HTTPException(status_code=404, detail="Image introuvable")
-    return FileResponse(shot["thumb"], media_type="image/jpeg")
+    # kept by the browser: the timeline draws them again at every change
+    return FileResponse(shot["thumb"], media_type="image/jpeg", headers={"Cache-Control": "private, max-age=3600"})
 
 
 class AdaptationShot(BaseModel):
@@ -994,6 +1002,42 @@ def change_adaptation_music(pid: str, channel: TargetChannel, req: AdaptationMus
     from adaptation import montage_pro
     _adaptation_or_404(pid)
     p = _adaptation_call(montage_pro.set_music, pid, channel, req.fichier)
+    _start_adaptation_step(pid, "voicing", only=channel)
+    return _serialize_adaptation(p)
+
+
+class AdaptationMontage(BaseModel):
+    doc: dict                           # the montage document as changed in the timeline (adaptation/montage_doc)
+
+
+@router.get("/api/adaptations/{pid}/targets/{channel}/montage")
+def adaptation_timeline(pid: str, channel: TargetChannel):
+    """Montage pro: everything the timeline shows for one version (its montage, sentences, words, shots, sounds)."""
+    from adaptation import montage_pro, pipeline as ap
+    p = _adaptation_or_404(pid)
+    try:
+        t = ap.target(p, channel)
+    except ap.PipelineError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return montage_pro.timeline(p, t)
+
+
+@router.post("/api/adaptations/{pid}/targets/{channel}/montage")
+def change_adaptation_montage(pid: str, channel: TargetChannel, req: AdaptationMontage):
+    """Montage pro: the person's montage from the timeline — checked, kept, rendered again (sound only: seconds)."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    p = _adaptation_call(montage_pro.set_montage, pid, channel, req.doc)
+    _start_adaptation_step(pid, "voicing", only=channel)
+    return _serialize_adaptation(p)
+
+
+@router.post("/api/adaptations/{pid}/targets/{channel}/montage/undo")
+def undo_adaptation_montage(pid: str, channel: TargetChannel):
+    """Montage pro: « Annuler » — the montage before the last render, rendered again."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    p = _adaptation_call(montage_pro.undo_montage, pid, channel)
     _start_adaptation_step(pid, "voicing", only=channel)
     return _serialize_adaptation(p)
 
