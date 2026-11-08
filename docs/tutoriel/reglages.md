@@ -169,6 +169,17 @@ Les onglets en haut : **Voix · Musiques · Effets sonores · Fonds et drones ·
 
 Les sons que le montage d'une Adaptation pose sur l'image (whoosh, impact…). Choisis le **type**, la **source** et la **licence**, puis le fichier. Vérifie qu'il est libre de droits.
 
+Chaque type dit **quand il est joué**. Dans le **montage pro** (Idée d'abord), les sons tombent sur les vrais moments du récit, jamais sur une phrase chuchotée :
+
+| Moment | Son |
+|---|---|
+| L'accroche | impact (ou pop si l'impact est éteint et que le bandeau a un chiffre) |
+| Un bandeau avec un chiffre | pop |
+| Le récit commence (2e phrase) | whoosh |
+| La réponse | ding si le style a une révélation (mystère, fait surprenant…), sinon whoosh |
+
+Le nombre de sons dépend de la **famille de récit** de la chaîne : Actualité 2 au plus (whoosh, pop), Explicatif et Humour 4, Hype 5, Motivation 1 (whoosh), Satisfying 1 (pop ou ding). Deux sons sont toujours à 3 secondes l'un de l'autre au moins. **Éteins un son ici et il n'est plus jamais joué.**
+
 ### 2.4 Fonds et drones
 
 ![Plans de drone](img/reglages/06_biblio_drones.png)

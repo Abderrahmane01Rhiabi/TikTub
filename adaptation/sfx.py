@@ -34,11 +34,13 @@ from typing import Dict, List, Optional, Set
 FOLDER = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "sfx")
 USER_FOLDER = "sfx_perso"        # in the data folder (the app's working directory)
 # the types a rule plays, and when — a sound of another type is never played
-RULES = {"whoosh": "une flèche ou un cercle apparaît ; la transition principale",
+RULES = {"whoosh": "une flèche ou un cercle apparaît ; la transition principale ; montage pro : le récit commence, "
+                   "ou la réponse",
          "shutter": "arrêt sur image",
          "riser": "la montée juste avant le ralenti sur le moment fort",
-         "impact": "le coup sur le moment fort au ralenti",
-         "pop": "un chiffre apparaît"}
+         "impact": "le coup sur le moment fort au ralenti ; montage pro : l'accroche",
+         "pop": "un chiffre apparaît (montage pro : dans un bandeau)",
+         "ding": "montage pro : la révélation d'un récit qui en a une (mystère, fait surprenant, vrai ou faux…)"}
 MAX_LEN = 4.0                    # seconds kept of an added sound
 EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".aac")
 MAX = 4                  # moments with a sound effect, a video
@@ -230,6 +232,13 @@ def plan(segs: List[Dict], annotations: List[Dict], numbers: List[Dict], total: 
     if cuts:
         main = min(cuts, key=lambda s: abs(s["out"] - TURN * total))
         wanted.append({"t": main["out"], "sons": ["whoosh"], "pourquoi": "transition principale"})
+    return keep(wanted, total, most, allowed, available)
+
+
+def keep(wanted: List[Dict], total: float, most: int = MAX, allowed: Optional[Set[str]] = None,
+         available: Optional[Set[str]] = None) -> List[Dict]:
+    """Of the moments wanted (in order of importance), the ones played: their types allowed and switched on, at most
+    `most`, GAP seconds apart, inside the video."""
     kept: List[Dict] = []
     for w in wanted:
         w["sons"] = [x for x in w["sons"] if (allowed is None or x in allowed) and (available is None or x in available)]

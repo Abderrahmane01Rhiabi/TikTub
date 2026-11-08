@@ -127,8 +127,8 @@ def test_a_sound_turned_off_is_never_played_and_the_apps_own_are_not_deleted(min
 
 def test_the_settings_screen_api(client, mine):
     d = client.get("/api/sfx").json()
-    assert set(d["regles"]) == {"whoosh", "shutter", "riser", "impact", "pop"}
-    assert any(x["type"] == "ding" and x["regle"] is None for x in d["sons"])      # said unused
+    assert set(d["regles"]) == {"whoosh", "shutter", "riser", "impact", "pop", "ding"}    # ding: the montage pro's reveal
+    assert any(x["type"] == "click" and x["regle"] is None for x in d["sons"])     # said unused
     with open(tone(mine / "beep.wav"), "rb") as f:
         r = client.post("/api/sfx", files={"file": ("Clap.wav", f, "audio/wav")}, data={"kind": "shutter", "licence": "CC0"})
     assert r.status_code == 200, r.text

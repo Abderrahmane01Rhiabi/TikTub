@@ -45,7 +45,16 @@ MIN_CUT_S = 1.0
 CAPTION_Y = H - 560             # the captions' one place (bottom of the line), never moving
 BANNER_MARGIN = 250
 MUSIC_GAIN = 0.12
-WHOOSH = "assets/sfx/whoosh_little_2.mp3"
+# The sound effects (adaptation/sfx: Réglages → Bibliothèques → Effets sonores) on the story's real moments, as many as
+# the narrative family wants (2026-11-08: one same whoosh on every sentence before, and over a whisper)
+SONS_FAMILLE = {"actualite": {"max": 2, "types": {"whoosh", "pop"}},
+                "explicatif": {"max": 4, "types": None},
+                "humour": {"max": 4, "types": None},
+                "hype": {"max": 5, "types": None},
+                "motivation": {"max": 1, "types": {"whoosh"}},
+                "satisfying": {"max": 1, "types": {"pop", "ding"}}}
+REVELATION = {"mystere", "fait_surprenant", "vrai_faux", "chute", "revelation_lente", "mythe_realite"}
+DIGIT = re.compile(r"[0-9\u0660-\u0669]")
 
 # The narrative styles: the app's one catalogue (adaptation/recits.py), each family's rules by style name
 from adaptation import recits as _recits
@@ -589,7 +598,7 @@ def _piece(e: Dict, s: Dict, out: str) -> str:
 
 def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: List[Dict], code: str, style: Dict,
                  voice_mp3: str, out: str, work: str, music: Optional[Tuple[str, float]] = None,
-                 report: Optional[Report] = None, whispered: Optional[List[int]] = None) -> Dict:
+                 report: Optional[Report] = None, effets: Optional[List[Dict]] = None) -> Dict:
     report = report or (lambda phase, f: None)
     os.makedirs(work, exist_ok=True)
     pieces = []
@@ -606,16 +615,12 @@ def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: Lis
     total = edl[-1]["fin"] if edl else v["duration"]
     inputs, mix, n = ["-i", voice_mp3], ["[1:a]volume=1.0[v0]"], 2
     labels = ["v0"]
-    starts = [ps["start"] for ps in v["passages"][1:]]
-    if os.path.exists(WHOOSH):
-        for k, t0 in enumerate(starts):             # a short whoosh on each new sentence (not on every cut)
-            if k + 1 in (whispered or []):          # it covered a whisper's start (the orcas, 2026-11-08)
-                continue
-            ms = int(max(0.0, t0 - 0.25) * 1000)
-            inputs += ["-i", os.path.abspath(WHOOSH)]
-            mix.append(f"[{n}:a]volume=0.35,adelay={ms}|{ms}[w{k}]")
-            labels.append(f"w{k}")
-            n += 1
+    for k, e in enumerate(effets or []):            # sound_moments: the story's moments, the library's sounds
+        ms = int(e["start"] * 1000)
+        inputs += ["-i", os.path.abspath(e["file"])]
+        mix.append(f"[{n}:a]aformat=sample_rates=44100:channel_layouts=stereo,volume={e['gain']},adelay={ms}|{ms}[w{k}]")
+        labels.append(f"w{k}")
+        n += 1
     if music and music[0] and os.path.exists(music[0]):
         # looped: a track shorter than the Short (a 28 s jingle) goes round instead of stopping before the end
         inputs += ["-stream_loop", "-1", "-ss", f"{max(0.0, float(music[1] or 0)):.2f}", "-i", music[0]]
@@ -633,6 +638,47 @@ def render_video(edl: List[Dict], shots: Dict[str, Dict], v: Dict, passages: Lis
           "-map", "[vout]", "-map", "[a]", "-c:v", "libx264", "-preset", "medium", "-crf", "19", "-pix_fmt", "yuv420p",
           "-c:a", "aac", "-b:a", "192k", "-t", f"{total:.3f}", out])
     return {"captions": caps, "duree": round(total, 2)}
+
+
+# ---------------------------------------------------------------- sound effects
+
+def sound_moments(v: Dict, passages: List[Dict], roles: List[str], recit: Optional[str], manieres: List[str],
+                  total: float) -> List[Dict]:
+    """The story's moments that get a sound, most important first ({"t": where it is loudest, "sons", "pourquoi"}):
+    an impact on the hook, a ding on the answer of a story that reveals (else a whoosh), a pop when a banner shows
+    a figure (sfx.keep leaves it out when the impact plays at the same instant), a whoosh where the story starts
+    after its promise. Never over a whispered sentence."""
+    vp = v.get("passages") or []
+    quiet = [(vp[k]["start"] - 0.6, vp[k]["end"]) for k, m in enumerate(manieres) if m == "chuchote" and k < len(vp)]
+    wanted = []
+    if vp:
+        wanted.append({"t": vp[0]["start"], "sons": ["impact"], "pourquoi": "accroche"})
+    for k, role in enumerate(roles[:len(vp)]):
+        if role == "reponse":
+            wanted.append({"t": vp[k]["start"], "sons": ["ding" if recit in REVELATION else "whoosh"],
+                           "pourquoi": "révélation" if recit in REVELATION else "la réponse"})
+    for k, ps in enumerate(passages[:len(vp)]):     # on the hook too: it plays when the impact is turned off
+        if DIGIT.search(ps.get("bandeau") or ""):
+            wanted.append({"t": vp[k]["start"] + 0.05, "sons": ["pop"], "pourquoi": "chiffre"})
+    for k, role in enumerate(roles[:len(vp)]):
+        if k and role == "promesse":
+            wanted.append({"t": vp[k]["start"], "sons": ["whoosh"], "pourquoi": "le récit commence"})
+    return [w for w in wanted if not any(a <= w["t"] <= b for a, b in quiet)]
+
+
+def sound_effects(p: Dict, t: Dict) -> List[Dict]:
+    """The files played ([{"kind", "file", "start", "gain", "pourquoi"}]): the moments the family keeps, with the
+    sounds switched on in Réglages, each variant in turn."""
+    from adaptation import sfx
+    rules = SONS_FAMILLE.get(p.get("famille_recit") or _recits.find(p.get("recit")) or "", SONS_FAMILLE["explicatif"])
+    v = t.get("voice") or {}
+    vp = v.get("passages") or []
+    total = (vp[-1]["end"] + 0.6) if vp else 0.0
+    roles = [pl.get("role") or "" for pl in (p.get("storyboard") or {}).get("plans") or []]
+    lib = sfx.library()
+    moments = sfx.keep(sound_moments(v, t["script"]["passages"], roles, p.get("recit"), t.get("manieres") or [], total),
+                       total, rules["max"], rules["types"], {k for k, x in lib.items() if x})
+    return sfx.sounds(moments, lib)
 
 
 # ---------------------------------------------------------------- music
@@ -764,11 +810,12 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     style = render.style_of(style_name)
     out = os.path.join(base, "preview.mp4")
     by_id = {s["id"]: s for s in p.get("stock") or []}
+    effets = sound_effects(p, t)
     made = render_video(edl, by_id, t["voice"], t["script"]["passages"], t["language"], style, mp3, out,
                         os.path.join(base, "pro_work"),
                         music=(t["music_path"], t.get("music_start") or 0.0) if t.get("music_path") else None,
                         report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)),
-                        whispered=[k for k, m in enumerate(t.get("manieres") or []) if m == "chuchote"])
+                        effets=effets)
     starts = []
     for ph in range(1, len(t["voice"]["passages"]) + 1):
         starts.append(next(e["debut"] for e in edl if e["phrase"] == ph))
@@ -777,7 +824,7 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     return {"path": out, "checks": c, "montage": edl, "credits": credits, "duree": made["duree"],
             # the cover (pipeline._thumbnail): the hook's image, with its banner
             "summary": {"segments": [{"impact": min(1.0, edl[0]["fin"] / 2), "end": edl[0]["fin"]}]},
-            "recette": recipe(p, t, edl, by_id, made), "cle": "pro"}
+            "recette": recipe(p, t, edl, by_id, {**made, "effets": effets}), "cle": "pro", "effets": effets}
 
 
 def run_montage(pid: str, report: Optional[Report] = None, only: Optional[str] = None) -> None:
@@ -841,7 +888,8 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
                "sous_titres": {"type": "mot par mot, mot dit en couleur", **{k: made["captions"][k] for k in
                                ("position", "y", "taille", "police", "mots_par_ligne", "mot_dit")}},
                "bandeau": made["captions"]["bandeau"], "bandeaux": True, "zoom": "lent par plan",
-               "effets_sonores": "whoosh à chaque phrase"},
+               "effets_sonores": [{k: e[k] for k in ("kind", "pourquoi", "start")} | {"fichier": os.path.basename(e["file"])}
+                                  for e in made.get("effets") or []]},
         details={"projet": p["project_id"], "mode": "idee", "idee": p.get("idee"), "angle": (p.get("angle") or {}).get("titre"),
                  "recit": p.get("recit"), "titre": (t.get("script") or {}).get("titre"),
                  "structure": {"phrases": n_ph, "coupes_par_phrase": round(len(edl) / n_ph, 2),

@@ -2,8 +2,6 @@
 (fixed once, else marked and blocking), the hook keeping its key number, a neutral news, and the manners a family
 allows (no whispered news, no [excited] sanction), two at most."""
 
-import os
-
 import pytest
 
 from adaptation import pipeline as ap
@@ -106,18 +104,3 @@ def test_the_person_cannot_pick_a_manner_the_family_forbids(project):
         vc.set_casting("ad_n", "chanA", manieres=["", "chuchote"])
     assert vc.set_casting("ad_n", "chanA", manieres=["serieux", ""])["targets"][0]["manieres"] == ["serieux", ""]
 
-
-def test_no_whoosh_covers_a_whispered_sentence(monkeypatch, tmp_path):
-    from adaptation import montage_pro as mp
-    runs = []
-    monkeypatch.setattr(mp, "_piece", lambda e, s, out: out)
-    monkeypatch.setattr(mp, "_run", lambda cmd: runs.append(cmd))
-    monkeypatch.setattr(mp, "captions_ass", lambda *a, **kw: [])
-    monkeypatch.setattr(mp, "WHOOSH", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), mp.WHOOSH))   # tests chdir
-    v = {"duration": 8.0, "passages": [{"start": s, "end": s + 1.5} for s in (0.0, 2.0, 4.0, 6.0)]}
-    edl = [{"plan": "a", "phrase": 1, "debut": 0.0, "fin": 8.0}]
-
-    mp.render_video(edl, {"a": {}}, v, [], "fr", {}, "voice.mp3", str(tmp_path / "o.mp4"), str(tmp_path),
-                    whispered=[2])
-
-    assert sum(1 for x in runs[-1] if str(x).endswith(mp.WHOOSH.rsplit("/", 1)[-1])) == 2   # sentences 2 and 4, not 3

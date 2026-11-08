@@ -185,7 +185,7 @@ function adOriginalsHtml(sug, cand, box = 'ad-clips'){
 
 // ---------- Réglages → Effets sonores : the sounds the montage plays, by rule ----------
 
-const SFX_NAMES = { whoosh: 'Whoosh', shutter: 'Déclic (shutter)', riser: 'Montée (riser)', impact: 'Impact', pop: 'Pop' };
+const SFX_NAMES = { whoosh: 'Whoosh', shutter: 'Déclic (shutter)', riser: 'Montée (riser)', impact: 'Impact', pop: 'Pop', ding: 'Ding' };
 let sfxAudio = null, sfxData = null;
 
 async function loadSfxSettings(){
