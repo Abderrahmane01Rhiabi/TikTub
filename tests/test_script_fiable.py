@@ -104,3 +104,28 @@ def test_the_person_cannot_pick_a_manner_the_family_forbids(project):
         vc.set_casting("ad_n", "chanA", manieres=["", "chuchote"])
     assert vc.set_casting("ad_n", "chanA", manieres=["serieux", ""])["targets"][0]["manieres"] == ["serieux", ""]
 
+
+
+def test_every_sentence_gets_a_verdict_and_every_fault_comes_back_at_once():
+    b = bundle("Seuls 10 sur 160 viennent.", "Ils ont trompe les cameras.", "Ils ont traite 200 000 dossiers.")
+    g = G({"verdicts": [{"plan": 1, "langue": "fr", "ok": True, "quoi": ""},
+                        {"plan": 2, "langue": "fr", "ok": False, "quoi": "les cameras n'ont pas pu etre utilisees"},
+                        {"plan": 3, "langue": "fr", "ok": False, "quoi": "116 203 dossiers, pas 200 000"}]})
+
+    found = sb.fact_check(b, ["fr"], FACTS, gemini=g)
+
+    assert set(found) == {(1, "fr"), (2, "fr")} and len(g.prompts) == 1
+    assert "UNE PAR UNE" in g.prompts[0] and "(3 verdicts)" in g.prompts[0]
+
+
+def test_faults_left_after_a_first_fix_get_a_second_one(monkeypatch):
+    b = bundle("Seuls 10 sur 160.", "Ils ont trompe les cameras.", "200 000 dossiers.")
+    checks = iter([{(1, "fr"): "cameras", (2, "fr"): "dossiers"}, {(2, "fr"): "dossiers"}, {}])
+    monkeypatch.setattr(sb, "fact_check", lambda bb, codes, facts, gemini=None: next(checks))
+    asked = []
+    monkeypatch.setattr(sb, "revise", lambda bb, codes, req, gemini=None: asked.append(req) or {**bb, "corrections": []})
+
+    out = ap._checked_facts(b, ["fr"], FACTS)
+
+    assert len(asked) == 2 and "plan 2 [fr] : cameras ; plan 3 [fr] : dossiers" in asked[0]
+    assert not any("hors_faits" in p for p in out["plans"])
