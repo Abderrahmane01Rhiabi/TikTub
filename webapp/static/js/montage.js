@@ -256,8 +256,17 @@ function mtDraw(box){
       ${changes.length ? '<button type="button" class="btn ghost small mt-reset">Oublier mes changements</button>' : ''}
       <button type="button" class="btn primary small mt-go" ${changes.length ? '' : 'disabled'}>Refaire l'aperçu${changes.length ? (changes.includes('voix') ? ' (≈ 1 min, voix ElevenLabs)' : mtSoundOnly(changes) ? ' (≈ 5 s)' : ' (≈ 30 s)') : ''}</button></div>
     ${mtTracks(ch)}
+    ${(st.data.changements || []).length ? `<details class="tiny mt-journal"><summary style="cursor:pointer"><b>Tes changements par rapport au montage de l'IA</b> (${st.data.changements.length})</summary>
+      <ul style="margin:6px 0 0 18px;padding:0">${st.data.changements.map(c => `<li><b>${esc(c.element)}</b> · ${esc(c.quoi)}</li>`).join('')}</ul></details>` : ''}
     <div class="mt-panel">${mtPanel(ch)}</div>`;
   if (st.sel) box.querySelectorAll(`.mt-track [data-kind="${st.sel.kind}"][data-i="${st.sel.i}"]`).forEach(el => el.classList.add('on'));
+  // changes not rendered yet: validating now would validate the video without them
+  const val = box.closest('.ad-prev-card') && box.closest('.ad-prev-card').querySelector('.pv-validate');
+  if (val && !st.target.validated){
+    if (val.dataset.ok === undefined) val.dataset.ok = val.disabled ? '0' : '1';
+    val.disabled = changes.length > 0 || val.dataset.ok === '0';
+    val.title = changes.length ? "Refais d'abord l'aperçu : tes changements ne sont pas encore dans la vidéo" : '';
+  }
   if (keepX != null) box.querySelector('.mt-scroll').scrollLeft = keepX;
   mtBind(box);
 }

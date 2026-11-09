@@ -154,3 +154,18 @@ def test_the_music_starts_early_enough_for_the_video_to_end_before_the_song_dies
     assert mp.fit_start(str(song), 83.0, 28.0) == 63.0          # 99 s song, 28 s video: before its last 8 s
     assert mp.fit_start(str(song), 20.0, 28.0) == 20.0          # room enough: the strong moment kept
     assert mp.fit_start(str(song), 10.0, 120.0) == 0.0          # a song shorter than the video: from its start
+
+
+def test_the_journal_says_what_the_person_changed_from_the_ai_s_montage(tmp_path):
+    a = doc()
+    b = md.new(EDL, 3, None, 0.0, [])
+    b["plans"][1].update(plan="c", zoom=1.3)
+    b["bandeaux"][0] = {"texte": "NADOR WEST MED", "cache": False}
+    b["sous_titres"]["mots"] = {"2": "اثنين"}
+    b["musique"]["zones"] = [{"debut": 10.0, "fin": 13.0, "volume": 50}]
+    got = [c["quoi"] for c in md.changes(a, b, ["لجوج وعشرين"], ["لاثنين وعشرين"], ["serieux"], [""])]
+    assert "Plan 2 remplacé (b → c)" in got and any(x.startswith("Plan 2 recadré") for x in got)
+    assert "Bandeau 1 réécrit : « NADOR WEST MED »" in got and "1 mot(s) corrigé(s) : اثنين" in got
+    assert "Zone de volume 0:10.0 → 0:13.0 à 50 %" in got
+    assert "Phrase 1 réécrite : « لجوج وعشرين » → « لاثنين وعشرين »" in got and "Phrase 1 : manière serieux → normale" in got
+    assert md.changes(a, a) == []

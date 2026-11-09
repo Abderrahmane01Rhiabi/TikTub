@@ -161,7 +161,8 @@ def choose_recit(reference: Dict, style: Optional[str], recents: List[str], gemi
 
 DIALECT_PART = {"darija": """LANGUE DE LA VOIX (arabe, cette regle REMPLACE la regle "arabe standard" donnee plus
 haut pour les textes dits) : DARIJA MAROCAINE naturelle, comme un presentateur marocain sur YouTube
-(pas l'arabe standard), en lettres arabes, sans voyelles courtes, les chiffres en toutes lettres en darija : c'est vrai pour
+(pas l'arabe standard), en lettres arabes, sans voyelles courtes, les NOMBRES EN CHIFFRES ("22", "115000", "5 مليار",
+"2026" ; jamais "جوج وعشرين" : choix de l'utilisateur, la voix les lit bien) : c'est vrai pour
 "texte", "bandeau" et "mots_cles". MAIS "titre", "description" et "tags" restent en ARABE STANDARD MODERNE (ce que les
 gens tapent dans la recherche).
 
@@ -1384,6 +1385,7 @@ def timeline(p: Dict, t: Dict) -> Dict:
         "musiques": [{"fichier": s["chemin"], "titre": s["titre"], "permise": s["permise"]} for s in music_choices(t)],
         "enveloppe": env, "saut": t.get("montage_jump"), "son_seulement": t.get("montage_son"),
         "relecture": t.get("relecture") or [],          # the shots the review flagged (review)
+        "changements": person_changes(t),               # what the person changed from the AI's montage
     }
 
 
@@ -1398,6 +1400,24 @@ def back_to_stock(pid: str) -> Dict:
 
 
 # ---------------------------------------------------------------- recipe
+
+def person_changes(t: Dict) -> List[Dict]:
+    """What the person changed from the AI's montage (its first version, its first voice) to now (montage_doc.changes)."""
+    versions = t.get("montage_versions") or []
+    if not versions or not t.get("montage"):
+        return []
+    ai = {k: v for k, v in versions[0].items() if k != "_voix"}
+    first_voice = next((x["_voix"] for x in versions if x.get("_voix")), None)
+    if first_voice and first_voice.get("voice") and t.get("voice"):    # the AI's cuts moved onto the voice said again
+        try:
+            ai = montage_doc.retime(ai, first_voice["voice"], t["voice"], [])
+        except montage_doc.MontageError:
+            pass
+    now_texts = [x["texte"] for x in (t.get("script") or {}).get("passages") or []]
+    now_manners = list(t.get("manieres") or [])
+    return montage_doc.changes(ai, t["montage"], first_voice["textes"] if first_voice else now_texts, now_texts,
+                               first_voice["manieres"] if first_voice else now_manners, now_manners)
+
 
 def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict) -> Dict:
     """The video's recipe in the common shape (recette.py), with what the montage pro adds: the narrative
@@ -1447,4 +1467,6 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
                  "modifications": len(t.get("montage_versions") or []),
                  "cadrages": [{"plan": k + 1, "zoom": e.get("zoom"), "centre": e.get("centre")} for k, e in enumerate(edl)
                               if (e.get("zoom") or 1.0) != 1.0 or e.get("centre") is not None],
-                 "bandeau_cadre": doc.get("bandeau_cadre"), "sous_titres_regles": doc.get("sous_titres")})
+                 "bandeau_cadre": doc.get("bandeau_cadre"), "sous_titres_regles": doc.get("sous_titres"),
+                 # the journal: what the person changed from the AI's montage, element by element
+                 "changements": person_changes(t)})

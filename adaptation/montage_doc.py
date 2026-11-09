@@ -209,3 +209,74 @@ def retime(doc: Dict, old_voice: Dict, new_voice: Dict, changed: List[int]) -> D
     if d.get("sous_titres") is not None:
         d["sous_titres"]["mots"] = kept
     return d
+
+
+def _fmt(t) -> str:
+    t = float(t or 0)
+    return f"{int(t // 60)}:{t % 60:04.1f}"
+
+
+MOVED = 0.3                 # a cut or a sound moved by less: the voice said again moved it, not the person
+
+
+def changes(ai: Dict, final: Dict, texts_before: Optional[List[str]] = None, texts_after: Optional[List[str]] = None,
+            manners_before: Optional[List[str]] = None, manners_after: Optional[List[str]] = None) -> List[Dict]:
+    """What the person changed from the AI's montage to the final one, element by element ({element, quoi}, in
+    French) — for the recipe (the Dashboard sees what is corrected most) and the timeline."""
+    out: List[Dict] = []
+    add = lambda element, quoi: out.append({"element": element, "quoi": quoi})
+    a, b = ai.get("plans") or [], final.get("plans") or []
+    if len(a) != len(b):
+        add("images", f"{abs(len(b) - len(a))} plan(s) {'ajouté(s)' if len(b) > len(a) else 'supprimé(s)'} ({len(a)} → {len(b)})")
+    for k, (x, y) in enumerate(zip(a, b), 1):
+        if x.get("plan") != y.get("plan"):
+            add("images", f"Plan {k} remplacé ({x.get('plan')} → {y.get('plan')})")
+        if (x.get("zoom") or 1) != (y.get("zoom") or 1) or x.get("centre") != y.get("centre"):
+            add("images", f"Plan {k} recadré (zoom ×{y.get('zoom') or 1}" + (f", centre {y['centre']}" if y.get("centre") is not None else "") + ")")
+        if k > 1 and abs((x.get("debut") or 0) - (y.get("debut") or 0)) > MOVED and len(a) == len(b):
+            add("images", f"Coupe du plan {k} déplacée ({_fmt(x.get('debut'))} → {_fmt(y.get('debut'))})")
+    for k, (x, y) in enumerate(zip(ai.get("bandeaux") or [], final.get("bandeaux") or []), 1):
+        if bool(x.get("cache")) != bool(y.get("cache")):
+            add("bandeau", f"Bandeau {k} {'enlevé' if y.get('cache') else 'remis'}")
+        if x.get("texte") != y.get("texte") and not y.get("cache"):
+            add("bandeau", f"Bandeau {k} réécrit : « {y.get('texte')} »")
+        if x.get("cadre") != y.get("cadre"):
+            add("bandeau", f"Cadre du bandeau {k} : {y.get('cadre') or 'celui de la vidéo'}")
+    if ai.get("bandeau_cadre") != final.get("bandeau_cadre"):
+        add("bandeau", f"Cadre de tous les bandeaux : {final.get('bandeau_cadre') or 'celui du style'}")
+    sa, sb = ai.get("sous_titres") or {}, final.get("sous_titres") or {}
+    for key, label in (("style", "Style"), ("position", "Position"), ("taille", "Taille")):
+        if sa.get(key) != sb.get(key):
+            add("sous-titres", f"{label} des sous-titres : {sb.get(key) or 'les nôtres'}")
+    fixed = set((sb.get("mots") or {})) - set((sa.get("mots") or {}))
+    if fixed:
+        add("sous-titres", f"{len(fixed)} mot(s) corrigé(s) : " + ", ".join((sb.get("mots") or {})[w] for w in sorted(fixed, key=int))[:120])
+    if (sb.get("groupes") or {}) != (sa.get("groupes") or {}):
+        add("sous-titres", f"{len(sb.get('groupes') or {})} groupe(s) avec leur propre look")
+    ma, mb = ai.get("musique") or {}, final.get("musique") or {}
+    if ma.get("fichier") != mb.get("fichier"):
+        add("musique", f"Chanson changée : {os.path.basename(mb.get('fichier') or '') or 'sans musique'}")
+    if ma.get("debut") != mb.get("debut"):
+        add("musique", f"Départ dans la chanson : {_fmt(ma.get('debut'))} → {_fmt(mb.get('debut'))}")
+    if ma.get("volume") != mb.get("volume"):
+        add("musique", f"Volume général : {ma.get('volume')} % → {mb.get('volume')} %")
+    if ma.get("fondu") != mb.get("fondu"):
+        add("musique", f"Fondu de fin : {mb.get('fondu')} s")
+    za = {(z["debut"], z["fin"], z["volume"]) for z in ma.get("zones") or []}
+    for z in mb.get("zones") or []:
+        if (z["debut"], z["fin"], z["volume"]) not in za:
+            add("musique", f"Zone de volume {_fmt(z['debut'])} → {_fmt(z['fin'])} à {z['volume']} %")
+    ea = [(os.path.basename(e["file"]), e["start"]) for e in ai.get("effets") or []]
+    eb = [(os.path.basename(e["file"]), e["start"]) for e in final.get("effets") or []]
+    near = lambda x, ys: any(x[0] == y[0] and abs(x[1] - y[1]) <= MOVED for y in ys)
+    for f, t in sorted((x for x in eb if not near(x, ea)), key=lambda x: x[1]):
+        add("effets", f"Son {f.split('_')[0]} à {_fmt(t)} (ajouté ou déplacé)")
+    for f, t in sorted((x for x in ea if not near(x, eb)), key=lambda x: x[1]):
+        add("effets", f"Son {f.split('_')[0]} à {_fmt(t)} retiré ou déplacé")
+    for k, (x, y) in enumerate(zip(texts_before or [], texts_after or []), 1):
+        if x != y:
+            add("voix", f"Phrase {k} réécrite : « {x} » → « {y} »")
+    for k, (x, y) in enumerate(zip(manners_before or [], manners_after or []), 1):
+        if (x or "") != (y or ""):
+            add("voix", f"Phrase {k} : manière {x or 'normale'} → {y or 'normale'}")
+    return out
