@@ -387,6 +387,12 @@
   .pjob-line b{color:var(--text);font-variant-numeric:tabular-nums;}
   .pbar{height:8px;border-radius:99px;background:var(--panel2);overflow:hidden;border:1px solid var(--border-soft);}
   .pbar > div{height:100%;border-radius:99px;background:linear-gradient(90deg,var(--accent),var(--ok));transition:width .5s ease;}
+  .pbar.indet > div{animation:pbar-indet 1.4s ease-in-out infinite;transition:none;}
+  @keyframes pbar-indet{0%{margin-left:-30%}100%{margin-left:100%}}
+  .adsteps{margin-top:12px;display:flex;flex-direction:column;gap:6px;font-size:13px;}
+  .adstep.done{color:var(--muted);}
+  .adstep.cur{font-weight:600;}
+  .adstep-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:4px;}
 
   /* Import → URLs: per-link download tracking */
   .dl-progress:empty{display:none;}

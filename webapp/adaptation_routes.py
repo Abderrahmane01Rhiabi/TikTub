@@ -114,6 +114,21 @@ def _adaptation_job(pid: str) -> str:
     return f"adapt:{pid}"
 
 
+def step_of(phase: str):
+    """A progress phase -> (its sub-step's name, its own progress 0-1 or None): « téléchargement des sources (3/8) »
+    -> (« téléchargement des sources », 0.375). The counts, the channel and the sentence numbers leave the name, so
+    each sub-step keeps one line on the screen."""
+    import re
+    text = str(phase or "")
+    m = re.search(r"(\d+)\s*/\s*(\d+)", text)
+    local = min(1.0, int(m.group(1)) / int(m.group(2))) if m and int(m.group(2)) else None
+    name = re.sub(r"\(.*?\)", "", text)
+    name = re.sub(r"\d+\s*/\s*\d+", "", name)
+    name = re.sub(r"\b\d[\d.,]*\b", "", name)
+    name = re.sub(r"\s*[:·—-]\s*$", "", " ".join(name.split())).strip()
+    return name[:80], local
+
+
 def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
     """Runs one background step of a project, with real progress for the UI."""
     import progress
@@ -124,11 +139,17 @@ def _start_adaptation_step(pid: str, step: str, only: Optional[str] = None):
 
     def run():
         try:
-            seen = {"f": 0.0}            # never backwards: sources handled at once each report their own share
+            seen = {"f": 0.0, "etapes": []}   # never backwards: sources handled at once each report their own share
 
             def report(phase, f):
                 seen["f"] = max(seen["f"], f)
-                progress.update(key, seen["f"], phase=phase)
+                name, local = step_of(phase)
+                steps = seen["etapes"]
+                if name and (not steps or steps[-1]["nom"] != name):     # a new sub-step: its own bar from 0
+                    steps.append({"nom": name})
+                if steps:
+                    steps[-1]["local"] = local
+                progress.update(key, seen["f"], phase=phase, etapes=[dict(x) for x in steps[-12:]])
             from gemini_ai_generator import usage_context
             with usage_context(projet=pid):          # each AI call of the step noted with its project
                 if step in ("voicing", "scripting") and only:
@@ -177,7 +198,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
                                   "channels": [t["channel"] for t in x["targets"]],
                                   "angle": (x.get("angle") or {}).get("titre")} for x in members]
     base["subject"] = (p.get("reference") or {}).get("sujet")
-    base["progress"] = {"fraction": job.get("fraction"), "phase": job.get("phase")} if job and not job.get("done") else None
+    base["progress"] = ({"fraction": job.get("fraction"), "phase": job.get("phase"), "etapes": job.get("etapes") or []}
+                        if job and not job.get("done") else None)
     targets = []
     for t in p.get("targets", []):
         prev, fin = t.get("preview") or {}, t.get("final") or {}

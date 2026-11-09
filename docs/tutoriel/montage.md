@@ -8,6 +8,8 @@ Dans **Adaptation → Idée d'abord**, à l'étape **Aperçu**, la vidéo est mo
 
 ![L'aperçu et sa timeline](img/montage/01_apercu_et_timeline.png)
 
+**Pendant que l'IA travaille** (recherche des images, voix et rendu), la carte d'attente montre deux choses : en haut, la barre de **toute l'étape** ; en dessous, la **liste des sous-étapes**. Celles qui sont finies sont cochées ✓. Celle en cours a **sa propre barre, qui repart de 0** : avec son pourcentage quand on sait compter (« téléchargement des sources 3/8 »), sinon une barre qui bouge. La recherche des images prend la première moitié de la barre de l'étape, le stock (téléchargement, découpage, description, contrôle des images) la seconde.
+
 ## 1. Lire la timeline
 
 | Piste | Ce qu'elle montre |

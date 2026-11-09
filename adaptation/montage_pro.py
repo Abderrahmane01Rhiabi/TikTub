@@ -782,7 +782,7 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
     edl, total = doc["plans"], montage_doc.total(doc)
     pieces = []
     for k, e in enumerate(edl):
-        report(f"plan {k + 1}/{len(edl)}", 0.7 * k / len(edl))
+        report(f"rendu des plans ({k + 1}/{len(edl)})", 0.7 * k / len(edl))
         path = os.path.join(work, "plans", _piece_key(e, shots[e["plan"]]) + ".mp4")
         pieces.append(path if os.path.exists(path) else _piece(e, shots[e["plan"]], path))
     ass = os.path.join(work, "textes.ass")
@@ -794,7 +794,7 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
     from adaptation.render import _filter_path
     from adaptation.langs import FONTS_DIR
     if not os.path.exists(picture):
-        report("textes", 0.75)
+        report("textes à l'écran", 0.75)
         lst = os.path.join(work, "pieces.txt")
         with open(lst, "w") as f:
             f.write("".join(f"file '{os.path.abspath(x)}'\n" for x in pieces))
@@ -830,7 +830,7 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
                 full = os.path.join(work, old)
                 if os.path.getmtime(full) < os.path.getmtime(picture) - 3600:
                     os.remove(full)
-    report("son", 0.9)
+    report("mixage du son", 0.9)
     inputs, mix, n = ["-i", voice_mp3], ["[0:a]volume=1.0[v0]"], 1
     labels = ["v0"]
     for k, e in enumerate(doc.get("effets") or []):
