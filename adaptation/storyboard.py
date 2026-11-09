@@ -60,6 +60,10 @@ que le modele montre deja ("plans_modele" = ses numeros) : ces videos existent. 
 c'est une video tres courante. Jamais une idee, un schema, un texte ou une image impossible a filmer.
 Pas deux plans avec la meme image. Decris l'ACTION, pas la facon de filmer : le montage sait ralentir et zoomer,
 n'exige donc ni "au ralenti" ni "plan serre" (ces videos sont rares) ; et l'image montre ce que dit SA phrase.
+"idee" = en ANGLAIS, ce que montrerait n'importe quelle video qui fait passer l'IDEE de la phrase, generale et
+filmable, ce qu'on VOIT (les choses et l'action), sans lieu ni nom precis ni facon de filmer (pas de timelapse, gros
+plan, drone) : 5 a 12 mots ; "new apartment buildings, a hand giving keys", pas "les familles d'El Harrouyine recoivent
+les cles". Un monteur prend une image qui fait passer l'idee quand la scene exacte manque.
 
 FLECHES ET CERCLES : sur 2 ou 3 plans seulement (jamais plus), ceux ou le spectateur doit ANTICIPER une action
 (la voiture qui va etre percutee, le tuyau qui va exploser) ou VOIR un detail qu'il raterait, donne "annotation" :
@@ -73,7 +77,7 @@ TEXTES dans chaque langue demandee, qui disent la meme chose plan par plan, natu
 - titre (100 caracteres max, 1-2 emojis), description (2-3 phrases + 3 a 5 hashtags dont #shorts), tags (8 a 12)
 
 JSON uniquement :
-{{"plans": [{{"role": "accroche | promesse | montee | reponse", "image": "...", "plans_modele": [numeros],
+{{"plans": [{{"role": "accroche | promesse | montee | reponse", "image": "...", "idee": "...", "plans_modele": [numeros],
              "annotation": null, "textes": {{{exemple}}}}}],
   "meta": {{{exemple_meta}}}}}"""
 
@@ -233,7 +237,7 @@ def revise(bundle: Dict, codes: List[str], request: str, gemini=None) -> Dict:
 
 
 def _public(bundle: Dict) -> Dict:
-    return {"plans": [{k: p.get(k) for k in ("role", "image", "plans_modele", "annotation", "textes")} for p in bundle["plans"]],
+    return {"plans": [{k: p.get(k) for k in ("role", "image", "idee", "plans_modele", "annotation", "textes")} for p in bundle["plans"]],
             "meta": bundle.get("meta") or {}}
 
 
@@ -255,6 +259,7 @@ def normalise(r, codes: List[str]) -> Dict:
             continue
         role = str(p.get("role") or "").lower().strip().replace("é", "e")
         plans.append({"role": role if role in ROLES else "montee", "image": " ".join(str(p.get("image") or "").split()),
+                      "idee": " ".join(str(p.get("idee") or "").split())[:160],     # the idea in English (adaptation/vision)
                       "plans_modele": [int(i) for i in p.get("plans_modele") or [] if isinstance(i, (int, float))],
                       "annotation": clean_annotation(p.get("annotation")), "textes": t})
     meta = {}

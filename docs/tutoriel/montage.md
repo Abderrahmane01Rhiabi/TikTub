@@ -1,6 +1,6 @@
 # Le montage modifiable (la timeline)
 
-*Mis à jour le 8 novembre 2026.*
+*Mis à jour le 9 novembre 2026.*
 
 Dans **Adaptation → Idée d'abord**, à l'étape **Aperçu**, la vidéo est montée par l'IA. Sous l'aperçu, la **timeline** montre tout ce qui la compose, et te laisse **changer n'importe quel morceau avant de publier** : une image, son cadrage, un bandeau, un mot des sous-titres, le volume de la musique sur un passage, un effet sonore, la manière de dire une phrase.
 
@@ -36,17 +36,34 @@ Dans **Adaptation → Idée d'abord**, à l'étape **Aperçu**, la vidéo est mo
 | chaque effet sonore | — |
 | le texte ou la manière d'une phrase | — |
 
-## 3. Les images
+## 3. Comment l'app choisit les images (Images v2)
+
+Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fait passer l'idée** de la phrase, et qui ne la contredit jamais. L'app fait pareil :
+
+| Étape | Ce qu'elle fait |
+|---|---|
+| **L'idée de chaque phrase** | une courte description, en anglais, de ce que montrerait n'importe quelle vidéo qui fait passer l'idée (« new apartment buildings, a hand giving keys ») |
+| **Recherche par le sens** | un modèle sur ton PC compare chaque plan du stock (3 images de lui) à **chaque phrase**, pas au sujet en général |
+| **Repêchage** | un plan écarté comme « hors sujet » mais qui colle bien à une phrase revient dans le stock (badge vert *repêché*) |
+| **Contrôle du lieu** (actualité) | une vidéo sur **un autre pays ou une autre ville** (NEOM pour Benslimane, Mayotte pour Casablanca) est écartée — l'autre quartier de la même ville reste |
+| **Recherche de secours** | pour une phrase que rien ne fait passer, une vidéo est cherchée sur **Pixabay** et choisie par le sens (badge vert *secours*) ; pas de clip généré par IA en actualité |
+| **Variété** | au plus **2 plans de la même vidéo** dans un montage |
+| **Relecture** | le montage fini est relu (comme un monteur qui se relit) : chaque plan qui **contredit** sa phrase ou **ne colle pas** est entouré d'**orange** dans la piste Images |
+
+À l'écran du **stock**, une ligne « Images v2 » résume ce qui a été fait. Ces étapes coûtent environ 5 centimes de Gemini par vidéo (la recherche par le sens est gratuite).
+
+## 4. Les images
 
 ![Le panneau d'un plan](img/montage/02_plan.png)
 
-- **Remplacer** : clique une miniature de ton stock, ou **glisse-la** sur un plan de la piste Images.
+- **Plan entouré d'orange (⚠)** : la relecture dit pourquoi il ne colle pas et quoi montrer à la place ; quand le stock a mieux, **Mettre le plan proposé** le remplace en un clic.
+- **Remplacer** : clique une miniature de ton stock, ou **glisse-la** sur un plan de la piste Images. Les plans sont **rangés du plus adapté à la phrase au moins adapté** ; ✓ = il fait passer l'idée de cette phrase ; *Pixabay* = un plan de secours.
 - **Cadrage** : *zoom* pour serrer l'image (jusqu'à ×1,6), *centrer sur* le sujet (choix de l'IA), la gauche, le centre ou la droite.
 - **Couper ce plan en deux** : la 2ᵉ moitié prend un autre plan de ton stock (change-le ensuite si tu veux).
 - **Supprimer** : le plan d'avant s'allonge pour boucher le trou.
 - **Déplacer une coupe** : glisse la **barre blanche** au début d'un plan. Elle se cale sur le mot le plus proche. Un plan dure au moins 1 seconde.
 
-## 4. La voix
+## 5. La voix
 
 ![Le panneau d'une phrase](img/montage/03_voix.png)
 
@@ -57,13 +74,13 @@ Tu peux changer le **texte** d'une phrase et sa **manière de dire** (seulement 
 - Un nouveau texte **n'est pas revérifié contre les faits** : relis-le.
 - **Annuler le dernier rendu** remet l'ancienne voix **sans repayer** ElevenLabs.
 
-## 5. Les bandeaux
+## 6. Les bandeaux
 
 ![Le panneau d'un bandeau](img/montage/04_bandeau.png)
 
 Change le texte (60 caractères au plus), coche **Pas de bandeau sur cette phrase**, ou choisis le **cadre de ce bandeau** : celui du style de la chaîne, noir, rouge actu, blanc ou bleu (par exemple un bandeau rouge seulement sur la révélation). **Appliquer ce cadre à tous les bandeaux** le met partout.
 
-## 6. Les sous-titres
+## 7. Les sous-titres
 
 ![Le panneau des sous-titres](img/montage/05_sous_titres.png)
 
@@ -72,14 +89,14 @@ Change le texte (60 caractères au plus), coche **Pas de bandeau sur cette phras
 - **Position** (bas, milieu, haut) et **taille** (60 à 160 %) de ce groupe. Les styles de la bibliothèque ont leur propre « bas », un peu plus près du bord.
 - **Appliquer… à tous les sous-titres** met ce look sur toute la vidéo ; **Comme le reste de la vidéo** annule le look propre de ce groupe.
 
-## 7. La musique
+## 8. La musique
 
 ![Une zone de volume](img/montage/06_musique_zone.png)
 
 - Clique la piste Musique : **chanson**, **départ** dans la chanson (en secondes), **volume général**, **fondu à la fin**.
 - **+ Baisser / monter une partie au curseur** : crée une zone de 3 secondes au trait rouge. Règle son volume (0 à 200 %) et ses bornes, ou **glisse-la** sur la piste. Pratique pour laisser entendre une phrase chuchotée.
 
-## 8. Les effets sonores
+## 9. Les effets sonores
 
 ![Le panneau d'un effet](img/montage/07_effet.png)
 
@@ -87,7 +104,7 @@ Change le texte (60 caractères au plus), coche **Pas de bandeau sur cette phras
 - Au clic : changer le **son** (ceux allumés dans Réglages → Bibliothèques → Effets sonores), son **moment**, son **volume**, l'**écouter**, le **supprimer**.
 - **+ Ajouter un son au curseur** : sans rien sélectionner, le bouton est dans le panneau.
 
-## 9. La démo instantanée
+## 10. La démo instantanée
 
 ![La démo par-dessus la vidéo](img/montage/08_demo.png)
 
@@ -104,7 +121,7 @@ Dès que tu changes quelque chose, l'aperçu montre une **DÉMO** (étiquette ja
 
 La démo est approximative : la vraie vidéo, c'est **Refaire l'aperçu**.
 
-## 10. Appliquer, comparer, annuler
+## 11. Appliquer, comparer, annuler
 
 En haut de la timeline :
 
@@ -118,7 +135,7 @@ En haut de la timeline :
 
 Après chaque rendu, le **contrôle automatique** du son repasse (chaque phrase à sa place, volume). Le bouton **Valider cet aperçu** ne s'allume que s'il est vert.
 
-## 11. À savoir
+## 12. À savoir
 
 - **« Revenir au stock »** refait un montage neuf par l'IA : tes changements dans la timeline seraient perdus. L'app te le demande avant.
 - Un seul rendu à la fois : pendant un rendu, la timeline attend.

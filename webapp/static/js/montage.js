@@ -80,8 +80,10 @@ function mtTracks(ch){
   const images = doc.plans.map((e, i) => {
     const s = stockById[e.plan] || {};
     const framed = (e.zoom || 1) !== 1 || e.centre != null;
-    return mtBlock('images', i, e.debut, e.fin, `<b>${i + 1}</b>${framed ? ' ⌖' : ''}`,
-      s.thumb_url ? `background-image:url('${s.thumb_url}')` : '', `Plan ${i + 1} : ${s.desc || e.plan}`, i > 0);
+    const flag = mtFlag(data, i, e);
+    return mtBlock('images', i, e.debut, e.fin, `<b>${i + 1}</b>${framed ? ' ⌖' : ''}${flag ? ' ⚠' : ''}`,
+      (s.thumb_url ? `background-image:url('${s.thumb_url}');` : '') + (flag ? 'box-shadow:inset 0 0 0 3px #f59e0b;' : ''),
+      flag ? `Relecture : ${flag.verdict === 'contredit' ? 'contredit la phrase' : 'ne colle pas'} — ${flag.pourquoi}` : `Plan ${i + 1} : ${s.desc || e.plan}`, i > 0);
   }).join('');
   const edits = mtState[ch].voix;
   const voix = data.phrases.map((ph, i) => {
@@ -124,10 +126,19 @@ function mtTracks(ch){
 
 // ---------------- the panel: what the selected element can become
 
-function mtStockGrid(ch, current){
+// the review's flag on a shot still in its place (the person may have changed it since)
+function mtFlag(data, i, e){
+  return (data.relecture || []).find(r => r.plan === i + 1 && r.id === e.plan) || null;
+}
+
+// the stock, the shots that best convey this sentence's idea first (Images v2: their score against each sentence)
+function mtStockGrid(ch, current, phrase){
   const { data } = mtState[ch];
-  return `<div class="mt-stock">${data.stock.map(s => `<button type="button" class="mt-shot ${s.id === current ? 'on' : ''}" draggable="true"
-      data-shot="${s.id}" title="${esc(s.desc || '')}" style="background-image:url('${s.thumb_url}')"><span>${s.duree} s</span></button>`).join('')}</div>`;
+  const fit = s => (s.colle || [])[phrase - 1] || 0;
+  const shots = phrase ? [...data.stock].sort((a, b) => fit(b) - fit(a)) : data.stock;
+  return `<div class="mt-stock">${shots.map(s => `<button type="button" class="mt-shot ${s.id === current ? 'on' : ''}" draggable="true"
+      data-shot="${s.id}" title="${esc(s.desc || '')}${phrase && fit(s) ? ` — colle à la phrase : ${Math.round(fit(s) * 100)}` : ''}" style="background-image:url('${s.thumb_url}')">
+      ${phrase && fit(s) >= 0.27 ? '<i class="mt-fit">✓</i>' : ''}${s.secours ? '<i class="mt-px">Pixabay</i>' : ''}<span>${s.duree} s</span></button>`).join('')}</div>`;
 }
 
 function mtPanel(ch){
@@ -141,8 +152,13 @@ function mtPanel(ch){
   if (sel.kind === 'images'){
     const e = doc.plans[i], s = data.stock.find(x => x.id === e.plan) || {};
     const c = e.centre == null ? 'auto' : e.centre;
+    const flag = mtFlag(data, i, e), prop = flag && flag.proposition ? data.stock.find(x => x.id === flag.proposition) : null;
     return `<div class="mt-p-title"><b>Plan ${i + 1}</b> · ${fmtSec(e.debut)} → ${fmtSec(e.fin)} · ${esc(s.desc || e.plan)}</div>
-      <label class="f">Remplacer par un plan de ton stock (clique, ou glisse-le sur la piste Images)</label>${mtStockGrid(ch, e.plan)}
+      ${flag ? `<div class="warnbox"><b>Relecture : ${flag.verdict === 'contredit' ? 'cette image contredit la phrase' : 'cette image ne colle pas à la phrase'}.</b>
+        ${esc(flag.pourquoi)}${flag.a_la_place ? `<br>À la place : ${esc(flag.a_la_place)}` : ''}
+        ${prop ? `<div class="mt-p-row" style="margin-top:6px"><span class="mt-shot" style="width:42px;height:70px;background-image:url('${prop.thumb_url}')"></span>
+          <button type="button" class="btn ghost small mt-take" data-shot="${prop.id}">Mettre le plan proposé</button></div>` : ''}</div>` : ''}
+      <label class="f">Remplacer par un plan de ton stock (✓ = fait passer l'idée de cette phrase ; clique, ou glisse-le sur la piste Images)</label>${mtStockGrid(ch, e.plan, e.phrase)}
       <div class="mt-p-grid">
         <div><label class="f">Cadrage : zoom ×<span class="mt-zoom-out">${(e.zoom || 1).toFixed(2)}</span></label>
           <input type="range" class="mt-zoom" min="1" max="1.6" step="0.05" value="${e.zoom || 1}"></div>
@@ -353,7 +369,8 @@ function mtBindPanel(box, now){
   on('.mt-v-man', 'onclick', b => { vEdit().maniere = b.dataset.v; vClean(); mtChanged(box); });
   on('.mt-v-undo', 'onclick', () => { delete st.voix[i]; mtChanged(box); });
   // the shot
-  on('.mt-panel .mt-shot', 'onclick', b => { doc.plans[i].plan = b.dataset.shot; mtChanged(box); });
+  on('.mt-panel .mt-shot', 'onclick', b => { if (b.dataset.shot){ doc.plans[i].plan = b.dataset.shot; mtChanged(box); } });
+  on('.mt-take', 'onclick', b => { doc.plans[i].plan = b.dataset.shot; mtChanged(box); });
   on('.mt-zoom', 'oninput', el => { box.querySelector('.mt-zoom-out').textContent = Number(el.value).toFixed(2); });
   on('.mt-zoom', 'onchange', el => { doc.plans[i].zoom = Number(el.value); mtChanged(box); });
   on('.mt-centre', 'onclick', b => { doc.plans[i].centre = b.dataset.v === 'auto' ? null : Number(b.dataset.v); mtChanged(box); });

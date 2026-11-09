@@ -1216,6 +1216,17 @@ function renderAdDone(body, p){
 
 // ---------- Montage pro (« Idée d'abord ») : the stock of shots, reviewed before the edit ----------
 
+// Images v2 (adaptation/vision): what the meaning search did to the stock, in one line
+function adImagesV2Html(p){
+  const v = p.images_v2;
+  if (!v) return '';
+  const n = k => (v[k] || []).length;
+  const off = [...new Set((p.stock || []).filter(s => s.ecarte === 'autre lieu').map(s => s.ailleurs))].filter(Boolean);
+  return `<div class="tiny" style="margin-top:6px">${icon('eye', 12)} <b>Images v2</b> : chaque plan jugé par rapport à <b>chaque phrase</b>.
+    ${n('repeches') ? `${n('repeches')} plan(s) écarté(s) à tort repêché(s). ` : ''}${n('secours') ? `${n('secours')} plan(s) de secours trouvé(s) sur Pixabay pour les phrases sans image. ` : ''}${
+    n('ailleurs') ? `${n('ailleurs')} plan(s) d'un autre lieu écarté(s)${off.length ? ` (${esc(off.join(', '))})` : ''}.` : ''}</div>`;
+}
+
 function renderAdStock(body, p){
   const stock = p.stock || [];
   const kept = stock.filter(s => s.garde).length;
@@ -1225,7 +1236,8 @@ function renderAdStock(body, p){
       ${icon('sparkle', 12)} L'app a téléchargé les meilleures vidéos trouvées (seulement leurs bons moments), les a découpées en
       <b>${stock.length} plans</b> et les a décrits. Le <b>monteur IA</b> choisira parmi les plans <b>gardés</b> : 2-3 coupes par phrase,
       l'image la plus forte en accroche, jamais deux fois le même plan. Clique sur un plan pour le retirer ou le remettre ;
-      ceux marqués <i>hors sujet</i> ont été écartés tout seuls.</div></div></article>` +
+      ceux marqués <i>hors sujet</i> ont été écartés tout seuls.</div>
+      ${adImagesV2Html(p)}</div></article>` +
     Object.keys(bySource).map(k => {
       const shots = bySource[k], first = shots[0];
       return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name" style="font-size:13px">
@@ -1234,7 +1246,8 @@ function renderAdStock(body, p){
         <div class="chcard-body"><div class="pro-stock">${shots.map(s => `
           <button class="pro-shot ${s.garde ? 'on' : 'off'}" data-sid="${s.id}" title="${esc(s.desc || '')}">
             <img src="${s.thumb_url}" alt="" loading="lazy">
-            <span class="pro-badges"><b>${s.force ?? '?'}</b>${s.probleme ? '<i>⚠</i>' : ''}${s.ecarte ? `<i>${esc(s.ecarte)}</i>` : ''}</span>
+            <span class="pro-badges"><b>${s.force ?? '?'}</b>${s.probleme ? '<i>⚠</i>' : ''}${s.ecarte ? `<i>${esc(s.ecarte)}</i>` : ''}${
+              s.repeche ? `<i class="pro-ok">repêché · phrase ${s.repeche}</i>` : ''}${s.secours_pour ? `<i class="pro-ok">secours · phrase ${s.secours_pour}</i>` : ''}</span>
             <span class="pro-desc">${esc(s.desc || '')}</span>
           </button>`).join('')}</div></div></article>`;
     }).join('') +

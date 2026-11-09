@@ -77,19 +77,23 @@ EDIT = """Tu es un monteur PRO de YouTube Shorts. Voici la voix off, phrase par 
 instant (secondes) :
 {phrases}
 
-Voici les RUSHS disponibles (id | duree | force visuelle 1-10 | pertinence 0-10 | ce qu'on voit | probleme) :
+Voici les RUSHS disponibles (id | source | duree | force visuelle 1-10 | colle aux phrases | ce qu'on voit | probleme) :
 {plans}
+« colle aux phrases » = les phrases dont ce plan fait passer l'IDEE (mesure de l'image contre l'idee de chaque phrase,
+la plus haute d'abord ; « - » = aucune).
 
 Monte la video comme un pro (le sens + l'emotion + l'attention), pas du mot a mot :
 - 2 ou 3 COUPES par phrase : chaque plan reste 1,2 a 3 secondes a l'ecran. Une coupe tombe sur le DEBUT d'un mot
   (de preference le mot important : un nom, un chiffre, un verbe fort) -> donne l'indice du mot ou le plan commence.
   La 1re coupe d'une phrase commence au mot 0.
 - La TOUTE PREMIERE image = la plus forte qui colle au sujet, pour arreter le scroll.
+- Pour chaque phrase, prends d'abord des plans dont « colle aux phrases » cite CETTE phrase.
 - L'image ne contredit JAMAIS la phrase ; elle montre l'idee ou l'emotion quand le mot a mot est impossible.
+- Au plus 2 plans d'une meme source dans toute la video.
 - VARIETE : jamais le meme plan deux fois ; deux plans qui se suivent ne se ressemblent pas (alterne large / serre,
   change de lieu ou d'angle) ; evite deux plans de suite de la meme source quand une autre colle aussi.
 - Evite les plans a probleme sauf s'il n'y a pas mieux.
-JSON uniquement : {{"montage": [{{"phrase": 1, "coupes": [{{"plan": "id", "mot": 0, "pourquoi": "court"}}]}}]}}"""
+JSON uniquement : {{"montage": [{{"phrase": 1, "coupes": [{{"plan": "id", "mot": 0}}]}}]}}"""
 
 HOOK_PROMPT = """Raccourcis l'accroche d'un YouTube Short ({langue}) : elle dure {duree:.1f} s a l'oral, il faut 3 s au plus
 (environ {mots} mots). Elle doit NOMMER le sujet et donner envie de rester.
@@ -333,12 +337,62 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
         for s in shots:
             why = set_aside(s)
             s.update(garde=why is None, ecarte=why)
+        v2 = images_v2(p, shots, metas, base, report)
         p = ap.load(pid)
-        p.update(stock=shots, stock_sources=metas, status="stock_review", error=None, failed_step=None)
+        if v2.get("idees"):                         # kept on the storyboard: the edit and the review use them
+            for pl, idea in zip((p.get("storyboard") or {}).get("plans") or [], v2["idees"]):
+                pl["idee"] = idea
+        secours.mark(p, "images", v2.get("secours"))
+        p.update(stock=shots, stock_sources=metas, images_v2=v2.get("bilan"), status="stock_review", error=None,
+                 failed_step=None)
         ap.save(p)
     except Exception as e:
         ap.fail(pid, "fetching", e)
     report("terminé", 1.0)
+
+
+def images_v2(p: Dict, shots: List[Dict], metas: List[Optional[Dict]], base: str, report: Report) -> Dict:
+    """Images v2 (adaptation/vision): the shots judged against each sentence's idea — the off-topic ones that fit a
+    sentence brought back, in the news the videos about another place set aside, a general Pixabay search for the
+    sentences nothing fits. -> {idees, bilan, secours (a message when it could not run)}."""
+    from adaptation import vision
+    if not vision.available():
+        return {"secours": "recherche par le sens non installée : les plans sont choisis comme avant."}
+    sujet = (p.get("reference") or {}).get("sujet") or p.get("idee") or ""
+    family = p.get("famille_recit") or _recits.find(p.get("recit"))
+    try:
+        if family == "actualite":
+            report("contrôle des lieux", 0.8)
+            off = vision.other_places(sujet, metas)
+            for s in shots:
+                if s["source"] in off and s.get("garde"):
+                    s.update(garde=False, ecarte="autre lieu", ailleurs=off[s["source"]])
+        report("recherche par le sens", 0.84)
+        ideas = vision.ideas_of(p)
+        folder = os.path.join(base, "vision")
+        vision.match(shots, ideas, folder)
+        vision.rescue([s for s in shots if s.get("ecarte") != "autre lieu"], len(ideas))
+        added, used = [], set()
+        miss = vision.missing(shots, len(ideas))
+        words = vision.searches([ideas[k] for k in miss]) if miss else []
+        for n, k in enumerate(miss):
+            report(f"recherche de secours (phrase {k + 1})", 0.9)
+            try:
+                shot = vision.pixabay(ideas[k], os.path.join(base, "pixabay"), n, family == "actualite", used, words[n])
+            except Exception:
+                shot = None
+            if shot:
+                shot["secours_pour"] = k + 1
+                used.add(shot["pixabay_id"])
+                added.append(shot)
+        if added:
+            describe(added, sujet)
+            vision.match(added, ideas, folder)
+            shots.extend(added)
+        vision.save_scores(folder, shots)
+        return {"idees": ideas, "bilan": vision.report_line(shots)}
+    except Exception as e:                          # never a stock lost for it: the shots as before
+        return {"secours": f"recherche par le sens interrompue ({str(e)[:80]}) : les plans sont choisis comme avant."}
 
 
 def set_shot(pid: str, sid: str, keep: bool) -> Dict:
@@ -429,30 +483,66 @@ def _edit_prompt(v: Dict, shots: List[Dict]) -> str:
     for i, ps in enumerate(v["passages"], 1):
         ws = " ".join(f"{k}:{words[w]['w']}@{words[w]['start']:.2f}" for k, w in enumerate(ps["words"]))
         lines.append(f"Phrase {i} ({ps['start']:.2f}-{ps['end']:.2f} s) : {ws}")
-    rushes = "\n".join(f"{s['id']} | {s['end'] - s['start']:.1f}s | {s.get('force')} | {s.get('pertinence')} | "
+    rushes = "\n".join(f"{s['id']} | {s.get('source')} | {s['end'] - s['start']:.1f}s | {s.get('force')} | {_fits(s)} | "
                        f"{s.get('desc')} | {s.get('probleme') or '-'}" for s in shots)
     return EDIT.format(phrases="\n".join(lines), plans=rushes)
+
+
+EDIT_MAX = 60               # shots shown to the editor (109 made its answer too long: cut, the montage fell back)
+
+
+def editable(shots: List[Dict], n_sentences: int) -> List[Dict]:
+    """The shots the editor is shown: each sentence's best ones (adaptation/vision) and the strongest, EDIT_MAX at most
+    — the code still chooses among all of them when it must replace one (build_edit)."""
+    if len(shots) <= EDIT_MAX:
+        return shots
+    keep = {}
+    per = max(4, EDIT_MAX // max(1, n_sentences) - 2)
+    for k in range(n_sentences):
+        for s in sorted(shots, key=lambda s: -((s.get("colle") or [0.0] * n_sentences)[k] if k < len(s.get("colle") or []) else 0.0))[:per]:
+            keep[s["id"]] = s
+    for s in sorted(shots, key=lambda s: -(s.get("force") or 0)):
+        if len(keep) >= EDIT_MAX:
+            break
+        keep.setdefault(s["id"], s)
+    return [s for s in shots if s["id"] in keep]
+
+
+def _fits(shot: Dict) -> str:
+    """« 3:0.35 5:0.29 »: the sentences whose idea this shot conveys (adaptation/vision), the best first."""
+    from adaptation.vision import FITS
+    sc = shot.get("colle") or []
+    best = sorted(((v, k + 1) for k, v in enumerate(sc) if v >= FITS), reverse=True)[:3]
+    return " ".join(f"{k}:{v:.2f}" for v, k in best) or "-"
 
 
 def build_edit(raw: Dict, v: Dict, shots: List[Dict]) -> List[Dict]:
     """Gemini's edit made safe: only kept shots, never one twice, cuts on the words' starts, at least
     MIN_CUT_S each, the whole voice covered (each sentence until the next one starts, the last + 0.6 s).
     [{phrase, plan, debut, fin}] in video time."""
+    from adaptation.vision import MAX_PER_SOURCE
     by_id = {s["id"]: s for s in shots}
-    spare = sorted(shots, key=lambda s: (-(s.get("pertinence") or 0), -(s.get("force") or 0)))
     used, edl = set(), []
+    per_source: Dict = {}
     words, ps_all = v["words"], v["passages"]
     asked = {int(m.get("phrase") or 0): m.get("coupes") or [] for m in (raw or {}).get("montage") or [] if isinstance(m, dict)}
     ends = [ps["start"] for ps in ps_all[1:]] + [v["duration"] + 0.6]
 
-    def free(prefer: Optional[str] = None) -> Optional[str]:
-        if prefer in by_id and prefer not in used:
+    def fit(s: Dict, i: int) -> float:              # how well a shot conveys sentence i (adaptation/vision)
+        sc = s.get("colle") or []
+        return sc[i - 1] if i - 1 < len(sc) else 0.0
+
+    def free(prefer: Optional[str] = None, i: int = 1) -> Optional[str]:
+        roomy = lambda s: per_source.get(s["source"], 0) < MAX_PER_SOURCE      # variety: 2 shots a video at most
+        if prefer in by_id and prefer not in used and roomy(by_id[prefer]):
             return prefer
         last = by_id.get(edl[-1]["plan"]) if edl else None
-        for s in spare:                             # the best unused one, from another source when possible
-            if s["id"] not in used and (not last or s["source"] != last["source"]):
-                return s["id"]
-        return next((s["id"] for s in spare if s["id"] not in used), None)
+        spare = sorted(shots, key=lambda s: (-fit(s, i), -(s.get("pertinence") or 0), -(s.get("force") or 0)))
+        for ok in (lambda s: roomy(s) and (not last or s["source"] != last["source"]), roomy, lambda s: True):
+            sid = next((s["id"] for s in spare if s["id"] not in used and ok(s)), None)
+            if sid:                                 # the best unused one for this sentence, another video if possible
+                return sid
+        return None
     for i, (ps, end) in enumerate(zip(ps_all, ends), 1):
         start = 0.0 if i == 1 else ps["start"]
         cuts = sorted((c for c in asked.get(i, []) if isinstance(c, dict)), key=lambda c: _num(c.get("mot"), 0))
@@ -462,20 +552,24 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict]) -> List[Dict]:
             at = start if not times else words[ps["words"][k]]["start"]
             if times and at - times[-1] < MIN_CUT_S:            # too short: this cut is dropped
                 continue
-            sid = free(str(c.get("plan") or ""))
+            sid = free(str(c.get("plan") or ""), i)
             if sid is None:
                 break
             used.add(sid)
+            per_source[by_id[sid]["source"]] = per_source.get(by_id[sid]["source"], 0) + 1
             times.append(at)
             plans.append(sid)
         if not plans:
-            sid = free()
+            sid = free(None, i)
             if sid is None:
                 raise MontageProError("Plus assez de plans dans le stock pour monter la vidéo.")
             used.add(sid)
+            per_source[by_id[sid]["source"]] = per_source.get(by_id[sid]["source"], 0) + 1
             times, plans = [start], [sid]
         if end - times[-1] < MIN_CUT_S and len(plans) > 1:     # the last piece too short: merged into the one before
-            used.discard(plans.pop())
+            gone = plans.pop()
+            used.discard(gone)
+            per_source[by_id[gone]["source"]] -= 1
             times.pop()
         if edl:
             times[0] = edl[-1]["fin"]
@@ -939,7 +1033,7 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     keep = t.pop("keep_edit", False) and old and all(e["plan"] in kept_ids for e in old)
     if not keep:
         report(f"montage {t['channel']}", offset + share * 0.25)
-        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], shots)}],
+        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(shots, len(t["voice"]["passages"])))}],
                                                       max_tokens=16000, timeout=240, temperature=0.4)
         lost = secours.failed(raw) or not (raw or {}).get("montage")
         secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
@@ -954,7 +1048,101 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
         doc = montage_doc.new(old if keep else edl, len(t["voice"]["passages"]), t.get("music_path"),
                               t.get("music_start") or 0.0, sound_effects(p, t))
         t["montage"], t["montage_versions"] = doc, []
-    return render_target(p, t, report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)))
+    made = render_target(p, t, report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)))
+    report(f"relecture du montage ({t['channel']})", offset + share * 0.97)
+    try:                                            # the AI's montage read again; the person's own is left as they made it
+        t["relecture"] = review(p, t, made, gemini)
+    except Exception:
+        t["relecture"] = []
+    return made
+
+
+REVIEW = """Tu es chef monteur de YouTube Shorts. Voici le montage fini d'un Short, plan par plan : pour chaque plan,
+l'image qu'on voit (dans l'ordre des images jointes) et la phrase dite par la voix pendant ce plan.
+Sujet : {sujet}
+
+{plans}
+
+Un monteur humain ne cherche pas la scene exacte : il veut une image qui FAIT PASSER L'IDEE de la phrase, forte,
+variee, et qui ne contredit jamais ce qui est dit (en actualite, le vrai lieu ou le vrai evenement quand c'est possible).
+Pour CHAQUE plan, juge :
+- "exact" : l'image montre ce que dit la phrase ;
+- "idee" : pas exact, mais fait passer l'idee ;
+- "ne_colle_pas" : ni l'un ni l'autre (hors sujet, trop vague, ennuyeux, deja vu juste avant) ;
+- "contredit" : l'image dit autre chose que la phrase (un detail qui la dement compte).
+Pour "ne_colle_pas" et "contredit" : "a_la_place" = quoi montrer (en francais, court), "recherche" = ce qu'on voit
+dans une video qui ferait l'affaire, en anglais, general (ou "schema" / "chiffre anime" / "carte" si aucune video
+reelle ne peut le montrer).
+JSON uniquement : {{"plans": [{{"plan": 1, "verdict": "exact", "pourquoi": "", "a_la_place": "", "recherche": ""}}]}}"""
+NOT_FOOTAGE = ("schema", "chiffre anime", "carte")
+
+
+def review(p: Dict, t: Dict, preview: Dict, gemini=None) -> List[Dict]:
+    """The finished montage read again like an editor reads his cut (the lab: one picture a shot + its sentence, one
+    call, 2-3 cents): the shots that contradict their sentence or do not fit, why, and a shot of the stock that conveys
+    the idea better (adaptation/vision). -> [{plan, id, verdict, pourquoi, a_la_place, recherche, proposition}]"""
+    edl, out = preview["montage"], preview["path"]
+    folder = os.path.join(os.path.dirname(out), "relecture")
+    os.makedirs(folder, exist_ok=True)
+    lines, imgs = [], []
+    for k, e in enumerate(edl, 1):
+        img = os.path.join(folder, f"r_{k:02d}.jpg")
+        _run(["ffmpeg", "-v", "error", "-y", "-ss", f"{(e['debut'] + e['fin']) / 2:.2f}", "-i", out, "-frames:v", "1",
+              "-vf", "scale=-2:480", "-q:v", "4", img])
+        imgs.append(_jpg(img))
+        lines.append(f"Plan {k} ({e['debut']:.1f}-{e['fin']:.1f} s) : « {t['script']['passages'][e['phrase'] - 1]['texte']} »")
+    r = (gemini or _gemini())._generate_content([{"text": REVIEW.format(sujet=(p.get("reference") or {}).get("sujet") or "",
+                                                                        plans="\n".join(lines))}] + imgs,
+                                                max_tokens=8000, timeout=240, temperature=0.2)
+    if secours.failed(r):
+        secours.mark(t, "relecture", f"pas faite ({secours.why(r)}) : regarde toi-même chaque plan.")
+        return []
+    secours.mark(t, "relecture")
+    found = []
+    for x in (r or {}).get("plans") or []:
+        try:
+            k = int(x.get("plan"))
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= k <= len(edl) or x.get("verdict") not in ("ne_colle_pas", "contredit"):
+            continue
+        found.append({"plan": k, "id": edl[k - 1]["plan"], "verdict": x["verdict"],
+                      "pourquoi": str(x.get("pourquoi") or "")[:200], "a_la_place": str(x.get("a_la_place") or "")[:160],
+                      "recherche": str(x.get("recherche") or "")[:120], "proposition": None})
+    _propose(p, edl, found)
+    return found
+
+
+def _propose(p: Dict, edl: List[Dict], found: List[Dict]) -> None:
+    """For each shot flagged, the kept and unused shot of the stock that best shows what the review asks (if any)."""
+    from adaptation import vision
+    asks = [f for f in found if f["recherche"] and f["recherche"].lower() not in NOT_FOOTAGE]
+    if not asks or not vision.available():
+        return
+    used = {e["plan"] for e in edl}
+    spare = [s for s in p.get("stock") or [] if s.get("garde") and s["id"] not in used]
+    if not spare:
+        return
+    try:
+        folder = os.path.join(pro_dir(p["project_id"]), "vision")
+        paths, owners = [], []
+        for s in spare:
+            for x in vision._frames(s, folder):
+                paths.append(x)
+                owners.append(s["id"])
+        sc = (vision.embed_images(paths) @ vision.embed_texts([f["recherche"] for f in asks]).T).tolist()
+    except Exception:
+        return
+    taken = set()
+    for j, f in enumerate(asks):
+        best = {}
+        for o, row in zip(owners, sc):
+            best[o] = max(best.get(o, -1.0), row[j])
+        for sid, v in sorted(best.items(), key=lambda x: -x[1]):
+            if v >= vision.FITS and sid not in taken:
+                f["proposition"], f["score"] = sid, round(v, 3)
+                taken.add(sid)
+                break
 
 
 def render_target(p: Dict, t: Dict, report: Optional[Report] = None) -> Dict:
@@ -1157,6 +1345,7 @@ def timeline(p: Dict, t: Dict) -> Dict:
     pid = p["project_id"]
     total = montage_doc.total(doc)
     stock = [{"id": s["id"], "desc": s.get("desc"), "duree": round(s["end"] - s["start"], 1), "force": s.get("force"),
+              "colle": s.get("colle") or [], "secours": s.get("secours_pour"),
               "thumb_url": f"/api/adaptations/{pid}/stock/{s['id']}/thumb"}
              for s in p.get("stock") or [] if s.get("garde")]
     m = doc.get("musique") or {}
@@ -1188,6 +1377,7 @@ def timeline(p: Dict, t: Dict) -> Dict:
         "cadres": list(montage_doc.CADRES), "positions": list(montage_doc.POSITIONS),
         "musiques": [{"fichier": s["chemin"], "titre": s["titre"], "permise": s["permise"]} for s in music_choices(t)],
         "enveloppe": env, "saut": t.get("montage_jump"), "son_seulement": t.get("montage_son"),
+        "relecture": t.get("relecture") or [],          # the shots the review flagged (review)
     }
 
 

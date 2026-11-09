@@ -10,7 +10,8 @@ one version (casting, hook, edit, music) — set when the step falls back, remov
 from typing import Any, Dict, List, Optional
 
 LABELS = {"recit": "Style du récit", "faits": "Vérification des faits", "casting": "Voix et manières",
-          "accroche": "Accroche", "montage": "Montage", "musique": "Musique"}
+          "accroche": "Accroche", "montage": "Montage", "musique": "Musique", "images": "Choix des images",
+          "relecture": "Relecture du montage"}
 
 
 def failed(r: Any) -> bool:

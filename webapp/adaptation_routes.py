@@ -240,7 +240,9 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
                                  for s in montage_pro.music_choices(t)]
         if full and p.get("stock"):
             used = {e["plan"] for t in p["targets"] for e in (t.get("preview") or {}).get("montage") or []}
-            base["stock"] = [{k: s.get(k) for k in ("id", "source", "desc", "montre", "force", "pertinence",
+            base["images_v2"] = p.get("images_v2")         # what Images v2 did (adaptation/vision)
+            base["stock"] = [{k: s.get(k) for k in ("id", "source", "desc", "montre", "force", "pertinence", "repeche",
+                                                    "ailleurs", "secours_pour",
                                                     "probleme", "garde", "ecarte", "credit", "titre_source", "url")}
                              | {"duree": round(s["end"] - s["start"], 1), "utilise": s["id"] in used,
                                 "thumb_url": f"/api/adaptations/{p['project_id']}/stock/{s['id']}/thumb"}
