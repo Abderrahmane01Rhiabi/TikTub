@@ -303,16 +303,22 @@ FACTS_PROMPT = """Faits verifies (les SEULS vrais pour cette video, chacun vient
 Phrases d'un script de Short (plan | langue | phrase) :
 {phrases}
 
-Pour CHAQUE phrase : affirme-t-elle un fait, un chiffre, une cause, une action ou un nom qui n'est PAS dans les faits
-verifies, ou qui les CONTREDIT (ex. les faits disent que les cameras n'ont pas pu etre utilisees, la phrase dit qu'ils
-ont trompe les cameras) ? Une formulation, une image, une question ou un resume fidele ne sont pas des fautes.
-JSON uniquement : {{"fautes": [{{"plan": 1, "langue": "ar", "quoi": "ce qui n'est pas dans les faits, en francais"}}]}}"""
+Examine les phrases UNE PAR UNE, sans en sauter (l'accroche aussi) : il y a souvent PLUSIEURS fautes dans un meme script.
+Pour chaque phrase, prends chaque nom, chiffre, date, cause et action qu'elle affirme : est-il dans les faits verifies,
+ou les CONTREDIT-il (ex. les faits disent que les cameras n'ont pas pu etre utilisees, la phrase dit qu'ils ont trompe
+les cameras), ou dit un mot VOISIN mais different de celui des faits, ou donne a une chose un chiffre ou un role
+qu'une autre ligne des faits donne a autre chose ? Une formulation, une image, une question ou un
+resume fidele ne sont pas des fautes. Si une phrase a plusieurs fautes, dis-les toutes dans son "quoi".
+Un verdict par ligne, dans l'ordre ({n} verdicts).
+JSON uniquement : {{"verdicts": [{{"plan": 1, "langue": "ar", "ok": true, "quoi": "si ok est false : ce qui n'est pas dans les faits, en francais"}}]}}"""
 
 
 def fact_check(bundle: Dict, codes: List[str], facts: List[str], gemini=None) -> Dict[Tuple[int, str], str]:
     """{(plan index, language): what a sentence says beyond the verified facts} — every sentence of every language
     in ONE call (about 1 cent, made again after each rewrite). Empty without facts, or when the check itself fails —
-    then the bundle says so (adaptation/secours: « not checked », not « no fault »)."""
+    then the bundle says so (adaptation/secours: « not checked », not « no fault »).
+    A verdict for EACH sentence, not a list of faults: asked « the faults », Gemini named the first one and stopped
+    (Grand Stade, 2026-11-09: three wrong sentences found one per pass)."""
     from adaptation import secours
     secours.mark(bundle, "faits")
     if not facts:
@@ -321,21 +327,22 @@ def fact_check(bundle: Dict, codes: List[str], facts: List[str], gemini=None) ->
              for k, p in enumerate(bundle.get("plans") or [], 1) for c in codes]
     try:
         r = (gemini or _gemini())._generate_content([{"text": FACTS_PROMPT.format(
-            faits="\n".join(f"- {f}" for f in facts), phrases="\n".join(lines))}], max_tokens=4000, timeout=90,
-            temperature=0.0)
+            faits="\n".join(f"- {f}" for f in facts), phrases="\n".join(lines), n=len(lines))}], max_tokens=16000,
+            timeout=90, temperature=0.0)
     except Exception as e:
         r = {"error": str(e)}
-    if secours.failed(r) or "fautes" not in r:
+    if secours.failed(r) or not isinstance(r, dict) or not ("verdicts" in r or "fautes" in r):
         secours.mark(bundle, "faits", f"pas faite ({secours.why(r)}) : relis toi-même les chiffres et les noms.")
         return {}
     out = {}
-    for f in ((r or {}).get("fautes") or []) if isinstance(r, dict) else []:
+    rows = [f for f in r.get("verdicts") or [] if isinstance(f, dict) and f.get("ok") is False] + list(r.get("fautes") or [])
+    for f in rows:
         try:
             k, c = int(f.get("plan")) - 1, str(f.get("langue") or codes[0])
         except (TypeError, ValueError, AttributeError):
             continue
         if 0 <= k < len(bundle.get("plans") or []) and c in codes and str(f.get("quoi") or "").strip():
-            out[(k, c)] = str(f["quoi"]).strip()[:200]
+            out[(k, c)] = str(f["quoi"]).strip()[:300]
     return out
 
 

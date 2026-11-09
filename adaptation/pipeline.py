@@ -542,16 +542,19 @@ def _checked_facts(b: Dict, codes: List[str], facts: List[str], extra: Optional[
     used): fixed once automatically, kept only if it has fewer faults; what is still wrong is marked on its plan and
     blocks the approval until the person corrects it."""
     found = storyboard.fact_check(b, codes, facts)
-    if found:
+    for _ in range(2):                  # all the faults fixed together, twice at most (a rewrite can miss one)
+        if not found:
+            break
         listing = " ; ".join(f"plan {k + 1} [{c}] : {q}" for (k, c), q in found.items())
         try:
             fixed = storyboard.revise(b, codes, FACTS_FIX.format(fautes=listing) + (extra or ""))
-            again = storyboard.fact_check(fixed, codes, facts)
-            if len(again) < len(found):
-                b = {**fixed, "corrections": b.get("corrections", []) + [f"Faits vérifiés : corrigé — {listing}"]}
-                found = again
         except script.ScriptError:
-            pass
+            break
+        again = storyboard.fact_check(fixed, codes, facts)
+        if len(again) >= len(found):    # no better: the marks stay for the person
+            break
+        b = {**fixed, "corrections": b.get("corrections", []) + [f"Faits vérifiés : corrigé — {listing}"]}
+        found = again
     return storyboard.mark_facts(b, found)
 
 
