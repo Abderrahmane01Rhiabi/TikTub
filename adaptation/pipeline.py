@@ -863,9 +863,12 @@ def run_images(pid: str, report: Optional[Report] = None):
         cache = p.get("verif_cache") or {}
         already = dict(cache.get("verifs") or {}) if cache.get("cle") == judged else {}
         shared = SharedSearch(p, wanted)
+        # the montage pro goes on with the stock (downloads, cuts, descriptions, Images v2): the search takes the
+        # first half of the bar, the stock the second — no more 10 minutes at « 99 % »
+        k = 0.5 if p.get("pro") else 1.0
         sug = finder.suggest(p["reference"], p["reference_url"], work_dir=os.path.join(project_dir(pid), "finder"),
                              wanted=wanted, local=local, search=shared.search, frames_fn=shared.frames,
-                             image_search=shared.image_search, report=lambda ph, f: report(ph, 0.05 + 0.55 * f))
+                             image_search=shared.image_search, report=lambda ph, f: report(ph, k * (0.05 + 0.55 * f)))
         shared.save()
         sug.setdefault("verifs", {}).update(already)        # verify_best skips a video already in verifs
 
@@ -881,9 +884,9 @@ def run_images(pid: str, report: Optional[Report] = None):
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(wanted)), words_share=1.0,
-                           report=lambda ph, f: report(ph, 0.62 + 0.3 * f), on_result=keep)
+                           report=lambda ph, f: report(ph, k * (0.62 + 0.3 * f)), on_result=keep)
         finder.follow_remontages(sug, {**p["reference"], "plans": []}, p["reference_url"],
-                                 report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
+                                 report=lambda ph, f: report(ph, k * (0.92 + 0.06 * f)))
         p = load(pid)
         p.update(suggestions=sug, picks=finder.auto_pick(sug, wanted if realisation else plans), status="images_review",
                  error=None, failed_step=None)
@@ -891,7 +894,7 @@ def run_images(pid: str, report: Optional[Report] = None):
             p["status"] = "fetching"
             save(p)
             from adaptation import montage_pro
-            montage_pro.run_stock(pid, lambda ph, f: report(ph, 0.98 + 0.02 * f))
+            montage_pro.run_stock(pid, lambda ph, f: report(ph, 0.5 + 0.5 * f))
             return
         save(p)
     except Exception as e:

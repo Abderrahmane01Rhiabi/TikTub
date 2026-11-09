@@ -232,7 +232,25 @@ function adBusyHtml(p){
   return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name">${spin('')} ${esc(label)}</div>
       <div class="meta" style="margin-left:0">${esc((p.progress && p.progress.phase) || 'préparation…')} — tu peux changer d'écran, ça continue.</div></div>
       <span class="pill wait">${pct} %</span></div>
-    <div class="chcard-body"><div class="pbar"><div style="width:${pct}%"></div></div></div></article>`;
+    <div class="chcard-body"><div class="pbar"><div style="width:${pct}%"></div></div>${adStepsHtml(p.progress)}</div></article>`;
+}
+
+// each sub-step with its own bar from 0 (the user's idea, 2026-11-09: « Images » sat at 99 % for 10 minutes):
+// the finished ones ticked, the current one with its own percentage (from its « 3/8 » count) or a moving bar
+function adStepsHtml(prog){
+  const steps = ((prog && prog.etapes) || []).filter(x => x.nom && x.nom !== 'terminé');
+  if (!steps.length) return '';
+  const shown = steps.slice(-7);
+  const rows = shown.map((x, i) => {
+    const cur = i === shown.length - 1;
+    if (!cur) return `<div class="adstep done">✓ ${esc(x.nom)}</div>`;
+    const known = typeof x.local === 'number';
+    const pc = known ? Math.round(x.local * 100) : 0;
+    return `<div class="adstep cur"><div class="adstep-head"><span>${spin('')} ${esc(x.nom)}</span>${known ? `<span>${pc} %</span>` : ''}</div>
+      <div class="pbar ${known ? '' : 'indet'}"><div style="width:${known ? pc : 30}%"></div></div></div>`;
+  });
+  const more = steps.length > shown.length ? `<div class="adstep done">✓ … ${steps.length - shown.length} étape(s) avant</div>` : '';
+  return `<div class="adsteps">${more}${rows.join('')}</div>`;
 }
 
 function renderAdError(body, p){
