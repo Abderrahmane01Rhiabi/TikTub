@@ -42,6 +42,7 @@ Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fai
 
 | Étape | Ce qu'elle fait |
 |---|---|
+| **Le réalisateur IA** | avant de chercher, il décide **comment montrer chaque phrase** : vraies images (actualité), image d'idée, **comparaison** (« en forme de tente » → le stade **et** une tente), **projet** (rendu 3D, maquette), chiffre, carte ou schéma ; 1 ou 2 images par phrase, cherchées en anglais **et dans la langue du pays** (en arabe pour le Maroc). Ses choix sont visibles à l'écran du **stock** (« Le réalisateur IA ») ; les cartes, chiffres et schémas y sont notés « à dessiner (bientôt) » |
 | **L'idée de chaque phrase** | une courte description, en anglais, de ce que montrerait n'importe quelle vidéo qui fait passer l'idée (« new apartment buildings, a hand giving keys ») |
 | **Recherche par le sens** | un modèle sur ton PC compare chaque plan du stock (3 images de lui) à **chaque phrase**, pas au sujet en général |
 | **Repêchage** | un plan écarté comme « hors sujet » mais qui colle bien à une phrase revient dans le stock (badge vert *repêché*) |

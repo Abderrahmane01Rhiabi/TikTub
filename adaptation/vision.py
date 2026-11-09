@@ -31,7 +31,8 @@ MAX_PER_SOURCE = 2          # shots of one video in a montage (7 of 14 from one 
 PIXABAY_PER_IDEA = 20
 THUMB_FITS = 0.22           # a Pixabay video's small picture that conveys the idea (a thumbnail scores lower)
 _lock = threading.Lock()
-_model = {}
+_proc: Dict = {}
+CALL_TIMEOUT = 600          # seconds for one request: the first loads torch and the model (~4 min on WSL)
 
 
 def available() -> bool:
@@ -43,37 +44,82 @@ def available() -> bool:
         return False
 
 
-def _load():
+def _worker(conn) -> None:
+    """The model's own process: loaded once, it turns pictures and texts into vectors. Kept out of the web server —
+    loading and running it there froze the app for a few seconds (« Le serveur ne répond pas »)."""
+    import open_clip
+    import torch
+    from PIL import Image
+    dev = "cuda" if torch.cuda.is_available() else "cpu"
+    model, _, pre = open_clip.create_model_and_transforms(MODEL[0], pretrained=MODEL[1], device=dev)
+    model.eval()
+    tok = open_clip.get_tokenizer(MODEL[0])
+    while True:
+        msg = conn.recv()
+        if msg is None:
+            break
+        kind, data = msg
+        try:
+            with torch.no_grad():
+                if kind == "img":
+                    out = []
+                    for i in range(0, len(data), 32):
+                        batch = torch.stack([pre(Image.open(x).convert("RGB")) for x in data[i:i + 32]]).to(dev)
+                        f = model.encode_image(batch)
+                        out.append(f / f.norm(dim=-1, keepdim=True))
+                    res = torch.cat(out)
+                else:
+                    f = model.encode_text(tok(data).to(dev))
+                    res = f / f.norm(dim=-1, keepdim=True)
+            conn.send(("ok", res.float().cpu().numpy()))
+        except Exception as e:
+            conn.send(("err", str(e)[:300]))
+
+
+def _call(kind: str, data: List[str]):
+    """One request to the model's process (started on first use, started again if it died)."""
+    import multiprocessing as mp
     with _lock:
-        if not _model:
-            import open_clip
-            import torch
-            dev = "cuda" if torch.cuda.is_available() else "cpu"
-            m, _, pre = open_clip.create_model_and_transforms(MODEL[0], pretrained=MODEL[1], device=dev)
-            m.eval()
-            _model.update(model=m, pre=pre, tok=open_clip.get_tokenizer(MODEL[0]), dev=dev)
-        return _model
+        if not _proc or not _proc["p"].is_alive():
+            ctx = mp.get_context("spawn")
+            parent, child = ctx.Pipe()
+            proc = ctx.Process(target=_worker, args=(child,), daemon=True, name="tiktub-vision")
+            proc.start()
+            _proc.update(p=proc, conn=parent)
+        _proc["conn"].send((kind, data))
+        waited = 0
+        while not _proc["conn"].poll(1):            # never waiting for ever on a process that died
+            waited += 1
+            if not _proc["p"].is_alive() or waited > CALL_TIMEOUT:
+                _proc["p"].kill()
+                _proc.clear()
+                raise RuntimeError("recherche par le sens : le processus du modèle s'est arrêté")
+        status, res = _proc["conn"].recv()
+    if status != "ok":
+        raise RuntimeError(f"recherche par le sens : {res}")
+    return res
+
+
+def warm() -> None:
+    """Starts the model's process in the background (it takes ~4 min to load on WSL): called when a montage pro
+    starts its search, it is ready by the time the stock is downloaded."""
+    if not available():
+        return
+
+    def go():
+        try:
+            embed_texts(["warm up"])
+        except Exception:
+            pass
+    threading.Thread(target=go, daemon=True, name="tiktub-vision-warm").start()
 
 
 def embed_images(paths: List[str]):
-    import torch
-    from PIL import Image
-    m = _load()
-    out = []
-    with torch.no_grad():
-        for i in range(0, len(paths), 32):
-            batch = torch.stack([m["pre"](Image.open(x).convert("RGB")) for x in paths[i:i + 32]]).to(m["dev"])
-            f = m["model"].encode_image(batch)
-            out.append(f / f.norm(dim=-1, keepdim=True))
-    return torch.cat(out) if out else None
+    return _call("img", list(paths)) if paths else None
 
 
 def embed_texts(texts: List[str]):
-    import torch
-    m = _load()
-    with torch.no_grad():
-        f = m["model"].encode_text(m["tok"](texts).to(m["dev"]))
-    return f / f.norm(dim=-1, keepdim=True)
+    return _call("txt", list(texts))
 
 
 def _frames(shot: Dict, folder: str) -> List[str]:
@@ -102,47 +148,62 @@ def match(shots: List[Dict], ideas: List[str], folder: str) -> None:
     f = embed_images(paths)
     sc = (f @ embed_texts(ideas).T).tolist()
     best: Dict[str, List[float]] = {}
+    worst: Dict[str, List[float]] = {}
     for o, row in zip(owners, sc):
-        cur = best.setdefault(o, [-1.0] * len(ideas))
-        best[o] = [max(a, b) for a, b in zip(cur, row)]
+        best[o] = [max(a, b) for a, b in zip(best.get(o, [-1.0] * len(ideas)), row)]
+        worst[o] = [min(a, b) for a, b in zip(worst.get(o, [9.0] * len(ideas)), row)]
     for s in shots:
         s["colle"] = [round(v, 3) for v in best.get(s["id"], [0.0] * len(ideas))]
+        # its worst picture: a shot whose content changes on the way (a Spanish stadium, then black-and-white
+        # archives) fits with one picture only — never brought back for that
+        s["colle_min"] = [round(v, 3) for v in worst.get(s["id"], [0.0] * len(ideas))]
 
 
 def rescue(shots: List[Dict], n_sentences: int) -> List[str]:
-    """Shots set aside as off-topic (or not described) that fit a sentence well (among its 3 best) come back."""
+    """Shots set aside as off-topic (or not described) that fit a sentence well with ALL their pictures (among its 3
+    best) come back."""
     back = []
     for k in range(n_sentences):
         ranked = sorted((s for s in shots if s.get("colle")), key=lambda s: -s["colle"][k])[:3]
         for s in ranked:
             # off-topic for the whole subject, or never described (one still the describe could not read): the model
             # sees what the shot shows (« non décrit » S1_00 fitted « the city's works » at 0.32)
-            if not s.get("garde") and s.get("ecarte") in ("hors sujet", "non décrit") and s["colle"][k] >= FITS:
+            if not s.get("garde") and s.get("ecarte") in ("hors sujet", "non décrit") and s["colle"][k] >= FITS \
+                    and (s.get("colle_min") or s["colle"])[k] >= NOTHING:
                 s.update(garde=True, ecarte=None, repeche=k + 1)
                 back.append(s["id"])
     return back
 
 
 def missing(shots: List[Dict], n_sentences: int) -> List[int]:
-    """The sentences (0-based) no kept shot conveys."""
+    """The sentences (0-based) no kept shot conveys well — half-fitting shots too (contrails kept showing « the
+    ceiling traps the Earth's heat »): the fallback search adds a choice, the editor still picks."""
     kept = [s for s in shots if s.get("garde") and s.get("colle")]
-    return [k for k in range(n_sentences) if max((s["colle"][k] for s in kept), default=0.0) < NOTHING]
+    return [k for k in range(n_sentences) if max((s["colle"][k] for s in kept), default=0.0) < FITS]
 
 
 IDEAS_PROMPT = """Short video, voice-over sentences (any language):
 {phrases}
-For EACH sentence, write in English what a stock video conveying its IDEA would show: the things and the action you
-SEE, general, not the exact place or event, and no way of filming (no timelapse, close-up, drone, slow motion).
+For EACH sentence, write in English what a stock video conveying its MEANING would show — what the sentence makes
+you understand or feel, not its words taken literally: the things and the action you SEE, general, not the exact
+place or event, and no way of filming (no timelapse, close-up, drone, slow motion).
 « new apartment buildings, a hand giving keys », not « families in El Harrouyine receiving keys » ;
-« construction machines working on roads in a big city », not « timelapse of high-rise construction ».
+« construction machines working on roads in a big city », not « timelapse of high-rise construction » ;
+« this ceiling traps the Earth's heat » -> « the Earth heating up, heat waves shimmering over a hot city », not
+« a thick cloud cover ».
 5 to 12 words. JSON only: {{"idees": ["...", "..."]}}"""
 
 
 def ideas_of(p: Dict, gemini=None) -> List[str]:
     """Every sentence's idea in English: the storyboard's, else written once now and kept on it."""
+    from adaptation import realisateur
     plans = (p.get("storyboard") or {}).get("plans") or []
+    directed = realisateur.ideas(p.get("realisation"))   # the director's visuals (all of a sentence's together)
+    if directed and len(directed) == len(plans) and all(directed):
+        return directed
     if plans and all(pl.get("idee") for pl in plans):
-        return [pl["idee"] for pl in plans]
+        own = [pl["idee"] for pl in plans]
+        return [d or o for d, o in zip(directed, own)] if directed and len(directed) == len(plans) else own
     t = p["targets"][0]
     code = t["language"]
     phrases = [((pl.get("textes") or {}).get(code) or {}).get("texte") or "" for pl in plans] or \
@@ -157,6 +218,8 @@ def ideas_of(p: Dict, gemini=None) -> List[str]:
         ideas = []
     if len(ideas) != len(phrases):                      # the precise image (French) rather than nothing
         ideas = [pl.get("image") or ph for pl, ph in zip(plans or [{}] * len(phrases), phrases)]
+    if directed and len(directed) == len(ideas):        # the director's where it has one
+        ideas = [d or x for d, x in zip(directed, ideas)]
     for pl, x in zip(plans, ideas):
         pl["idee"] = x
     return ideas
@@ -165,30 +228,40 @@ def ideas_of(p: Dict, gemini=None) -> List[str]:
 PLACE_PROMPT = """News Short about: {sujet}
 Videos found for it (number | title | uploader):
 {videos}
-For EACH video: the place it is about, and whether that is ANOTHER CITY or COUNTRY than the Short's (e.g. a Saudi
-mega-project, or a slum in Mayotte, for a story in Casablanca). NOT another place: another neighbourhood of the same
-city, the same kind of event nearby, generic footage that could be anywhere (machines, crowds, a city), a title in
-another language about the same place.
-JSON only: {{"videos": [{{"n": 0, "lieu": "short", "autre": false}}]}}"""
+Give the COUNTRY the Short is about, then for EACH video the country it shows (in English, e.g. "Morocco", "Spain",
+"Saudi Arabia", "France") and its place. Use "" for the country when you cannot tell or when the footage is generic
+(machines, crowds, a city that could be anywhere). A title in another language about the same place has the same country.
+JSON only: {{"pays_du_short": "...", "videos": [{{"n": 0, "pays": "...", "lieu": "short"}}]}}"""
+
+
+def _country(x) -> str:
+    return " ".join(str(x or "").lower().replace("the ", "").split())
 
 
 def _places_once(sujet: str, rows, gemini) -> Dict[int, str]:
+    """{video index: its place} for the videos of ANOTHER country than the Short's — compared here, not asked as
+    yes/no (« another place? » set aside the live of another neighbourhood of Casablanca, and once let a Spanish
+    stadium through)."""
     r = gemini._generate_content([{"text": PLACE_PROMPT.format(sujet=sujet, videos="\n".join(
         f"{k} | {m.get('titre') or ''} | {m.get('uploader') or m.get('handle') or ''}" for k, m in rows))}],
         max_tokens=2000, timeout=60, temperature=0.0)
-    out = {}
-    for v in (r or {}).get("videos") or [] if isinstance(r, dict) else []:
+    if not isinstance(r, dict) or not _country(r.get("pays_du_short")):
+        return {}
+    home, out = _country(r["pays_du_short"]), {}
+    for v in r.get("videos") or []:
         try:
-            if v.get("autre") is True and str(v.get("lieu") or "").strip():
-                out[int(v.get("n"))] = str(v["lieu"])[:80]
+            c = _country(v.get("pays"))
+            if c and c != home:
+                out[int(v.get("n"))] = f"{v.get('lieu') or ''}, {v.get('pays')}".strip(" ,")[:80]
         except (TypeError, ValueError, AttributeError):
             continue
     return out
 
 
 def other_places(sujet: str, metas: List[Optional[Dict]], gemini=None) -> Dict[int, str]:
-    """News: the downloaded videos about another place or event -> {index: that place}. Asked twice, a video set aside
-    only when both answers agree (one answer once set aside the very live of the subject), and never more than half."""
+    """News: the downloaded videos about another COUNTRY -> {index: that place}. Asked twice, a video set aside only
+    when both answers agree, and never more than half of them (the real place first when it exists; another
+    neighbourhood or city of the same country stays — it conveys the idea)."""
     rows = [(k, m) for k, m in enumerate(metas) if m and m.get("path")]
     if not rows:
         return {}

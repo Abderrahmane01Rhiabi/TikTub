@@ -217,7 +217,11 @@ def spans_of(row: Dict) -> Optional[List[List[float]]]:
         except (TypeError, ValueError):
             continue
         a, b = max(0.0, min(a, b) - PAD), max(a, b) + PAD
-        spans.append([a, min(b, float(dur)) if dur else b])
+        if dur:
+            b = min(b, float(dur))
+        if b - a < 1.0:             # a moment past the video's end (700 s in a 482 s video) made ffmpeg refuse the
+            continue                # whole download — and its real good moments were lost with it
+        spans.append([a, b])
     spans.sort()
     merged: List[List[float]] = []
     for a, b in spans:

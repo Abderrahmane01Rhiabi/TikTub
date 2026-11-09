@@ -836,11 +836,26 @@ def run_images(pid: str, report: Optional[Report] = None):
         return
     try:
         plans = p["storyboard"]["plans"]
-        report("recherches pour chaque plan", 0.02)
-        queries = finder.plan_queries(finder.wanted_from_storyboard(plans, {}))
-        local = lambda found: {i: {"pays": q["pays"], "langue": q["langue"], "recherches": q["locales"]}
-                               for i, q in queries.items() if q.get("locales")}
-        wanted = finder.wanted_from_storyboard(plans, queries)
+        realisation = None
+        if p.get("pro"):                    # the AI director: how to show each sentence, 1 or 2 visuals, local searches
+            from adaptation import realisateur, vision
+            vision.warm()                   # the meaning search's model loads meanwhile, out of the server
+            report("le réalisateur choisit comment montrer chaque phrase", 0.02)
+            realisation = realisateur.plan(p)
+            if realisation:
+                p["realisation"] = realisation
+                save(p)
+        if realisation:
+            from adaptation import realisateur
+            wanted = realisateur.wanted(realisation, plans)
+            found_local = realisateur.local_of(realisation)
+            local = lambda found: found_local
+        else:
+            report("recherches pour chaque plan", 0.02)
+            queries = finder.plan_queries(finder.wanted_from_storyboard(plans, {}))
+            local = lambda found: {i: {"pays": q["pays"], "langue": q["langue"], "recherches": q["locales"]}
+                                   for i, q in queries.items() if q.get("locales")}
+            wanted = finder.wanted_from_storyboard(plans, queries)
         # what a check judges (each scene, the sentence said over it, its clues, the model Short): the checks
         # made by a run cut short are kept only while all of it is unchanged — never judged against old plans
         judged = json.dumps([[w.get("scene"), w.get("phrase"), w.get("indices")] for w in wanted]
@@ -865,13 +880,13 @@ def run_images(pid: str, report: Optional[Report] = None):
         if shared.reused:
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
-                           n=min(14, 2 * len(plans)), words_share=1.0,
+                           n=min(14, 2 * len(wanted)), words_share=1.0,
                            report=lambda ph, f: report(ph, 0.62 + 0.3 * f), on_result=keep)
         finder.follow_remontages(sug, {**p["reference"], "plans": []}, p["reference_url"],
                                  report=lambda ph, f: report(ph, 0.92 + 0.06 * f))
         p = load(pid)
-        p.update(suggestions=sug, picks=finder.auto_pick(sug, plans), status="images_review", error=None,
-                 failed_step=None)
+        p.update(suggestions=sug, picks=finder.auto_pick(sug, wanted if realisation else plans), status="images_review",
+                 error=None, failed_step=None)
         if p.get("pro"):                # montage pro: the best checked videos become a stock of shots, reviewed
             p["status"] = "fetching"
             save(p)

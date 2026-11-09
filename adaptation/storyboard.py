@@ -60,10 +60,12 @@ que le modele montre deja ("plans_modele" = ses numeros) : ces videos existent. 
 c'est une video tres courante. Jamais une idee, un schema, un texte ou une image impossible a filmer.
 Pas deux plans avec la meme image. Decris l'ACTION, pas la facon de filmer : le montage sait ralentir et zoomer,
 n'exige donc ni "au ralenti" ni "plan serre" (ces videos sont rares) ; et l'image montre ce que dit SA phrase.
-"idee" = en ANGLAIS, ce que montrerait n'importe quelle video qui fait passer l'IDEE de la phrase, generale et
-filmable, ce qu'on VOIT (les choses et l'action), sans lieu ni nom precis ni facon de filmer (pas de timelapse, gros
-plan, drone) : 5 a 12 mots ; "new apartment buildings, a hand giving keys", pas "les familles d'El Harrouyine recoivent
-les cles". Un monteur prend une image qui fait passer l'idee quand la scene exacte manque.
+"idee" = en ANGLAIS, ce que montrerait n'importe quelle video qui fait passer le SENS de la phrase (ce qu'elle fait
+comprendre ou ressentir, pas ses mots pris a la lettre), generale et filmable, ce qu'on VOIT (les choses et l'action),
+sans lieu ni nom precis ni facon de filmer (pas de timelapse, gros plan, drone) : 5 a 12 mots ; "new apartment
+buildings, a hand giving keys", pas "les familles d'El Harrouyine recoivent les cles" ; "ce plafond emprisonne la
+chaleur" -> "the Earth heating up, heat waves over a hot city", pas "a thick cloud cover". Un monteur prend une image
+qui fait passer l'idee quand la scene exacte manque.
 
 FLECHES ET CERCLES : sur 2 ou 3 plans seulement (jamais plus), ceux ou le spectateur doit ANTICIPER une action
 (la voiture qui va etre percutee, le tuyau qui va exploser) ou VOIR un detail qu'il raterait, donne "annotation" :

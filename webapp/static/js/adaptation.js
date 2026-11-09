@@ -1227,6 +1227,17 @@ function adImagesV2Html(p){
     n('ailleurs') ? `${n('ailleurs')} plan(s) d'un autre lieu écarté(s)${off.length ? ` (${esc(off.join(', '))})` : ''}.` : ''}</div>`;
 }
 
+// the AI director's choices (adaptation/realisateur): how each sentence is shown
+const AD_KINDS = { reel: 'vraies images', idee: "image d'idée", comparaison: 'comparaison', projet: 'projet (rendu, maquette)',
+                   chiffre: 'chiffre', carte: 'carte', schema: 'schéma' };
+function adRealisationHtml(p){
+  const r = p.realisation;
+  if (!r || !r.length) return '';
+  return `<details style="margin-top:6px"><summary class="tiny" style="cursor:pointer">${icon('film', 12)} <b>Le réalisateur IA</b> : comment chaque phrase est montrée</summary>
+    <ul class="tiny" style="margin:6px 0 0 18px;padding:0">${r.map(e => `<li><b>Phrase ${e.phrase} · ${esc(AD_KINDS[e.type] || e.type)}</b> — ${
+      e.visuels.map(v => esc(v.image)).join(' <i>+</i> ')}${e.graphique ? `<br><span style="color:#f5c56d">✎ à dessiner (bientôt) : ${esc(e.graphique.contenu || '')}</span>` : ''}</li>`).join('')}</ul></details>`;
+}
+
 function renderAdStock(body, p){
   const stock = p.stock || [];
   const kept = stock.filter(s => s.garde).length;
@@ -1237,7 +1248,7 @@ function renderAdStock(body, p){
       <b>${stock.length} plans</b> et les a décrits. Le <b>monteur IA</b> choisira parmi les plans <b>gardés</b> : 2-3 coupes par phrase,
       l'image la plus forte en accroche, jamais deux fois le même plan. Clique sur un plan pour le retirer ou le remettre ;
       ceux marqués <i>hors sujet</i> ont été écartés tout seuls.</div>
-      ${adImagesV2Html(p)}</div></article>` +
+      ${adImagesV2Html(p)}${adRealisationHtml(p)}</div></article>` +
     Object.keys(bySource).map(k => {
       const shots = bySource[k], first = shots[0];
       return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name" style="font-size:13px">

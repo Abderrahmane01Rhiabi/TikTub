@@ -36,7 +36,7 @@ def test_the_editor_sees_which_sentences_a_shot_fits_and_the_code_keeps_two_shot
     assert [e["plan"] for e in edl] == ["A1", "A2", "B1"]                # a 3rd shot of the same video refused
 
 
-def test_the_news_videos_about_another_place_are_set_aside_only_when_two_answers_agree():
+def test_the_news_videos_of_another_country_are_set_aside_only_when_two_answers_agree():
     class G:
         def __init__(self, *answers):
             self.answers = list(answers)
@@ -45,12 +45,14 @@ def test_the_news_videos_about_another_place_are_set_aside_only_when_two_answers
             assert "They're Building a 170 KM City" in parts[0]["text"]
             return self.answers.pop(0)
     metas = [{"path": "a", "titre": "ملعب الحسن الثاني آخر تطورات"}, {"path": "b", "titre": "They're Building a 170 KM City in the Desert"},
-             {"path": "c", "titre": "Benslimane stadium works"}]
-    neom = {"videos": [{"n": 0, "lieu": "Benslimane", "autre": False}, {"n": 1, "lieu": "NEOM, Arabie saoudite", "autre": True}]}
-    assert vision.other_places("Le Grand Stade à Benslimane", metas, gemini=G(neom, neom)) == {1: "NEOM, Arabie saoudite"}
-    flip = {"videos": [{"n": 0, "lieu": "Casablanca", "autre": True}]}     # one answer alone is not enough
-    assert vision.other_places("Le Grand Stade à Benslimane", metas, gemini=G(flip, neom)) == {}
-    most = {"videos": [{"n": k, "lieu": "ailleurs", "autre": True} for k in range(3)]}
+             {"path": "c", "titre": "Casablanca rebuilt"}]
+    neom = {"pays_du_short": "Morocco", "videos": [{"n": 0, "pays": "Morocco", "lieu": "Benslimane"},
+                                                   {"n": 1, "pays": "Saudi Arabia", "lieu": "NEOM"},
+                                                   {"n": 2, "pays": "", "lieu": "a city"}]}
+    assert vision.other_places("Le Grand Stade à Benslimane", metas, gemini=G(neom, neom)) == {1: "NEOM, Saudi Arabia"}
+    same = {"pays_du_short": "Morocco", "videos": [{"n": 1, "pays": "Morocco", "lieu": "?"}]}   # one answer alone: kept
+    assert vision.other_places("Le Grand Stade à Benslimane", metas, gemini=G(neom, same)) == {}
+    most = {"pays_du_short": "Morocco", "videos": [{"n": k, "pays": "Spain", "lieu": "x"} for k in range(3)]}
     assert vision.other_places("Le Grand Stade à Benslimane", metas, gemini=G(most, most)) == {}   # more than half: distrusted
 
 
@@ -125,3 +127,16 @@ def test_a_big_stock_shows_the_editor_each_sentence_s_best_shots_and_the_stronge
     ids = {s["id"] for s in seen}
     assert len(seen) == mp.EDIT_MAX and {"S5_7", "S8_3", "S1_2"} <= ids
     assert mp.editable(shots[:10], 2) == shots[:10]                      # a small stock: all of it
+
+
+def test_a_shot_whose_pictures_do_not_all_fit_is_not_brought_back_and_a_half_fitting_sentence_gets_a_fallback():
+    s = shot("S7_00", 7, [0.28, 0.1], garde=False, ecarte="non décrit")
+    s["colle_min"] = [0.05, 0.05]                       # a grass picture, then black-and-white archives
+    assert vision.rescue([s], 2) == [] and not s["garde"]
+    half = shot("S0_00", 0, [0.30, 0.25])               # sentence 2: only half-fitting shots
+    assert vision.missing([half], 2) == [1]
+
+
+def test_a_moment_past_the_video_s_end_is_dropped_not_the_whole_video():
+    row = {"duree": 482, "moments": [{"debut": 10, "fin": 30}, {"debut": 700, "fin": 710}, {"debut": 742}]}
+    assert mp.spans_of(row) == [[7.0, 33.0]]

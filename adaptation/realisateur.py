@@ -1,0 +1,158 @@
+"""
+The AI director of the montage pro — what a human editor decides in his head before searching: « how do I show
+this sentence? » (the user's remarks of 2026-11-09 on the lab's Shorts: a location shown without a map, « shaped
+like a moussem tent » without the stadium's render nor a tent, « the agents paint red numbers » searched only in
+French, « this ceiling traps the Earth's heat » shown as one more plane).
+
+For every sentence, one call chooses the KIND of picture and writes 1 or 2 visuals to find:
+  reel         the real place or event (news): its footage, searched in the country's language too
+  idee         a picture that conveys the meaning when the exact scene does not exist
+  comparaison  « shaped like », « as big as »: the thing AND what it is compared to (2 visuals)
+  projet       something designed or not built yet: its official render, model or plans
+  chiffre / carte / schema
+               a figure, a place to locate, a mechanism: noted as a graphic to draw ("graphique") — until the app
+               draws them, a footage visual conveying the idea is searched as well
+Each visual: "image" (French, what the video shows — the search and the checks), "idee" (English meaning — the
+meaning search, adaptation/vision), short searches in English and in the country's language.
+One call, in place of the search-words call it replaces (finder.plan_queries).
+"""
+
+import json
+from typing import Dict, List, Optional
+
+KINDS = ("reel", "idee", "comparaison", "projet", "chiffre", "carte", "schema")
+GRAPHICS = ("chiffre", "carte", "schema")
+MAX_VISUALS = 2
+
+PROMPT = """Tu es le realisateur d'un YouTube Short (voix off sur des images trouvees en video). Sujet : {sujet}
+Famille : {famille}. Faits verifies (pour savoir ou et quoi) : {faits}
+Les phrases dites par la voix :
+{phrases}
+
+Pour CHAQUE phrase, decide COMMENT la montrer, comme un monteur pro (le sens, l'emotion, l'attention ; jamais une
+image qui contredit la phrase ; varie les images d'une phrase a l'autre) :
+- "reel" : la phrase raconte un fait reel (actualite) : les vraies images du lieu ou de l'evenement ;
+- "idee" : la scene exacte n'existe pas en video : une image qui fait passer le SENS (« les familles recoivent les
+  cles » -> des immeubles neufs, une main qui tend des cles) ;
+- "comparaison" : « en forme de », « aussi grand que », « comme » : 2 visuels, la chose ET ce a quoi on la compare
+  (le stade, puis une vraie tente marocaine de moussem) ;
+- "projet" : quelque chose de dessine ou pas encore construit : son rendu 3D officiel, sa maquette, ses plans ;
+- "chiffre" : un chiffre a frapper (« 370 millions », « deux fois plus ») ; "carte" : un lieu a situer (« a Mansouria,
+  pres de Casablanca ») ; "schema" : un mecanisme invisible (« emprisonne la chaleur ») : decris le "graphique" a
+  dessiner, ET donne quand meme un visuel video qui fait passer l'idee (en attendant que l'app dessine).
+1 visuel par phrase, 2 au plus (comparaison, ou phrase en deux temps). Chaque visuel :
+- "image" : en francais, ce qu'on voit dans la video a trouver (concret, filmable, l'ACTION, sans facon de filmer) ;
+- "idee" : en ANGLAIS, 5 a 12 mots, ce que montrerait n'importe quelle video qui fait passer le SENS (generale) ;
+- "anglais" : 2 recherches YouTube en anglais, courtes (2 a 5 mots), comme le titre d'une vraie video ;
+- "pays" et "locales" : le pays ou une telle video a ete filmee et 2 recherches DANS SA LANGUE (en arabe pour le
+  Maroc : les reportages marocains titrent en arabe ; vide si generique).
+JSON uniquement : {{"plans": [{{"phrase": 1, "type": "reel", "pourquoi": "court",
+  "visuels": [{{"image": "", "idee": "", "anglais": ["", ""], "pays": "", "locales": ["", ""]}}],
+  "graphique": null}}]}}"""
+
+
+def _phrases(p: Dict) -> List[str]:
+    plans = (p.get("storyboard") or {}).get("plans") or []
+    code = p["targets"][0]["language"] if p.get("targets") else "fr"
+    out = []
+    for pl in plans:
+        t = pl.get("textes") or {}
+        fr = (t.get("fr") or {}).get("texte")
+        own = (t.get(code) or {}).get("texte")
+        out.append(f"{own}" + (f"  (fr : {fr})" if fr and fr != own else ""))
+    return out
+
+
+def plan(p: Dict, gemini=None) -> Optional[List[Dict]]:
+    """[{phrase, type, pourquoi, visuels: [{image, idee, anglais, pays, locales}], graphique}] — one per sentence,
+    or None when the call fails (the search then goes on as before, one image a sentence)."""
+    from adaptation import recits
+    from adaptation.script import _gemini
+    phrases = _phrases(p)
+    if not phrases:
+        return None
+    ref = p.get("reference") or {}
+    fam = p.get("famille_recit") or recits.find(p.get("recit")) or "explicatif"
+    try:
+        r = (gemini or _gemini())._generate_content([{"text": PROMPT.format(
+            sujet=ref.get("sujet") or p.get("idee") or "", famille=recits.FAMILLES.get(fam, {}).get("label", fam),
+            faits="; ".join(ref.get("faits") or [])[:1500],
+            phrases="\n".join(f"{k}. {x}" for k, x in enumerate(phrases, 1)))}],
+            max_tokens=8000, timeout=120, temperature=0.4)
+    except Exception:
+        return None
+    return clean(r, len(phrases), (p.get("storyboard") or {}).get("plans") or [])
+
+
+def clean(r, n: int, sb_plans: List[Dict]) -> Optional[List[Dict]]:
+    """The director's answer made safe: one entry per sentence, 1 or 2 visuals each (the storyboard's image when
+    a sentence came back empty)."""
+    if not isinstance(r, dict) or not isinstance(r.get("plans"), list):
+        return None
+    by = {}
+    for x in r["plans"]:
+        try:
+            k = int(x.get("phrase")) - 1
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 0 <= k < n and k not in by:
+            by[k] = x
+    out = []
+    for k in range(n):
+        x = by.get(k) or {}
+        kind = x.get("type") if x.get("type") in KINDS else "idee"
+        vis = []
+        for v in (x.get("visuels") or [])[:MAX_VISUALS]:
+            if not isinstance(v, dict) or not str(v.get("image") or "").strip():
+                continue
+            vis.append({"image": " ".join(str(v["image"]).split())[:200],
+                        "idee": " ".join(str(v.get("idee") or "").split())[:160],
+                        "anglais": [str(q).strip()[:60] for q in v.get("anglais") or [] if str(q).strip()][:3],
+                        "pays": str(v.get("pays") or "")[:40],
+                        "locales": [str(q).strip()[:60] for q in v.get("locales") or [] if str(q).strip()][:3]})
+        if not vis:                                 # the storyboard's own image, as before
+            pl = sb_plans[k] if k < len(sb_plans) else {}
+            vis = [{"image": pl.get("image") or "", "idee": pl.get("idee") or "", "anglais": [], "pays": "", "locales": []}]
+        g = x.get("graphique") if kind in GRAPHICS and isinstance(x.get("graphique"), (dict, str)) else None
+        out.append({"phrase": k + 1, "type": kind, "pourquoi": str(x.get("pourquoi") or "")[:160], "visuels": vis,
+                    "graphique": g if isinstance(g, dict) else ({"contenu": str(g)[:200]} if g else None)})
+    return out
+
+
+def wanted(realisation: List[Dict], sb_plans: List[Dict]) -> List[Dict]:
+    """The visuals as « scenes to find » for the search (finder.suggest): each with the sentence said over it and
+    its English searches (the local ones go through local_of)."""
+    out = []
+    for e in realisation:
+        k = e["phrase"] - 1
+        pl = sb_plans[k] if k < len(sb_plans) else {}
+        textes = pl.get("textes") or {}
+        phrase = next((textes[c]["texte"] for c in ("fr", *textes) if c in textes and textes[c].get("texte")), "")
+        for v in e["visuels"]:
+            out.append({"scene": v["image"], "plans": [i - 1 for i in pl.get("plans_modele") or [] if i >= 1],
+                        "indices": "", "phrase": phrase, "phrase_n": e["phrase"],
+                        "recherches": v["anglais"] or [" ".join(v["image"].split()[:8])]})
+    return out
+
+
+def local_of(realisation: List[Dict]) -> Dict[int, Dict]:
+    """{scene index: {pays, langue, recherches}} — the searches in the country's language (finder.suggest's local)."""
+    out, i = {}, 0
+    for e in realisation:
+        for v in e["visuels"]:
+            if v["locales"]:
+                out[i] = {"pays": v["pays"], "langue": "", "recherches": v["locales"]}
+            i += 1
+    return out
+
+
+def ideas(realisation: Optional[List[Dict]]) -> Optional[List[str]]:
+    """Each sentence's meaning in English for the meaning search: its visuals' ideas together."""
+    if not realisation:
+        return None
+    return [", ".join(v["idee"] for v in e["visuels"] if v.get("idee")) for e in realisation]   # "" = none for it
+
+
+def summary(realisation: Optional[List[Dict]]) -> str:
+    return json.dumps([{"phrase": e["phrase"], "type": e["type"], "visuels": [v["image"] for v in e["visuels"]],
+                        "graphique": e.get("graphique")} for e in realisation or []], ensure_ascii=False)
