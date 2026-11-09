@@ -4,7 +4,7 @@ Un guide par partie de l'app, avec des captures, en français simple. **Chaque c
 
 | Partie | Tutoriel | État |
 |---|---|---|
-| Réglages (Chaînes, Bibliothèques, App) | [reglages.md](reglages.md) | ✅ à jour (8 novembre 2026) |
+| Réglages (Chaînes, Bibliothèques, App) | [reglages.md](reglages.md) | ✅ à jour (9 novembre 2026) |
 | Accueil | — | à écrire |
 | Import | — | à écrire |
 | Génération | — | à écrire |

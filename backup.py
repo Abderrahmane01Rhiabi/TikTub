@@ -31,7 +31,8 @@ BACKUP_DIR = os.path.join("database", "backups")
 KEEP = 14
 MAX_AGE = timedelta(hours=24)
 PREFIX = "tiktub-"
-EXTRA_FILES = ["upload_schedule.json", "channels/channel_config.json", "database/ai_models.json"]
+EXTRA_FILES = ["upload_schedule.json", "channels/channel_config.json", "database/ai_models.json",
+               "prononciation.json"]          # the pronunciation dictionary (adaptation/prononciation)
 CHANNEL_FILES = ["profile.json", "background.jpg", "background.jpeg", "background.png"]
 
 

@@ -67,22 +67,28 @@ def download_preview(url: str, path: str) -> Optional[str]:
     return path
 
 
-def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str, model: str = MODEL) -> Dict:
+def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str, model: str = MODEL,
+               dictionary: bool = True) -> Dict:
     """Narrates every passage['texte'] in one take (natural flow between
     sentences) and returns the word timings and each passage's span:
-    {"words": [{w, start, end}], "passages": [{..., start, end, words: [i]}], "duration": s}."""
+    {"words": [{w, start, end}], "passages": [{..., start, end, words: [i]}], "duration": s}.
+    The pronunciation dictionary's words (adaptation/prononciation) are read their way, the timings come back on
+    the written words."""
+    from adaptation import prononciation
+    table = prononciation.table(lang_code) if dictionary else {}    # off: to hear a word as it was read before
+    said, sizes = zip(*[prononciation.apply(p["texte"], lang_code, table) for p in passages]) if passages else ((), ())
     text, spans = "", []
-    for p in passages:
+    for p in said:
         if text:
             text += " "
-        spans.append((len(text), len(text) + len(p["texte"])))
-        text += p["texte"]
+        spans.append((len(text), len(text) + len(p)))
+        text += p
     r = requests.post(f"{API}/v1/text-to-speech/{voice_id}/with-timestamps", headers={"xi-api-key": _key()},
                       timeout=300, json={"text": text, "model_id": model, "language_code": lang_code.split("-")[0],
                                          "voice_settings": {"stability": 0.5, "similarity_boost": 0.8,
                                                             "style": 0.15, "speed": 1.0}})
     if r.status_code != 200 and model != FALLBACK and 400 <= r.status_code < 500:  # a model refused: the older one
-        return synthesize(passages, voice_id, lang_code, out_mp3, model=FALLBACK)
+        return synthesize(passages, voice_id, lang_code, out_mp3, model=FALLBACK, dictionary=dictionary)
     if r.status_code != 200:
         raise VoiceError(f"ElevenLabs HTTP {r.status_code} : {r.text[:300]}")
     d = r.json()
@@ -91,7 +97,11 @@ def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str
         f.write(base64.b64decode(d["audio_base64"]))
     al = d["alignment"]
     chars, st, en = al["characters"], al["character_start_times_seconds"], al["character_end_times_seconds"]
-    return align(passages, spans, chars, st, en)
+    v = align(passages, spans, chars, st, en)
+    if list(said) != [p["texte"] for p in passages]:            # some words read another way: written back
+        v = prononciation.restore(v, [p["texte"] for p in passages], list(sizes))
+    v["prononciation"] = prononciation.signature(lang_code)
+    return v
 
 
 def align(passages, spans, chars, st, en) -> Dict:

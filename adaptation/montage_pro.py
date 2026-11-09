@@ -429,7 +429,9 @@ def _voice(p: Dict, t: Dict, mp3: str, report: Report, at: float) -> Dict:
     manieres = (t.get("manieres") or []) + [""] * len(clean)
     texts = [voix_casting.tagged(x, m) for x, m in zip(clean, manieres)]   # each sentence's manner, as a v4 tag
     v = t.get("voice") or {}
+    from adaptation import prononciation
     if v and v.get("voice_id") == t["voice_id"] and v.get("texts") == texts and v.get("model") == model \
+            and v.get("prononciation", "[]") == prononciation.signature(t["language"]) \
             and os.path.exists(mp3):
         return v                                    # never pay twice for the same narration
     report(f"voix {t['channel']}", at)

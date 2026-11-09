@@ -1009,6 +1009,75 @@ def change_adaptation_music(pid: str, channel: TargetChannel, req: AdaptationMus
     return _serialize_adaptation(p)
 
 
+class PronunciationWord(BaseModel):
+    mot: str
+    dire: str
+    langue: str = "ar"
+    note: str = ""
+
+
+class PronunciationListen(BaseModel):
+    texte: str
+    voice_id: str
+    langue: str = "ar"
+    dictionnaire: bool = True           # False: the word as ElevenLabs read it before
+
+
+@router.get("/api/prononciation")
+def pronunciation_list():
+    """Réglages → Bibliothèques → Prononciation: the words ElevenLabs must read another way (adaptation/prononciation)."""
+    from adaptation import prononciation
+    return {"mots": prononciation.entries()}
+
+
+@router.post("/api/prononciation")
+def pronunciation_add(req: PronunciationWord):
+    from adaptation import prononciation
+    try:
+        prononciation.add(req.mot, req.dire, req.langue, req.note)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"mots": prononciation.entries()}
+
+
+@router.delete("/api/prononciation/{langue}/{mot}")
+def pronunciation_remove(langue: str, mot: str):
+    from adaptation import prononciation
+    try:
+        prononciation.remove(mot, langue)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return {"mots": prononciation.entries()}
+
+
+@router.post("/api/prononciation/ecouter")
+def pronunciation_listen(req: PronunciationListen):
+    """A short sentence said by a voice, with the dictionary or without it (to compare): a few ElevenLabs characters."""
+    import hashlib
+    from adaptation import prononciation, voices
+    texte = " ".join(req.texte.split())[:200]
+    if not texte:
+        raise HTTPException(status_code=400, detail="Rien à dire.")
+    key = hashlib.sha1(repr((texte, req.voice_id, req.langue, req.dictionnaire,
+                             prononciation.signature(req.langue) if req.dictionnaire else "")).encode()).hexdigest()[:16]
+    path = os.path.join("temp", "prononciation", f"{key}.mp3")
+    if not os.path.exists(path):
+        try:
+            voices.synthesize([{"texte": texte}], req.voice_id, req.langue, path, dictionary=req.dictionnaire)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"ElevenLabs : {str(e)[:200]}")
+    return {"url": f"/api/prononciation/ecoute/{key}"}
+
+
+@router.get("/api/prononciation/ecoute/{key}")
+def pronunciation_audio(key: str):
+    from fastapi.responses import FileResponse
+    path = os.path.join("temp", "prononciation", f"{key}.mp3")
+    if not key.isalnum() or not os.path.exists(path):
+        raise HTTPException(status_code=404, detail="Écoute introuvable.")
+    return FileResponse(path, media_type="audio/mpeg")
+
+
 class AdaptationMontage(BaseModel):
     doc: dict                           # the montage document as changed in the timeline (adaptation/montage_doc)
     voix: Optional[list] = None         # sentences said again: [{i, texte, maniere}] (ElevenLabs)

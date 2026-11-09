@@ -267,7 +267,8 @@ async function rgAdvancedCards(adv, ch){
 // ---------- the tabs of Bibliothèques and App ----------
 
 const LIB_LOADERS = { voix: () => loadVoiceSettings(), musiques: () => loadSongs(), sfx: () => loadSfxSettings(),
-                      drones: () => loadBrollLibrary(), soustitres: () => loadCaptionSettings() };
+                      drones: () => loadBrollLibrary(), soustitres: () => loadCaptionSettings(),
+                      prononciation: () => loadPronunciation() };
 const APP_LOADERS = { ia: () => loadAiModels(), sauvegardes: () => loadBackups(), stockage: () => loadStorage() };
 let libTab = 'voix', appTab = 'ia';
 
@@ -284,3 +285,56 @@ function rgTabs(barId, screenIdx, loaders, current, set){
 function loadLibraries(){ return rgTabs('libTabs', 19, LIB_LOADERS, libTab, t => { libTab = t; }); }
 function loadAppSettings(){ return rgTabs('appTabs', 20, APP_LOADERS, appTab, t => { appTab = t; }); }
 function openLibrary(tab){ if (tab) libTab = tab; goTo(19); }
+
+
+// ---------- Bibliothèques → Prononciation (adaptation/prononciation.py) ----------
+// the words ElevenLabs reads badly and how to make it say them: only the text sent to the voice changes
+
+async function loadPronunciation(){
+  const list = document.getElementById('pnList'), lang = document.getElementById('pnLang');
+  const voiceSel = document.getElementById('pnVoice'), audio = document.getElementById('pnAudio');
+  const note = document.getElementById('pnNoteOut');
+  const fillVoices = async () => {
+    const vs = (await api(`/api/voices?language=${lang.value}`)).voices || [];
+    voiceSel.innerHTML = vs.map(v => `<option value="${v.voice_id}">${esc(v.name || v.voice_id)}${v.accent ? ' · ' + esc(v.accent) : ''}</option>`).join('')
+      || '<option value="">aucune voix dans cette langue</option>';
+  };
+  const draw = mots => {
+    list.innerHTML = mots.length ? `<article class="chcard"><div class="chcard-body"><table class="pn-table">
+      <tr><th>Mot écrit</th><th>Dit comme</th><th>Langue</th><th>Note</th><th></th></tr>
+      ${mots.map(m => `<tr><td dir="auto"><b>${esc(m.mot)}</b></td><td dir="auto">${esc(m.dire)}</td><td>${esc(m.langue)}</td><td class="tiny">${esc(m.note || '')}</td>
+        <td><button class="btn ghost small pn-play" data-mot="${esc(m.mot)}" data-lang="${esc(m.langue)}">Écouter</button>
+            <button class="btn ghost small pn-del" data-mot="${esc(m.mot)}" data-lang="${esc(m.langue)}">Supprimer</button></td></tr>`).join('')}
+    </table></div></article>` : '<div class="tiny">Aucun mot pour l\'instant : ajoute le premier ci-dessus.</div>';
+    list.querySelectorAll('.pn-del').forEach(b => b.onclick = async () => {
+      if (!confirm(`Retirer « ${b.dataset.mot} » du dictionnaire ? Il sera de nouveau lu comme avant.`)) return;
+      draw((await api(`/api/prononciation/${encodeURIComponent(b.dataset.lang)}/${encodeURIComponent(b.dataset.mot)}`, { method:'DELETE' })).mots);
+    });
+    list.querySelectorAll('.pn-play').forEach(b => b.onclick = () => listen(b.dataset.mot, true, b.dataset.lang));
+  };
+  const listen = async (texte, dictionnaire, langue) => {
+    if (!texte.trim()) return toast('Écris le mot à écouter.', 'error');
+    if (!voiceSel.value) return toast('Choisis une voix.', 'error');
+    note.textContent = 'ElevenLabs lit le mot…';
+    try {
+      const r = await api('/api/prononciation/ecouter', { method:'POST', body: JSON.stringify({ texte, voice_id: voiceSel.value,
+                                                                                               langue: langue || lang.value, dictionnaire }) });
+      audio.src = r.url; audio.play().catch(() => {}); note.textContent = dictionnaire ? 'Avec le dictionnaire.' : 'Comme avant (sans le dictionnaire).';
+    } catch (e){ note.textContent = ''; toast(e.message, 'error'); }
+  };
+  lang.onchange = fillVoices;
+  document.getElementById('pnBefore').onclick = () => listen(document.getElementById('pnMot').value, false);
+  document.getElementById('pnAfter').onclick = () => listen(document.getElementById('pnDire').value, false);
+  document.getElementById('pnAdd').onclick = async () => {
+    try {
+      const r = await api('/api/prononciation', { method:'POST', body: JSON.stringify({ mot: document.getElementById('pnMot').value,
+        dire: document.getElementById('pnDire').value, langue: lang.value, note: document.getElementById('pnNote').value }) });
+      ['pnMot', 'pnDire', 'pnNote'].forEach(id => { document.getElementById(id).value = ''; });
+      note.textContent = 'Ajouté : les prochaines voix le liront ainsi.';
+      draw(r.mots);
+    } catch (e){ toast(e.message, 'error'); }
+  };
+  await fillVoices();
+  draw((await api('/api/prononciation')).mots);
+  hydrateIcons(document.querySelector('.rg-panel[data-panel="prononciation"]'));
+}

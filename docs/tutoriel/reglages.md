@@ -140,7 +140,7 @@ Clique **« Avancé »** en bas de la page pour l'ouvrir. Il contient les régla
 
 ## 2. Bibliothèques
 
-Les onglets en haut : **Voix · Musiques · Effets sonores · Fonds et drones · Sous-titres**.
+Les onglets en haut : **Voix · Musiques · Effets sonores · Fonds et drones · Sous-titres · Prononciation**.
 
 ### 2.1 Voix
 
@@ -193,6 +193,28 @@ Les plans de drone que le Montage auto glisse avant la chute. Tape un thème **e
 Les 37 styles de sous-titres de l'app, à voir bouger. Choisis la langue (Français / Arabe / Anglais) et un groupe. Le style d'une chaîne se choisit sur sa page (**Chaînes → la chaîne → Avancé → Sous-titres**).
 
 ---
+
+### 2.6 Prononciation
+
+![Prononciation](img/reglages/07_biblio_prononciation.png)
+
+Les mots qu'ElevenLabs lit mal (un nom propre, un mot de darija : « المعلمة » dit *m3alma* au lieu de *ma3lama*, « جرادي » avec un G…) et la façon de les lui faire dire.
+
+1. Choisis la **langue** et une **voix** (celle de ta chaîne, par exemple Ghalia).
+2. Écris le **mot tel qu'il est écrit dans le script** (avec و / ف / ال s'ils sont collés au mot), puis **comment le dire** : avec des voyelles (« مَعْلَمة ») ou une autre écriture qui sonne juste (« پارطمات » pour un P).
+3. **Écouter avant** fait entendre la lecture actuelle, **Écouter après** ta version. Change l'écriture jusqu'à ce que ça sonne juste.
+4. **Ajouter au dictionnaire**.
+
+Ce qui change, et ce qui ne change pas :
+
+| | |
+|---|---|
+| ✅ change | seulement **le texte envoyé à la voix**, et seulement ce **mot entier** (jamais un morceau d'un autre mot) |
+| ❌ ne change pas | le script, les **sous-titres** et les bandeaux gardent l'écriture normale ; les autres mots |
+| ↺ | une vidéo déjà faite garde sa voix ; la **prochaine** voix (ou « Refaire l'aperçu » avec un changement de voix) prend le dictionnaire |
+| 🗑 | **Supprimer** un mot : il est de nouveau lu comme avant |
+
+Les voyelles (tashkeel) restent limitées aux mots de la liste : le reste du texte part sans, comme d'habitude.
 
 ## 3. App
 

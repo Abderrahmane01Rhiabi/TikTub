@@ -179,6 +179,7 @@
       <button class="seg-opt" data-tab="sfx">Effets sonores</button>
       <button class="seg-opt" data-tab="drones">Fonds et drones</button>
       <button class="seg-opt" data-tab="soustitres">Sous-titres</button>
+      <button class="seg-opt" data-tab="prononciation">Prononciation</button>
     </div>
 
     <div class="rg-panel" data-panel="voix">
@@ -231,6 +232,26 @@
       <div class="toolbar" id="brollThemes"></div>
       <div id="brollHealth"></div>
       <div id="brollGrid" class="broll-grid"></div>
+    </div>
+
+    <div class="rg-panel" data-panel="prononciation" hidden>
+      <p class="sub">Les mots qu'ElevenLabs lit mal (un nom, un mot de darija…) et la façon de les lui faire dire. Seul le texte <b>envoyé à la voix</b> change : le script, les sous-titres et les bandeaux gardent l'écriture normale. Un mot ajouté sert à toutes les vidéos suivantes ; supprime-le et tout redevient comme avant.</p>
+      <article class="chcard">
+        <div class="chcard-head"><div class="who"><div class="name">Ajouter un mot</div>
+          <div class="meta" style="margin-left:0">Le mot <b>tel qu'il est écrit</b> dans le script (avec و / ف / ال s'ils sont collés), puis comment le dire : avec des voyelles (« مَعْلَمة ») ou une autre écriture qui sonne juste. Écoute avant d'ajouter.</div></div></div>
+        <div class="chcard-body stack" style="gap:8px">
+          <div class="ad-row"><select class="f" id="pnLang" style="width:auto"><option value="ar">Arabe / darija</option><option value="fr">Français</option><option value="en">Anglais</option></select>
+            <input class="f" id="pnMot" placeholder="Le mot, tel qu'écrit (ex. المعلمة)" dir="auto">
+            <input class="f" id="pnDire" placeholder="Comment le dire (ex. مَعْلَمة)" dir="auto"></div>
+          <div class="ad-row"><input class="f" id="pnNote" placeholder="Note (facultatif) : ce qu'il disait mal, ex. « m3alma au lieu de ma3lama »">
+            <select class="f" id="pnVoice" style="width:auto;max-width:280px"></select></div>
+          <div class="ad-row"><button class="btn ghost small" id="pnBefore" data-icon="play">Écouter avant</button>
+            <button class="btn ghost small" id="pnAfter" data-icon="play">Écouter après</button>
+            <audio id="pnAudio" controls preload="none" style="height:32px;flex:1;min-width:200px"></audio></div>
+        </div>
+        <div class="chcard-foot"><button class="btn primary small" id="pnAdd" data-icon="plus">Ajouter au dictionnaire</button><span class="note" id="pnNoteOut"></span></div>
+      </article>
+      <div class="stack" id="pnList"></div>
     </div>
 
     <div class="rg-panel" data-panel="soustitres" hidden>

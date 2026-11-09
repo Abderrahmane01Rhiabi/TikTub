@@ -146,3 +146,7 @@ assets/musiques/
 
 # Vidéos prêtes à publier plus tard (Reprise) : pas dans git
 a_publier/
+
+# the tutorials' screenshots belong to the docs (the *.png rule above hid them)
+!docs/tutoriel/img/
+!docs/tutoriel/img/**

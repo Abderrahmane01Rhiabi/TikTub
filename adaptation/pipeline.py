@@ -2072,7 +2072,9 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
     texts = [x["texte"] for x in t["script"]["passages"]]
     v = t.get("voice") or {}
     model = t.get("voice_model") or voices.MODEL        # the channel's choice (Réglages → Voix), else the usual one
-    if not v or v.get("voice_id") != t["voice_id"] or v.get("texts", texts) != texts or v.get("model", voices.MODEL) != model:
+    from adaptation import prononciation
+    if not v or v.get("voice_id") != t["voice_id"] or v.get("texts", texts) != texts or v.get("model", voices.MODEL) != model \
+            or v.get("prononciation", "[]") != prononciation.signature(t["language"]):     # a word now read otherwise
         report(f"voix {t['channel']}", offset)          # never pay twice for the same narration
         t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3, model=model)
         t["voice"].update(voice_id=t["voice_id"], texts=texts, model=model)
