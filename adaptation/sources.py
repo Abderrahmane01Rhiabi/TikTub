@@ -290,12 +290,26 @@ def _write_meta(path: str, url: str, info: Dict, **extra):
         json.dump(meta, f, ensure_ascii=False)
 
 
+def _clear(dest_dir: str, name: str) -> None:
+    """An old file under this name goes first: yt-dlp keeps a file already there instead of downloading (measured,
+    the montage pro's stock made again on 2026-11-10: « pro2 », now the Raja's supporters, was still the stadium
+    video of the first stock)."""
+    import glob
+    for p in glob.glob(os.path.join(glob.escape(dest_dir), glob.escape(name) + ".*")) + \
+            glob.glob(os.path.join(glob.escape(dest_dir), glob.escape(name) + "_part*")):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
+
+
 def download(url: str, dest_dir: str, name: str, sections: Optional[List[List[float]]] = None) -> str:
     """sections: only these [start, end] spans of a long video (joined, in order).
     A file without picture is never returned: sections fall back to the whole
     video, then a plain "best" format is tried."""
     if local_path(url):                 # a file dropped by hand: cut, nothing to download
         return _cut_local(url, dest_dir, name, sections)
+    _clear(dest_dir, name)
     path = _download(url, dest_dir, name, sections)
     if has_picture(path):
         return path

@@ -701,6 +701,22 @@ def test_a_download_without_picture_is_never_returned(monkeypatch, tmp_path):
     assert sources.VIDEO_FORMAT.startswith("bv*[vcodec^=avc1]")
 
 
+def test_an_old_file_under_the_same_name_is_never_taken_for_the_new_video(monkeypatch, tmp_path):
+    from adaptation import sources
+    for f in ("pro2.mp4", "pro2.mp4.meta.json", "pro2_part00001.00.mp4", "pro20.mp4"):
+        (tmp_path / f).write_bytes(b"old")
+    seen = []
+
+    def fake(url, d, name, sections=None, fmt=sources.VIDEO_FORMAT):
+        seen.append(sorted(os.listdir(d)))             # what yt-dlp would find there
+        (tmp_path / f"{name}.mp4").write_bytes(b"new")
+        return str(tmp_path / f"{name}.mp4")
+    monkeypatch.setattr(sources, "_download", fake)
+    monkeypatch.setattr(sources, "has_picture", lambda path: True)
+    sources.download("raja", str(tmp_path), "pro2")
+    assert seen == [["pro20.mp4"]] and (tmp_path / "pro2.mp4").read_bytes() == b"new"
+
+
 def test_a_channel_style_colours_its_banners_and_captions(tmp_path):
     from PIL import Image
     from adaptation import render, settings
