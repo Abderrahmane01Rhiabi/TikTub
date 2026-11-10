@@ -1,0 +1,90 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1080, height=1920" />
+<title>Chiffre</title>
+<script src="vendor/gsap.min.js"></script>
+<style>
+  @font-face { font-family: "Tajawal"; font-weight: 900; src: url("fonts/Tajawal-Black.ttf"); }
+  @font-face { font-family: "Tajawal"; font-weight: 800; src: url("fonts/Tajawal-ExtraBold.ttf"); }
+  @font-face { font-family: "Montserrat"; font-weight: 900; src: url("fonts/Montserrat-Black.ttf"); }
+  body { margin: 0; background: transparent; }
+  #root { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  .bg { position: absolute; inset: 0;
+        background: radial-gradient(ellipse 70% 45% at 50% 48%, #1c2440 0%, #0b0f1c 55%, #05070c 100%); }
+  .rays { position: absolute; left: 50%; top: 48%; width: 2400px; height: 2400px; margin: -1200px 0 0 -1200px;
+          background: repeating-conic-gradient(from 0deg, rgba(255,200,90,.07) 0deg 6deg, transparent 6deg 18deg);
+          border-radius: 50%; }
+  .stack { position: absolute; left: 0; right: 0; top: 0; height: 1700px; display: flex; flex-direction: column;
+           align-items: center; justify-content: center; gap: 10px; }
+  .card { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 34px 56px 30px;
+          border-radius: 44px; }
+  .incrustation .card { background: rgba(6, 9, 18, .72); box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+  .kicker { font-family: "Tajawal"; font-weight: 800; font-size: 64px; color: #cfd6ea; white-space: nowrap; }
+  .num { font-family: "Montserrat"; font-weight: 900; line-height: 1; letter-spacing: -4px; white-space: nowrap;
+         color: #ffd36b; text-shadow: 0 0 60px rgba(255,190,60,.45), 0 8px 0 #9a6a10; direction: ltr; }
+  .unit { font-family: "Tajawal"; font-weight: 900; font-size: 130px; line-height: 1.1; color: #ffffff;
+          white-space: nowrap; }
+  .bar { width: 0px; height: 12px; border-radius: 6px; background: linear-gradient(90deg, #ffb52e, #ffe29a); }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="graphique" data-start="0" data-width="1080" data-height="1920" data-duration="6">
+  <div class="bg" id="bg"></div>
+  <div class="rays" id="rays"></div>
+  <div class="stack" id="stack">
+    <div class="card">
+      <div class="kicker" id="kicker"></div>
+      <div class="num" id="num">0</div>
+      <div class="bar" id="bar"></div>
+      <div class="unit" id="unit"></div>
+    </div>
+  </div>
+</div>
+<script>
+  // written by adaptation/graphiques.py: {valeur: "115000" | "5.3", unite, titre, mode: "plein" | "incrustation", rtl}
+  const DATA = /*DATA*/{};
+  const over = DATA.mode === "incrustation";        // laid over the hook's real picture: no background of its own
+  if (over) {
+    document.getElementById("bg").remove();
+    document.getElementById("rays").remove();
+    document.getElementById("stack").classList.add("incrustation");
+    document.getElementById("stack").style.height = "1500px";      // above the captions
+  } else {
+    document.body.style.background = "#07090f";
+  }
+  const raw = String(DATA.valeur);
+  const decimals = raw.includes(".") ? raw.split(".")[1].length : 0;
+  const value = parseFloat(raw);
+  const sep = DATA.rtl ? "." : ",";
+  const fmt = n => {
+    const [i, d] = n.toFixed(decimals).split(".");
+    return i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d ? sep + d : "");
+  };
+  const num = document.getElementById("num");
+  const longest = fmt(value).length;
+  num.style.fontSize = Math.min(over ? 170 : 210, Math.floor(940 / (0.7 * longest))) + "px";   // fits the width
+  for (const id of ["kicker", "unit"]) {
+    const el = document.getElementById(id);
+    el.textContent = id === "kicker" ? (DATA.titre || "") : (DATA.unite || "");
+    el.style.direction = DATA.rtl ? "rtl" : "ltr";
+    if (!el.textContent) el.style.display = "none";
+  }
+  const unitLen = (DATA.unite || "").length;
+  if (unitLen > 8) document.getElementById("unit").style.fontSize = Math.max(64, Math.floor(1300 / unitLen)) + "px";
+  const counter = { v: 0 };
+  const tl = gsap.timeline({ paused: true });
+  if (!over) tl.fromTo("#rays", { rotation: 0, opacity: 0 }, { rotation: 60, opacity: 1, duration: 6, ease: "none" }, 0);
+  tl.fromTo(".card", { scale: 0.7, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(2)" }, 0.05);
+  tl.fromTo("#kicker", { y: -40, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 0.1);
+  tl.fromTo(counter, { v: 0 }, { v: value, duration: 1.4, ease: "power2.out",
+            onUpdate: () => { num.textContent = fmt(counter.v); } }, 0.15);
+  tl.fromTo("#num", { scale: 1 }, { scale: 1.1, duration: 0.12, yoyo: true, repeat: 1, ease: "power1.out" }, 1.55);
+  tl.fromTo("#bar", { width: 0 }, { width: 560, duration: 0.5, ease: "power3.out" }, 1.6);
+  tl.fromTo("#unit", { y: 50, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 1.65);
+  tl.fromTo(".card", { y: 0 }, { y: -18, duration: 3.6, ease: "sine.inOut" }, 2.3);          // never still
+  window.__timelines["graphique"] = tl;
+</script>
+</body>
+</html>

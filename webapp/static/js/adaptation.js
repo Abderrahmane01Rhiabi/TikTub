@@ -1253,7 +1253,16 @@ function adRealisationHtml(p){
   if (!r || !r.length) return '';
   return `<details style="margin-top:6px"><summary class="tiny" style="cursor:pointer">${icon('film', 12)} <b>Le réalisateur IA</b> : comment chaque phrase est montrée</summary>
     <ul class="tiny" style="margin:6px 0 0 18px;padding:0">${r.map(e => `<li><b>Phrase ${e.phrase} · ${esc(AD_KINDS[e.type] || e.type)}</b> — ${
-      e.visuels.map(v => esc(v.image)).join(' <i>+</i> ')}${e.graphique ? `<br><span style="color:#f5c56d">✎ à dessiner (bientôt) : ${esc(e.graphique.contenu || '')}</span>` : ''}</li>`).join('')}</ul></details>`;
+      e.visuels.map(v => esc(v.image)).join(' <i>+</i> ')}${e.graphique ? `<br><span style="color:#f5c56d">✎ ${adGraphicState(p, e)} : ${esc(e.graphique.contenu || '')}</span>` : ''}</li>`).join('')}</ul></details>`;
+}
+
+// what became of a graphic the director asked for (adaptation/graphiques: 2 at most, never two sentences in a row,
+// the hook's number laid over its real picture)
+function adGraphicState(p, e){
+  const g = (p.graphiques || []).find(x => x.phrase === e.phrase);
+  if (!g) return p.graphiques ? 'graphique non fait (règles : 2 au plus, jamais deux phrases de suite, ni carte ou schéma sur l\'accroche ; chiffre absent des faits)' : 'graphique à dessiner';
+  if (g.erreur) return `graphique non fait (${esc(g.erreur)})`;
+  return g.mode === 'incrustation' ? 'chiffre animé par-dessus l\'image de l\'accroche' : 'graphique animé fait — dans ton stock, carte « Graphiques animés »';
 }
 
 function renderAdStock(body, p){

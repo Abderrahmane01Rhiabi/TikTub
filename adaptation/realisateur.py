@@ -38,8 +38,17 @@ image qui contredit la phrase ; varie les images d'une phrase a l'autre) :
   (le stade, puis une vraie tente marocaine de moussem) ;
 - "projet" : quelque chose de dessine ou pas encore construit : son rendu 3D officiel, sa maquette, ses plans ;
 - "chiffre" : un chiffre a frapper (« 370 millions », « deux fois plus ») ; "carte" : un lieu a situer (« a Mansouria,
-  pres de Casablanca ») ; "schema" : un mecanisme invisible (« emprisonne la chaleur ») : decris le "graphique" a
-  dessiner, ET donne quand meme un visuel video qui fait passer l'idee (en attendant que l'app dessine).
+  pres de Casablanca ») ; "schema" : un mecanisme invisible (« emprisonne la chaleur ») : l'app dessine le "graphique"
+  (au plus 2 par video), ET donne quand meme un visuel video qui fait passer l'idee (si le graphique n'est pas fait).
+  "graphique" selon le type (les mots a l'ecran dans la langue de la video, {langue}) :
+    chiffre : {{"contenu": "ce qu'on voit", "valeur": "le nombre EXACTEMENT comme dans les faits, en chiffres (115000,
+      54, 5.3)", "unite": "les mots apres le nombre (مقعد, مليار درهم, millions de tonnes)", "titre": "2-4 mots au-dessus,
+      tires des faits, ou vide"}}
+    carte : {{"contenu": "...", "lieu": "le lieu precis EN ANGLAIS pour une recherche de carte (Betoya Bay, Nador,
+      Morocco)", "nom": "son nom a l'ecran", "pays": "le pays en anglais", "pays_nom": "le pays a l'ecran",
+      "reperes": [{{"lieu": "une grande ville proche connue, en anglais", "nom": "son nom a l'ecran"}}] (1 ou 2),
+      "chiffre": {{"valeur": "", "unite": ""}} ou null (un chiffre des faits sur ce lieu)}}
+    schema : {{"contenu": "ce que le schema montre, etape par etape"}}
 1 visuel par phrase, 2 au plus (comparaison, ou phrase en deux temps). Chaque visuel :
 - "image" : en francais, ce qu'on voit dans la video a trouver (concret, filmable, l'ACTION, sans facon de filmer) ;
 - "idee" : en ANGLAIS, 5 a 12 mots, ce que montrerait n'importe quelle video qui fait passer le SENS (generale) ;
@@ -67,6 +76,7 @@ def plan(p: Dict, gemini=None) -> Optional[List[Dict]]:
     """[{phrase, type, pourquoi, visuels: [{image, idee, anglais, pays, locales}], graphique}] — one per sentence,
     or None when the call fails (the search then goes on as before, one image a sentence)."""
     from adaptation import recits
+    from adaptation.langs import lang as lang_of
     from adaptation.script import _gemini
     phrases = _phrases(p)
     if not phrases:
@@ -77,7 +87,8 @@ def plan(p: Dict, gemini=None) -> Optional[List[Dict]]:
         r = (gemini or _gemini())._generate_content([{"text": PROMPT.format(
             sujet=ref.get("sujet") or p.get("idee") or "", famille=recits.FAMILLES.get(fam, {}).get("label", fam),
             faits="; ".join(ref.get("faits") or [])[:1500],
-            phrases="\n".join(f"{k}. {x}" for k, x in enumerate(phrases, 1)))}],
+            phrases="\n".join(f"{k}. {x}" for k, x in enumerate(phrases, 1)),
+            langue=lang_of(p["targets"][0]["language"])["label"] if p.get("targets") else "francais")}],
             max_tokens=8000, timeout=120, temperature=0.4)
     except Exception:
         return None
@@ -115,7 +126,25 @@ def clean(r, n: int, sb_plans: List[Dict]) -> Optional[List[Dict]]:
             vis = [{"image": pl.get("image") or "", "idee": pl.get("idee") or "", "anglais": [], "pays": "", "locales": []}]
         g = x.get("graphique") if kind in GRAPHICS and isinstance(x.get("graphique"), (dict, str)) else None
         out.append({"phrase": k + 1, "type": kind, "pourquoi": str(x.get("pourquoi") or "")[:160], "visuels": vis,
-                    "graphique": g if isinstance(g, dict) else ({"contenu": str(g)[:200]} if g else None)})
+                    "graphique": _graphic(g) if isinstance(g, dict) else ({"contenu": str(g)[:200]} if g else None)})
+    return out
+
+
+def _graphic(g: Dict) -> Dict:
+    """The director's graphic kept to its fields, each short (adaptation/graphiques draws it)."""
+    short = lambda x, n: " ".join(str(x or "").split())[:n]
+    out = {"contenu": short(g.get("contenu"), 300)}
+    for key, n in (("valeur", 20), ("unite", 40), ("titre", 40), ("lieu", 120), ("nom", 40), ("pays", 60),
+                   ("pays_nom", 30)):
+        if g.get(key) not in (None, ""):
+            out[key] = short(g[key], n)
+    reps = [{"lieu": short(r.get("lieu"), 120), "nom": short(r.get("nom"), 30)}
+            for r in g.get("reperes") or [] if isinstance(r, dict) and r.get("lieu") and r.get("nom")][:2]
+    if reps:
+        out["reperes"] = reps
+    c = g.get("chiffre")
+    if isinstance(c, dict) and c.get("valeur") not in (None, ""):
+        out["chiffre"] = {"valeur": short(c["valeur"], 20), "unite": short(c.get("unite"), 30)}
     return out
 
 

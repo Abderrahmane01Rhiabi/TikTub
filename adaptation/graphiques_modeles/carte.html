@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1080, height=1920" />
+<title>Carte</title>
+<script src="vendor/gsap.min.js"></script>
+<script src="vendor/d3-array.min.js"></script>
+<script src="vendor/d3-geo.min.js"></script>
+<script src="vendor/topojson-client.min.js"></script>
+<script src="vendor/land10.js"></script>
+<style>
+  @font-face { font-family: "Tajawal"; font-weight: 900; src: url("fonts/Tajawal-Black.ttf"); }
+  @font-face { font-family: "Tajawal"; font-weight: 800; src: url("fonts/Tajawal-ExtraBold.ttf"); }
+  @font-face { font-family: "Montserrat"; font-weight: 900; src: url("fonts/Montserrat-Black.ttf"); }
+  body { margin: 0; background: #0a2236; }
+  #root { position: relative; width: 100%; height: 100%; overflow: hidden; }
+  svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .sea { fill: url(#seaGrad); }
+  .land { fill: #e9dcc0; stroke: #b9a57c; stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .grid { fill: none; stroke: rgba(255,255,255,.06); stroke-width: 1.5; }
+  .label { position: absolute; font-family: "Tajawal"; font-weight: 800; white-space: nowrap; }
+  .city { font-size: 48px; color: #3a2e1a; }
+  .country { font-size: 80px; font-weight: 900; color: rgba(90,70,35,.55); letter-spacing: 4px; }
+  .pin { position: absolute; width: 0; height: 0; }
+  .pin .dot { position: absolute; left: -18px; top: -18px; width: 36px; height: 36px; border-radius: 50%;
+              background: #ff3b30; border: 6px solid #fff; box-sizing: border-box; }
+  .pin .ring { position: absolute; left: -18px; top: -18px; width: 36px; height: 36px; border-radius: 50%;
+               border: 6px solid #ff3b30; box-sizing: border-box; }
+  .tag { position: absolute; left: 40px; right: 40px; top: 430px; display: flex; justify-content: center; }
+  .tag .t1 { white-space: nowrap; font-family: "Tajawal"; font-weight: 900; font-size: 80px; color: #fff;
+             background: #ff3b30; padding: 6px 34px 0; border-radius: 18px; }
+  .stat { position: absolute; left: 50%; top: 600px; width: 760px; margin-left: -380px; text-align: center;
+          background: rgba(8,24,40,.88); border-radius: 36px; padding: 26px 0 30px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+  .stat .n { font-family: "Montserrat"; font-weight: 900; font-size: 120px; color: #ffd36b; direction: ltr;
+             text-shadow: 0 6px 0 #7a5208; }
+  .stat .u { font-family: "Tajawal"; font-weight: 900; font-size: 66px; color: #fff; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="graphique" data-start="0" data-width="1080" data-height="1920" data-duration="6">
+  <svg viewBox="0 0 1080 1920">
+    <defs>
+      <radialGradient id="seaGrad" cx="50%" cy="45%" r="75%">
+        <stop offset="0%" stop-color="#1d5f86" /><stop offset="100%" stop-color="#0a2236" />
+      </radialGradient>
+    </defs>
+    <rect class="sea" x="0" y="0" width="1080" height="1920" />
+    <g id="world">
+      <path class="grid" id="grid" vector-effect="non-scaling-stroke" />
+      <path class="land" id="land" />
+    </g>
+  </svg>
+  <div id="labels"></div>
+  <div class="pin" id="pin"><div class="ring" id="ring"></div><div class="dot"></div></div>
+  <div class="tag" id="tag"><div class="t1" id="t1"></div></div>
+  <div class="stat" id="stat"><div class="n" id="statn"></div><div class="u" id="statu"></div></div>
+</div>
+<script>
+  // written by adaptation/graphiques.py (lon, lat): {wide: {center, span}, close: {center, span},
+  // place: {at, name}, labels: [{at, text, country, from: "wide" | "close"}], stat: {valeur, unite} | null, rtl}
+  // The coasts only, never a border (the land in one colour, the names give the bearings).
+  const DATA = /*DATA*/{};
+  const W = 1080, H = 1920;
+  const land = topojson.feature(window.LAND10, window.LAND10.objects.land);
+  // a piece wound the wrong way covers the whole sphere but itself (the land then filled the sea): turned back
+  const turn = poly => d3.geoArea({ type: "Polygon", coordinates: poly }) > 2 * Math.PI ? poly.map(r => r.slice().reverse()) : poly;
+  (land.features || [land]).forEach(f => {
+    const g = f.geometry;
+    if (g.type === "Polygon") g.coordinates = turn(g.coordinates);
+    if (g.type === "MultiPolygon") g.coordinates = g.coordinates.map(turn);
+  });
+  // drawn ONCE in the wide view: zooming a Mercator map is enlarging the drawing (each frame only moves a <g>)
+  const scaleOf = span => W / (span * Math.PI / 180);
+  const proj = d3.geoMercator().scale(scaleOf(DATA.wide.span)).center(DATA.wide.center).translate([W / 2, H / 2])
+                 .clipExtent([[-W, -H], [2 * W, 2 * H]]);
+  const path = d3.geoPath(proj);
+  document.getElementById("land").setAttribute("d", path(land));
+  document.getElementById("grid").setAttribute("d", path(d3.geoGraticule().step([2, 2])()));
+  const dir = DATA.rtl ? "rtl" : "ltr";
+  const labelEls = DATA.labels.map(l => {
+    const d = document.createElement("div");
+    d.className = "label " + (l.country ? "country" : "city");
+    d.textContent = l.text;
+    d.style.direction = dir;
+    document.getElementById("labels").appendChild(d);
+    return d;
+  });
+  const world = document.getElementById("world"), pin = document.getElementById("pin");
+  const view = { k: 0 };
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const wideC = proj(DATA.wide.center), closeC = proj(DATA.close.center);
+  function draw() {
+    const t = view.k;
+    const z = Math.exp(lerp(0, Math.log(DATA.wide.span / DATA.close.span), t));
+    const cx = lerp(wideC[0], closeC[0], t), cy = lerp(wideC[1], closeC[1], t);
+    const tx = W / 2 - cx * z, ty = lerp(H / 2, 1010, t) - cy * z;     // the place ends under the card, above the captions
+    world.setAttribute("transform", `translate(${tx} ${ty}) scale(${z})`);
+    const at = ll => { const q = proj(ll); return [q[0] * z + tx, q[1] * z + ty]; };
+    const p = at(DATA.place.at);
+    pin.style.left = p[0] + "px"; pin.style.top = p[1] + "px";
+    DATA.labels.forEach((l, i) => {
+      const q = at(l.at);
+      labelEls[i].style.left = (q[0] - labelEls[i].offsetWidth / 2) + "px";
+      labelEls[i].style.top = (q[1] + (l.country ? -44 : 26)) + "px";
+    });
+  }
+  const t1 = document.getElementById("t1");
+  t1.textContent = DATA.place.name; t1.style.direction = dir;
+  if (DATA.place.name.length > 18) t1.style.fontSize = Math.max(52, Math.floor(1500 / DATA.place.name.length)) + "px";
+  const stat = DATA.stat;
+  const statn = document.getElementById("statn");
+  if (!stat) document.getElementById("stat").remove();
+  else { document.getElementById("statu").textContent = stat.unite || ""; document.getElementById("statu").style.direction = dir; }
+  const raw = stat ? String(stat.valeur) : "0";
+  const decimals = raw.includes(".") ? raw.split(".")[1].length : 0;
+  const fmt = n => { const [i, d] = n.toFixed(decimals).split(".");
+                     return i.replace(/\B(?=(\d{3})+(?!\d))/g, " ") + (d ? (DATA.rtl ? "." : ",") + d : ""); };
+  const counter = { v: 0 };
+  const tl = gsap.timeline({ paused: true });
+  tl.fromTo(view, { k: 0 }, { k: 1, duration: 2.6, ease: "power2.inOut", onUpdate: draw, immediateRender: true }, 0.4);
+  DATA.labels.forEach((l, i) => {
+    if (l.from === "wide") {
+      tl.fromTo(labelEls[i], { opacity: 0 }, { opacity: 1, duration: 0.3 }, 0.05);
+      tl.to(labelEls[i], { opacity: 0, duration: 0.3 }, 2.1);
+    } else {
+      tl.fromTo(labelEls[i], { opacity: 0 }, { opacity: 1, duration: 0.3 }, 2.5);
+    }
+  });
+  tl.fromTo("#pin", { scale: 0, opacity: 0 }, { scale: 1, opacity: 1, duration: 0.35, ease: "back.out(3)" }, 2.8);
+  tl.fromTo("#ring", { scale: 1, opacity: 0.9 }, { scale: 3.2, opacity: 0, duration: 0.9, repeat: 3, ease: "power1.out" }, 3.0);
+  tl.fromTo("#tag", { y: -60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 2.9);
+  if (stat) {
+    tl.fromTo("#stat", { y: 60, opacity: 0 }, { y: 0, opacity: 1, duration: 0.4, ease: "power3.out" }, 3.2);
+    tl.fromTo(counter, { v: 0 }, { v: parseFloat(raw), duration: 1.2, ease: "power2.out",
+              onUpdate: () => { statn.textContent = fmt(counter.v); } }, 3.2);
+  }
+  draw();
+  window.__timelines["graphique"] = tl;
+</script>
+</body>
+</html>
