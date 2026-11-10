@@ -31,7 +31,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable, Dict, List, Optional, Tuple
 
-from adaptation import checks, finder, montage_doc, render, secours, sources, voices
+from adaptation import checks, finder, graphiques, montage_doc, render, secours, sources, voices
 from adaptation.langs import lang as lang_of
 
 Report = Callable[[str, float], None]
@@ -315,6 +315,10 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
         metas: List[Optional[Dict]] = [None] * len(rows)
         lock = threading.Lock()
         done = {"n": 0}
+        made = {}                           # the animated graphics (adaptation/graphiques), made beside the downloads
+        drawing = threading.Thread(target=lambda: made.update(graphiques.make_all(p, os.path.join(base, "graphiques"))),
+                                   daemon=True)
+        drawing.start()
 
         def one(k: int, row: Dict) -> None:
             try:
@@ -343,13 +347,21 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
             why = set_aside(s)
             s.update(garde=why is None, ecarte=why)
         v2 = images_v2(p, shots, metas, base, report)
+        if drawing.is_alive():
+            report("graphiques animés", 0.95)
+        drawing.join()
+        n_sentences = len(((p.get("storyboard") or {}).get("plans")) or [])
+        for s in made.get("shots") or []:   # kept for their sentence: seen and removed like any shot
+            s["colle"] = (s.get("colle") or [])[:n_sentences] + [0.0] * max(0, n_sentences - len(s.get("colle") or []))
+            shots.append(s)
         p = ap.load(pid)
         if v2.get("idees"):                         # kept on the storyboard: the edit and the review use them
             for pl, idea in zip((p.get("storyboard") or {}).get("plans") or [], v2["idees"]):
                 pl["idee"] = idea
         secours.mark(p, "images", v2.get("secours"))
-        p.update(stock=shots, stock_sources=metas, images_v2=v2.get("bilan"), status="stock_review", error=None,
-                 failed_step=None)
+        secours.mark(p, "graphiques", made.get("secours"))
+        p.update(stock=shots, stock_sources=metas, images_v2=v2.get("bilan"), graphiques=made.get("liste") or [],
+                 incrustation=made.get("incrustation"), status="stock_review", error=None, failed_step=None)
         ap.save(p)
     except Exception as e:
         ap.fail(pid, "fetching", e)
@@ -735,6 +747,11 @@ def _piece(e: Dict, s: Dict, out: str) -> str:
     """One shot of the edit: cut from its source, cropped to 9:16 around its subject (or where the person centred
     it, as close as they zoomed), a slow push-in, no sound."""
     need = max(0.2, e["fin"] - e["debut"])
+    if s.get("graphique"):                  # drawn for the Short (adaptation/graphiques): no crop, no push-in
+        _run(["ffmpeg", "-v", "error", "-y", "-i", s["file"], "-an", "-vf",
+              f"scale={W}:{H},fps={FPS},setsar=1,tpad=stop_mode=clone:stop_duration={need:.2f}", "-t", f"{need:.3f}",
+              "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p", out])
+        return out
     dur_src, w, h = _probe(s["file"])
     # past a blurred transition, then a little inside the shot: its first frames are often the source's own cut
     first = sharp_start(s, need)
@@ -788,8 +805,8 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
     ass = os.path.join(work, "textes.ass")
     caps = captions_ass(v, passages, ass, code, style, doc)
     with open(ass, encoding="utf-8") as f:
-        key = hashlib.sha1(repr((pieces, f.read(), (doc.get("sous_titres") or {}), [w["w"] for w in doc_words(v, doc)])
-                                ).encode()).hexdigest()[:16]
+        key = hashlib.sha1(repr((pieces, f.read(), (doc.get("sous_titres") or {}), [w["w"] for w in doc_words(v, doc)],
+                                 doc.get("incrustation"))).encode()).hexdigest()[:16]
     picture = os.path.join(work, f"image_{key}.mp4")
     from adaptation.render import _filter_path
     from adaptation.langs import FONTS_DIR
@@ -805,7 +822,14 @@ def render_doc(doc: Dict, shots: Dict[str, Dict], v: Dict, passages: List[Dict],
         def add_input(*args) -> int:
             inputs.extend(args)
             return sum(1 for x in inputs if x == "-i") - 1
-        g = [f"[0:v]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex[b]"]
+        g, src = [], "0:v"
+        inc = doc.get("incrustation") or {}
+        if inc.get("fichier") and not inc.get("cache") and os.path.exists(inc["fichier"]):
+            k_in = add_input("-i", inc["fichier"])
+            until = next((e["debut"] for e in edl if e["phrase"] > (inc.get("phrase") or 1)), total)
+            g.append(f"[0:v][{k_in}:v]overlay=0:0:enable='lt(t,{until:.2f})':eof_action=pass[inc]")
+            src = "inc"
+        g.append(f"[{src}]ass='{_filter_path(ass)}':fontsdir='{_filter_path(FONTS_DIR)}':shaping=complex[b]")
         cur = "b"
         parts = {}                                  # the groups a caption library style draws, by look
         for grp in caption_groups(v, doc):
@@ -1040,12 +1064,13 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     keep = t.pop("keep_edit", False) and old and all(e["plan"] in kept_ids for e in old)
     if not keep:
         report(f"montage {t['channel']}", offset + share * 0.25)
-        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(shots, len(t["voice"]["passages"])))}],
+        footage = [s for s in shots if not s.get("graphique")]     # a graphic is placed on its sentence, not chosen
+        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(footage, len(t["voice"]["passages"])))}],
                                                       max_tokens=16000, timeout=240, temperature=0.4)
         lost = secours.failed(raw) or not (raw or {}).get("montage")
         secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
                                    "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)
-        edl = build_edit({} if lost else raw, t["voice"], shots)
+        edl = graphiques.with_graphics(build_edit({} if lost else raw, t["voice"], footage), shots)
     choose_music(p, t)
     if keep and t.get("montage"):       # only the music changed: the person's montage kept, its song replaced
         doc = copy.deepcopy(t["montage"])
@@ -1054,6 +1079,9 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     else:                               # a new montage by the AI: a new document, no history
         doc = montage_doc.new(old if keep else edl, len(t["voice"]["passages"]), t.get("music_path"),
                               t.get("music_start") or 0.0, sound_effects(p, t))
+        inc = p.get("incrustation")         # the hook's number, laid over its real picture
+        if inc and os.path.exists(inc.get("fichier") or ""):
+            doc["incrustation"] = {"fichier": inc["fichier"], "phrase": 1, "cache": False}
         t["montage"], t["montage_versions"] = doc, []
     made = render_target(p, t, report=lambda ph, f: report(f"{ph} ({t['channel']})", offset + share * (0.35 + 0.6 * f)))
     report(f"relecture du montage ({t['channel']})", offset + share * 0.97)
@@ -1092,7 +1120,10 @@ def review(p: Dict, t: Dict, preview: Dict, gemini=None) -> List[Dict]:
     folder = os.path.join(os.path.dirname(out), "relecture")
     os.makedirs(folder, exist_ok=True)
     lines, imgs = [], []
+    drawn = {s["id"] for s in p.get("stock") or [] if s.get("graphique")}
     for k, e in enumerate(edl, 1):
+        if e["plan"] in drawn:              # a graphic drawn for its sentence: not footage to judge
+            continue
         img = os.path.join(folder, f"r_{k:02d}.jpg")
         _run(["ffmpeg", "-v", "error", "-y", "-ss", f"{(e['debut'] + e['fin']) / 2:.2f}", "-i", out, "-frames:v", "1",
               "-vf", "scale=-2:480", "-q:v", "4", img])
@@ -1252,6 +1283,10 @@ def set_montage(pid: str, channel: str, doc: Dict, voix: Optional[List[Dict]] = 
         new_doc = montage_doc.clean(doc, t["voice"], shot_ids, files)
     except montage_doc.MontageError as e:
         raise ap.PipelineError(str(e))
+    inc = t["montage"].get("incrustation")      # the file stays ours: the person only shows or hides it
+    new_doc.pop("incrustation", None)
+    if inc:
+        new_doc["incrustation"] = {**inc, "cache": bool((doc.get("incrustation") or {}).get("cache"))}
     edits = _voice_edits(p, t, voix)
     if new_doc == t["montage"] and not edits:
         raise ap.PipelineError("Rien n'a changé.")
@@ -1352,7 +1387,7 @@ def timeline(p: Dict, t: Dict) -> Dict:
     pid = p["project_id"]
     total = montage_doc.total(doc)
     stock = [{"id": s["id"], "desc": s.get("desc"), "duree": round(s["end"] - s["start"], 1), "force": s.get("force"),
-              "colle": s.get("colle") or [], "secours": s.get("secours_pour"),
+              "colle": s.get("colle") or [], "secours": s.get("secours_pour"), "graphique": s.get("graphique"),
               "thumb_url": f"/api/adaptations/{pid}/stock/{s['id']}/thumb"}
              for s in p.get("stock") or [] if s.get("garde")]
     m = doc.get("musique") or {}

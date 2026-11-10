@@ -1,6 +1,6 @@
 # Le montage modifiable (la timeline)
 
-*Mis à jour le 9 novembre 2026.*
+*Mis à jour le 10 novembre 2026.*
 
 Dans **Adaptation → Idée d'abord**, à l'étape **Aperçu**, la vidéo est montée par l'IA. Sous l'aperçu, la **timeline** montre tout ce qui la compose, et te laisse **changer n'importe quel morceau avant de publier** : une image, son cadrage, un bandeau, un mot des sous-titres, le volume de la musique sur un passage, un effet sonore, la manière de dire une phrase.
 
@@ -44,7 +44,7 @@ Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fai
 
 | Étape | Ce qu'elle fait |
 |---|---|
-| **Le réalisateur IA** | avant de chercher, il décide **comment montrer chaque phrase** : vraies images (actualité), image d'idée, **comparaison** (« en forme de tente » → le stade **et** une tente), **projet** (rendu 3D, maquette), chiffre, carte ou schéma ; 1 ou 2 images par phrase, cherchées en anglais **et dans la langue du pays** (en arabe pour le Maroc). Ses choix sont visibles à l'écran du **stock** (« Le réalisateur IA ») ; les cartes, chiffres et schémas y sont notés « à dessiner (bientôt) » |
+| **Le réalisateur IA** | avant de chercher, il décide **comment montrer chaque phrase** : vraies images (actualité), image d'idée, **comparaison** (« en forme de tente » → le stade **et** une tente), **projet** (rendu 3D, maquette), chiffre, carte ou schéma ; 1 ou 2 images par phrase, cherchées en anglais **et dans la langue du pays** (en arabe pour le Maroc). Ses choix sont visibles à l'écran du **stock** (« Le réalisateur IA »), avec ce que sont devenus ses graphiques (voir **Les graphiques animés** plus bas) |
 | **L'idée de chaque phrase** | une courte description, en anglais, de ce que montrerait n'importe quelle vidéo qui fait passer l'idée (« new apartment buildings, a hand giving keys ») |
 | **Recherche par le sens** | un modèle sur ton PC compare chaque plan du stock (3 images de lui) à **chaque phrase**, pas au sujet en général |
 | **Repêchage** | un plan écarté comme « hors sujet » mais qui colle bien à une phrase revient dans le stock (badge vert *repêché*) |
@@ -54,6 +54,23 @@ Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fai
 | **Relecture** | le montage fini est relu (comme un monteur qui se relit) : chaque plan qui **contredit** sa phrase ou **ne colle pas** est entouré d'**orange** dans la piste Images |
 
 À l'écran du **stock**, une ligne « Images v2 » résume ce qui a été fait. Ces étapes coûtent environ 5 centimes de Gemini par vidéo (la recherche par le sens est gratuite).
+
+### Les graphiques animés
+
+Quand le réalisateur choisit un **chiffre**, une **carte** ou un **schéma**, l'app le **dessine** elle-même (avec HyperFrames, sur ton PC, pendant le téléchargement des vidéos) :
+
+| Graphique | Ce que tu vois | Ce qui est vérifié |
+|---|---|---|
+| **Chiffre** | un compteur qui monte jusqu'au chiffre, puis ses mots (« 115 000 مقعد ») | le chiffre doit être dans les **faits vérifiés**, sinon il n'est pas fait |
+| **Carte** | une vue large (le pays, 1-2 grandes villes), un zoom jusqu'au lieu, un point rouge et son nom ; parfois un chiffre des faits | le lieu est trouvé sur **OpenStreetMap**, jamais placé par l'IA ; les **côtes seulement, aucune frontière** |
+| **Schéma** | un dessin animé qui explique un mécanisme (« la chaleur piégée sous le voile ») | écrit par Gemini Flash (2-3 centimes), contrôlé avant le rendu |
+
+Les règles :
+- **au plus 2 graphiques en plein écran** par vidéo, **jamais deux phrases de suite** ;
+- **l'accroche garde sa vraie image** : un chiffre y est posé **par-dessus** (🔢 sur le plan 1 de la timeline) ; une carte ou un schéma n'y est pas fait ;
+- toutes les versions d'un projet doivent être dans la même langue (les mots du graphique sont dans cette langue).
+
+Au **stock**, les graphiques sont dans la carte « Graphiques animés » : clique un graphique pour le retirer (sa phrase reprend de vraies images). Dans la **timeline**, un graphique est un plan comme un autre, marqué ✎ (pas de cadrage : il est dessiné pour l'écran) ; sur le plan 1, **Chiffre animé par-dessus l'accroche : Affiché / Enlevé**. Un graphique qui n'a pas pu être fait est dit à l'écran du stock, avec la raison : la phrase garde alors ses vraies images.
 
 ## 4. Les images
 

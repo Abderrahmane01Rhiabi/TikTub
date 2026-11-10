@@ -39,7 +39,7 @@ function mtChanges(ch){
   const { doc, orig, voix } = mtState[ch], out = [];
   const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
   if (Object.keys(voix).length) out.push('voix');
-  if (!same(doc.plans, orig.plans)) out.push('images');
+  if (!same(doc.plans, orig.plans) || !same(doc.incrustation, orig.incrustation)) out.push('images');
   if (!same(doc.bandeaux, orig.bandeaux) || doc.bandeau_cadre !== orig.bandeau_cadre) out.push('bandeaux');
   if (!same(doc.sous_titres, orig.sous_titres)) out.push('sous-titres');
   if (!same(doc.musique, orig.musique)) out.push('musique');
@@ -81,7 +81,8 @@ function mtTracks(ch){
     const s = stockById[e.plan] || {};
     const framed = (e.zoom || 1) !== 1 || e.centre != null;
     const flag = mtFlag(data, i, e);
-    return mtBlock('images', i, e.debut, e.fin, `<b>${i + 1}</b>${framed ? ' ⌖' : ''}${flag ? ' ⚠' : ''}`,
+    const inc = i === 0 && doc.incrustation && !doc.incrustation.cache;     // the hook's animated number over it
+    return mtBlock('images', i, e.debut, e.fin, `<b>${i + 1}</b>${framed ? ' ⌖' : ''}${flag ? ' ⚠' : ''}${s.graphique ? ' ✎' : ''}${inc ? ' 🔢' : ''}`,
       (s.thumb_url ? `background-image:url('${s.thumb_url}');` : '') + (flag ? 'box-shadow:inset 0 0 0 3px #f59e0b;' : ''),
       flag ? `Relecture : ${flag.verdict === 'contredit' ? 'contredit la phrase' : 'ne colle pas'} — ${flag.pourquoi}` : `Plan ${i + 1} : ${s.desc || e.plan}`, i > 0);
   }).join('');
@@ -138,7 +139,7 @@ function mtStockGrid(ch, current, phrase){
   const shots = phrase ? [...data.stock].sort((a, b) => fit(b) - fit(a)) : data.stock;
   return `<div class="mt-stock">${shots.map(s => `<button type="button" class="mt-shot ${s.id === current ? 'on' : ''}" draggable="true"
       data-shot="${s.id}" title="${esc(s.desc || '')}${phrase && fit(s) ? ` — colle à la phrase : ${Math.round(fit(s) * 100)}` : ''}" style="background-image:url('${s.thumb_url}')">
-      ${phrase && fit(s) >= 0.27 ? '<i class="mt-fit">✓</i>' : ''}${s.secours ? '<i class="mt-px">Pixabay</i>' : ''}<span>${s.duree} s</span></button>`).join('')}</div>`;
+      ${phrase && fit(s) >= 0.27 ? '<i class="mt-fit">✓</i>' : ''}${s.secours ? '<i class="mt-px">Pixabay</i>' : ''}${s.graphique ? '<i class="mt-px">✎ graphique</i>' : ''}<span>${s.duree} s</span></button>`).join('')}</div>`;
 }
 
 function mtPanel(ch){
@@ -159,12 +160,15 @@ function mtPanel(ch){
         ${prop ? `<div class="mt-p-row" style="margin-top:6px"><span class="mt-shot" style="width:42px;height:70px;background-image:url('${prop.thumb_url}')"></span>
           <button type="button" class="btn ghost small mt-take" data-shot="${prop.id}">Mettre le plan proposé</button></div>` : ''}</div>` : ''}
       <label class="f">Remplacer par un plan de ton stock (✓ = fait passer l'idée de cette phrase ; clique, ou glisse-le sur la piste Images)</label>${mtStockGrid(ch, e.plan, e.phrase)}
-      <div class="mt-p-grid">
+      ${i === 0 && doc.incrustation ? `<div class="mt-p-row"><label class="f" style="margin:0">Chiffre animé par-dessus l'accroche 🔢</label>
+        <button type="button" class="chipbtn mt-inc ${doc.incrustation.cache ? '' : 'on'}" data-v="0">Affiché</button>
+        <button type="button" class="chipbtn mt-inc ${doc.incrustation.cache ? 'on' : ''}" data-v="1">Enlevé</button></div>` : ''}
+      ${s.graphique ? `<div class="tiny">✎ Graphique animé fait par l'app pour cette phrase (pas de cadrage : il est dessiné pour l'écran).</div>` : `<div class="mt-p-grid">
         <div><label class="f">Cadrage : zoom ×<span class="mt-zoom-out">${(e.zoom || 1).toFixed(2)}</span></label>
           <input type="range" class="mt-zoom" min="1" max="1.6" step="0.05" value="${e.zoom || 1}"></div>
         <div><label class="f">Cadrage : centrer sur</label><div class="mt-p-row">${[['auto', 'Le sujet (IA)'], [0.2, 'Gauche'], [0.5, 'Centre'], [0.8, 'Droite']]
           .map(([v, l]) => `<button type="button" class="chipbtn mt-centre ${String(v) === String(c) ? 'on' : ''}" data-v="${v}">${l}</button>`).join('')}</div></div>
-      </div>
+      </div>`}
       <div class="mt-p-row"><button type="button" class="btn ghost small mt-split">Couper ce plan en deux</button>
         <button type="button" class="btn ghost small mt-del-plan" ${doc.plans.length < 2 ? 'disabled' : ''}>Supprimer ce plan (le voisin s'allonge)</button></div>`;
   }
@@ -380,6 +384,7 @@ function mtBindPanel(box, now){
   // the shot
   on('.mt-panel .mt-shot', 'onclick', b => { if (b.dataset.shot){ doc.plans[i].plan = b.dataset.shot; mtChanged(box); } });
   on('.mt-take', 'onclick', b => { doc.plans[i].plan = b.dataset.shot; mtChanged(box); });
+  on('.mt-inc', 'onclick', b => { doc.incrustation = { ...doc.incrustation, cache: b.dataset.v === '1' }; mtChanged(box); });
   on('.mt-zoom', 'oninput', el => { box.querySelector('.mt-zoom-out').textContent = Number(el.value).toFixed(2); });
   on('.mt-zoom', 'onchange', el => { doc.plans[i].zoom = Number(el.value); mtChanged(box); });
   on('.mt-centre', 'onclick', b => { doc.plans[i].centre = b.dataset.v === 'auto' ? null : Number(b.dataset.v); mtChanged(box); });

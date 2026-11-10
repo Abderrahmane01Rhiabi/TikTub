@@ -61,6 +61,7 @@ STEPS: Dict[str, tuple] = {
     "annotate.locate":       (FLASH, "placer les flèches et cercles"),
     "annotate.review":       (FLASH, "revoir les flèches sur les vrais clips"),
     "storyboard.adapt_to":   (FLASH, "réécrire un plan pour une image déjà trouvée"),
+    "graphiques.schema_html": (FLASH, "écrire un schéma animé (montage pro)"),   # Flash clearer than Pro on 3/3 (labo_graphiques.md)
     "tone.guess":            (FLASH, "deviner le ton du sujet"),
     "pipeline._choose_music": (FLASH, "choisir la musique"),
     "discours.passages":     (FLASH, "proposer les passages forts d'un discours"),
@@ -76,7 +77,7 @@ STEPS: Dict[str, tuple] = {
 
 # the steps that send ONLY text (no video, picture, YouTube link or Google search): the only ones another
 # provider may serve. Anything else stays on Gemini, whatever database/ai_models.json says.
-TEXT_ONLY = {"idee.plan", "storyboard.angles", "storyboard.write", "storyboard.critique", "storyboard.revise",
+TEXT_ONLY = {"idee.plan", "graphiques.schema_html", "storyboard.angles", "storyboard.write", "storyboard.critique", "storyboard.revise",
              "storyboard.adapt_to", "finder.plan_queries", "finder.local_queries", "finder.action_queries",
              "finder._sort_one", "script.write", "script.critique", "script.revise", "tone.guess",
              "pipeline._choose_music", "script_generator.generate_script", "planner.pick_keywords",

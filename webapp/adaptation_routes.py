@@ -264,8 +264,10 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             used = {e["plan"] for t in p["targets"] for e in (t.get("preview") or {}).get("montage") or []}
             base["images_v2"] = p.get("images_v2")         # what Images v2 did (adaptation/vision)
             base["realisation"] = p.get("realisation")     # how the AI director shows each sentence (adaptation/realisateur)
+            base["graphiques"] = [{k: g.get(k) for k in ("phrase", "type", "mode", "contenu", "erreur")}
+                                  for g in p.get("graphiques") or []]      # what the app drew (adaptation/graphiques)
             base["stock"] = [{k: s.get(k) for k in ("id", "source", "desc", "montre", "force", "pertinence", "repeche",
-                                                    "ailleurs", "secours_pour",
+                                                    "ailleurs", "secours_pour", "graphique", "pour",
                                                     "probleme", "garde", "ecarte", "credit", "titre_source", "url")}
                              | {"duree": round(s["end"] - s["start"], 1), "utilise": s["id"] in used,
                                 "thumb_url": f"/api/adaptations/{p['project_id']}/stock/{s['id']}/thumb"}

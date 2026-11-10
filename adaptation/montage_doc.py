@@ -12,6 +12,8 @@ One document per version, t["montage"], says everything the render needs — the
                 groupes {first word index: {style, position, taille}} — one group of 3 words set apart}
   musique       {fichier, debut (in the song), volume (%), zones [{debut, fin, volume (%)}], fondu (s)}
   effets        [{kind, file, start (when the file begins), gain, pourquoi, par}]
+  incrustation  the hook's animated number laid over its picture (adaptation/graphiques): {fichier, phrase, cache}
+                or None — the person only shows or hides it
 
 Every version the person renders is kept (VERSIONS): « Annuler » goes back one, « Avant / Après » compares.
 What the person sends is checked and made safe (clean): cuts snapped on words, nothing outside the video.
@@ -242,6 +244,9 @@ def changes(ai: Dict, final: Dict, texts_before: Optional[List[str]] = None, tex
             add("bandeau", f"Bandeau {k} réécrit : « {y.get('texte')} »")
         if x.get("cadre") != y.get("cadre"):
             add("bandeau", f"Cadre du bandeau {k} : {y.get('cadre') or 'celui de la vidéo'}")
+    ia, ib = ai.get("incrustation") or {}, final.get("incrustation") or {}
+    if ia and bool(ia.get("cache")) != bool(ib.get("cache")):
+        add("images", f"Chiffre animé de l'accroche {'enlevé' if ib.get('cache') else 'remis'}")
     if ai.get("bandeau_cadre") != final.get("bandeau_cadre"):
         add("bandeau", f"Cadre de tous les bandeaux : {final.get('bandeau_cadre') or 'celui du style'}")
     sa, sb = ai.get("sous_titres") or {}, final.get("sous_titres") or {}
