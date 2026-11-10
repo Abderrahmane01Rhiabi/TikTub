@@ -133,6 +133,12 @@ def test_a_shot_whose_pictures_do_not_all_fit_is_not_brought_back_and_a_half_fit
     s = shot("S7_00", 7, [0.28, 0.1], garde=False, ecarte="non décrit")
     s["colle_min"] = [0.05, 0.05]                       # a grass picture, then black-and-white archives
     assert vision.rescue([s], 2) == [] and not s["garde"]
+    logo = shot("S2_09", 2, [0.30, 0.1], garde=False, ecarte="hors sujet")
+    logo.update(colle_min=[0.29, 0.1], probleme="graphisme recouvrant l'écran")    # the Raja TV logo over the supporters
+    assert vision.rescue([logo], 2) == [] and not logo["garde"]
+    card = shot("S3_00", 3, [0.30, 0.1], garde=False, ecarte="non décrit")
+    card.update(colle_min=[0.29, 0.1], desc="", reserve=6)          # an official channel's « Subscribe » card
+    assert vision.rescue([card], 2) == [] and not card["garde"]
     half = shot("S0_00", 0, [0.30, 0.25])               # sentence 2: only half-fitting shots
     assert vision.missing([half], 2) == [1]
 

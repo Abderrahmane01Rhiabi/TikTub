@@ -168,8 +168,11 @@ def rescue(shots: List[Dict], n_sentences: int) -> List[str]:
         for s in ranked:
             # off-topic for the whole subject, or never described (one still the describe could not read): the model
             # sees what the shot shows (« non décrit » S1_00 fitted « the city's works » at 0.32)
-            if not s.get("garde") and s.get("ecarte") in ("hors sujet", "non décrit") and s["colle"][k] >= FITS \
-                    and (s.get("colle_min") or s["colle"])[k] >= NOTHING:
+            # a shot with a defect stays out (the Raja TV logo over the supporters, 2026-11-10: it fits « supporters »),
+            # and an official channel's shot never described too (its « Subscribe » card fitted « the Camp Nou »)
+            if not s.get("garde") and s.get("ecarte") in ("hors sujet", "non décrit") and not s.get("probleme") \
+                    and not (s.get("reserve") and not s.get("desc")) \
+                    and s["colle"][k] >= FITS and (s.get("colle_min") or s["colle"])[k] >= NOTHING:
                 s.update(garde=True, ecarte=None, repeche=k + 1)
                 back.append(s["id"])
     return back

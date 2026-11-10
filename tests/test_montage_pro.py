@@ -53,6 +53,55 @@ def test_every_visual_gets_a_source_before_a_second_one_for_the_same(project):
     assert "scenes" not in rows[0]
 
 
+def test_the_editor_follows_the_director_s_times_in_the_voice_s_order():
+    r = [{"phrase": 1, "visuels": [{"mot": "", "image": "le stade"}]},
+         {"phrase": 2, "visuels": [{"mot": "كامب", "image": "le Camp Nou"}, {"mot": "الرجاء", "image": "les supporters du Raja"},
+                                   {"mot": "والوداد", "image": "les supporters du Wydad"}]},
+         {"phrase": 9, "visuels": [{"image": "a"}, {"image": "b"}]}]
+    text = mp._directed(r, 2)
+    assert "Phrase 2 : « كامب » le Camp Nou -> « الرجاء » les supporters du Raja -> « والوداد » les supporters du Wydad" in text
+    assert "Phrase 1" not in text and "Phrase 9" not in text           # one visual: free; not in this voice: left out
+    assert mp._directed(None, 2) == "" and mp._directed(r[:1], 2) == ""
+
+
+def test_a_quick_cut_is_kept_on_a_name_of_the_director_s_list():
+    said = [("فالفين", 22.72), ("كامب", 24.68), ("نو", 24.96), ("الرجاء", 25.8), ("والوداد", 26.4), ("والمنتخب.", 27.12)]
+    v = {"duration": 28.1, "words": [{"w": w, "start": s} for w, s in said],
+         "passages": [{"start": 22.72, "end": 28.1, "words": list(range(6))}]}
+    r = [{"phrase": 1, "visuels": [{"mot": "كامب", "image": "Camp Nou"}, {"mot": "الرجاء", "image": "Raja"},
+                                   {"mot": "والوداد", "image": "Wydad"}, {"mot": "والمنتخب", "image": "équipe nationale"}]}]
+    quick = mp.quick_words(r, v)
+    assert quick == {1: {1, 3, 4, 5}}
+    stock = [{"id": f"S{k}_0", "source": k, "start": 0, "end": 4, "colle": [0.3]} for k in range(5)]
+    raw = {"montage": [{"phrase": 1, "coupes": [{"plan": "S0_0", "mot": 0}, {"plan": "S1_0", "mot": 1},
+                                                {"plan": "S2_0", "mot": 3}, {"plan": "S3_0", "mot": 4}, {"plan": "S4_0", "mot": 5}]}]}
+    assert [e["plan"] for e in mp.build_edit(raw, v, stock, quick)] == ["S0_0", "S1_0", "S2_0", "S3_0", "S4_0"]
+    assert [e["plan"] for e in mp.build_edit(raw, v, stock)] == ["S0_0", "S1_0", "S2_0", "S4_0"]   # the 1 s rule: no Wydad
+
+
+def test_an_official_channel_s_video_stays_in_its_sentence():
+    p = {"suggestions": {"scenes": [
+        {"phrase_n": 5, "candidats": [{"url": "route", "origines": ["youtube"]}]},
+        {"phrase_n": 6, "candidats": [{"url": "nou", "origines": ["chaine"]}, {"url": "wac", "origines": ["chaine", "youtube"]}]},
+        {"phrase_n": 3, "candidats": [{"url": "both", "origines": ["chaine"]}]},
+        {"phrase_n": 4, "candidats": [{"url": "both", "origines": ["chaine"]}]}]}}
+    assert mp.reserved(p) == {"nou": 6, "wac": 6}                      # found for two sentences: free
+    said = [("a", 0.0), ("b", 2.0), ("c", 4.0), ("d", 6.0)]
+    v = {"duration": 8, "words": [{"w": w, "start": s} for w, s in said],
+         "passages": [{"start": 0.0, "end": 4.0, "words": [0, 1]}, {"start": 4.0, "end": 8.0, "words": [2, 3]}]}
+    stock = [{"id": "nou", "source": 0, "start": 0, "end": 4, "colle": [0.4, 0.1], "reserve": 2},
+             {"id": "route", "source": 1, "start": 0, "end": 4, "colle": [0.3, 0.1]},
+             {"id": "x", "source": 2, "start": 0, "end": 4, "colle": [0.1, 0.3]}]
+    raw = {"montage": [{"phrase": 1, "coupes": [{"plan": "nou", "mot": 0}]}, {"phrase": 2, "coupes": [{"plan": "x", "mot": 0}]}]}
+    edl = mp.build_edit(raw, v, stock)
+    assert [(e["phrase"], e["plan"]) for e in edl] == [(1, "route"), (2, "x")]
+    assert "nou | 0 «  » (RESERVE a la phrase 2)" in mp._edit_prompt(v, stock)
+    many = [{"id": f"S1_{k}", "source": 1, "start": 0, "end": 2, "force": 5, "colle": [0.3, 0.3]} for k in range(80)]
+    nou = [{"id": f"S9_{k}", "source": 9, "start": 0, "end": 2, "force": k, "colle": [0.0, 0.0], "reserve": 2} for k in range(5)]
+    ids = {s["id"] for s in mp.editable(many + nou, 2)}
+    assert {"S9_4", "S9_3", "S9_2"} <= ids and "S9_0" not in ids         # the editor always sees the Camp Nou
+
+
 def test_a_long_video_is_downloaded_around_its_good_moments_only():
     assert mp.spans_of({"duree": 90, "moments": [{"debut": 5, "fin": 8}]}) is None          # short: whole
     spans = mp.spans_of({"duree": 900, "moments": [{"debut": 100, "fin": 104}, {"debut": 106, "fin": 110},

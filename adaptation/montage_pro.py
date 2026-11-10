@@ -43,6 +43,7 @@ SHOT_S = 2.6                    # a long take is cut into pieces about this long
 MAX_SHOTS_PER_SOURCE = 24
 HOOK_MAX_S = 3.4                # the first sentence, measured on the real voice
 MIN_CUT_S = 1.0
+RAFALE_S = 0.5                  # a cut on a name of the director's list (one visual a club)
 CAPTION_Y = H - 560             # the captions' one place (bottom of the line), never moving
 BANNER_MARGIN = 250
 MUSIC_GAIN = 0.12
@@ -77,14 +78,16 @@ EDIT = """Tu es un monteur PRO de YouTube Shorts. Voici la voix off, phrase par 
 instant (secondes) :
 {phrases}
 
-Voici les RUSHS disponibles (id | source | duree | force visuelle 1-10 | colle aux phrases | ce qu'on voit | probleme) :
+Voici les RUSHS disponibles (id | source « son titre » | duree | force visuelle 1-10 | colle aux phrases | ce qu'on voit |
+probleme) :
 {plans}
 « colle aux phrases » = les phrases dont ce plan fait passer l'IDEE (mesure de l'image contre l'idee de chaque phrase,
 la plus haute d'abord ; « - » = aucune).
-
+{realisation}
 Monte la video comme un pro (le sens + l'emotion + l'attention), pas du mot a mot :
 - 2 ou 3 COUPES par phrase : chaque plan reste 1,2 a 3 secondes a l'ecran. Une coupe tombe sur le DEBUT d'un mot
   (de preference le mot important : un nom, un chiffre, un verbe fort) -> donne l'indice du mot ou le plan commence.
+  Une phrase a plusieurs temps du REALISATEUR : autant de coupes que de visuels (4 au plus), chacune sur son mot.
   La 1re coupe d'une phrase commence au mot 0.
 - La TOUTE PREMIERE image = la plus forte qui colle au sujet, pour arreter le scroll.
 - Pour chaque phrase, prends d'abord des plans dont « colle aux phrases » cite CETTE phrase.
@@ -308,6 +311,17 @@ def _num(x, default, kind=int):
         return default
 
 
+def reserved(p: Dict) -> Dict[str, int]:
+    """{url: sentence} — a video found in a club's (a company's…) official channel for one sentence of the director
+    is kept for that sentence: the editor put the Camp Nou and the Wydad in the sentence before (2026-11-10)."""
+    out: Dict[str, set] = {}
+    for s in (p.get("suggestions") or {}).get("scenes") or []:
+        for c in s.get("candidats") or []:
+            if "chaine" in (c.get("origines") or []) and s.get("phrase_n"):
+                out.setdefault(c["url"], set()).add(s["phrase_n"])
+    return {u: next(iter(ks)) for u, ks in out.items() if len(ks) == 1}
+
+
 def set_aside(shot: Dict) -> Optional[str]:
     """Why the code keeps a shot out of the edit by itself (the person can bring it back), or None."""
     if shot.get("pertinence", 5) <= 3:
@@ -350,8 +364,11 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
         for k, m in enumerate(metas):
             if m and m.get("path"):
                 report(f"découpage en plans ({k + 1}/{len(metas)})", 0.5 + 0.15 * k / len(metas))
+                official = reserved(p)
                 for s in shots_of(m["path"], k, os.path.join(base, "thumbs")):
                     s.update(credit=m.get("handle") or m.get("uploader") or "", url=m["url"], titre_source=m["titre"])
+                    if official.get(m["url"]):
+                        s["reserve"] = official[m["url"]]
                     shots.append(s)
         if not shots:
             raise MontageProError("Aucune source n'a pu être téléchargée : " +
@@ -396,8 +413,8 @@ def images_v2(p: Dict, shots: List[Dict], metas: List[Optional[Dict]], base: str
         if family == "actualite":
             report("contrôle des lieux", 0.8)
             off = vision.other_places(sujet, metas)
-            for s in shots:
-                if s["source"] in off and s.get("garde"):
+            for s in shots:                 # an official channel's video was asked by the director (the Camp Nou)
+                if s["source"] in off and s.get("garde") and not s.get("reserve"):
                     s.update(garde=False, ecarte="autre lieu", ailleurs=off[s["source"]])
         report("recherche par le sens", 0.84)
         ideas = vision.ideas_of(p)
@@ -511,15 +528,34 @@ def shorter_hook(p: Dict, t: Dict, seconds: float, gemini=None) -> Optional[str]
 
 # ---------------------------------------------------------------- 3. the edit
 
-def _edit_prompt(v: Dict, shots: List[Dict]) -> str:
+def _edit_prompt(v: Dict, shots: List[Dict], realisation: Optional[List[Dict]] = None) -> str:
     words = v["words"]
     lines = []
     for i, ps in enumerate(v["passages"], 1):
         ws = " ".join(f"{k}:{words[w]['w']}@{words[w]['start']:.2f}" for k, w in enumerate(ps["words"]))
         lines.append(f"Phrase {i} ({ps['start']:.2f}-{ps['end']:.2f} s) : {ws}")
-    rushes = "\n".join(f"{s['id']} | {s.get('source')} | {s['end'] - s['start']:.1f}s | {s.get('force')} | {_fits(s)} | "
+    rushes = "\n".join(f"{s['id']} | {s.get('source')} « {str(s.get('titre_source') or '')[:50]} »"
+                       + (f" (RESERVE a la phrase {s['reserve']})" if s.get("reserve") else "") + " | "
+                       f"{s['end'] - s['start']:.1f}s | {s.get('force')} | {_fits(s)} | "
                        f"{s.get('desc')} | {s.get('probleme') or '-'}" for s in shots)
-    return EDIT.format(phrases="\n".join(lines), plans=rushes)
+    return EDIT.format(phrases="\n".join(lines), plans=rushes, realisation=_directed(realisation, len(v["passages"])))
+
+
+def _directed(realisation: Optional[List[Dict]], n: int) -> str:
+    """The director's plan for the editor (adaptation/realisateur): each sentence's visuals in the voice's order, from
+    their word — measured on 2026-11-10, without it the Camp Nou of « dépassera le Camp Nou et accueillera le Raja, le
+    Wydad et l'équipe nationale » went to the sentence before, and that sentence opened on foundations."""
+    rows = []
+    for e in realisation or []:
+        vis = e.get("visuels") or []
+        if 1 <= e.get("phrase", 0) <= n and len(vis) > 1:
+            rows.append(f"Phrase {e['phrase']} : " + " -> ".join(
+                (f"« {v['mot']} » " if v.get("mot") else "") + v["image"] for v in vis))
+    if not rows:
+        return ""
+    return ("\nLe REALISATEUR a decide ces phrases a plusieurs temps : une coupe PAR visuel, DANS CET ORDRE, chacune sur "
+            "son mot (« mot ») ; prends pour chaque visuel le rush qui le montre (la source le dit souvent : le nom du "
+            "club, du lieu) :\n" + "\n".join(rows) + "\n")
 
 
 EDIT_MAX = 60               # shots shown to the editor (109 made its answer too long: cut, the montage fell back)
@@ -531,6 +567,9 @@ def editable(shots: List[Dict], n_sentences: int) -> List[Dict]:
     if len(shots) <= EDIT_MAX:
         return shots
     keep = {}
+    for src in {s["source"] for s in shots if s.get("reserve")}:     # each official channel's video: its 3 strongest
+        for s in sorted((s for s in shots if s["source"] == src), key=lambda s: -(s.get("force") or 0))[:3]:
+            keep[s["id"]] = s
     per = max(4, EDIT_MAX // max(1, n_sentences) - 2)
     for k in range(n_sentences):
         for s in sorted(shots, key=lambda s: -((s.get("colle") or [0.0] * n_sentences)[k] if k < len(s.get("colle") or []) else 0.0))[:per]:
@@ -550,10 +589,28 @@ def _fits(shot: Dict) -> str:
     return " ".join(f"{k}:{v:.2f}" for v, k in best) or "-"
 
 
-def build_edit(raw: Dict, v: Dict, shots: List[Dict]) -> List[Dict]:
+def quick_words(realisation: Optional[List[Dict]], v: Dict) -> Dict[int, set]:
+    """{sentence: its words where the director starts a visual} — there a cut may last RAFALE_S only (« الرجاء
+    والوداد والمنتخب » : 0.6 s between two clubs, the Wydad was dropped by the 1 s rule)."""
+    plain = lambda w: re.sub(r"[^\w]", "", str(w or "")).lower()
+    out = {}
+    for e in realisation or []:
+        i = e.get("phrase", 0)
+        if not 1 <= i <= len(v["passages"]) or len(e.get("visuels") or []) < 2:
+            continue
+        said = [plain(v["words"][w]["w"]) for w in v["passages"][i - 1]["words"]]
+        for vis in e["visuels"]:
+            m = plain(vis.get("mot"))
+            k = next((k for k, w in enumerate(said) if m and w == m), None)
+            if k:
+                out.setdefault(i, set()).add(k)
+    return out
+
+
+def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, set]] = None) -> List[Dict]:
     """Gemini's edit made safe: only kept shots, never one twice, cuts on the words' starts, at least
-    MIN_CUT_S each, the whole voice covered (each sentence until the next one starts, the last + 0.6 s).
-    [{phrase, plan, debut, fin}] in video time."""
+    MIN_CUT_S each (RAFALE_S on a word where the director starts a visual: quick), the whole voice covered (each
+    sentence until the next one starts, the last + 0.6 s). [{phrase, plan, debut, fin}] in video time."""
     from adaptation.vision import MAX_PER_SOURCE
     by_id = {s["id"]: s for s in shots}
     used, edl = set(), []
@@ -567,16 +624,17 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict]) -> List[Dict]:
         return sc[i - 1] if i - 1 < len(sc) else 0.0
 
     def free(prefer: Optional[str] = None, i: int = 1) -> Optional[str]:
+        mine = lambda s: s.get("reserve") in (None, i)              # an official channel's video: its sentence only
         roomy = lambda s: per_source.get(s["source"], 0) < MAX_PER_SOURCE      # variety: 2 shots a video at most
-        if prefer in by_id and prefer not in used and roomy(by_id[prefer]):
+        if prefer in by_id and prefer not in used and roomy(by_id[prefer]) and mine(by_id[prefer]):
             return prefer
         last = by_id.get(edl[-1]["plan"]) if edl else None
-        spare = sorted(shots, key=lambda s: (-fit(s, i), -(s.get("pertinence") or 0), -(s.get("force") or 0)))
+        spare = sorted((s for s in shots if mine(s)), key=lambda s: (-fit(s, i), -(s.get("pertinence") or 0), -(s.get("force") or 0)))
         for ok in (lambda s: roomy(s) and (not last or s["source"] != last["source"]), roomy, lambda s: True):
             sid = next((s["id"] for s in spare if s["id"] not in used and ok(s)), None)
             if sid:                                 # the best unused one for this sentence, another video if possible
                 return sid
-        return None
+        return next((s["id"] for s in shots if s["id"] not in used), None)     # only reserved ones left
     for i, (ps, end) in enumerate(zip(ps_all, ends), 1):
         start = 0.0 if i == 1 else ps["start"]
         cuts = sorted((c for c in asked.get(i, []) if isinstance(c, dict)), key=lambda c: _num(c.get("mot"), 0))
@@ -584,7 +642,8 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict]) -> List[Dict]:
         for c in cuts or [{"mot": 0}]:
             k = min(max(0, _num(c.get("mot"), 0)), len(ps["words"]) - 1) if ps["words"] else 0
             at = start if not times else words[ps["words"][k]]["start"]
-            if times and at - times[-1] < MIN_CUT_S:            # too short: this cut is dropped
+            shortest = RAFALE_S if k in (quick or {}).get(i, ()) else MIN_CUT_S
+            if times and at - times[-1] < shortest:             # too short: this cut is dropped
                 continue
             sid = free(str(c.get("plan") or ""), i)
             if sid is None:
@@ -1080,12 +1139,14 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     if not keep:
         report(f"montage {t['channel']}", offset + share * 0.25)
         footage = [s for s in shots if not s.get("graphique")]     # a graphic is placed on its sentence, not chosen
-        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(footage, len(t["voice"]["passages"])))}],
+        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(footage, len(t["voice"]["passages"])),
+                                                                              p.get("realisation"))}],
                                                       max_tokens=16000, timeout=240, temperature=0.4)
         lost = secours.failed(raw) or not (raw or {}).get("montage")
         secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
                                    "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)
-        edl = graphiques.with_graphics(build_edit({} if lost else raw, t["voice"], footage), shots)
+        edl = graphiques.with_graphics(build_edit({} if lost else raw, t["voice"], footage,
+                                                  quick_words(p.get("realisation"), t["voice"])), shots)
     choose_music(p, t)
     if keep and t.get("montage"):       # only the music changed: the person's montage kept, its song replaced
         doc = copy.deepcopy(t["montage"])
