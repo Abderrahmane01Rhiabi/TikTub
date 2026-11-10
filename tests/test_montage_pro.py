@@ -43,6 +43,16 @@ def test_the_sources_are_the_checked_videos_with_good_moments_best_first():
     assert [r["url"] for r in rows] == ["u2", "u1"]
 
 
+def test_every_visual_gets_a_source_before_a_second_one_for_the_same(project):
+    g = lambda *ks: {"par_scene": {k: {"niveau": "equivalente", "moments": []} for k in ks}}
+    p = {"suggestions": {"scenes": [], "verifs": {
+        "stade": {"par_scene": {"0": {"niveau": "exacte", "moments": []}, "1": {"niveau": "exacte", "moments": []}}},
+        "nou1": g("2"), "nou2": g("2"), "nou3": g("2"), "raja": g("3"), "wac": {"par_scene": {"4": {"niveau": "partielle", "moments": []}}}}}}
+    rows = mp.choose_sources(p, n=4)
+    assert [r["url"] for r in rows] == ["stade", "nou1", "raja", "wac"]    # the Wydad before a second Camp Nou
+    assert "scenes" not in rows[0]
+
+
 def test_a_long_video_is_downloaded_around_its_good_moments_only():
     assert mp.spans_of({"duree": 90, "moments": [{"debut": 5, "fin": 8}]}) is None          # short: whole
     spans = mp.spans_of({"duree": 900, "moments": [{"debut": 100, "fin": 104}, {"debut": 106, "fin": 110},

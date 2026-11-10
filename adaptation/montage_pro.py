@@ -185,7 +185,9 @@ def recit_part(name: str, style: Optional[str] = None) -> str:
 # ---------------------------------------------------------------- 1. the stock
 
 def choose_sources(p: Dict, n: int = MAX_SOURCES) -> List[Dict]:
-    """The checked videos with good moments, best first: [{url, titre, duree, moments, score}]."""
+    """The checked videos with good moments: first, one by one, the video that brings the most to the scenes still
+    without any (each of the director's visuals gets its source: the Wydad's after the Raja's), then the best left:
+    [{url, titre, duree, moments, score}]."""
     sug = p.get("suggestions") or {}
     cands = {c["url"]: c for c in finder.all_candidates(sug)}
     chosen = {x["url"] for x in p.get("picks") or [] if x and x.get("url")}
@@ -200,9 +202,22 @@ def choose_sources(p: Dict, n: int = MAX_SOURCES) -> List[Dict]:
         rows.append({"url": url, "titre": c.get("title") or v.get("title") or url,
                      "duree": c.get("duration") or v.get("duration"),
                      "moments": [m for e in good for m in e.get("moments") or []],
-                     "score": sum(3 - finder.RANK[e["niveau"]] for e in good) + (2 if url in chosen else 0)})
+                     "score": sum(3 - finder.RANK[e["niveau"]] for e in good) + (2 if url in chosen else 0),
+                     "scenes": {k: 3 - finder.RANK[e["niveau"]] for k, e in (v.get("par_scene") or {}).items()
+                                if isinstance(e, dict) and e.get("niveau") in finder.RANK}})
     rows.sort(key=lambda r: -r["score"])
-    return rows[:n]
+    out, covered = [], set()
+    while len(out) < n:
+        gain = lambda r: sum(w for k, w in r["scenes"].items() if k not in covered)
+        top = max((r for r in rows if r not in out and gain(r) > 0), key=gain, default=None)
+        if not top:
+            break
+        out.append(top)
+        covered |= set(top["scenes"])
+    out += [r for r in rows if r not in out][:n - len(out)]
+    for r in out:
+        r.pop("scenes")
+    return out
 
 
 def spans_of(row: Dict) -> Optional[List[List[float]]]:

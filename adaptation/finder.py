@@ -165,6 +165,33 @@ def search_channel(handle: str, query: str, n: int = 8) -> List[Dict]:
              "query": query} for e in (info.get("entries") or [])[:n] if e.get("id")]
 
 
+def channel_info(handle: str) -> Optional[Dict]:
+    """{id: "channel/UC…", nom, abonnes} of an @handle, or None when it does not exist."""
+    import yt_dlp
+    try:
+        with yt_dlp.YoutubeDL(ytdlp_opts(extract_flat=True, playlistend=1)) as ydl:
+            info = ydl.extract_info(f"https://www.youtube.com/@{handle.lstrip('@')}/videos", download=False) or {}
+    except Exception:
+        return None
+    cid = info.get("channel_id")
+    return {"id": "channel/" + cid, "nom": info.get("channel") or "", "abonnes": info.get("channel_follower_count")} \
+        if cid else None
+
+
+def search_channels(name: str, n: int = 8) -> List[Dict]:
+    """YouTube's channel search (its « Chaînes » filter): [{id: "channel/UC…", nom, abonnes}]."""
+    import yt_dlp
+    url = f"https://www.youtube.com/results?search_query={quote_plus(name)}&sp=EgIQAg%253D%253D"
+    try:
+        with yt_dlp.YoutubeDL(ytdlp_opts(extract_flat=True, playlistend=n)) as ydl:
+            info = ydl.extract_info(url, download=False) or {}
+    except Exception:
+        return []
+    return [{"id": "channel/" + e["channel_id"], "nom": e.get("channel") or e.get("title") or "",
+             "abonnes": e.get("channel_follower_count")}
+            for e in (info.get("entries") or [])[:n] if e.get("channel_id")]
+
+
 SORT_PROMPT = """On cherche les videos d'origine des scenes d'un Short viral. Pour chaque scene, voici des resultats
 de recherche YouTube (numero, titre, chaine, duree en s). Garde seulement ceux qui peuvent plausiblement contenir
 la scene (le meme type d'evenement filme : une compilation du bon theme est bonne, un sujet voisin ne l'est pas).
@@ -442,7 +469,8 @@ def auto_pick(sug: Dict, sb_plans: List[Dict]) -> List[Optional[Dict]]:
 
 
 ORIGINS = {"youtube": "recherche YouTube", "langue": "recherche en langue locale", "image": "trouvée par image",
-           "compte": "compte crédité", "action": "recherche par action", "cite": "cité par un remontage"}
+           "compte": "compte crédité", "chaine": "chaîne officielle", "action": "recherche par action",
+           "cite": "cité par un remontage"}
 
 
 def _add(cands: List[Dict], c: Dict, origin: str, by_url: Dict[str, Dict]):
@@ -460,7 +488,7 @@ def _add(cands: List[Dict], c: Dict, origin: str, by_url: Dict[str, Dict]):
     cands.append(c)
 
 
-TEXT_ORIGINS = ("youtube", "langue", "compte")
+TEXT_ORIGINS = ("youtube", "langue", "compte", "chaine")
 
 
 def score(c: Dict) -> int:
@@ -469,7 +497,7 @@ def score(c: Dict) -> int:
     picture AND by words is the strongest."""
     o = c.get("origines") or []
     by_text = any(x in o for x in TEXT_ORIGINS)
-    return (2 * min(c.get("hits") or 0, 2) + 2 * ("compte" in o) + ("langue" in o) + ("youtube" in o)
+    return (2 * min(c.get("hits") or 0, 2) + 2 * ("compte" in o) + 2 * ("chaine" in o) + ("langue" in o) + ("youtube" in o)
             + (4 if by_text and "image" in o else 0))
 
 
@@ -522,6 +550,11 @@ def suggest(ref: Dict, reference_url: str = "", work_dir: Optional[str] = None, 
     for i, s in enumerate(found):
         s["candidats"] = s["candidats"][:PER_SCENE + 2]
         by_url[i] = {c["url"]: c for c in s["candidats"]}
+        if s.get("chaine") and not s.get("pub"):    # the director's entity: its official channel's own videos
+            report(f"chaîne officielle : {s['chaine']['nom']}", 0.39)
+            for c in search_in(s["chaine"]["id"], s["chaine"]["requete"], 4):
+                if c["id"] not in skip:
+                    _add(s["candidats"], c, "chaine", by_url[i])
 
     # 2. the Short's pictures, searched by image
     images = {"frames": [], "source": None, "error": None, "search_error": None}
@@ -614,7 +647,19 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
             if top and len(todo) < cap:
                 todo.append(top)
                 picked.add(top["url"])
-    todo += [c for c in best(all_candidates(sug)) if c["url"] not in picked][:n - len(todo)]
+    # the rest: the best of all, 2 checks a scene at most while others are left — never the whole budget on one
+    # scene (measured, the director's Camp Nou of 2026-11-10: its official-channel videos took 4 of the places left)
+    where = {}
+    for k, s in enumerate(sug.get("scenes") or []):
+        for c in s.get("candidats") or []:
+            where.setdefault(c["url"], set()).add(k)
+    count = lambda k: sum(k in where.get(c["url"], ()) for c in todo)
+    rest = [c for c in best(all_candidates(sug)) if c["url"] not in picked]
+    for c in rest:
+        if len(todo) < n and all(count(k) < 2 for k in where.get(c["url"], ())):
+            todo.append(c)
+            picked.add(c["url"])
+    todo += [c for c in rest if c["url"] not in picked][:n - len(todo)]
     scenes_, plans = sug.get("scenes") or [], ref.get("plans") or []
     model = model_of(ref)
     extra = {"model": model} if model else {}

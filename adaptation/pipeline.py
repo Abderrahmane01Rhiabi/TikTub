@@ -846,6 +846,7 @@ def run_images(pid: str, report: Optional[Report] = None):
             report("le réalisateur choisit comment montrer chaque phrase", 0.02)
             realisation = realisateur.plan(p)
             if realisation:
+                realisateur.channels(realisation, report=lambda ph: report(ph, 0.03))
                 p["realisation"] = realisation
                 save(p)
         if realisation:

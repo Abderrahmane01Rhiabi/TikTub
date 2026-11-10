@@ -355,7 +355,7 @@ const AD_LEVEL = { exacte: ['ok', 'vidéo exacte'], equivalente: ['ok', 'images 
 const AD_VERDICT = { oui: ['ok', 'vidéo exacte trouvée'], probable: ['ok', 'images équivalentes'],
   partielle: ['warn', 'partielle : à regarder'], non: ['bad', 'rien d\'utile'] };
 const AD_RANK = { exacte: 0, equivalente: 1, partielle: 2, rien: 4 };
-const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', perso: 'ton lien', action: 'par action', cite: 'cité par un remontage' };
+const AD_ORIGIN = { youtube: 'YouTube', langue: 'langue locale', image: 'par image', compte: 'compte crédité', chaine: 'chaîne officielle', perso: 'ton lien', action: 'par action', cite: 'cité par un remontage' };
 
 function adVerifOf(sug, url){
   const v = (sug.verifs || {})[url];
@@ -1253,7 +1253,8 @@ function adRealisationHtml(p){
   if (!r || !r.length) return '';
   return `<details style="margin-top:6px"><summary class="tiny" style="cursor:pointer">${icon('film', 12)} <b>Le réalisateur IA</b> : comment chaque phrase est montrée</summary>
     <ul class="tiny" style="margin:6px 0 0 18px;padding:0">${r.map(e => `<li><b>Phrase ${e.phrase} · ${esc(AD_KINDS[e.type] || e.type)}</b> — ${
-      e.visuels.map(v => esc(v.image)).join(' <i>+</i> ')}${e.graphique ? `<br><span style="color:#f5c56d">✎ ${adGraphicState(p, e)} : ${esc(e.graphique.contenu || '')}</span>` : ''}</li>`).join('')}</ul></details>`;
+      e.visuels.map(v => (v.mot ? `<span style="color:var(--muted)">« ${esc(v.mot)} »</span> ` : '') + esc(v.image)
+        + (v.entite && v.entite.chaine_nom ? ` <span style="color:#7fd1a0">· chaîne officielle ${esc(v.entite.chaine_nom)}</span>` : '')).join(' <i>+</i> ')}${e.graphique ? `<br><span style="color:#f5c56d">✎ ${adGraphicState(p, e)} : ${esc(e.graphique.contenu || '')}</span>` : ''}</li>`).join('')}</ul></details>`;
 }
 
 // what became of a graphic the director asked for (adaptation/graphiques: 2 at most, never two sentences in a row,

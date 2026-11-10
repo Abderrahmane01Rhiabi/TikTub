@@ -518,6 +518,16 @@ def test_verify_best_gives_every_scene_a_check_before_the_high_scores():
     assert seen == [f"t{k}" for k in range(7)] + ["i0"]      # Script d'abord: every plan's words before any picture
 
 
+def test_one_scene_does_not_take_every_check_left():
+    from adaptation import finder
+    c = lambda u, sc, o="chaine": {"url": u, "score": sc, "duration": 60, "origines": [o]}
+    sug = {"scenes": [{"candidats": [c("nou1", 5), c("nou2", 5), c("nou3", 5), c("nou4", 5)]},     # the Camp Nou
+                      {"candidats": [c("wac1", 3), c("wac2", 3)]}]}                                   # the Wydad
+    seen = []
+    finder.verify_best(sug, {}, n=5, words_share=1.0, workers=1, checker=lambda u, s, p: seen.append(u) or {"verdict": "non"})
+    assert seen == ["nou1", "wac1", "nou2", "wac2", "nou3"]   # 2 a scene while another is left, then the best
+
+
 # ---------------------------------------------------------------- image search / frames
 
 def test_imagesearch_keeps_one_spelling_of_each_readable_video():
