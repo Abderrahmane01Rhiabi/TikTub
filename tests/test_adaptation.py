@@ -3,6 +3,7 @@ script checks, voice alignment, and one real (tiny, synthetic) render with
 the automatic checks run on it."""
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -708,7 +709,7 @@ def test_an_old_file_under_the_same_name_is_never_taken_for_the_new_video(monkey
     seen = []
 
     def fake(url, d, name, sections=None, fmt=sources.VIDEO_FORMAT):
-        seen.append(sorted(os.listdir(d)))             # what yt-dlp would find there
+        seen.append(sorted(f for f in os.listdir(d) if f.startswith("pro2")))   # what yt-dlp would find there
         (tmp_path / f"{name}.mp4").write_bytes(b"new")
         return str(tmp_path / f"{name}.mp4")
     monkeypatch.setattr(sources, "_download", fake)

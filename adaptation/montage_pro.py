@@ -38,6 +38,8 @@ Report = Callable[[str, float], None]
 
 W, H, FPS = 1080, 1920, 30
 MAX_SOURCES = 8                 # videos downloaded for the stock (more sources = more variety)
+MAX_SOURCES_ALL = 10            # up to this many when the director asked for more visuals (one source each)
+SPECIALIST = 2                  # a video showing 1-2 of the scenes was made for them: chosen before a « shows 5 » one
 PAD = 3.0                       # seconds kept around each good moment of a long video
 SHOT_S = 2.6                    # a long take is cut into pieces about this long
 MAX_SHOTS_PER_SOURCE = 24
@@ -56,6 +58,7 @@ SONS_FAMILLE = {"actualite": {"max": 2, "types": {"whoosh", "pop"}},
                 "motivation": {"max": 1, "types": {"whoosh"}},
                 "satisfying": {"max": 1, "types": {"pop", "ding"}}}
 REVELATION = {"mystere", "fait_surprenant", "vrai_faux", "chute", "revelation_lente", "mythe_realite"}
+BURNT_TEXT = re.compile(r"texte|chiffre|sous-titre|titre|ecrit|écrit", re.I)   # a shot whose own words may say something else
 DIGIT = re.compile(r"[0-9\u0660-\u0669]")
 
 # The narrative styles: the app's one catalogue (adaptation/recits.py), each family's rules by style name
@@ -95,7 +98,8 @@ Monte la video comme un pro (le sens + l'emotion + l'attention), pas du mot a mo
 - Au plus 2 plans d'une meme source dans toute la video.
 - VARIETE : jamais le meme plan deux fois ; deux plans qui se suivent ne se ressemblent pas (alterne large / serre,
   change de lieu ou d'angle) ; evite deux plans de suite de la meme source quand une autre colle aussi.
-- Evite les plans a probleme sauf s'il n'y a pas mieux.
+- Evite les plans a probleme sauf s'il n'y a pas mieux ; un plan avec du TEXTE ou des chiffres incrustes jamais sur
+  une phrase qui dit un chiffre, une date ou un montant (il dirait autre chose que la voix).
 JSON uniquement : {{"montage": [{{"phrase": 1, "coupes": [{{"plan": "id", "mot": 0}}]}}]}}"""
 
 HOOK_PROMPT = """Raccourcis l'accroche d'un YouTube Short ({langue}) : elle dure {duree:.1f} s a l'oral, il faut 3 s au plus
@@ -187,11 +191,16 @@ def recit_part(name: str, style: Optional[str] = None) -> str:
 
 # ---------------------------------------------------------------- 1. the stock
 
-def choose_sources(p: Dict, n: int = MAX_SOURCES) -> List[Dict]:
+def choose_sources(p: Dict, n: Optional[int] = None) -> List[Dict]:
     """The checked videos with good moments: first, one by one, the video that brings the most to the scenes still
-    without any (each of the director's visuals gets its source: the Wydad's after the Raja's), then the best left:
-    [{url, titre, duree, moments, score}]."""
+    without any (each of the director's visuals gets its source: the Wydad's after the Raja's), the videos made for
+    one or two scenes before the ones said to show many (2026-11-11: an explainer said to show « exactly » 5 scenes,
+    the moussem tent and the national team among them, took their place from « The Moussem of Tan-Tan » and the
+    Lions' celebrations), then the best left: [{url, titre, duree, moments, score}]. As many as the director's
+    visuals, between MAX_SOURCES and MAX_SOURCES_ALL."""
     sug = p.get("suggestions") or {}
+    if n is None:
+        n = min(MAX_SOURCES_ALL, max(MAX_SOURCES, len(sug.get("scenes") or [])))
     cands = {c["url"]: c for c in finder.all_candidates(sug)}
     chosen = {x["url"] for x in p.get("picks") or [] if x and x.get("url")}
     rows = []
@@ -209,14 +218,17 @@ def choose_sources(p: Dict, n: int = MAX_SOURCES) -> List[Dict]:
                      "scenes": {k: 3 - finder.RANK[e["niveau"]] for k, e in (v.get("par_scene") or {}).items()
                                 if isinstance(e, dict) and e.get("niveau") in finder.RANK}})
     rows.sort(key=lambda r: -r["score"])
-    out, covered = [], set()
-    while len(out) < n:
-        gain = lambda r: sum(w for k, w in r["scenes"].items() if k not in covered)
-        top = max((r for r in rows if r not in out and gain(r) > 0), key=gain, default=None)
-        if not top:
-            break
-        out.append(top)
-        covered |= set(top["scenes"])
+    out, covered = [], {}               # {scene: the best level a chosen video brings it}
+    gain = lambda r: sum(max(0, w - covered.get(k, 0)) for k, w in r["scenes"].items())
+    for special in (True, False):
+        while len(out) < n:
+            top = max((r for r in rows if r not in out and gain(r) > 0
+                       and (not special or len(r["scenes"]) <= SPECIALIST)), key=gain, default=None)
+            if not top:
+                break
+            out.append(top)
+            for k, w in top["scenes"].items():
+                covered[k] = max(w, covered.get(k, 0))
     out += [r for r in rows if r not in out][:n - len(out)]
     for r in out:
         r.pop("scenes")
@@ -544,18 +556,23 @@ def _edit_prompt(v: Dict, shots: List[Dict], realisation: Optional[List[Dict]] =
 def _directed(realisation: Optional[List[Dict]], n: int) -> str:
     """The director's plan for the editor (adaptation/realisateur): each sentence's visuals in the voice's order, from
     their word — measured on 2026-11-10, without it the Camp Nou of « dépassera le Camp Nou et accueillera le Raja, le
-    Wydad et l'équipe nationale » went to the sentence before, and that sentence opened on foundations."""
+    Wydad et l'équipe nationale » went to the sentence before, and that sentence opened on foundations. Every
+    sentence, one visual too (2026-11-11: the hanging gardens went to the budget sentence, the stairs and gardens one
+    got foundations and a train station)."""
     rows = []
     for e in realisation or []:
-        vis = e.get("visuels") or []
-        if 1 <= e.get("phrase", 0) <= n and len(vis) > 1:
+        vis = [v for v in e.get("visuels") or [] if v.get("image")]
+        if 1 <= e.get("phrase", 0) <= n and vis:
             rows.append(f"Phrase {e['phrase']} : " + " -> ".join(
-                (f"« {v['mot']} » " if v.get("mot") else "") + v["image"] for v in vis))
+                (f"« {v['mot']} » " if v.get("mot") and len(vis) > 1 else "") + v["image"] for v in vis))
     if not rows:
         return ""
-    return ("\nLe REALISATEUR a decide ces phrases a plusieurs temps : une coupe PAR visuel, DANS CET ORDRE, chacune sur "
-            "son mot (« mot ») ; prends pour chaque visuel le rush qui le montre (la source le dit souvent : le nom du "
-            "club, du lieu) :\n" + "\n".join(rows) + "\n")
+    return ("\nLe REALISATEUR a decide ce qu'on voit sur chaque phrase ; prends pour chaque visuel le rush qui le montre "
+            "(la source le dit souvent : le nom du club, du lieu). Une phrase a plusieurs temps : une coupe PAR visuel, "
+            "DANS CET ORDRE, chacune sur son mot (« mot »). Un rush qui montre une AUTRE sorte de chose que le visuel "
+            "ne le montre pas (une tente nomade du desert n'est pas une tente de moussem marocaine, un autre stade "
+            "n'est pas ce stade) : prends-en un autre ; pour une comparaison sans le bon rush, montre le sujet "
+            "lui-meme :\n" + "\n".join(rows) + "\n")
 
 
 EDIT_MAX = 60               # shots shown to the editor (109 made its answer too long: cut, the montage fell back)
@@ -611,7 +628,7 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, 
     """Gemini's edit made safe: only kept shots, never one twice, cuts on the words' starts, at least
     MIN_CUT_S each (RAFALE_S on a word where the director starts a visual: quick), the whole voice covered (each
     sentence until the next one starts, the last + 0.6 s). [{phrase, plan, debut, fin}] in video time."""
-    from adaptation.vision import MAX_PER_SOURCE
+    from adaptation.vision import FITS, MAX_PER_SOURCE
     by_id = {s["id"]: s for s in shots}
     used, edl = set(), []
     per_source: Dict = {}
@@ -627,7 +644,12 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, 
         mine = lambda s: s.get("reserve") in (None, i)              # an official channel's video: its sentence only
         roomy = lambda s: per_source.get(s["source"], 0) < MAX_PER_SOURCE      # variety: 2 shots a video at most
         if prefer in by_id and prefer not in used and roomy(by_id[prefer]) and mine(by_id[prefer]):
-            return prefer
+            if not BURNT_TEXT.search(by_id[prefer].get("probleme") or ""):
+                return prefer
+            clean = next((s["id"] for s in sorted(shots, key=lambda s: -fit(s, i)) if s["id"] not in used
+                          and fit(s, i) >= FITS and mine(s) and roomy(s)
+                          and not BURNT_TEXT.search(s.get("probleme") or "")), None)
+            return clean or prefer      # burnt-in text (« 5,000 2028 » on « 5 billion »): another shot of this sentence
         last = by_id.get(edl[-1]["plan"]) if edl else None
         spare = sorted((s for s in shots if mine(s)), key=lambda s: (-fit(s, i), -(s.get("pertinence") or 0), -(s.get("force") or 0)))
         for ok in (lambda s: roomy(s) and (not last or s["source"] != last["source"]), roomy, lambda s: True):

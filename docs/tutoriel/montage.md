@@ -50,6 +50,9 @@ Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fai
 | **Repêchage** | un plan écarté comme « hors sujet » mais qui colle bien à une phrase revient dans le stock (badge vert *repêché*) |
 | **Contrôle du lieu** (actualité) | une vidéo sur **un autre pays ou une autre ville** (NEOM pour Benslimane, Mayotte pour Casablanca) est écartée — l'autre quartier de la même ville reste |
 | **Recherche de secours** | pour une phrase que rien ne fait passer, une vidéo est cherchée sur **Pixabay** et choisie par le sens (badge vert *secours*) ; pas de clip généré par IA en actualité |
+| **Les vidéos du stock** | chaque image du réalisateur a **sa** vidéo : d'abord les vidéos faites pour **une ou deux** de ses images (« The Moussem of Tan-Tan » pour la tente, une célébration des Lions pour la sélection), **avant** une vidéo qui prétend tout montrer (depuis le 11 novembre) ; jusqu'à **10 vidéos** quand il a demandé 10 images (8 sinon) |
+| **Le bon objet** | le monteur IA reçoit l'image voulue de **chaque** phrase : un plan qui montre **une autre sorte de chose** (une tente nomade du désert pour une tente de moussem, un autre stade) ne compte pas ; pour une comparaison sans le bon plan, il montre le sujet lui-même |
+| **Texte incrusté** | un plan qui porte son propre texte ou des chiffres (« 5,000 – 2028 ») est remplacé par un plan propre de la même phrase quand il y en a un : il dirait autre chose que la voix |
 | **Variété** | au plus **2 plans de la même vidéo** dans un montage |
 | **Relecture** | le montage fini est relu (comme un monteur qui se relit) : chaque plan qui **contredit** sa phrase ou **ne colle pas** est entouré d'**orange** dans la piste Images |
 

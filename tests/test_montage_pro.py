@@ -60,8 +60,33 @@ def test_the_editor_follows_the_director_s_times_in_the_voice_s_order():
          {"phrase": 9, "visuels": [{"image": "a"}, {"image": "b"}]}]
     text = mp._directed(r, 2)
     assert "Phrase 2 : « كامب » le Camp Nou -> « الرجاء » les supporters du Raja -> « والوداد » les supporters du Wydad" in text
-    assert "Phrase 1" not in text and "Phrase 9" not in text           # one visual: free; not in this voice: left out
-    assert mp._directed(None, 2) == "" and mp._directed(r[:1], 2) == ""
+    assert "Phrase 1 : le stade" in text and "Phrase 9" not in text    # one visual too; not in this voice: left out
+    assert "tente nomade" in text                                      # another kind of thing does not show it
+    assert mp._directed(None, 2) == "" and mp._directed([{"phrase": 1, "visuels": []}], 2) == ""
+
+
+def test_a_video_made_for_a_scene_beats_one_said_to_show_many():
+    # 2026-11-11: an explainer said to show « exactly » 5 scenes took the moussem tent's and the national team's place
+    ex = lambda *ks: {"par_scene": {k: {"niveau": "exacte", "moments": []} for k in ks}}
+    eq = lambda *ks: {"par_scene": {k: {"niveau": "equivalente", "moments": []} for k in ks}}
+    p = {"suggestions": {"scenes": [{}] * 6, "verifs": {
+        "explainer": ex("0", "1", "2", "3", "4"), "moussem": eq("3"), "lions": eq("4"), "chantier": eq("1"),
+        "nou": eq("5")}}}
+    rows = [r["url"] for r in mp.choose_sources(p, n=5)]
+    assert set(rows[:4]) == {"moussem", "lions", "chantier", "nou"} and rows[4] == "explainer"
+    assert len(mp.choose_sources({"suggestions": {"scenes": [{}] * 10, "verifs": {
+        f"u{k}": eq(str(k)) for k in range(12)}}})) == mp.MAX_SOURCES_ALL     # 10 visuals: 10 sources
+
+
+def test_a_shot_with_burnt_in_text_gives_way_to_a_clean_one_of_its_sentence():
+    v = {"duration": 4.0, "words": [{"w": "خمسة", "start": 0.0}, {"w": "مليار", "start": 2.0}],
+         "passages": [{"start": 0.0, "end": 4.0, "words": [0, 1]}]}
+    stock = [{"id": "T", "source": 0, "start": 0, "end": 3, "colle": [0.5], "probleme": "texte incruste « 5,000 2028 »"},
+             {"id": "C", "source": 1, "start": 0, "end": 3, "colle": [0.4], "probleme": None}]
+    raw = {"montage": [{"phrase": 1, "coupes": [{"plan": "T", "mot": 0}]}]}
+    assert [e["plan"] for e in mp.build_edit(raw, v, stock)] == ["C"]
+    stock[1]["colle"] = [0.0]                                         # nothing else shows it: kept
+    assert [e["plan"] for e in mp.build_edit(raw, v, stock)] == ["T"]
 
 
 def test_a_quick_cut_is_kept_on_a_name_of_the_director_s_list():
