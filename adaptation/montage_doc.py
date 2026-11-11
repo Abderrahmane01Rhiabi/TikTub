@@ -23,7 +23,7 @@ import copy
 import os
 from typing import Dict, List, Optional
 
-MIN_CUT_S = 1.0
+MIN_CUT_S = 0.5                 # the director's quick cuts on a list of names (montage_pro.RAFALE_S)
 VERSIONS = 20
 POSITIONS = ("bas", "milieu", "haut")
 CADRES = {"noir": ("#111111", "#FFFFFF"), "rouge": ("#D62828", "#FFFFFF"), "blanc": ("#FFFFFF", "#111111"),
@@ -80,7 +80,7 @@ def clean(doc: Dict, voice: Dict, shot_ids: List[str], sfx_files: Optional[List[
     for k, e in enumerate(out):                     # back to back: each one ends where the next begins
         e["fin"] = round(out[k + 1]["debut"] if k + 1 < len(out) else end, 2)
         if e["fin"] - e["debut"] < MIN_CUT_S - 0.01:
-            raise MontageError(f"Plan {k + 1} : trop court ({e['fin'] - e['debut']:.1f} s, au moins {MIN_CUT_S:.0f} s).")
+            raise MontageError(f"Plan {k + 1} : trop court ({e['fin'] - e['debut']:.1f} s, au moins {MIN_CUT_S:.1f} s).")
     for e in out:                                   # its sentence: the one being said when it starts
         e["phrase"] = 1 + max((i for i, ps in enumerate(voice.get("passages") or []) if ps["start"] <= e["debut"] + 0.3),
                               default=0)

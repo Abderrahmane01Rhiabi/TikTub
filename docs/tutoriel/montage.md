@@ -81,7 +81,7 @@ Au **stock**, les graphiques sont dans la carte « Graphiques animés » : cliqu
 - **Cadrage** : *zoom* pour serrer l'image (jusqu'à ×1,6), *centrer sur* le sujet (choix de l'IA), la gauche, le centre ou la droite.
 - **Couper ce plan en deux** : la 2ᵉ moitié prend un autre plan de ton stock (change-le ensuite si tu veux).
 - **Supprimer** : le plan d'avant s'allonge pour boucher le trou.
-- **Déplacer une coupe** : glisse la **barre blanche** au début d'un plan. Elle se cale sur le mot le plus proche. Un plan dure au moins 1 seconde.
+- **Déplacer une coupe** : glisse la **barre blanche** au début d'un plan. Elle se cale sur le mot le plus proche. Un plan dure au moins une demi-seconde (assez pour une rafale de noms, comme « الرجاء والوداد »).
 
 ## 5. La voix
 
