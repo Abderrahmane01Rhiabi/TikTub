@@ -330,3 +330,11 @@ def test_the_ai_editor_thinks_less_in_economique():
     import inspect
     src = inspect.getsource(mp.make_target)
     assert "thinking=ECO_THINKING if economique(p) else None" in src and mp.ECO_THINKING <= 1024
+
+
+def test_a_watermarked_shot_gives_way_to_a_clean_one_of_its_sentence():
+    v = {"duration": 4.0, "words": [{"w": "x", "start": 0.0}], "passages": [{"start": 0.0, "end": 4.0, "words": [0]}]}
+    stock = [{"id": "W", "source": 0, "start": 0, "end": 3, "colle": [0.5], "probleme": "filigrane videoblocks"},
+             {"id": "C", "source": 1, "start": 0, "end": 3, "colle": [0.4], "probleme": None}]
+    raw = {"montage": [{"phrase": 1, "coupes": [{"plan": "W", "mot": 0}]}]}
+    assert [e["plan"] for e in mp.build_edit(raw, v, stock)] == ["C"]

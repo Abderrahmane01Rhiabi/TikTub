@@ -162,3 +162,14 @@ def test_a_request_to_the_ai_sees_the_facts_and_its_fact_faults_are_fixed(projec
     ap.revise_plan("ad_f", "c", "raccourcis l'accroche")
 
     assert "Faits verifies" in asked[0] and "10 a 11 fonctionnaires" in asked[0] and fixed == [FACTS]
+
+
+def test_a_banner_in_another_language_blocks_the_approval():
+    # 2026-11-12: an Arabic flamingo Short came with « MAQUILLAGE SECRET » on top
+    b = bundle("Seuls 10 sur 160.", "B.", "C.")
+    b["plans"][0]["textes"]["ar"] = {"bandeau": "MAQUILLAGE SECRET 🦩", "texte": "طيور النحام تضع مكياجا حقيقيا!", "mots_cles": []}
+    assert any("bandeau" in x and "Plan 1" in x for x in sb.problems(b, "ar"))
+    b["plans"][0]["textes"]["ar"]["bandeau"] = "مكياج سري 🦩"
+    assert not any("bandeau" in x for x in sb.problems(b, "ar"))
+    b["plans"][0]["textes"]["fr"]["bandeau"] = "مكياج سري"
+    assert any("bandeau" in x for x in sb.problems(b, "fr"))

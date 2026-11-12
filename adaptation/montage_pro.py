@@ -61,7 +61,8 @@ SONS_FAMILLE = {"actualite": {"max": 2, "types": {"whoosh", "pop"}},
                 "motivation": {"max": 1, "types": {"whoosh"}},
                 "satisfying": {"max": 1, "types": {"pop", "ding"}}}
 REVELATION = {"mystere", "fait_surprenant", "vrai_faux", "chute", "revelation_lente", "mythe_realite"}
-BURNT_TEXT = re.compile(r"texte|chiffre|sous-titre|titre|ecrit|écrit", re.I)   # a shot whose own words may say something else
+BURNT_TEXT = re.compile(r"texte|chiffre|sous-titre|titre|ecrit|écrit|filigrane|watermark", re.I)   # its own words, or a
+# stock site's mark across the picture (« videoblocks », « Movie About You », 2026-11-12, the flamingos)   # a shot whose own words may say something else
 DIGIT = re.compile(r"[0-9\u0660-\u0669]")
 
 # The narrative styles: the app's one catalogue (adaptation/recits.py), each family's rules by style name
