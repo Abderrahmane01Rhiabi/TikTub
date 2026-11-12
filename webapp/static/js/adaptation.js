@@ -78,6 +78,10 @@ async function renderNewAdaptation(){
           <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="discours"> <b>Discours</b> <span class="pill wait">nouveau</span>
             <span class="tiny">un discours ou une interview : l'IA trouve le passage le plus fort, on garde la voix de l'orateur, on ajoute des plans de coupe, des sous-titres traduits et la musique</span></label>
         </div>
+        <div id="adCoutBox" style="display:none"><label class="f" style="margin-top:6px">Coût du montage</label>
+          <select class="f" id="adCout"><option value="">Le réglage de la chaîne (Réglages → Chaînes)</option>
+            <option value="economique">Économique (≈ 0,10-0,15 $) : un modèle gratuit trie les plans avant Gemini</option>
+            <option value="qualite">Qualité max (≈ 0,55 $) : Gemini décrit tous les plans</option></select></div>
         <div id="adSonBox" style="display:none">${rpSoundPicker('notre_musique', 16)}</div>
         <div id="adDsBox" style="display:none">${await dsCreationHtml()}</div>
         <label class="switch" id="adVersionsBox" style="color:var(--text);margin-top:4px"><input type="checkbox" id="adVersions" checked>
@@ -109,6 +113,7 @@ async function renderNewAdaptation(){
     document.getElementById('adSrcBox').style.display = mode === 'sources' ? '' : 'none';
     document.getElementById('adRefBox').style.display = mode === 'idee' ? 'none' : '';
     document.getElementById('adIdeaBox').style.display = mode === 'idee' ? '' : 'none';
+    document.getElementById('adCoutBox').style.display = mode === 'idee' ? '' : 'none';
     document.getElementById('adCreate').lastChild.textContent = mode === 'idee' ? ' Chercher les faits →' : ' Analyser →';
     document.getElementById('adSonBox').style.display = mode === 'reprise' ? '' : 'none';
     document.getElementById('adDsBox').style.display = mode === 'discours' ? '' : 'none';
@@ -126,6 +131,7 @@ async function renderNewAdaptation(){
     const mode = (stage.querySelector('input[name="adMode"]:checked') || {}).value || 'sources';
     const body = { reference_url: mode === 'idee' ? '' : document.getElementById('adRef').value.trim(), mode,
                    idea: mode === 'idee' ? document.getElementById('adIdea').value.trim() : '',
+                   cout: mode === 'idee' && document.getElementById('adCout').value ? document.getElementById('adCout').value : null,
                    versions: document.getElementById('adVersions').checked,
                    source_urls: mode === 'sources' ? document.getElementById('adSrc').value.split('\n').map(x => x.trim()).filter(Boolean) : [],
                    channels: [...stage.querySelectorAll('.ad-target:checked')].map(x => x.value),
@@ -1236,6 +1242,12 @@ function renderAdDone(body, p){
 
 // Images v2 (adaptation/vision): what the meaning search did to the stock, in one line
 function adImagesV2Html(p){
+  const t = p.pretri;     // « économique »: the free model sorted the stock before Gemini described it
+  const eco = t ? `<div class="tiny" style="margin-top:6px">${icon('gauge', 12)} <b>Économique</b> : un modèle gratuit a trié les plans, Gemini n'en a décrit que <b>${t.decrits} sur ${t.total}</b> (les autres : <i>pré-tri</i>, tu peux les remettre).</div>` : '';
+  return eco + adImagesV2Line(p);
+}
+
+function adImagesV2Line(p){
   const v = p.images_v2;
   if (!v) return '';
   const n = k => (v[k] || []).length;

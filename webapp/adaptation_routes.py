@@ -228,6 +228,8 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
     if p.get("pro"):                    # montage pro (« Idée d'abord »): the stock of shots, the casting
         from adaptation import montage_pro
         base["pro"] = True
+        base["cout"] = p.get("cout") or "qualite"
+        base["pretri"] = p.get("pretri")
         for x, t in zip(targets, p.get("targets") or []):
             x["corrections"] = t.get("corrections") or []
             x["montage_plans"] = len((t.get("preview") or {}).get("montage") or [])
@@ -440,6 +442,7 @@ class AdaptationCreate(BaseModel):
     volume_db: Optional[float] = None   # Reprise: the music this many dB under the voice
     chanson: Optional[str] = None       # Discours, son "choisie": a shared song (assets/musiques)
     duree: int = 45                     # Discours: the Short's length aimed at (30 / 45 / 60 s)
+    cout: Optional[str] = None          # Idée d'abord: economique | qualite (None: the first channel's setting)
 
 
 @router.post("/api/adaptations")
@@ -451,7 +454,7 @@ def create_adaptation(req: AdaptationCreate):
                 "music_dir": _main().channel_manager.get_assets_dirs(ch)["music"]} for ch in req.channels]
     mode = "script" if req.mode == "idee" else req.mode
     p = _adaptation_call(ap.create, req.reference_url, req.source_urls, targets, mode, req.versions, None, None, req.idea,
-                         req.son, req.volume_db, req.chanson, req.duree)
+                         req.son, req.volume_db, req.chanson, req.duree, req.cout)
     _start_adaptation_step(p["project_id"], "analysing")
     return _serialize_adaptation(p)
 

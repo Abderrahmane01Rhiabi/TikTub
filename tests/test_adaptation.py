@@ -294,7 +294,7 @@ def test_channel_adaptation_settings_language_voice_music(client, project, monke
     assert r["settings"] == {"language": "ar", "voice_id": "v1", "music_file": "song.mp3", "music_start": 33.0,
                              "style": "classique", "ton": None, "voice_model": None, "dialecte": None,
                              "musique_categories": [], "musique_sans_paroles": False, "voix_permises": [],
-                             "voix_mode": "auto", "famille_recit": "explicatif", "styles_exclus": []}
+                             "voix_mode": "auto", "famille_recit": "explicatif", "styles_exclus": [], "cout": "economique"}
     assert [x["name"] for x in r["styles"]][:2] == ["classique", "flamme"]
     assert [v["voice_id"] for v in r["voices"]] == ["v1"]                    # only voices of its language
     assert client.put("/api/channels/chanA/adaptation", json={"language": "xx"}).status_code == 400

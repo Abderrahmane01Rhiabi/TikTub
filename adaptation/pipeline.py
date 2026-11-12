@@ -88,7 +88,7 @@ def _new_pid() -> str:
 def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
            versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None,
            idea: Optional[str] = None, son: str = "notre_musique", volume_db: Optional[float] = None,
-           chanson: Optional[str] = None, duree: int = 45) -> Dict:
+           chanson: Optional[str] = None, duree: int = 45, cout: Optional[str] = None) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
     mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
     versions (script mode, several channels): one project per channel, a group — the reference
@@ -138,6 +138,8 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
             "credits": "", "credits_auto": "", "error": None, "failed_step": None, "remake_of": remake_of}
     if idea:
         base.update(idee=idea, pro=True)     # « Idée d'abord » = montage pro (adaptation/montage_pro.py)
+        first = settings.channel_settings(channels[0]["profile"]) if channels else {}
+        base["cout"] = cout if cout in settings.COUTS else first.get("cout") or "economique"   # chosen, else the channel's
     if mode == "reprise":
         from adaptation import musique, reprise_pipeline
         return save(reprise_pipeline.new_project({**base, "project_id": _new_pid()}, targets, son,

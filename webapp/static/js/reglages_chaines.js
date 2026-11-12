@@ -119,6 +119,15 @@ async function renderChannelPage(ch){
       </article>
 
       <article class="chcard rg-sec">
+        <div class="chcard-head"><div class="who"><div class="name">Coût du montage pro</div>
+          <div class="meta" style="margin-left:0">« Idée d'abord » : le choix par défaut de la chaîne, changeable à la création du projet.</div></div></div>
+        <div class="chcard-body">
+          <select class="f ad-cout"><option value="economique" ${s.cout !== 'qualite' ? 'selected' : ''}>Économique (≈ 0,10-0,15 $ le montage) : un modèle gratuit trie les plans avant Gemini</option>
+            <option value="qualite" ${s.cout === 'qualite' ? 'selected' : ''}>Qualité max (≈ 0,55 $) : Gemini décrit tous les plans, le monteur IA réfléchit plus</option></select>
+        </div>
+      </article>
+
+      <article class="chcard rg-sec">
         <div class="chcard-head"><div class="who"><div class="name">Musique</div>
           <div class="meta" style="margin-left:0">Les ambiances permises. L'IA prend celle qui colle à la vidéo.</div></div></div>
         <div class="chcard-body">
@@ -220,6 +229,7 @@ async function renderChannelPage(ch){
     save({ settings: { musique_categories: [...page.querySelectorAll('.ad-mcats .mc-chip.on')].map(x => x.dataset.cat) } });
   });
   on('.ad-nolyrics', 'onchange', e => save({ settings: { musique_sans_paroles: e.target.checked } }));
+  on('.ad-cout', 'onchange', e => save({ settings: { cout: e.target.value } }));
   on('.ad-music', 'onchange', e => save({ settings: { music_file: e.target.value || null } }));
   const start = page.querySelector('.ad-start'), audio = page.querySelector('.ad-audio');
   if (start) start.onchange = () => save({ settings: { music_start: parseFloat(start.value) || 0 } });

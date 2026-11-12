@@ -56,6 +56,8 @@ Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fai
 | **Variété** | au plus **2 plans de la même vidéo** dans un montage |
 | **Relecture** | le montage fini est relu (comme un monteur qui se relit) : chaque plan qui **contredit** sa phrase ou **ne colle pas** est entouré d'**orange** dans la piste Images |
 
+**En mode Économique** (Réglages → chaque chaîne, ou à la création du projet), le modèle gratuit note les plans **avant** Gemini : seuls les 8 meilleurs de chaque phrase et les 3 meilleurs de chaque vidéo sont décrits ; les autres portent l'étiquette **pré-tri** dans le stock et tu peux les remettre (ils n'ont pas de description). La ligne **Économique** du stock dit combien ont été décrits.
+
 À l'écran du **stock**, une ligne « Images v2 » résume ce qui a été fait. Ces étapes coûtent environ 5 centimes de Gemini par vidéo (la recherche par le sens est gratuite).
 
 ### Les graphiques animés

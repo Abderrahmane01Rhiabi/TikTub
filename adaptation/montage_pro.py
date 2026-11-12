@@ -39,6 +39,9 @@ Report = Callable[[str, float], None]
 W, H, FPS = 1080, 1920, 30
 MAX_SOURCES = 8                 # videos downloaded for the stock (more sources = more variety)
 MAX_SOURCES_ALL = 10            # up to this many when the director asked for more visuals (one source each)
+ECO_PER_SENTENCE = 8            # « économique »: the shots the free model ranks best for each sentence are described,
+ECO_PER_SOURCE = 3              # + each video's best (the Lions of a 4-name sentence), the rest never sent to Gemini
+ECO_THINKING = 512              # « économique »: the AI editor's thinking cap (0.15 $ -> 0.02 $, lab 2026-11-12)
 SPECIALIST = 2                  # a video showing 1-2 of the scenes was made for them: chosen before a « shows 5 » one
 PAD = 3.0                       # seconds kept around each good moment of a long video
 SHOT_S = 2.6                    # a long take is cut into pieces about this long
@@ -334,6 +337,25 @@ def reserved(p: Dict) -> Dict[str, int]:
     return {u: next(iter(ks)) for u, ks in out.items() if len(ks) == 1}
 
 
+def economique(p: Dict) -> bool:
+    """The project's cost mode (adaptation/settings.COUTS); projects made before it: every shot described."""
+    return p.get("cout") == "economique"
+
+
+def presort(shots: List[Dict], n: int) -> set:
+    """« économique »: the ids of the shots worth describing, by the free local model's score (shot["colle"],
+    adaptation/vision) — each sentence's ECO_PER_SENTENCE best and each video's ECO_PER_SOURCE best (lab
+    2026-11-12: 8 a sentence alone lost the Raja and the Lions of « le Raja, le Wydad et l'équipe nationale »)."""
+    sc = lambda s, k: (s.get("colle") or [])[k] if k < len(s.get("colle") or []) else 0.0
+    keep = set()
+    for k in range(n):
+        keep |= {s["id"] for s in sorted(shots, key=lambda s: -sc(s, k))[:ECO_PER_SENTENCE]}
+    for src in {s["source"] for s in shots}:
+        mine = [s for s in shots if s["source"] == src]
+        keep |= {s["id"] for s in sorted(mine, key=lambda s: -max(s.get("colle") or [0.0]))[:ECO_PER_SOURCE]}
+    return keep
+
+
 def set_aside(shot: Dict) -> Optional[str]:
     """Why the code keeps a shot out of the edit by itself (the person can bring it back), or None."""
     if shot.get("pertinence", 5) <= 3:
@@ -385,12 +407,26 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
         if not shots:
             raise MontageProError("Aucune source n'a pu être téléchargée : " +
                                   " ; ".join(m.get("failed", "") for m in metas if m)[:300])
-        report(f"description des {len(shots)} plans", 0.68)
-        describe(shots, (p.get("reference") or {}).get("sujet") or p.get("idee") or "")
+        pretri, matched = None, False
+        if economique(p) and _vision_ok():
+            report("tri gratuit des plans", 0.66)
+            try:
+                from adaptation import vision
+                n = len(((p.get("storyboard") or {}).get("plans")) or [])
+                vision.match(shots, vision.ideas_of(p), os.path.join(base, "vision"))
+                matched = any(s.get("colle") for s in shots)
+            except Exception:           # the model would not run: every shot described, as in « qualité »
+                matched = False
+            if matched:
+                keep = presort(shots, n)
+                pretri = {"decrits": len(keep), "total": len(shots)}
+        todo = [s for s in shots if pretri is None or s["id"] in keep]
+        report(f"description des {len(todo)} plans" + (f" sur {len(shots)}" if len(todo) < len(shots) else ""), 0.68)
+        describe(todo, (p.get("reference") or {}).get("sujet") or p.get("idee") or "")
         for s in shots:
-            why = set_aside(s)
+            why = "pré-tri" if pretri is not None and s["id"] not in keep else set_aside(s)
             s.update(garde=why is None, ecarte=why)
-        v2 = images_v2(p, shots, metas, base, report)
+        v2 = images_v2(p, shots, metas, base, report, matched)
         if drawing.is_alive():
             report("graphiques animés", 0.95)
         drawing.join()
@@ -404,7 +440,7 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
                 pl["idee"] = idea
         secours.mark(p, "images", v2.get("secours"))
         secours.mark(p, "graphiques", made.get("secours"))
-        p.update(stock=shots, stock_sources=metas, images_v2=v2.get("bilan"), graphiques=made.get("liste") or [],
+        p.update(stock=shots, stock_sources=metas, images_v2=v2.get("bilan"), graphiques=made.get("liste") or [], pretri=pretri,
                  incrustation=made.get("incrustation"), status="stock_review", error=None, failed_step=None)
         ap.save(p)
     except Exception as e:
@@ -412,7 +448,13 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
     report("terminé", 1.0)
 
 
-def images_v2(p: Dict, shots: List[Dict], metas: List[Optional[Dict]], base: str, report: Report) -> Dict:
+def _vision_ok() -> bool:
+    from adaptation import vision
+    return vision.available()
+
+
+def images_v2(p: Dict, shots: List[Dict], metas: List[Optional[Dict]], base: str, report: Report,
+              matched: bool = False) -> Dict:
     """Images v2 (adaptation/vision): the shots judged against each sentence's idea — the off-topic ones that fit a
     sentence brought back, in the news the videos about another place set aside, a general Pixabay search for the
     sentences nothing fits. -> {idees, bilan, secours (a message when it could not run)}."""
@@ -431,7 +473,8 @@ def images_v2(p: Dict, shots: List[Dict], metas: List[Optional[Dict]], base: str
         report("recherche par le sens", 0.84)
         ideas = vision.ideas_of(p)
         folder = os.path.join(base, "vision")
-        vision.match(shots, ideas, folder)
+        if not matched:                 # « économique » scored them already, before the description
+            vision.match(shots, ideas, folder)
         vision.rescue([s for s in shots if s.get("ecarte") != "autre lieu"], len(ideas))
         added, used = [], set()
         miss = vision.missing(shots, len(ideas))
@@ -1163,7 +1206,8 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
         footage = [s for s in shots if not s.get("graphique")]     # a graphic is placed on its sentence, not chosen
         raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(footage, len(t["voice"]["passages"])),
                                                                               p.get("realisation"))}],
-                                                      max_tokens=16000, timeout=240, temperature=0.4)
+                                                      max_tokens=16000, timeout=240, temperature=0.4,
+                                                      thinking=ECO_THINKING if economique(p) else None)
         lost = secours.failed(raw) or not (raw or {}).get("montage")
         secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
                                    "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)

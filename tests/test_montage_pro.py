@@ -272,3 +272,61 @@ def test_a_darija_channel_speaks_darija_but_keeps_its_title_in_fusha():
     rule = mp.dialect_part([{"language": "ar", "dialecte": "darija"}])
     assert "DARIJA" in rule and "ARABE STANDARD" in rule and "titre" in rule
     assert mp.dialect_part([{"language": "ar", "dialecte": None}]) == ""
+
+
+# ---- « économique » (lab 2026-11-12: ~4x cheaper, judged as good)
+
+def test_economique_is_every_channel_s_default_and_old_projects_stay_quality():
+    from adaptation import settings
+    assert settings.channel_settings({})["cout"] == "economique"
+    assert settings.channel_settings({"adaptation": {"cout": "qualite"}})["cout"] == "qualite"
+    assert settings.clean_update({"cout": "n'importe"}) == {"cout": "economique"}
+    assert mp.economique({"cout": "economique"}) and not mp.economique({})      # made before: every shot described
+
+
+def test_the_free_presort_keeps_each_sentence_s_best_and_each_video_s_best():
+    # 3 sentences; source 9 (the Lions of a 4-name sentence) never in a sentence's top: still 3 of its shots kept
+    sh = [{"id": f"S{k % 3}_{k:02d}", "source": k % 3, "colle": [0.30 - k / 1000, 0.20, 0.10]} for k in range(30)]
+    sh += [{"id": f"S9_{k}", "source": 9, "colle": [0.05, 0.05, 0.05 + k / 100]} for k in range(5)]
+    keep = mp.presort(sh, 3)
+    assert {f"S9_{k}" for k in (2, 3, 4)} <= keep and "S9_0" not in keep
+    assert len(keep) < len(sh) and {"S0_00", "S1_01", "S2_02"} <= keep
+
+
+def test_an_economique_stock_describes_only_the_presorted_shots(project, monkeypatch):
+    from adaptation import graphiques, sources, vision
+    p = ap.save({"project_id": "ad_eco", "status": "fetching", "cout": "economique", "targets": [],
+                 "storyboard": {"plans": [{}, {}]}, "reference": {"sujet": "le stade"}})
+    monkeypatch.setattr(mp, "choose_sources", lambda p: [{"url": f"u{k}", "titre": f"t{k}"} for k in range(2)])
+    monkeypatch.setattr(sources, "download", lambda url, d, name, spans=None: f"{d}/{name}.mp4")
+    monkeypatch.setattr(sources, "source_meta", lambda path: {})
+    monkeypatch.setattr(mp, "shots_of", lambda path, k, thumbs: [{"id": f"S{k}_{i:02d}", "source": k, "start": 0.0,
+                                                                  "end": 2.6, "file": path} for i in range(20)])
+    monkeypatch.setattr(graphiques, "make_all", lambda p, d: {})
+    monkeypatch.setattr(vision, "available", lambda: True)
+    monkeypatch.setattr(vision, "ideas_of", lambda p: ["a", "b"])
+    monkeypatch.setattr(vision, "match", lambda shots, ideas, folder: [s.update(colle=[int(s["id"][-2:]) / 100, 0.1])
+                                                                      for s in shots])
+    described, v2 = [], {}
+    monkeypatch.setattr(mp, "describe", lambda shots, sujet, gemini=None: [
+        described.append(s["id"]) or s.update(desc="vu", pertinence=8) for s in shots])
+    monkeypatch.setattr(mp, "images_v2", lambda p, shots, metas, base, report, matched=False: v2.update(matched=matched) or {})
+
+    mp.run_stock("ad_eco")
+
+    q = ap.load("ad_eco")
+    assert q["status"] == "stock_review" and v2["matched"] is True       # scored once, before the description
+    assert q["pretri"] == {"decrits": len(described), "total": 40} and len(described) < 40
+    out = [s for s in q["stock"] if s["id"] not in described]
+    assert out and all(s["ecarte"] == "pré-tri" and not s["garde"] for s in out)
+
+    ap.save({**ap.load("ad_eco"), "status": "fetching", "cout": "qualite"})
+    described.clear()
+    mp.run_stock("ad_eco")
+    assert len(described) == 40 and ap.load("ad_eco")["pretri"] is None
+
+
+def test_the_ai_editor_thinks_less_in_economique():
+    import inspect
+    src = inspect.getsource(mp.make_target)
+    assert "thinking=ECO_THINKING if economique(p) else None" in src and mp.ECO_THINKING <= 1024
