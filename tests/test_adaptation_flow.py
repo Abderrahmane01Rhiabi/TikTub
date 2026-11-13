@@ -57,7 +57,7 @@ def fakes(monkeypatch):
     monkeypatch.setattr(script, "write", lambda ref, clips, lang, angle=None, **kw: json.loads(json.dumps(SCRIPT)))
     monkeypatch.setattr(script, "critique", lambda sc, lang, clips: {**sc, "corrections": ["fin complète"]})
 
-    def synth(passages, voice_id, lang, out, model=voices.MODEL):
+    def synth(passages, voice_id, lang, out, model=voices.MODEL, dialect=None):
         calls["synth"] += 1
         calls["model"] = model                     # the channel's choice, else the usual one
         return {"words": [], "passages": passages, "duration": 5.0}

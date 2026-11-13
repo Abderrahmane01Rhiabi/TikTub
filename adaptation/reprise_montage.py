@@ -141,10 +141,11 @@ def fit_plans(plans: List[Dict], length: float) -> List[Dict]:
 MODEL = "eleven_v4"
 
 
-def voice(script: Dict, code: str, voice_id: str, mp3: str, model: str = MODEL) -> Dict:
+def voice(script: Dict, code: str, voice_id: str, mp3: str, model: str = MODEL, dialect: Optional[str] = None) -> Dict:
     """The parts said in one take -> the timings (words, each part's span), kept beside the mp3 (.json)."""
     from adaptation import voices
-    v = voices.synthesize([{"texte": p[code]} for p in script["parties"]], voice_id, code, mp3, model=model)
+    v = voices.synthesize([{"texte": p[code]} for p in script["parties"]], voice_id, code, mp3, model=model,
+                          dialect=dialect)
     json.dump(v, open(mp3[:-4] + ".json", "w", encoding="utf-8"), ensure_ascii=False)
     return v
 

@@ -90,3 +90,45 @@ def test_the_settings_routes_add_list_listen_and_remove(client, monkeypatch):
     client.post("/api/prononciation/ecouter", json={"texte": "فبرطمات", "voice_id": "v", "langue": "ar", "dictionnaire": False})
     assert len(said) == 1                                                 # the same listen: not paid twice
     assert client.delete("/api/prononciation/ar/فبرطمات").json()["mots"] == []
+
+
+def test_an_unreadable_dictionary_is_never_rewritten_with_one_word(project, monkeypatch):
+    """2026-11-13: quick add() calls on the Windows disk read the file as empty and kept only the last word."""
+    pr.add("المعلمة", "مَعْلَمة", "ar")
+    pr.add("جرادي", "ژرادي", "ar")
+    monkeypatch.setattr(pr.time, "sleep", lambda s: None)
+    real = open
+
+    def flaky(path, *a, **k):
+        if str(path) == pr.FILE and "w" not in (a[0] if a else k.get("mode", "r")):
+            raise PermissionError("busy")
+        return real(path, *a, **k)
+    import builtins
+    monkeypatch.setattr(builtins, "open", flaky)
+    with pytest.raises(ValueError):
+        pr.add("البراق", "البوراق", "ar")
+    with pytest.raises(ValueError):
+        pr.remove("جرادي", "ar")
+    monkeypatch.setattr(builtins, "open", real)
+    assert pr.table("ar") == {"المعلمة": "مَعْلَمة", "جرادي": "ژرادي"}       # nothing lost
+
+
+def test_a_dictionary_read_that_fails_once_is_read_again(project, monkeypatch):
+    pr.add("المعلمة", "مَعْلَمة", "ar")
+    monkeypatch.setattr(pr.time, "sleep", lambda s: None)
+    real, fails = open, [1]
+
+    def once(path, *a, **k):
+        if str(path) == pr.FILE and fails and "w" not in (a[0] if a else k.get("mode", "r")):
+            fails.pop()
+            raise ValueError("half written")
+        return real(path, *a, **k)
+    import builtins
+    monkeypatch.setattr(builtins, "open", once)
+    pr.add("جرادي", "ژرادي", "ar")
+    monkeypatch.setattr(builtins, "open", real)
+    assert len(pr.entries()) == 2
+
+
+def test_no_file_yet_is_an_empty_dictionary(project):
+    assert pr.entries() == [] and pr.table("ar") == {}

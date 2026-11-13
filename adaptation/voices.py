@@ -68,15 +68,20 @@ def download_preview(url: str, path: str) -> Optional[str]:
 
 
 def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str, model: str = MODEL,
-               dictionary: bool = True) -> Dict:
+               dictionary: bool = True, dialect: Optional[str] = None) -> Dict:
     """Narrates every passage['texte'] in one take (natural flow between
     sentences) and returns the word timings and each passage's span:
     {"words": [{w, start, end}], "passages": [{..., start, end, words: [i]}], "duration": s}.
-    The pronunciation dictionary's words (adaptation/prononciation) are read their way, the timings come back on
-    the written words."""
+    The pronunciation dictionary's words (adaptation/prononciation) are read their way, and a darija narration's
+    numbers are said in darija words (adaptation/nombres_darija); the timings come back on the written words."""
     from adaptation import prononciation
     table = prononciation.table(lang_code) if dictionary else {}    # off: to hear a word as it was read before
-    said, sizes = zip(*[prononciation.apply(p["texte"], lang_code, table) for p in passages]) if passages else ((), ())
+    numbers = None
+    if lang_code.split("-")[0] == "ar":                  # darija: numbers and units in words; fusha: units only
+        from adaptation.nombres_darija import fusha_reading, reading
+        numbers = reading if dialect == "darija" else fusha_reading
+    said, sizes = zip(*[prononciation.apply(p["texte"], lang_code, table, numbers) for p in passages]) \
+        if passages else ((), ())
     text, spans = "", []
     for p in said:
         if text:
@@ -88,7 +93,8 @@ def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str
                                          "voice_settings": {"stability": 0.5, "similarity_boost": 0.8,
                                                             "style": 0.15, "speed": 1.0}})
     if r.status_code != 200 and model != FALLBACK and 400 <= r.status_code < 500:  # a model refused: the older one
-        return synthesize(passages, voice_id, lang_code, out_mp3, model=FALLBACK, dictionary=dictionary)
+        return synthesize(passages, voice_id, lang_code, out_mp3, model=FALLBACK, dictionary=dictionary,
+                          dialect=dialect)
     if r.status_code != 200:
         raise VoiceError(f"ElevenLabs HTTP {r.status_code} : {r.text[:300]}")
     d = r.json()

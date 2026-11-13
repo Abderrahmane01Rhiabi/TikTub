@@ -492,7 +492,8 @@ def _voice(p: Dict, t: Dict, mp3: str, report: Report, at: float) -> Dict:
             and os.path.exists(mp3):
         return v                                    # never pay twice for the same narration
     report(f"voix {t['channel']}", at)
-    v = voices.synthesize([{"texte": x} for x in texts], t["voice_id"], t["language"], mp3, model=model)
+    v = voices.synthesize([{"texte": x} for x in texts], t["voice_id"], t["language"], mp3, model=model,
+                          dialect=dialect(t))
     v = voix_casting.strip_tags(v, clean)           # the tags are said to ElevenLabs, never shown in the captions
     v.update(voice_id=t["voice_id"], texts=texts, model=model)
     return v

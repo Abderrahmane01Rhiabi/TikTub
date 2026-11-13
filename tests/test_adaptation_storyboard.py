@@ -701,7 +701,7 @@ def test_a_poor_picture_comes_after_a_clean_one_of_the_same_level():
 def test_back_from_the_preview_keeps_the_voice_unless_a_sentence_changes(project, fakes, monkeypatch, tmp_path):
     from adaptation import voices
     calls = []
-    monkeypatch.setattr(voices, "synthesize", lambda passages, vid, code, out, model=None: calls.append(1) or {
+    monkeypatch.setattr(voices, "synthesize", lambda passages, vid, code, out, model=None, dialect=None: calls.append(1) or {
         "passages": [{**x, "start": k, "end": k + 0.8, "words": []} for k, x in enumerate(passages)], "words": [], "duration": 5})
     p = {"project_id": "x", "clips": {}, "credits": "", "targets": [{"channel": "c", "language": "fr", "voice_id": "v",
          "script": {"passages": [{"clip": "P1", "texte": "Un.", "bandeau": "A"}, {"clip": "P2", "texte": "Deux.", "bandeau": "B"}]}}]}
