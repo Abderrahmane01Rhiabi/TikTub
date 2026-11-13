@@ -106,3 +106,22 @@ def test_the_pipelines_give_the_channel_dialect_to_the_voice(project, monkeypatc
          "script": {"passages": [{"texte": "2"}]}}
     mp._voice({}, t, "nouveau.mp3", lambda *a: None, 0)
     assert got["dialect"] == "darija"
+
+
+@pytest.mark.parametrize("text, said", [
+    ("يبلغ طوله 3 كلم", "يبلغ طوله 3 كيلومتر"),                     # fusha: units in full, digits kept
+    ("3كلم", "3 كيلومتر"), ("بطول 1400 م.", "بطول 1400 متر."), ("عام 2029 م", "عام 2029 م"),
+    ("110 م³", "110 متر مكعب"), ("20 كلغ", "20 كيلوغرام"), ("350 كلم/س", "350 كيلومتر في الساعة"),
+    ("30% و 3,5 مليار", "30% و 3,5 مليار"),
+])
+def test_fusha_says_the_units_in_full_and_keeps_the_digits(text, said):
+    from adaptation import prononciation as pr
+    assert pr.apply(text, "ar", {}, nd.fusha_reading)[0] == said
+
+
+def test_a_fusha_voice_hears_the_units_in_full(project, monkeypatch, tmp_path):
+    sent = {}
+    _fake_elevenlabs(monkeypatch, sent)
+    v = voices.synthesize([{"texte": "نفق طوله 3 كلم."}], "vid", "ar", str(tmp_path / "v.mp3"))
+    assert sent["text"] == "نفق طوله 3 كيلومتر."
+    assert [w["w"] for w in v["words"]] == ["نفق", "طوله", "3", "كلم."]

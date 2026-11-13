@@ -202,6 +202,31 @@ def reading(cores: List[str], i: int) -> Optional[str]:
     return prefix + said
 
 
+# ---------------------------------------------------------------- Modern Standard Arabic (fusha)
+# The user, 2026-11-13: the short units said in full there too, the numbers kept as digits (ElevenLabs reads them
+# well in fusha).
+FUSHA_UNITS = {"كلم": "كيلومتر", "كلغ": "كيلوغرام", "م³": "متر مكعب", "م3": "متر مكعب", "م²": "متر مربع",
+               "م2": "متر مربع", "كلم/س": "كيلومتر في الساعة", "كلم/ساعة": "كيلومتر في الساعة",
+               "كم/س": "كيلومتر في الساعة"}
+
+
+def fusha_reading(cores: List[str], i: int) -> Optional[str]:
+    """Fusha: only the units change (« 3 كلم » -> 3 كيلومتر, « 3كلم » -> 3 كيلومتر, « 1400 م » -> 1400 متر)."""
+    core = cores[i]
+    if core in FUSHA_UNITS:
+        return FUSHA_UNITS[core]
+    if core in AFTER_NUMBER:
+        before = _number_before(cores, i)
+        return AFTER_NUMBER[core] if before is not None and not _is_year(before) else None
+    m = TOKEN.match(core.translate(DIGITS))
+    if not m or not m.group(3) or m.group(3) == "%" or value(m.group(2)) is None:
+        return None
+    unit = m.group(3)
+    if unit in AFTER_NUMBER and _is_year(value(m.group(2))):
+        return None
+    return f"{core[:len(core) - len(unit)]} {FUSHA_UNITS.get(unit) or AFTER_NUMBER[unit]}"
+
+
 def token(core: str) -> Optional[str]:
     """One word read alone (no neighbours)."""
     return reading([core], 0)

@@ -77,8 +77,9 @@ def synthesize(passages: List[Dict], voice_id: str, lang_code: str, out_mp3: str
     from adaptation import prononciation
     table = prononciation.table(lang_code) if dictionary else {}    # off: to hear a word as it was read before
     numbers = None
-    if dialect == "darija" and lang_code.split("-")[0] == "ar":
-        from adaptation.nombres_darija import reading as numbers
+    if lang_code.split("-")[0] == "ar":                  # darija: numbers and units in words; fusha: units only
+        from adaptation.nombres_darija import fusha_reading, reading
+        numbers = reading if dialect == "darija" else fusha_reading
     said, sizes = zip(*[prononciation.apply(p["texte"], lang_code, table, numbers) for p in passages]) \
         if passages else ((), ())
     text, spans = "", []
