@@ -56,6 +56,8 @@ Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fai
 | **Variété** | au plus **2 plans de la même vidéo** dans un montage |
 | **Relecture** | le montage fini est relu (comme un monteur qui se relit) : chaque plan qui **contredit** sa phrase ou **ne colle pas** est entouré d'**orange** dans la piste Images |
 
+**En mode Économique** (Réglages → chaque chaîne, ou à la création du projet), le modèle gratuit note les plans **avant** Gemini : seuls les 8 meilleurs de chaque phrase et les 3 meilleurs de chaque vidéo sont décrits ; les autres portent l'étiquette **pré-tri** dans le stock et tu peux les remettre (ils n'ont pas de description). La ligne **Économique** du stock dit combien ont été décrits.
+
 À l'écran du **stock**, une ligne « Images v2 » résume ce qui a été fait. Ces étapes coûtent environ 5 centimes de Gemini par vidéo (la recherche par le sens est gratuite).
 
 ### Les graphiques animés
@@ -164,3 +166,4 @@ Après chaque rendu, le **contrôle automatique** du son repasse (chaque phrase 
 - Un seul rendu à la fois : pendant un rendu, la timeline attend.
 - La **recette** de la vidéo (Dashboard) note que le montage a été modifié par toi, combien de fois, les cadrages, les zones de musique et le cadre des bandeaux.
 - Tout ça ne coûte **aucun crédit Gemini**. Seul un changement de voix coûte un peu chez ElevenLabs.
+- **« À corriger avant de valider : phrase trop longue / accroche trop longue / durée totale »** à l'écran du script : une phrase dure au plus **7 s** de voix, l'accroche **4 s** (viser 2 à 3 s), la vidéo **20 à 38 s** (viser 25 à 35 s). L'app raccourcit elle-même après chaque réécriture, **y compris après la vérification des faits** (depuis le 12 novembre : avant, cette dernière étape pouvait rallonger des phrases). S'il reste un message, écris dans la case de l'IA par exemple « raccourcis l'accroche et les plans 4 et 5 », ou coupe la phrase toi-même puis **Enregistrer**.

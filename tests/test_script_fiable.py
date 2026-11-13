@@ -67,6 +67,25 @@ def test_a_wrong_sentence_is_fixed_once_and_kept_only_if_it_has_fewer_faults(mon
     assert out["plans"][1]["hors_faits"] == {"fr": "cameras"}
 
 
+def test_a_fact_fix_is_told_the_length_limit_and_shortened_again_if_it_got_too_long(monkeypatch):
+    # 2026-11-12, the flamingos: the fact fix wrote 7.2 s sentences after the length checks, nothing measured them
+    long_ = "Mais pour nourrir le poussin, le parent regurgite un lait rouge vif puise dans ses propres reserves de pigments."
+    b = bundle("Seuls 10 sur 160.", "Ils ont trompe les cameras.", "Fin.")
+    too_long = bundle("Seuls 10 sur 160.", long_ + " " + long_, "Fin.")
+    short = bundle("Seuls 10 sur 160.", "Les cameras n'ont pas pu etre utilisees.", "Fin.")
+    checks = iter([{(1, "fr"): "cameras"}, {}, {}])
+    monkeypatch.setattr(sb, "fact_check", lambda bb, codes, facts, gemini=None: next(checks))
+    answers, asked = iter([too_long, short]), []
+    monkeypatch.setattr(sb, "revise", lambda bb, codes, req, gemini=None: asked.append(req) or {**next(answers), "corrections": []})
+
+    out = ap._checked_facts(b, ["fr"], FACTS)
+
+    assert "plan 2 [fr] :" in asked[0] and "caracteres au plus" in asked[0]          # the limit given with the fix
+    assert "trop longue" in asked[1] and "garde exactement ses faits" in asked[1]
+    assert not any("longue" in x for x in sb.problems(out, "fr"))
+    assert out["plans"][1]["textes"]["fr"]["texte"].startswith("Les cameras")
+
+
 def test_the_hook_keeps_its_key_number_and_the_news_stays_neutral():
     assert "chiffre frappant" in sb.LENGTH_FIX
     news = recits.part("news")
@@ -129,3 +148,28 @@ def test_faults_left_after_a_first_fix_get_a_second_one(monkeypatch):
 
     assert len(asked) == 2 and "plan 2 [fr] : cameras ; plan 3 [fr] : dossiers" in asked[0]
     assert not any("hors_faits" in p for p in out["plans"])
+
+
+def test_a_request_to_the_ai_sees_the_facts_and_its_fact_faults_are_fixed(project, monkeypatch):
+    # 2026-11-12: « raccourcis l'accroche » wrote « tout blanc » again (the facts say « pâlit »), only marked in red
+    ap.save({"project_id": "ad_f", "status": "plan_review", "mode": "script", "storyboard": bundle("A.", "B.", "C."),
+             "reference": {"origine": "idee", "faits": FACTS}, "targets": [{"channel": "c", "language": "fr"}]})
+    asked = []
+    monkeypatch.setattr(sb, "revise", lambda bb, codes, req, gemini=None: asked.append(req) or {**bb, "corrections": []})
+    fixed = []
+    monkeypatch.setattr(ap, "_checked_facts", lambda bb, codes, facts, extra=None: fixed.append(facts) or bb)
+
+    ap.revise_plan("ad_f", "c", "raccourcis l'accroche")
+
+    assert "Faits verifies" in asked[0] and "10 a 11 fonctionnaires" in asked[0] and fixed == [FACTS]
+
+
+def test_a_banner_in_another_language_blocks_the_approval():
+    # 2026-11-12: an Arabic flamingo Short came with « MAQUILLAGE SECRET » on top
+    b = bundle("Seuls 10 sur 160.", "B.", "C.")
+    b["plans"][0]["textes"]["ar"] = {"bandeau": "MAQUILLAGE SECRET 🦩", "texte": "طيور النحام تضع مكياجا حقيقيا!", "mots_cles": []}
+    assert any("bandeau" in x and "Plan 1" in x for x in sb.problems(b, "ar"))
+    b["plans"][0]["textes"]["ar"]["bandeau"] = "مكياج سري 🦩"
+    assert not any("bandeau" in x for x in sb.problems(b, "ar"))
+    b["plans"][0]["textes"]["fr"]["bandeau"] = "مكياج سري"
+    assert any("bandeau" in x for x in sb.problems(b, "fr"))

@@ -109,6 +109,10 @@ Pour ajouter une voix : **Bibliothèques → Voix**.
 
 Pour ajouter une musique ou corriger ses catégories : **Bibliothèques → Musiques**.
 
+**Coût du montage pro** *(Idée d'abord, depuis le 12 novembre)* : le choix par défaut de la chaîne, que tu peux changer à la création de chaque projet.
+- **Économique** (par défaut, ≈ 0,10-0,15 $ le montage) : un modèle **gratuit sur ton PC** trie les plans téléchargés ; Gemini ne décrit que les meilleurs de chaque phrase et de chaque vidéo (44 sur 220 pour le Grand Stade), et le monteur IA réfléchit moins. Testé sur 3 vidéos : jugé aussi bon.
+- **Qualité max** (≈ 0,55 $) : Gemini décrit **tous** les plans, le monteur IA réfléchit autant qu'il veut.
+
 ### 1.6 Look
 
 ![Look](img/reglages/04_5_Look.png)

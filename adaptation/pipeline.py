@@ -88,7 +88,7 @@ def _new_pid() -> str:
 def create(reference_url: str, source_urls: List[str], channels: List[Dict], mode: str = "sources",
            versions: bool = False, style_of: Optional[Dict[str, Dict]] = None, remake_of: Optional[str] = None,
            idea: Optional[str] = None, son: str = "notre_musique", volume_db: Optional[float] = None,
-           chanson: Optional[str] = None, duree: int = 45) -> Dict:
+           chanson: Optional[str] = None, duree: int = 45, cout: Optional[str] = None) -> Dict:
     """channels: [{"channel": name, "profile": profile.json dict, "music_dir": path}]
     mode: "sources" (find the footage, then write) or "script" (write, then find the footage).
     versions (script mode, several channels): one project per channel, a group — the reference
@@ -138,6 +138,8 @@ def create(reference_url: str, source_urls: List[str], channels: List[Dict], mod
             "credits": "", "credits_auto": "", "error": None, "failed_step": None, "remake_of": remake_of}
     if idea:
         base.update(idee=idea, pro=True)     # « Idée d'abord » = montage pro (adaptation/montage_pro.py)
+        first = settings.channel_settings(channels[0]["profile"]) if channels else {}
+        base["cout"] = cout if cout in settings.COUTS else first.get("cout") or "economique"   # chosen, else the channel's
     if mode == "reprise":
         from adaptation import musique, reprise_pipeline
         return save(reprise_pipeline.new_project({**base, "project_id": _new_pid()}, targets, son,
@@ -534,20 +536,40 @@ def _fit_length(b: Dict, codes: List[str], draft: Optional[Dict] = None, facts: 
 
 FACTS_FIX = ("Ces phrases disent une chose absente des faits verifies, ou qui les contredit : {fautes}. Reecris SEULEMENT "
              "ces phrases (toutes leurs langues), avec les faits verifies, a la meme longueur ; ne change rien d'autre.")
+SHORTER_KEEP_FACTS = (" Raccourcis en coupant des mots, sans changer le sens : chaque phrase garde exactement ses faits "
+                      "(ils viennent d'etre verifies), ses chiffres et ses unites.")
+
+
+def _caps(b: Dict, codes: List[str], plans: List[int]) -> str:
+    """The most each listed plan may say, in characters (the hook and a sentence's voice limits): a fact fix wrote
+    longer sentences and nothing measured them again (2026-11-12, the flamingos: 7.2 s sentences, a 4.1 s hook)."""
+    from adaptation.langs import lang as lang_of
+    out = []
+    for c in codes:
+        cps = lang_of(c)["chars_per_second"]
+        for k in sorted(set(plans)):
+            if k < len(b.get("plans") or []):
+                limit = (storyboard.HOOK_MAX_S - 0.8 if k == 0 else storyboard.PLAN_MAX_S - 0.5) * cps
+                old = len(((b["plans"][k].get("textes") or {}).get(c) or {}).get("texte", ""))
+                out.append(f"plan {k + 1} [{c}] : {int(min(limit, max(old, 15)))} caracteres au plus")
+    return (" Longueurs : " + ", ".join(out) + ".") if out else ""
 
 
 def _checked_facts(b: Dict, codes: List[str], facts: List[str], extra: Optional[str] = None) -> Dict:
     """An « Idée d'abord » storyboard checked sentence by sentence against its verified facts (a re-read that matches
     a sentence to its image once invented « they fooled the cameras » when the facts said the cameras could not be
     used): fixed once automatically, kept only if it has fewer faults; what is still wrong is marked on its plan and
-    blocks the approval until the person corrects it."""
+    blocks the approval until the person corrects it. A fix is told each sentence's length limit, and a voice it
+    still made too long is shortened once more, kept only without a new fact fault."""
+    count = lambda x: sum(len(storyboard.problems(x, c)) for c in codes)
     found = storyboard.fact_check(b, codes, facts)
     for _ in range(2):                  # all the faults fixed together, twice at most (a rewrite can miss one)
         if not found:
             break
         listing = " ; ".join(f"plan {k + 1} [{c}] : {q}" for (k, c), q in found.items())
         try:
-            fixed = storyboard.revise(b, codes, FACTS_FIX.format(fautes=listing) + (extra or ""))
+            fixed = storyboard.revise(b, codes, FACTS_FIX.format(fautes=listing) + _caps(b, codes, [k for k, _ in found])
+                                      + (extra or ""))
         except script.ScriptError:
             break
         again = storyboard.fact_check(fixed, codes, facts)
@@ -555,6 +577,20 @@ def _checked_facts(b: Dict, codes: List[str], facts: List[str], extra: Optional[
             break
         b = {**fixed, "corrections": b.get("corrections", []) + [f"Faits vérifiés : corrigé — {listing}"]}
         found = again
+    left = [f"[{c}] {x}" for c in codes for x in storyboard.problems(b, c)
+            if "longue" in x or (x.startswith("Durée") and storyboard.total_seconds(b, c) > storyboard.TOTAL_S[1])]
+    if left:                            # what the fact fix made too long: shortened, facts kept
+        try:
+            shorter = storyboard.revise(b, codes, "Corrige ces problemes : " + " ".join(left) + SHORTER_KEEP_FACTS
+                                        + storyboard.length_budgets(b, codes)
+                                        + _caps(b, codes, list(range(len(b.get("plans") or [])))) + (extra or ""))
+            if count(shorter) < count(b):
+                still = storyboard.fact_check(shorter, codes, facts)
+                if len(still) <= len(found):
+                    b = {**shorter, "corrections": b.get("corrections", []) + ["Correction automatique : " + " ".join(left)]}
+                    found = still
+        except script.ScriptError:
+            pass
     return storyboard.mark_facts(b, found)
 
 
@@ -596,9 +632,14 @@ def revise_plan(pid: str, channel: str, request: str) -> Dict:
     if p.get("pro"):                    # a request in a few words must not bring the voice back to fusha
         from adaptation import montage_pro
         request += montage_pro.dialect_part(p["targets"])
+    idee = (p.get("reference") or {}).get("origine") == "idee"
+    facts = p["reference"].get("faits") or [] if idee else []
+    if facts:                           # « raccourcis l'accroche » brought back « tout blanc », a fact already fixed
+        request += " Faits verifies (la seule source : n'ecris rien qui en sorte, garde les corrections deja faites) : " \
+            + " ; ".join(facts)[:2500]
     b = storyboard.revise(p["storyboard"], _codes(p), request)
-    if (p.get("reference") or {}).get("origine") == "idee":     # the AI's rewrite checked against the facts too
-        storyboard.mark_facts(b, storyboard.fact_check(b, _codes(p), p["reference"].get("faits") or []))
+    if idee:                            # the AI's rewrite checked against the facts too, fixed like the first writing
+        b = _checked_facts(b, _codes(p), facts)
     p["storyboard"] = b
     _refresh_plan(p)
     return save(p)

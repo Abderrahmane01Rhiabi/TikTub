@@ -443,6 +443,7 @@ def script_for(bundle: Dict, code: str) -> Dict:
             "corrections": bundle.get("corrections", [])}
 
 
+ARABIC = re.compile(r"[\u0600-\u06FF]")
 UNFILMABLE = re.compile(r"\banimation|sch[ée]ma|infographi|graphique|mod[ée]lisation|\b3d\b|dessin anim|illustration", re.I)
 
 
@@ -463,6 +464,9 @@ def problems(bundle: Dict, code: str) -> List[str]:
             out.append(f"Plan {k} : phrase incomplète (elle finit par « {'…' if texte.endswith(('…', '...')) else texte[-1]} »).")
         if texte.lstrip().startswith(("…", "...")):
             out.append(f"Plan {k} : la phrase commence par « … » : elle continue celle d'avant, écris une phrase complète.")
+        bandeau = (t.get("bandeau") or "").strip()
+        if bandeau and (code == "ar") != bool(ARABIC.search(bandeau)):       # « MAQUILLAGE SECRET » on an Arabic Short
+            out.append(f"Plan {k} : le bandeau « {bandeau} » n'est pas dans la langue de la vidéo ({code}) : traduis-le.")
         s = seconds(texte, code)
         if k == 1 and s > HOOK_MAX_S:
             out.append(f"Plan 1 : accroche trop longue ({s} s de voix, viser 2 à 3 s).")
