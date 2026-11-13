@@ -1036,6 +1036,39 @@ def change_adaptation_music(pid: str, channel: TargetChannel, req: AdaptationMus
     return _serialize_adaptation(p)
 
 
+class AvoidedChannel(BaseModel):
+    nom: str
+    note: str = ""
+
+
+@router.get("/api/chaines-evitees")
+def avoided_list():
+    """Réglages → Bibliothèques → Chaînes à éviter: their videos are never used (adaptation/chaines_evitees)."""
+    from adaptation import chaines_evitees
+    try:
+        return {"chaines": chaines_evitees.entries()}
+    except ValueError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.post("/api/chaines-evitees")
+def avoided_add(req: AvoidedChannel):
+    from adaptation import chaines_evitees
+    try:
+        return {"chaines": chaines_evitees.add(req.nom, req.note)}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/api/chaines-evitees/retirer")
+def avoided_remove(req: AvoidedChannel):
+    from adaptation import chaines_evitees
+    try:
+        return {"chaines": chaines_evitees.remove(req.nom)}
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
 class PronunciationWord(BaseModel):
     mot: str
     dire: str

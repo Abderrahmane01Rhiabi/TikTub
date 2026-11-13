@@ -224,6 +224,10 @@ Ce qui change, et ce qui ne change pas :
 
 Les voyelles (tashkeel) restent limitées aux mots de la liste : le reste du texte part sans, comme d'habitude.
 
+### 2.7 Chaînes à éviter
+
+Les chaînes YouTube dont l'app n'utilise **jamais** les vidéos — par exemple une chaîne qui montre des **images générées par IA** comme si c'était le vrai chantier (« عين على مشاريع الغد », dans la liste dès le départ). Écris son **nom tel que YouTube l'affiche** sous la vidéo (majuscules, accents et espaces ne comptent pas), ajoute une note si tu veux, puis **Ajouter à la liste**. Ses vidéos sont retirées de chaque recherche **avant** que l'IA en regarde une. **Retirer** la remet dans les recherches suivantes.
+
 ## 3. App
 
 Les onglets en haut : **Modèles d'IA · Sauvegardes · Stockage**.

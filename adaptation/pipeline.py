@@ -916,6 +916,18 @@ def run_images(pid: str, report: Optional[Report] = None):
                              image_search=shared.image_search, report=lambda ph, f: report(ph, k * (0.05 + 0.55 * f)))
         shared.save()
         sug.setdefault("verifs", {}).update(already)        # verify_best skips a video already in verifs
+        from adaptation import chaines_evitees
+        chaines_evitees.drop(sug)                           # Réglages → Chaînes à éviter: never checked, never used
+        first = None
+        if realisation and p.get("pretri_parole"):          # the free pre-sort « image + parole » (adaptation/pretri)
+            from adaptation import pretri
+            visuals = [v for e in realisation for v in e["visuels"]]
+            try:
+                first = pretri.run(sug, [v.get("idee") or v["image"] for v in visuals], [v["image"] for v in visuals],
+                                   os.path.join(project_dir(pid), "pretri"),
+                                   report=lambda ph, f: report(ph, k * (0.6 + 0.02 * f)))["premiers"]
+            except Exception as e:                          # free and optional: the search goes on without it
+                sug["pretri"] = {"erreur": str(e)[:300]}
 
         def keep(url: str, result: Dict):
             q = load(pid)
@@ -929,7 +941,7 @@ def run_images(pid: str, report: Optional[Report] = None):
             report("réutilisé des autres versions : " + ", ".join(shared.reused), 0.6)
         finder.verify_best(sug, {"plans": [], **{k: p["reference"].get(k) for k in ("script_complet", "duree_s")}},
                            n=min(14, 2 * len(wanted)), words_share=1.0,
-                           report=lambda ph, f: report(ph, k * (0.62 + 0.3 * f)), on_result=keep)
+                           report=lambda ph, f: report(ph, k * (0.62 + 0.3 * f)), on_result=keep, first=first)
         finder.follow_remontages(sug, {**p["reference"], "plans": []}, p["reference_url"],
                                  report=lambda ph, f: report(ph, k * (0.92 + 0.06 * f)))
         p = load(pid)

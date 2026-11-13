@@ -278,7 +278,7 @@ async function rgAdvancedCards(adv, ch){
 
 const LIB_LOADERS = { voix: () => loadVoiceSettings(), musiques: () => loadSongs(), sfx: () => loadSfxSettings(),
                       drones: () => loadBrollLibrary(), soustitres: () => loadCaptionSettings(),
-                      prononciation: () => loadPronunciation() };
+                      prononciation: () => loadPronunciation(), evitees: () => loadAvoidedChannels() };
 const APP_LOADERS = { ia: () => loadAiModels(), sauvegardes: () => loadBackups(), stockage: () => loadStorage() };
 let libTab = 'voix', appTab = 'ia';
 
@@ -295,6 +295,37 @@ function rgTabs(barId, screenIdx, loaders, current, set){
 function loadLibraries(){ return rgTabs('libTabs', 19, LIB_LOADERS, libTab, t => { libTab = t; }); }
 function loadAppSettings(){ return rgTabs('appTabs', 20, APP_LOADERS, appTab, t => { appTab = t; }); }
 function openLibrary(tab){ if (tab) libTab = tab; goTo(19); }
+
+
+// ---------- Bibliothèques → Chaînes à éviter (adaptation/chaines_evitees.py) ----------
+// their videos are taken out of every search before the AI checks any
+
+async function loadAvoidedChannels(){
+  const list = document.getElementById('ceList');
+  const draw = chaines => {
+    list.innerHTML = chaines.length ? `<article class="chcard"><div class="chcard-body"><table class="pn-table">
+      <tr><th>Chaîne</th><th>Pourquoi</th><th></th></tr>
+      ${chaines.map(c => `<tr><td dir="auto"><b>${esc(c.nom)}</b></td><td class="tiny">${esc(c.note || '')}</td>
+        <td><button class="btn ghost small ce-del" data-nom="${esc(c.nom)}">Retirer</button></td></tr>`).join('')}
+    </table></div></article>` : '<div class="tiny">Aucune chaîne évitée.</div>';
+    list.querySelectorAll('.ce-del').forEach(b => b.onclick = async () => {
+      if (!confirm(`Retirer « ${b.dataset.nom} » de la liste ? Ses vidéos pourront de nouveau être utilisées.`)) return;
+      try { draw((await api('/api/chaines-evitees/retirer', { method:'POST', body: JSON.stringify({ nom: b.dataset.nom }) })).chaines); }
+      catch (e){ toast(e.message, 'error'); }
+    });
+  };
+  document.getElementById('ceAdd').onclick = async () => {
+    try {
+      const r = await api('/api/chaines-evitees', { method:'POST', body: JSON.stringify({ nom: document.getElementById('ceNom').value,
+        note: document.getElementById('ceNote').value }) });
+      ['ceNom', 'ceNote'].forEach(id => { document.getElementById(id).value = ''; });
+      draw(r.chaines);
+      toast('Ajoutée : ses vidéos ne seront plus utilisées.');
+    } catch (e){ toast(e.message, 'error'); }
+  };
+  draw((await api('/api/chaines-evitees')).chaines);
+  hydrateIcons(document.querySelector('.rg-panel[data-panel="evitees"]'));
+}
 
 
 // ---------- Bibliothèques → Prononciation (adaptation/prononciation.py) ----------

@@ -78,8 +78,12 @@ Pour CHAQUE image, en JSON :
   spectaculaire ; 2 = plan vide, flou, statique, presentateur face camera) ;
 - "pertinence" : 0-10, a quel point l'image sert CE sujet (0 = hors sujet, ex. des oranges pour un sujet sur les tomates) ;
 - "probleme" : null ou ce qui gene (texte incruste, logo, micro de journaliste, flou, ecran partage, filigrane) ;
+- "ia" : true si l'image semble GENEREE PAR IA en se faisant passer pour une vraie prise de vue (chantier, foule,
+  ouvriers ou paysage trop parfaits, lisses, details incoherents : mains, visages, textes illisibles, machines
+  impossibles) ; false pour une vraie video, et false aussi pour un rendu 3D, une maquette ou une simulation
+  d'architecte qui se montre comme tel (le rendu officiel d'un stade n'est pas une image IA) ;
 - "x" : ou est le sujet horizontalement (0 gauche - 1 droite), pour recadrer en vertical.
-JSON uniquement : {{"plans": [{{"id": "", "desc": "", "montre": [""], "force": 5, "pertinence": 5, "probleme": null, "x": 0.5}}]}}"""
+JSON uniquement : {{"plans": [{{"id": "", "desc": "", "montre": [""], "force": 5, "pertinence": 5, "probleme": null, "ia": false, "x": 0.5}}]}}"""
 
 EDIT = """Tu es un monteur PRO de YouTube Shorts. Voici la voix off, phrase par phrase, avec ses mots numerotes et leur
 instant (secondes) :
@@ -317,7 +321,8 @@ def describe(shots: List[Dict], sujet: str, gemini=None) -> None:
             d = got.get(s["id"]) or {}
             s.update(desc=str(d.get("desc") or ""), montre=[str(x) for x in d.get("montre") or []][:6],
                      force=_num(d.get("force"), 5), pertinence=_num(d.get("pertinence"), 5),
-                     probleme=d.get("probleme") or None, x=min(1.0, max(0.0, _num(d.get("x"), 0.5, float))))
+                     probleme=d.get("probleme") or None, ia=d.get("ia") is True,
+                     x=min(1.0, max(0.0, _num(d.get("x"), 0.5, float))))
 
 
 def _num(x, default, kind=int):
@@ -359,6 +364,8 @@ def presort(shots: List[Dict], n: int) -> set:
 
 def set_aside(shot: Dict) -> Optional[str]:
     """Why the code keeps a shot out of the edit by itself (the person can bring it back), or None."""
+    if shot.get("ia"):                  # 2026-11-13: AI-made « works » shown as the real site
+        return "image IA"
     if shot.get("pertinence", 5) <= 3:
         return "hors sujet"
     if not shot.get("desc"):

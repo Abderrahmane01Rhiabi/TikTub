@@ -618,14 +618,15 @@ def all_candidates(sug: Dict) -> List[Dict]:
 
 def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, workers: int = 3,
                 report: Optional[Callable[[str, float], None]] = None, words_share: float = 0.5,
-                on_result: Optional[Callable[[str, Dict], None]] = None) -> Dict:
+                on_result: Optional[Callable[[str, Dict], None]] = None, first: Optional[List[str]] = None) -> Dict:
     """Gemini watches the n most promising candidates, in parallel (a YouTube
     link takes ~15 s, a VK/Rutube file ~2 min). Results land in sug["verifs"];
     a failure is noted, never fatal. words_share: the part of the budget for
     each scene's best found by words (1.0 in Script d'abord: the pictures
     searched are the model's shots, not the storyboard's plans — measured, the
     tuna Short: plans 7 to 11 never had their "tuna spawning" result checked,
-    the budget went to marlin fishing found by picture)."""
+    the budget went to marlin fishing found by picture). first: urls watched before all others (the free pre-sort
+    « image + parole », adaptation/pretri), up to the whole budget."""
     from concurrent.futures import ThreadPoolExecutor, as_completed
     checker = checker or check
     report = report or (lambda phase, f: None)
@@ -640,6 +641,12 @@ def verify_best(sug: Dict, ref: Dict, n: int = 8, checker: Callable = None, work
     if account and n:                                    # the credited account's best video: the strongest lead
         todo.append(account[0])
         picked.add(account[0]["url"])
+    by_url = {c["url"]: c for c in all_candidates(sug)}
+    for u in first or []:                                # the pre-sort's: its picture fits, its name is said
+        c = by_url.get(u)
+        if c and ok(c) and u not in picked and len(todo) < n:
+            todo.append(c)
+            picked.add(u)
     # each scene: its best found by words, then its best found by a picture — half the budget each
     for kind, cap in ((by_text, -(-n * words_share // 1)), (lambda c: not by_text(c), n)):
         for s in sug.get("scenes") or []:
