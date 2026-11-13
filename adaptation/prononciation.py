@@ -92,16 +92,21 @@ def _split(token: str) -> Tuple[str, str, str]:
 
 
 def apply(text: str, lang: str, words: Optional[Dict[str, str]] = None,
-          other: Optional[Callable[[str], Optional[str]]] = None) -> Tuple[str, List[int]]:
+          other: Optional[Callable[[List[str], int], Optional[str]]] = None) -> Tuple[str, List[int]]:
     """The text ElevenLabs reads, and for each written word how many spoken words it became (to give the timings
-    back to the written words). Only whole listed words change — and, with « other », the words it gives a reading
-    (adaptation/nombres_darija: a darija narration's numbers in words)."""
+    back to the written words; 0 for a word said with the one before it, « 11 000 »). Only whole listed words
+    change — and, with « other », the words it gives a reading from the word and its neighbours
+    (adaptation/nombres_darija: a darija narration's numbers and units in words)."""
     words = table(lang) if words is None else words
     out, sizes = [], []
-    for token in text.split():
+    tokens = text.split()
+    cores = [_split(t)[1] for t in tokens]
+    for i, token in enumerate(tokens):
         pre, core, post = _split(token)
-        said = words.get(core) or (other(core) if other and core else None)
-        if said:
+        said = words.get(core)
+        if said is None and other and core:
+            said = other(cores, i)
+        if said is not None:
             parts = (pre + said + post).split()
             out.extend(parts)
             sizes.append(len(parts))
@@ -129,6 +134,11 @@ def restore(v: Dict, written: List[str], sizes: List[List[int]]) -> Dict:
         for tok, n in zip(tokens, sz):
             group = [v["words"][i] for i in spoken[j:j + n]]
             j += n
+            if not group:                                       # said with the word before (« 11 000 »)
+                end = words[-1]["end"] if words else 0.0
+                words.append({"w": tok, "start": end, "end": end})
+                idx.append(len(words) - 1)
+                continue
             words.append({**group[0], "w": tok, "end": group[-1]["end"]})
             idx.append(len(words) - 1)
         passages.append({**ps, "words": idx})
