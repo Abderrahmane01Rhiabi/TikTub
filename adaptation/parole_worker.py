@@ -2,7 +2,7 @@
 What is said in a few videos (adaptation/pretri), in its own process: the CUDA libraries must be on the library path
 when it starts, and Whisper's memory goes back to the system when it ends.
 
-  python -m adaptation.parole_worker <jobs.json> <folder>
+  python adaptation/parole_worker.py <jobs.json> <folder>
   jobs.json  [{url, vid}]; for each: its audio alone (the lightest), Whisper medium on the graphics card (small on the
              processor if the card refuses), every word's instant; <folder>/<vid>.json = {vid, langue, parole_s, cues};
              the audio deleted. Prints « FAIT <vid> » after each (the progress), never stops on one video's failure.
@@ -14,6 +14,8 @@ import os
 import random
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))   # the app's code, whatever the cwd
 
 
 def _model():

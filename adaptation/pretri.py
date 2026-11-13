@@ -212,7 +212,8 @@ def speech(urls: List[str], folder: str, report: Report, timeout: int = 3600) ->
         jobs = os.path.join(folder, "a_faire.json")
         json.dump([{"url": u, "vid": _vid(u)} for u in todo], open(jobs, "w"))
         env = {**os.environ, "LD_LIBRARY_PATH": _nvidia_libs()}
-        proc = subprocess.Popen([sys.executable, "-m", "adaptation.parole_worker", jobs, folder], env=env,
+        worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "parole_worker.py")   # this code's own
+        proc = subprocess.Popen([sys.executable, worker, jobs, folder], env=env,
                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         start, n = time.time(), 0
         for line in proc.stdout:
