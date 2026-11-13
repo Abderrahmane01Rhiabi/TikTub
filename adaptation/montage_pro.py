@@ -316,7 +316,8 @@ def describe(shots: List[Dict], sujet: str, gemini=None) -> None:
                                     max_tokens=8000, timeout=180, temperature=0.2)
         except Exception:
             r = {}
-        got = {str(d.get("id")): d for d in (r or {}).get("plans") or [] if isinstance(d, dict)}
+        plans = r.get("plans") if isinstance(r, dict) else r if isinstance(r, list) else []   # a bare list too
+        got = {str(d.get("id")): d for d in plans or [] if isinstance(d, dict)}         # (13/11: the stock stopped)
         for s in batch:
             d = got.get(s["id"]) or {}
             s.update(desc=str(d.get("desc") or ""), montre=[str(x) for x in d.get("montre") or []][:6],

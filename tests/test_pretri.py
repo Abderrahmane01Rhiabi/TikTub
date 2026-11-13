@@ -140,3 +140,15 @@ def test_the_speech_reads_finished_files_and_leaves_music_only_videos(tmp_path, 
     (tmp_path / "BBBBBBBBBBB.json").write_text(json.dumps({"parole_s": 4, "cues": []}))
     monkeypatch.setattr(pretri.subprocess, "Popen", lambda *a, **k: pytest.fail("nothing left to transcribe"))
     assert pretri.speech([u1, u2], str(tmp_path), lambda *a: None) == {u1: [{"t": 1, "text": "x"}]}
+
+
+def test_a_description_answered_as_a_bare_list_is_read(tmp_path):
+    """2026-11-13: Gemini answered [..] instead of {"plans": [..]} and the whole stock stopped ('list'.get)."""
+    class G:
+        def _generate_content(self, parts, **kw):
+            return [{"id": "S0_00", "desc": "un viaduc", "pertinence": 8, "ia": False}]
+    thumb = tmp_path / "t.jpg"
+    thumb.write_bytes(b"\xff\xd8\xff")
+    shots = [{"id": "S0_00", "thumb": str(thumb)}]
+    montage_pro.describe(shots, "TGV", gemini=G())
+    assert shots[0]["desc"] == "un viaduc"
