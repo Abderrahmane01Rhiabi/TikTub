@@ -15,19 +15,33 @@ to the listed words (the user keeps the Arabic narration without tashkeel: +30-5
 import json
 import os
 import re
-from typing import Dict, List, Optional, Tuple
+import time
+from typing import Callable, Dict, List, Optional, Tuple
 
 FILE = "prononciation.json"                  # in the data folder (the app's working directory)
 PUNCT = "،؛؟.,!?;:«»\"'()[]…-"  # around a word: kept where it is
 
 
 def entries() -> List[Dict]:
-    try:
-        with open(FILE, encoding="utf-8") as f:
-            data = json.load(f)
-        return [e for e in data if isinstance(e, dict) and e.get("mot") and e.get("dire")]
-    except (OSError, ValueError):
-        return []
+    """The listed words; [] only when there is no file yet. A file that can't be read (the Windows disk busy, a write
+    half done) is read again 3 times, then refused: before 2026-11-13 it counted as empty, and the next add() wrote
+    the file back with that one word — the dictionary lost every other word (and a narration whose signature
+    suddenly read « [] » would have been paid again)."""
+    for k in range(4):
+        try:
+            with open(FILE, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, list):
+                raise ValueError("pas une liste")
+            return [e for e in data if isinstance(e, dict) and e.get("mot") and e.get("dire")]
+        except FileNotFoundError:
+            return []
+        except (OSError, ValueError) as e:
+            if k == 3:
+                raise ValueError(f"Le dictionnaire de prononciation ({FILE}) ne se lit pas ({str(e)[:80]}) : "
+                                 "rien n'a été changé, réessaie dans un instant.")
+            time.sleep(0.2 * (k + 1))
+    return []
 
 
 def _save(data: List[Dict]) -> None:
@@ -77,14 +91,16 @@ def _split(token: str) -> Tuple[str, str, str]:
     return token[:a], token[a:b], token[b:]
 
 
-def apply(text: str, lang: str, words: Optional[Dict[str, str]] = None) -> Tuple[str, List[int]]:
+def apply(text: str, lang: str, words: Optional[Dict[str, str]] = None,
+          other: Optional[Callable[[str], Optional[str]]] = None) -> Tuple[str, List[int]]:
     """The text ElevenLabs reads, and for each written word how many spoken words it became (to give the timings
-    back to the written words). Only whole listed words change."""
+    back to the written words). Only whole listed words change — and, with « other », the words it gives a reading
+    (adaptation/nombres_darija: a darija narration's numbers in words)."""
     words = table(lang) if words is None else words
     out, sizes = [], []
     for token in text.split():
         pre, core, post = _split(token)
-        said = words.get(core)
+        said = words.get(core) or (other(core) if other and core else None)
         if said:
             parts = (pre + said + post).split()
             out.extend(parts)

@@ -2083,7 +2083,8 @@ def _make(p: Dict, t: Dict, preview: bool, report: Report, share: float, offset:
     if not v or v.get("voice_id") != t["voice_id"] or v.get("texts", texts) != texts or v.get("model", voices.MODEL) != model \
             or v.get("prononciation", "[]") != prononciation.signature(t["language"]):     # a word now read otherwise
         report(f"voix {t['channel']}", offset)          # never pay twice for the same narration
-        t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3, model=model)
+        t["voice"] = voices.synthesize(t["script"]["passages"], t["voice_id"], t["language"], voice_mp3, model=model,
+                                       dialect=t.get("dialecte"))
         t["voice"].update(voice_id=t["voice_id"], texts=texts, model=model)
     for vp, sp in zip(t["voice"]["passages"], t["script"]["passages"]):      # back from the preview: a clip or a banner changed
         vp.update({k: sp[k] for k in ("clip", "bandeau", "mots_cles") if k in sp})

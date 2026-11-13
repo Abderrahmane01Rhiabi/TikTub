@@ -1051,7 +1051,10 @@ class PronunciationListen(BaseModel):
 def pronunciation_list():
     """Réglages → Bibliothèques → Prononciation: the words ElevenLabs must read another way (adaptation/prononciation)."""
     from adaptation import prononciation
-    return {"mots": prononciation.entries()}
+    try:
+        return {"mots": prononciation.entries()}
+    except ValueError as e:                     # the file can't be read: said, never shown as an empty dictionary
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.post("/api/prononciation")

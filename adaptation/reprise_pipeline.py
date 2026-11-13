@@ -676,7 +676,7 @@ def make_voice(p: Dict, t: Dict, report: Report) -> Dict:
     if not v or v.get("key") != key or not os.path.exists(v.get("mp3", "")):
         report(f"{t['channel']} : voix", 0.1)
         mp3 = os.path.join(work_dir(p, "cibles", t["channel"]), "voix.mp3")
-        rm.voice(r["script"], code, t["voice_id"], mp3, model=model_for(t))
+        rm.voice(r["script"], code, t["voice_id"], mp3, model=model_for(t), dialect=t.get("dialecte"))
         v = {"mp3": mp3, "json": mp3[:-4] + ".json", "key": key}
         t["voice"] = v
     return v
