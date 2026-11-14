@@ -338,3 +338,63 @@ def test_a_watermarked_shot_gives_way_to_a_clean_one_of_its_sentence():
              {"id": "C", "source": 1, "start": 0, "end": 3, "colle": [0.4], "probleme": None}]
     raw = {"montage": [{"phrase": 1, "coupes": [{"plan": "W", "mot": 0}]}]}
     assert [e["plan"] for e in mp.build_edit(raw, v, stock)] == ["C"]
+
+
+# ---- the Brut way (default since 2026-11-14: blind vote Brut 9/10, former look 7/10)
+
+def test_brut_one_shot_a_sentence_and_a_second_one_only_in_a_long_sentence():
+    v = voice(["un deux trois", "a b c d e f g h i j k l m n"])         # 1.45 s, then a long 7 s sentence
+    shots_ = [{"id": i, "source": k, "start": 0, "end": 9, "garde": True, "colle": [0.3, 0.3 - k / 100]}
+              for k, i in enumerate("ABCDE")]
+    edl = [{"phrase": 1, "plan": "A", "debut": 0.0, "fin": 0.9}, {"phrase": 1, "plan": "B", "debut": 0.9, "fin": 1.65},
+           {"phrase": 2, "plan": "C", "debut": 1.65, "fin": 4.0}, {"phrase": 2, "plan": "D", "debut": 4.0, "fin": 8.85}]
+    out = mp.brut_cuts(edl, v, shots_, main={2: "C"})
+    assert [e["plan"] for e in out if e["phrase"] == 1] == ["A"]                     # short: one shot, all of it
+    assert out[0]["fin"] == 1.65
+    two = [e for e in out if e["phrase"] == 2]
+    assert [e["plan"] for e in two] == ["C", "D"]                                     # long: the main, then the editor's 2nd
+    cut = two[0]["fin"]
+    assert cut == two[1]["debut"] and 1.65 + 0.5 * 7.2 < cut < 1.65 + 0.7 * 7.2      # near 60 %, on a word
+    assert cut in [w["start"] for w in v["words"]]
+
+
+def test_brut_look_title_over_the_hook_in_the_channel_colour_and_its_name_top_right(tmp_path):
+    from adaptation import montage_doc
+    v = voice(["واش شفشاون ديما زرقاء", "فـ 1471 بناها علي بن راشد", "الأزرق بدا فـ 1930"])
+    doc = montage_doc.new([{"phrase": 1, "plan": "A", "debut": 0, "fin": 9}], 3, None, 0, [{"kind": "pop"}],
+                          brut={"titre": "هل كانت شفشاون دائما زرقاء", "nom": "Prince Moulay Hassan", "couleur": "#FB923C"})
+    assert doc["effets"] == [] and doc["musique"]["volume"] == 35 and doc["sous_titres"]["position"] == "milieu"
+    assert [b["cache"] for b in doc["bandeaux"]] == [False, False, True]
+    clean = montage_doc.clean(doc, v, ["A"])
+    assert clean["bandeau_cadre"] == "chaine" and clean["bandeau_place"] == "milieu"
+    path = tmp_path / "t.ass"
+    info = mp.captions_ass(v, [{"bandeau": "x", "texte": "x"}] * 3, str(path), "ar", render.style_of("actu"), clean)
+    text = path.read_text(encoding="utf-8")
+    banners = [l for l in text.splitlines() if ",Bandeau," in l]
+    assert len(banners) == 2 and all("\\pos(540,640)" in l and "هل كانت شفشاون" in l for l in banners)
+    assert "&H003C92FB" in text.split("Style: Bandeau,")[1].split("\n")[0]            # the box in the channel's orange
+    assert any(",Nom," in l and "Prince Moulay Hassan" in l and "\\an9" in l for l in text.splitlines())
+    assert info["bandeau"]["couleur"] == "#FB923C" and info["bandeau"]["place"] == "milieu"
+
+
+def test_the_former_look_stays_for_a_version_that_asks_for_it():
+    t = {"channel": "c", "montage_style": "classique"}
+    assert mp.brut_look({}, t) is None
+
+
+def test_the_hook_title_is_written_once_in_the_video_language(monkeypatch):
+    t = {"channel": "c", "language": "ar", "script": {"passages": [{"texte": "واش شفشاون", "bandeau": "صحيح ولا غالط؟ 🤔"}]}}
+    calls = []
+
+    class G:
+        def _generate_content(self, parts, **kw):
+            calls.append(parts[0]["text"])
+            return {"titre": "  هل كانت شفشاون دائما زرقاء  "}
+    assert mp.hook_title({}, t, gemini=G()) == "هل كانت شفشاون دائما زرقاء"
+    assert mp.hook_title({}, t, gemini=G()) == "هل كانت شفشاون دائما زرقاء" and len(calls) == 1
+
+    class Down:
+        def _generate_content(self, parts, **kw):
+            raise RuntimeError("503")
+    t2 = {k: x for k, x in t.items() if k != "titre_accroche"}
+    assert mp.hook_title({}, t2, gemini=Down()) == "صحيح ولا غالط؟"                 # the first banner, without emoji

@@ -14,6 +14,10 @@ One document per version, t["montage"], says everything the render needs — the
   effets        [{kind, file, start (when the file begins), gain, pourquoi, par}]
   incrustation  the hook's animated number laid over its picture (adaptation/graphiques): {fichier, phrase, cache}
                 or None — the person only shows or hides it
+  style_montage "brut" (the default since 2026-11-14: the user's blind test on Chefchaouen, Brut 9/10 against 7/10 for
+                the former look) or None (the former: a banner a sentence at the top, whooshes and pops)
+  chaine        {nom, couleur}: the channel's name, small, top right, and the colour of the "chaine" banner box
+  bandeau_place "haut" | "milieu" (Brut: the hook's title above the captions in the middle)
 
 Every version the person renders is kept (VERSIONS): « Annuler » goes back one, « Avant / Après » compares.
 What the person sends is checked and made safe (clean): cuts snapped on words, nothing outside the video.
@@ -28,6 +32,17 @@ VERSIONS = 20
 POSITIONS = ("bas", "milieu", "haut")
 CADRES = {"noir": ("#111111", "#FFFFFF"), "rouge": ("#D62828", "#FFFFFF"), "blanc": ("#FFFFFF", "#111111"),
           "bleu": ("#6D8DFD", "#FFFFFF")}
+CHAINE = "chaine"               # a box in the channel's own colour (doc["chaine"]["couleur"])
+BRUT_MUSIC = 35                 # % — Brut keeps its music low under the voice
+BRUT_HOOK = 2                   # sentences under the hook's title
+
+
+def cadre(name: Optional[str], doc: Optional[Dict]) -> Optional[tuple]:
+    """(box, text) colours of a banner box name: one of CADRES, or the channel's colour."""
+    if name == CHAINE:
+        col = ((doc or {}).get("chaine") or {}).get("couleur")
+        return (col, "#FFFFFF") if col else None
+    return CADRES.get(name or "")
 SOUND_KEYS = ("musique", "effets")      # a change only there: the picture is kept, only the sound is made again
 
 
@@ -35,14 +50,26 @@ class MontageError(Exception):
     pass
 
 
-def new(edl: List[Dict], n_sentences: int, music_path: Optional[str], music_start: float, effets: List[Dict]) -> Dict:
-    """The document of a montage the AI just made."""
-    return {"plans": [{**e, "zoom": 1.0, "centre": None} for e in edl],
-            "bandeaux": [{"texte": None, "cache": False} for _ in range(n_sentences)], "bandeau_cadre": None,
-            "sous_titres": {"style": None, "position": "bas", "taille": 100, "mots": {}},
-            "musique": {"fichier": music_path, "debut": float(music_start or 0.0), "volume": 100, "zones": [],
-                        "fondu": 1.2},
-            "effets": [{**e, "par": "ia"} for e in effets]}
+def new(edl: List[Dict], n_sentences: int, music_path: Optional[str], music_start: float, effets: List[Dict],
+        brut: Optional[Dict] = None) -> Dict:
+    """The document of a montage the AI just made. brut: {titre, nom, couleur} — the Brut look (one title over the
+    hook in the channel's colour, captions in the middle, music low, no sound effect, the channel's name top right)."""
+    doc = {"plans": [{**e, "zoom": 1.0, "centre": None} for e in edl],
+           "bandeaux": [{"texte": None, "cache": False} for _ in range(n_sentences)], "bandeau_cadre": None,
+           "sous_titres": {"style": None, "position": "bas", "taille": 100, "mots": {}},
+           "musique": {"fichier": music_path, "debut": float(music_start or 0.0), "volume": 100, "zones": [],
+                       "fondu": 1.2},
+           "effets": [{**e, "par": "ia"} for e in effets]}
+    if brut is not None:
+        title = (brut.get("titre") or "").strip()[:60]
+        doc.update(style_montage="brut", bandeau_place="milieu", effets=[],
+                   chaine={"nom": str(brut.get("nom") or "")[:40], "couleur": brut.get("couleur")},
+                   bandeau_cadre=CHAINE if brut.get("couleur") else None,
+                   bandeaux=[{"texte": title if k < BRUT_HOOK and title else None,
+                              "cache": k >= BRUT_HOOK or not title} for k in range(n_sentences)])
+        doc["sous_titres"]["position"] = "milieu"
+        doc["musique"]["volume"] = BRUT_MUSIC
+    return doc
 
 
 def total(doc: Dict) -> float:
@@ -88,10 +115,12 @@ def clean(doc: Dict, voice: Dict, shot_ids: List[str], sfx_files: Optional[List[
     n = len(voice.get("passages") or [])
     bs = (d.get("bandeaux") or [])[:n]
     d["bandeaux"] = [{"texte": None if b.get("texte") is None else str(b["texte"])[:60], "cache": bool(b.get("cache"))}
-                     | ({"cadre": b["cadre"]} if b.get("cadre") in CADRES or b.get("cadre") == "style" else {})   # its own box
+                     | ({"cadre": b["cadre"]} if b.get("cadre") in CADRES or b.get("cadre") in ("style", CHAINE) else {})
                      for b in bs] + [{"texte": None, "cache": False}] * (n - len(bs))
-    if d.get("bandeau_cadre") not in CADRES:
+    if d.get("bandeau_cadre") not in CADRES and not (d.get("bandeau_cadre") == CHAINE and cadre(CHAINE, d)):
         d["bandeau_cadre"] = None
+    if d.get("bandeau_place") not in ("haut", "milieu"):
+        d.pop("bandeau_place", None)
     st = d.get("sous_titres") or {}
     nw = len(voice.get("words") or [])
     d["sous_titres"] = {"style": st.get("style") or None,
