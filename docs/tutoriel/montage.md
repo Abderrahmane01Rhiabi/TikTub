@@ -38,6 +38,20 @@ Dans **Adaptation → Idée d'abord**, à l'étape **Aperçu**, la vidéo est mo
 | chaque effet sonore | — |
 | le texte ou la manière d'une phrase | — |
 
+## Le style « Brut » (par défaut depuis le 14 novembre)
+
+Ton test à l'aveugle sur Chefchaouen : style Brut **9/10**, l'ancien style **7/10**. Chaque nouveau montage pro suit maintenant la méthode des Shorts de Brut (mesurée sur 3 de leurs vidéos), aux couleurs de ta chaîne :
+
+| | |
+|---|---|
+| **Un plan par phrase** | ton image principale (« Je choisis mes plans ») tient toute la phrase ; une phrase de **plus de 5 s** reçoit un **2e plan** vers 60 % de la phrase, sur un mot |
+| **Accroche** | un **titre** sur les 2 premières phrases, dans un bandeau **à la couleur de la chaîne**, au-dessus des sous-titres (écrit par l'IA dans la langue de la chaîne, 5 à 9 mots) ; ensuite, plus de bandeau |
+| **Sous-titres** | au **milieu** de l'écran |
+| **Son** | musique **basse** (35 %), **aucun effet sonore** (ni whoosh ni pop) |
+| **Nom de la chaîne** | petit, **en haut à droite**, dans sa couleur, toute la vidéo |
+
+Tout se change ensuite dans la timeline comme avant (bandeaux, cadre, position des sous-titres, volume, effets). Une version peut garder l'ancien style si on lui donne `montage_style = classique` (pas encore de bouton).
+
 ## Montage pro : tes deux écrans de choix (depuis le 14 novembre)
 
 L'IA cherche, télécharge et découpe ; **toi, tu décides** ce qu'on voit. Deux écrans, environ 3 minutes en tout.

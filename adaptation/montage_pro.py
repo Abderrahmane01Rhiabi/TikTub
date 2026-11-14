@@ -51,6 +51,7 @@ MIN_CUT_S = 1.0
 RAFALE_S = 0.5                  # a cut on a name of the director's list (one visual a club)
 CAPTION_Y = H - 560             # the captions' one place (bottom of the line), never moving
 BANNER_MARGIN = 250
+BANNER_MIDDLE = 640                 # Brut: the hook's title box above the captions in the middle
 MUSIC_GAIN = 0.12
 # The sound effects (adaptation/sfx: Réglages → Bibliothèques → Effets sonores) on the story's real moments, as many as
 # the narrative family wants (2026-11-08: one same whoosh on every sentence before, and over a whisper)
@@ -772,6 +773,85 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, 
     return edl
 
 
+# ---------------------------------------------------------------- the Brut way (the default since 2026-11-14)
+# The labs of 2026-11-14: 3 Brut Shorts measured (shots 3-6 s on average, the cuts at a sentence's end, on a word) and
+# the user's blind vote on Chefchaouen — Brut 9/10, « Brut rythmé » 9/10, the former look 7/10.
+
+BRUT_SECOND_S = 5.0             # a sentence longer than this gets a second shot…
+BRUT_SECOND_AT = 0.6            # …near 60 % of it, on a word
+
+
+def brut_cuts(edl: List[Dict], v: Dict, shots: List[Dict], main: Optional[Dict[int, str]] = None) -> List[Dict]:
+    """One shot a sentence (the person's main one, else the editor's first), and a second one only in a sentence
+    longer than BRUT_SECOND_S — the editor's second shot of it, else the best unused for it — cut on the word nearest
+    BRUT_SECOND_AT of the sentence. Never a shot twice."""
+    by_id = {s["id"]: s for s in shots}
+    words = v["words"]
+    used = {e["plan"] for e in edl if e["plan"] == (main or {}).get(e["phrase"])}
+    out = []
+    for i in sorted({e["phrase"] for e in edl}):
+        mine = [e for e in edl if e["phrase"] == i]
+        first, a, b = mine[0], mine[0]["debut"], mine[-1]["fin"]
+        used.add(first["plan"])
+        second = next((e["plan"] for e in mine[1:] if e["plan"] not in used), None)
+        if b - a > BRUT_SECOND_S and not second:
+            sc = lambda s: (s.get("colle") or [0.0] * i)[i - 1] if i - 1 < len(s.get("colle") or []) else 0.0
+            second = next((s["id"] for s in sorted(shots, key=lambda s: -sc(s)) if s["id"] not in used
+                           and not s.get("graphique") and s.get("reserve") in (None, i)
+                           and s["id"] not in (main or {}).values()), None)
+        cut = None
+        if b - a > BRUT_SECOND_S and second and i - 1 < len(v["passages"]):
+            starts = [words[w]["start"] for w in v["passages"][i - 1]["words"] if a + 2.0 < words[w]["start"] < b - 1.5]
+            cut = min(starts, key=lambda s: abs(s - (a + BRUT_SECOND_AT * (b - a))), default=None)
+        if cut is None:
+            out.append({**first, "debut": a, "fin": b})
+        else:
+            used.add(second)
+            out += [{**first, "debut": a, "fin": round(cut, 2)}, {"phrase": i, "plan": second, "debut": round(cut, 2), "fin": b}]
+    return out
+
+
+HOOK_TITLE_PROMPT = """Ecris le TITRE d'accroche d'un YouTube Short d'information, affiche dans un bandeau sur ses 2
+premieres phrases (comme un titre de Brut ou de HugoDecrypte) : 5 a 9 mots, une question ou un fait fort, fidele au
+script, sans emoji, sans guillemets, sans point final. LANGUE DU TITRE : {langue} (code {code}) — la langue de la
+chaine, jamais l'anglais si ce n'est pas elle ; en arabe : arabe standard simple, comprehensible au Maroc.
+Le script : {script}
+JSON uniquement : {{"titre": ""}}"""
+
+
+def hook_title(p: Dict, t: Dict, gemini=None) -> str:
+    """The Brut hook's title in the video's language (written once, kept on the version); the first banner else."""
+    if t.get("titre_accroche"):
+        return t["titre_accroche"]
+    script = " ".join(x["texte"] for x in (t.get("script") or {}).get("passages") or [])
+    first = ((t.get("script") or {}).get("passages") or [{}])[0].get("bandeau") or ""
+    try:
+        r = (gemini or _gemini())._generate_content([{"text": HOOK_TITLE_PROMPT.format(       # room for its thinking:
+            langue=lang_of(t["language"])["label"], code=t["language"], script=script[:1500])}],   # 400 tokens cut the
+            max_tokens=2000, timeout=60, temperature=0.4, thinking=ECO_THINKING)                    # answer (14/11)
+        title = " ".join(str((r or {}).get("titre") or "").split())[:60] if isinstance(r, dict) else ""
+    except Exception:
+        title = ""
+    t["titre_accroche"] = title or banner_text(first)
+    return t["titre_accroche"]
+
+
+def brut_look(p: Dict, t: Dict, gemini=None) -> Optional[Dict]:
+    """{titre, nom, couleur} for montage_doc.new, or None when the version keeps the former look."""
+    if (t.get("montage_style") or "brut") != "brut":
+        return None
+    nom, couleur = t["channel"], None
+    try:
+        from channel_manager import ChannelManager
+        cm = ChannelManager()
+        ch = next((c for c in cm.list_channels() if c["name"] == t["channel"]), None)
+        if ch:
+            nom, couleur = ch.get("display_name") or nom, ch.get("color")
+    except Exception:
+        pass
+    return {"titre": hook_title(p, t, gemini), "nom": nom, "couleur": couleur}
+
+
 # ---------------------------------------------------------------- 4. render
 
 def _ass_time(t: float) -> str:
@@ -829,9 +909,10 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
     font, enc = lang["caption_font"], -1 if lang["rtl"] else 1
     white, key, box = _ass_colour(style["text"]), _ass_colour(style["key"]), _ass_colour(style["box"])
     btext = white
-    cadre = montage_doc.CADRES.get((doc or {}).get("bandeau_cadre") or "")
+    cadre = montage_doc.cadre((doc or {}).get("bandeau_cadre"), doc)
     if cadre:
         box, btext = _ass_colour(cadre[0]), _ass_colour(cadre[1])
+    by = BANNER_MIDDLE if (doc or {}).get("bandeau_place") == "milieu" else BANNER_MARGIN
     st = (doc or {}).get("sous_titres") or {}
     size, y = int(96 * (st.get("taille") or 100) / 100), CAPTION_PLACES.get(st.get("position") or "bas", CAPTION_Y)
     bans = (doc or {}).get("bandeaux") or []
@@ -842,22 +923,28 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
         "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, "
         "Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, "
         "MarginR, MarginV, Encoding",
-        f"Style: Bandeau,{font},78,{btext},{btext},{box},{box},1,0,0,0,100,100,0,0,3,18,0,8,60,60,{BANNER_MARGIN},{enc}",
+        f"Style: Bandeau,{font},78,{btext},{btext},{box},{box},1,0,0,0,100,100,0,0,3,18,0,8,60,60,{by},{enc}",
         f"Style: Sous,{font},{size},{white},{white},&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,7,3,2,70,70,0,{enc}",
+        f"Style: Nom,{font},34,&H00FFFFFF,&H00FFFFFF,&H99000000,&H99000000,1,0,0,0,100,100,0,0,1,2,2,9,48,48,96,{enc}",
         "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     ev, words = [], doc_words(v, doc)
+    ch = (doc or {}).get("chaine") or {}
+    if ch.get("nom"):                   # Brut: the channel's name, small, top right, all along (no logo file yet)
+        col = f"\\1c{_ass_colour(ch['couleur'])}&" if ch.get("couleur") else ""
+        ev.append(f"Dialogue: 2,{_ass_time(0)},{_ass_time(v['duration'] + 1.0)},Nom,,0,0,0,,"
+                  f"{{\\an9\\pos({W - 48},96){col}}}{ch['nom'].replace('{', '').replace('}', '')}")
     nexts = [x["start"] for x in v["passages"][1:]] + [None]
     for k, (vp, sp, nxt) in enumerate(zip(v["passages"], passages, nexts)):
         b = bans[k] if k < len(bans) else {}
         text = "" if b.get("cache") else banner_text(b["texte"] if b.get("texte") is not None else sp.get("bandeau") or "")
         if text:                        # until the next sentence starts, at one place: never two banners stacked
             end = nxt if nxt is not None else vp["end"] + 0.25
-            own = montage_doc.CADRES.get(b.get("cadre") or "") or (               # "style": the look's, whatever the video's
+            own = montage_doc.cadre(b.get("cadre"), doc) or (                       # "style": the look's, whatever the video's
                 (style["box"] if isinstance(style["box"], str) else "#%02X%02X%02X" % tuple(style["box"][:3]), style["text"])
                 if b.get("cadre") == "style" else None)
             tint = (f"\\1c{_ass_colour(own[1])}&\\3c{_ass_colour(own[0])}&\\4c{_ass_colour(own[0])}&" if own else "")
             ev.append(f"Dialogue: 0,{_ass_time(vp['start'])},{_ass_time(end)},Bandeau,,0,0,0,,"
-                      f"{{\\an8\\pos({W // 2},{BANNER_MARGIN}){tint}}}{up(text)}")
+                      f"{{\\an8\\pos({W // 2},{by}){tint}}}{up(text)}")
     groups = caption_groups(v, doc)
     for gi, grp in enumerate(groups):
         if grp["style"]:                # a caption library style draws this group (render_doc)
@@ -876,7 +963,8 @@ def captions_ass(v: Dict, passages: List[Dict], path: str, code: str, style: Dic
         f.write("\n".join(head + ev) + "\n")
     return {"position": f"{st.get('position') or 'bas'}-centre, fixe", "y": y, "taille": size, "police": font,
             "mots_par_ligne": 3, "mot_dit": style["key"], "style_bibliotheque": st.get("style"),
-            "bandeau": {"couleur": cadre[0] if cadre else "#%02X%02X%02X" % tuple(style["box"][:3]), "place": "haut",
+            "bandeau": {"couleur": cadre[0] if cadre else "#%02X%02X%02X" % tuple(style["box"][:3]),
+                        "place": "milieu" if by == BANNER_MIDDLE else "haut",
                         "taille": 78}}
 
 
@@ -1250,16 +1338,20 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
         lost = secours.failed(raw) or not (raw or {}).get("montage")
         secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
                                    "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)
-        edl = graphiques.with_graphics(build_edit({} if lost else raw, t["voice"], footage,
-                                                  quick_words(p.get("realisation"), t["voice"]), main), shots)
+        edl = build_edit({} if lost else raw, t["voice"], footage, quick_words(p.get("realisation"), t["voice"]), main)
+        look = brut_look(p, t, gemini)
+        if look is not None:            # Brut: one shot a sentence, a second one only in a long sentence
+            edl = brut_cuts(edl, t["voice"], footage, main)
+        edl = graphiques.with_graphics(edl, shots)
     choose_music(p, t)
     if keep and t.get("montage"):       # only the music changed: the person's montage kept, its song replaced
         doc = copy.deepcopy(t["montage"])
         doc["musique"].update(fichier=t.get("music_path"), debut=float(t.get("music_start") or 0.0))
         montage_doc.push(t, doc)
     else:                               # a new montage by the AI: a new document, no history
+        look = None if keep else brut_look(p, t, gemini)
         doc = montage_doc.new(old if keep else edl, len(t["voice"]["passages"]), t.get("music_path"),
-                              t.get("music_start") or 0.0, sound_effects(p, t))
+                              t.get("music_start") or 0.0, [] if look is not None else sound_effects(p, t), brut=look)
         inc = p.get("incrustation")         # the hook's number, laid over its real picture
         if inc and os.path.exists(inc.get("fichier") or ""):
             doc["incrustation"] = {"fichier": inc["fichier"], "phrase": 1, "cache": False}
@@ -1590,14 +1682,18 @@ def timeline(p: Dict, t: Dict) -> Dict:
         # the look's colours and places, for the instant demo drawn over the video before « Refaire l'aperçu »
         "look": {k: (lambda c: c if isinstance(c, str) else "#%02X%02X%02X" % tuple(c[:3]))(
                      render.style_of(t.get("style") or "classique")[k]) for k in ("text", "key", "box")}
-                | {"cadres": montage_doc.CADRES, "places": CAPTION_PLACES, "bandeau_y": BANNER_MARGIN, "w": W, "h": H,
+                | {"cadres": {**montage_doc.CADRES, **({montage_doc.CHAINE: montage_doc.cadre(montage_doc.CHAINE, t.get("montage"))}
+                                                      if montage_doc.cadre(montage_doc.CHAINE, t.get("montage")) else {})},
+                   "places": CAPTION_PLACES, "w": W, "h": H,
+                   "bandeau_y": BANNER_MIDDLE if (t.get("montage") or {}).get("bandeau_place") == "milieu" else BANNER_MARGIN,
                    "majuscules": lang_of(t["language"])["upper"]},
         "mots": [[w["w"], w["start"], w["end"]] for w in v["words"]],
         "stock": stock,
         "sons": {k: [{"file": f, "nom": os.path.basename(f)} for f in x] for k, x in sfx.library().items() if x},
         "gains": sfx.GAIN,
         "styles_sous_titres": [{"id": x.id, "label": x.label} for x in caption_lib.STYLES.values() if "adaptation" in x.spaces],
-        "cadres": list(montage_doc.CADRES), "positions": list(montage_doc.POSITIONS),
+        "cadres": list(montage_doc.CADRES) + ([montage_doc.CHAINE] if montage_doc.cadre(montage_doc.CHAINE, t.get("montage")) else []),
+        "positions": list(montage_doc.POSITIONS),
         "musiques": [{"fichier": s["chemin"], "titre": s["titre"], "permise": s["permise"]} for s in music_choices(t)],
         "enveloppe": env, "saut": t.get("montage_jump"), "son_seulement": t.get("montage_son"),
         "relecture": t.get("relecture") or [],          # the shots the review flagged (review)
