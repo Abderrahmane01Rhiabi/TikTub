@@ -148,7 +148,20 @@ async function renderNewAdaptation(){
 async function loadAdProject(){
   clearTimeout(adPoll);
   const stage = document.getElementById('adStage');
-  const p = await api(`/api/adaptations/${adCurrent}`);
+  let p;
+  try { p = await api(`/api/adaptations/${adCurrent}`); }
+  catch (e){
+    // the server busy for a moment (a search, a render): try again by itself instead of leaving the screen frozen
+    // (2026-11-14: « Traduction de tes versions… » stayed 50 minutes while the project had moved on to its stock)
+    const want = adCurrent;
+    let note = document.getElementById('adRetry');
+    if (!note && stage){ note = document.createElement('div'); note.id = 'adRetry'; note.className = 'warnbox'; stage.prepend(note); }
+    if (note) note.textContent = 'Le serveur est occupé : nouvel essai dans quelques secondes… (' + e.message + ')';
+    adPoll = setTimeout(() => { if (currentSpace === 'adaptation' && adCurrent === want) loadAdProject(); }, 4000);
+    return;
+  }
+  const retry = document.getElementById('adRetry');
+  if (retry) retry.remove();
   const changed = !adProject || adProject.project_id !== p.project_id || adProject.status !== p.status || AD_BUSY.includes(p.status);
   const statusMoved = !adProject || adProject.status !== p.status;
   adProject = p;
