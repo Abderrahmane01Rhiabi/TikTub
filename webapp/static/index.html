@@ -180,6 +180,7 @@
       <button class="seg-opt" data-tab="drones">Fonds et drones</button>
       <button class="seg-opt" data-tab="soustitres">Sous-titres</button>
       <button class="seg-opt" data-tab="prononciation">Prononciation</button>
+      <button class="seg-opt" data-tab="evitees">Chaînes à éviter</button>
     </div>
 
     <div class="rg-panel" data-panel="voix">
@@ -252,6 +253,20 @@
         <div class="chcard-foot"><button class="btn primary small" id="pnAdd" data-icon="plus">Ajouter au dictionnaire</button><span class="note" id="pnNoteOut"></span></div>
       </article>
       <div class="stack" id="pnList"></div>
+    </div>
+
+    <div class="rg-panel" data-panel="evitees" hidden>
+      <p class="sub">Les chaînes YouTube dont l'app n'utilise <b>jamais</b> les vidéos (par exemple une chaîne qui montre des images générées par IA comme si c'était le vrai lieu). Leurs vidéos sont retirées de la recherche avant toute vérification par l'IA.</p>
+      <article class="chcard">
+        <div class="chcard-head"><div class="who"><div class="name">Ajouter une chaîne</div>
+          <div class="meta" style="margin-left:0">Son nom <b>tel que YouTube l'affiche</b> sous la vidéo (majuscules, accents et espaces ne comptent pas).</div></div></div>
+        <div class="chcard-body stack" style="gap:8px">
+          <div class="ad-row"><input class="f" id="ceNom" placeholder="Nom de la chaîne" dir="auto">
+            <input class="f" id="ceNote" placeholder="Pourquoi (facultatif) : ex. « images IA »"></div>
+        </div>
+        <div class="chcard-foot"><button class="btn primary small" id="ceAdd" data-icon="plus">Ajouter à la liste</button></div>
+      </article>
+      <div class="stack" id="ceList"></div>
     </div>
 
     <div class="rg-panel" data-panel="soustitres" hidden>
