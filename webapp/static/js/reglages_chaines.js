@@ -35,6 +35,7 @@ async function loadChannelSettings(){
   list.innerHTML = channels.map(ch => `
     <button class="rg-ch ${ch.name === rgSelected ? 'on' : ''}" data-ch="${ch.name}">
       <span class="name"><span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}</span>
+      ${ch.google_account_email ? `<span class="tiny rg-ch-mail">${esc(ch.google_account_email)}</span>` : ''}
       <span class="tiny rg-ch-sum" data-sum="${ch.name}"></span></button>`).join('');
   list.querySelectorAll('.rg-ch').forEach(b => b.onclick = () => { rgSelected = b.dataset.ch; loadChannelSettings(); });
   channels.forEach(async ch => {                       // each channel's one-line summary in the list
@@ -57,7 +58,8 @@ async function renderChannelPage(ch){
   const fam = (d.familles || {})[s.famille_recit] || {};
   page.innerHTML = `
     <article class="chcard rg-summary">
-      <div class="chcard-head"><div class="who"><div class="name" style="font-size:18px"><span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}</div>
+      <div class="chcard-head"><div class="who"><div class="name" style="font-size:18px"><span class="dot" style="background:${channelColor(ch.name)}"></span>${esc(ch.display_name)}
+          ${ch.google_account_email ? `<span class="tiny" style="font-weight:400;margin-left:6px">${esc(ch.google_account_email)}</span>` : ''}</div>
         <div class="meta" style="margin-left:0">La chaîne en une ligne. Chaque section ci-dessous en règle un morceau.</div></div>
         <span class="pill wait" data-role="pill">Connexion…</span></div>
       <div class="chcard-body"><div class="rg-chips">

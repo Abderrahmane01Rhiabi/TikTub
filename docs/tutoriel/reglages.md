@@ -22,6 +22,10 @@ Un réglage est **enregistré tout de suite** quand tu le changes, sauf dans la 
 - **Clique sur une chaîne** : sa page s'ouvre à droite.
 - **« + Ajouter une chaîne »** (en haut à droite) : connecte une nouvelle chaîne YouTube. Sa page s'ouvre à la fin.
 
+**L'email du compte Google** de chaque chaîne est écrit sous son nom (dans la liste, en haut de sa page et dans les alertes) : c'est le compte à utiliser pour la reconnecter.
+
+**Appli Google en mode « Test »** : si l'appli Google Cloud d'une chaîne est encore en mode Test, sa connexion est coupée **7 jours** après l'avoir faite. L'app le voit : la page de la chaîne affiche « Connectée · mode Test » avec la date de coupure et le nom du projet, et une alerte apparaît sur l'Accueil. Pour régler ça pour de bon : Google Cloud → le projet → **Google Auth Platform → Audience → « Publier l'application »** (supprime le logo s'il y en a un : sinon Google demande une validation), puis **reconnecte la chaîne** (les connexions faites en mode Test gardent leur limite). À la connexion, « Google n'a pas validé cette application » → « Paramètres avancés » → « Accéder à … » : normal pour ton app à toi.
+
 ### 1.1 Le résumé : la chaîne en une ligne
 
 ![Le résumé de prince](img/reglages/02_prince_resume.png)

@@ -780,6 +780,19 @@ def oauth_callback(request: Request):
     """)
 
 
+def _google_project(channel_name: str) -> str:
+    from youtube_uploader import google_project
+    return google_project(channel_name)
+
+
+def _channel_email(channel_name: str) -> str:
+    try:
+        from channel_manager import ChannelManager
+        return (ChannelManager().get_channel_profile(channel_name) or {}).get("google_account_email") or ""
+    except Exception:
+        return ""
+
+
 @app.get("/api/channels/{channel_name}/connection_status")
 def connection_status(channel_name: ChannelName):
     """state tells WHY a channel isn't usable (see get_connection_health) —
@@ -790,7 +803,7 @@ def connection_status(channel_name: ChannelName):
     connected = health["state"] == "connected"
     try:
         import alerts
-        alerts.connection_state(channel_name, health["state"], health["reason"])
+        alerts.connection_state(channel_name, health["state"], health["reason"], health.get("mode_test_expire_dans"))
     except Exception:
         pass
     return {
@@ -799,6 +812,9 @@ def connection_status(channel_name: ChannelName):
         "reason": health["reason"],
         "youtube_channel_title": health["youtube_channel_title"],
         "can_edit": has_edit_scope(channel_name) if connected else False,
+        "mode_test_expire_dans": health.get("mode_test_expire_dans"),      # its Google app still in « Test »
+        "projet_google": _google_project(channel_name),
+        "email": _channel_email(channel_name),
     }
 
 

@@ -3,7 +3,7 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 # oauthlib refuses to exchange an authorization code over a plain http://
 # redirect URI ("OAuth 2 MUST utilize https") unless this is set. That's
@@ -235,6 +235,33 @@ def get_connected_channel_title(channel_name: str):
     return identity['title'] if identity else None
 
 
+def google_project(channel_name: str) -> str:
+    """The Google Cloud project of this channel's credentials.json ("" when unreadable)."""
+    try:
+        with open(get_credentials_path(channel_name), encoding="utf-8") as f:
+            c = json.load(f)
+        return str((c.get("installed") or c.get("web") or {}).get("project_id") or "")
+    except (OSError, ValueError, AttributeError):
+        return ""
+
+
+def test_mode_left(channel_name: str) -> Optional[int]:
+    """Seconds before the saved connection dies when its Google app is still in « Test » mode (Google then gives the
+    refresh token a lifetime, « refresh_token_expires_in »: 7 days from the connection — measured 2026-11-14, 8 channels
+    of 10 cut off the same week); None when it never expires (the app is « En production ») or it can't be told."""
+    import requests
+    try:
+        with open(get_token_path(channel_name), encoding="utf-8") as f:
+            t = json.load(f)
+        r = requests.post(t.get("token_uri") or "https://oauth2.googleapis.com/token", timeout=15, data={
+            "client_id": t["client_id"], "client_secret": t["client_secret"], "refresh_token": t["refresh_token"],
+            "grant_type": "refresh_token"})
+        left = r.json().get("refresh_token_expires_in") if r.ok else None
+        return int(left) if left is not None else None
+    except Exception:
+        return None
+
+
 def get_connection_health(channel_name: str) -> Dict:
     """Why a channel is or isn't usable right now, for the UI — instead of a
     bare "Non connectée" that hides an expired token behind the same label
@@ -264,7 +291,7 @@ def get_connection_health(channel_name: str) -> Dict:
         return {**health, "state": "error", "reason": str(e)[:300]}
     if title is None:
         return {**health, "state": "error", "reason": "Ce compte Google n'a pas de chaîne YouTube."}
-    return {**health, "youtube_channel_title": title}
+    return {**health, "youtube_channel_title": title, "mode_test_expire_dans": test_mode_left(channel_name)}
 
 
 def has_edit_scope(channel_name: str) -> bool:

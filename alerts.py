@@ -20,7 +20,7 @@ nothing, so the hourly checks never spam. The page shows open alerts on
 every screen and, if allowed, as a Windows notification.
 """
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 import db as _db
@@ -33,7 +33,7 @@ def raise_alert(key: str, kind: str, title: str, message: str, channel: Optional
         with conn:
             row = conn.execute("SELECT resolved_at FROM alerts WHERE key = ?", (key,)).fetchone()
             if row and row["resolved_at"] is None:
-                conn.execute("UPDATE alerts SET message = ? WHERE key = ?", (message, key))
+                conn.execute("UPDATE alerts SET message = ?, title = ? WHERE key = ?", (message, title, key))
                 return False
             conn.execute(
                 """INSERT INTO alerts (key, kind, channel, title, message, created_at) VALUES (?, ?, ?, ?, ?, ?)
@@ -83,15 +83,30 @@ def active() -> List[Dict]:
 # The checks, wired where each problem is noticed
 # ---------------------------------------------------------------------------
 
-def connection_state(channel: str, state: str, reason: Optional[str] = None):
-    """Called with every connection check (hourly, and whenever the UI asks)."""
+def connection_state(channel: str, state: str, reason: Optional[str] = None, test_left: Optional[int] = None):
+    """Called with every connection check (hourly, and whenever the UI asks). test_left: the connection works but its
+    Google app is still in « Test » mode — it dies after this many seconds (youtube_uploader.test_mode_left)."""
     key = f"connection:{channel}"
     if state == "expired":
         raise_alert(key, "connection", f"{_display(channel)} : connexion YouTube expirée",
                     "Plus rien ne peut être publié sur cette chaîne — reconnecte-la dans Réglages → Chaînes (sa page)."
-                    + (f" ({reason})" if reason else ""), channel)
+                    + (f" ({reason})" if reason else "")
+                    + " Si ça revient chaque semaine, son appli Google est en mode « Test » : publie-la (voir l'alerte "
+                      "« mode Test »).", channel)
     elif state == "connected":
         resolve(key)
+    test_key = f"mode_test:{channel}"
+    if state == "connected" and test_left is not None:
+        from youtube_uploader import google_project
+        until = (datetime.now() + timedelta(seconds=test_left)).strftime("%d/%m à %H:%M")
+        project = google_project(channel)
+        raise_alert(test_key, "connection", f"{_display(channel)} : appli Google en mode « Test »",
+                    f"La connexion marche, mais elle sera coupée le {until} (les applis en mode Test coupent tous les "
+                    f"7 jours). Pour de bon : Google Cloud → projet « {project or '?'} » → Google Auth Platform → "
+                    "Audience → « Publier l'application » (sans logo : pas de validation), puis reconnecte la chaîne.",
+                    channel)
+    elif state == "connected":
+        resolve(test_key)
 
 
 def check_connections() -> int:
@@ -103,7 +118,7 @@ def check_connections() -> int:
         if not ch.get("has_token"):
             continue
         health = get_connection_health(ch["name"])
-        connection_state(ch["name"], health["state"], health.get("reason"))
+        connection_state(ch["name"], health["state"], health.get("reason"), health.get("mode_test_expire_dans"))
         expired += health["state"] == "expired"
     return expired
 
@@ -200,10 +215,14 @@ def video_deleted(video: Dict):
 
 
 def _display(channel: Optional[str]) -> str:
+    """The channel's name and its Google account's e-mail (the user, 2026-11-14: which account to reconnect with)."""
     if not channel:
         return "?"
     try:
         from channel_manager import ChannelManager
-        return next((c["display_name"] for c in ChannelManager().list_channels() if c["name"] == channel), channel)
+        ch = next((c for c in ChannelManager().list_channels() if c["name"] == channel), None)
+        if not ch:
+            return channel
+        return ch["display_name"] + (f" ({ch['google_account_email']})" if ch.get("google_account_email") else "")
     except Exception:
         return channel

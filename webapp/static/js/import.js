@@ -44,11 +44,22 @@ function renderConnectionBody(body, ch, status){
   const card = body.closest('.chcard');
   const pill = card.querySelector('[data-role="pill"]');
   const foot = card.querySelector('[data-role="foot"]');
-  const ytLine = status.youtube_channel_title
-    ? `<div class="fact">${icon('link')}<span>Chaîne YouTube liée : <b style="color:var(--text)">${esc(status.youtube_channel_title)}</b></span></div>` : '';
+  const ytLine = (status.youtube_channel_title
+    ? `<div class="fact">${icon('link')}<span>Chaîne YouTube liée : <b style="color:var(--text)">${esc(status.youtube_channel_title)}</b></span></div>` : '')
+    + ((status.email || ch.google_account_email)
+    ? `<div class="fact">${icon('globe')}<span>Compte Google : <b style="color:var(--text)">${esc(status.email || ch.google_account_email)}</b>${status.projet_google ? ` · projet ${esc(status.projet_google)}` : ''}</span></div>` : '');
+  const testLeft = status.mode_test_expire_dans;
+  const testHtml = (status.connected && testLeft != null)
+    ? `<div class="warnbox" style="margin-top:6px"><b>Appli Google en mode « Test »</b> : cette connexion sera coupée le
+        ${new Date(Date.now() + testLeft * 1000).toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}.
+        Pour de bon : Google Cloud → projet <b>${esc(status.projet_google || '?')}</b> → Google Auth Platform → Audience →
+        « Publier l'application » (sans logo), puis reconnecte la chaîne.</div>` : '';
   let pillCls, pillHtml, bodyHtml, btnCls = 'secondary', btnLabel = 'Reconnecter';
 
-  if (status.connected && status.can_edit){
+  if (status.connected && testLeft != null){
+    pillCls = 'warn'; pillHtml = 'Connectée · mode Test';
+    bodyHtml = `<div class="facts">${ytLine}</div>${testHtml}`;
+  } else if (status.connected && status.can_edit){
     pillCls = 'ok'; pillHtml = `${icon('check', 11)} Connectée`;
     bodyHtml = `<div class="facts">${ytLine}</div>`;
   } else if (status.connected){
