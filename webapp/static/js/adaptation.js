@@ -1300,13 +1300,14 @@ function renderAdStock(body, p, fromChoix){
       return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name" style="font-size:13px">
           ${esc((first.titre_source || '').slice(0, 90))}</div><div class="meta" style="margin-left:0">${esc(first.credit || '')} ·
           ${shots.filter(s => s.garde).length}/${shots.length} gardés${first.url ? ` · <a href="${esc(first.url)}" target="_blank" rel="noopener">voir la source ↗</a>` : ''}</div></div></div>
-        <div class="chcard-body"><div class="pro-stock">${shots.map(s => `
+        <div class="chcard-body"><div class="pro-stock">${shots.map(s => `${fromChoix ? '<div class="pro-cell">' : ''}
           <button class="pro-shot ${s.garde ? 'on' : 'off'}" data-sid="${s.id}" title="${esc(s.desc || '')}">
             <img src="${s.thumb_url}" alt="" loading="lazy">
             <span class="pro-badges"><b>${s.force ?? '?'}</b>${s.probleme ? '<i>⚠</i>' : ''}${s.ecarte ? `<i>${esc(s.ecarte)}</i>` : ''}${
               s.repeche ? `<i class="pro-ok">repêché · phrase ${s.repeche}</i>` : ''}${s.secours_pour ? `<i class="pro-ok">secours · phrase ${s.secours_pour}</i>` : ''}</span>
             <span class="pro-desc">${esc(s.desc || '')}</span>
-          </button>`).join('')}</div></div></article>`;
+          </button>${fromChoix ? `<select class="f pro-assign" data-sid="${s.id}" title="En faire l'image principale d'une phrase">
+            <option value="">→ phrase…</option>${(p.phrases || []).map((x, k) => `<option value="${k + 1}" ${(cpPicks || {})[k + 1] === s.id ? 'selected' : ''}>→ phrase ${k + 1}</option>`).join('')}</select></div>` : ''}`).join('')}</div></div></article>`;
     }).join('') +
     (fromChoix
       ? `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
@@ -1314,6 +1315,16 @@ function renderAdStock(body, p, fromChoix){
       : `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
       <button class="btn primary" id="adMontage" ${kept >= 6 ? '' : 'disabled'} data-icon="film" title="Voix, montage et rendu : quelques minutes">Monter la vidéo →</button></div>`);
   if (fromChoix){
+    body.querySelectorAll('.pro-assign').forEach(sel => sel.onchange = async () => {
+      if (!sel.value) return;
+      try {
+        const np = await api(`/api/adaptations/${p.project_id}/choix-plans/${sel.value}/plan`, { method:'POST',
+          body: JSON.stringify({ plan: sel.dataset.sid, choix: cpPicks || {} }) });
+        cpPicks = Object.fromEntries(Object.entries(np.choix_plans || {}).map(([k, v]) => [+k, v]));
+        adProject = np; renderAdStock(body, np, true);
+        toast(`Image principale de la phrase ${sel.value}.`);
+      } catch (e){ log(e.message, 'error'); }
+    });
     const top = document.createElement('div');
     top.className = 'cp-bar';
     top.innerHTML = '<button class="btn ghost" id="adBackChoix1">← Revenir à « Je choisis mes plans »</button><span class="tiny">Ici tu regardes et tu retires des plans ; le montage se lance depuis le récapitulatif de « Je choisis mes plans ».</span>';

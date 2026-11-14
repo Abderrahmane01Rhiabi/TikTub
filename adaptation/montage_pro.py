@@ -1774,12 +1774,44 @@ def choices(p: Dict) -> Dict:
               next((x for x in ids if x not in taken), ids[0] if ids else None))
         if ai:
             taken.add(ai)
-        pick = mine.get(str(n)) if mine.get(str(n)) in ids else None
+        own = mine.get(str(n))
+        if own and any(s["id"] == own for s in stock):                  # the person's choice: always first
+            ids = [own] + [x for x in ids if x != own]
+        pick = own if own in ids else None
         e = real.get(n) or {}
         out.append({"n": n, "texte": text, "voulu": " / ".join(v["image"] for v in e.get("visuels") or []),
                     "type": e.get("type"), "candidats": ids[:max(PROPOSALS, len(graphic) + len(added) + 1)],
                     "ia": ai, "choix": pick or ai})
     return {"phrases": out}
+
+
+def assign(pid: str, phrase: int, sid: str, picks: Optional[Dict] = None) -> Dict:
+    """From the stock: this shot becomes the person's main shot of this sentence (kept, even one the free pre-sort set
+    aside and Gemini never described); the other choices made so far are kept too."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "stock_review")
+    shot = next((s for s in p.get("stock") or [] if s["id"] == sid), None)
+    n = len(((p.get("storyboard") or {}).get("plans")) or [])
+    if not shot or not 1 <= int(phrase) <= max(1, n):
+        raise ap.PipelineError("Plan ou phrase inconnu.")
+    shot.update(garde=True, ecarte=None)
+    ok = {s["id"] for s in p["stock"] if s.get("garde")}
+    mine = {str(int(k)): str(v) for k, v in (picks or p.get("choix_plans") or {}).items() if str(v) in ok}
+    mine = {k: v for k, v in mine.items() if v != sid}          # one sentence a shot
+    mine[str(int(phrase))] = sid
+    p["choix_plans"] = mine
+    return ap.save(p)
+
+
+def keep_choices(pid: str, picks: Dict) -> Dict:
+    """The choices made so far, kept (going to the stock and back loses nothing)."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "stock_review")
+    ok = {s["id"] for s in p.get("stock") or [] if s.get("garde")}
+    p["choix_plans"] = {str(int(k)): str(v) for k, v in (picks or {}).items() if str(v) in ok and str(k).isdigit()}
+    return ap.save(p)
 
 
 def chosen_main(p: Dict, footage: List[Dict]) -> Dict[int, str]:

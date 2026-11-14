@@ -125,6 +125,7 @@ function renderAdRealisation(body, p){
 // ---------- Screen 2 : the main shot of each sentence ----------
 
 let cpShowStock = false;
+let cpPicks = null;         // {sentence: shot} chosen so far (kept when going to the stock and back)
 
 async function renderAdChoix(body, p){
   if (cpShowStock) return renderAdStockWithBack(body, p);
@@ -134,6 +135,7 @@ async function renderAdChoix(body, p){
   const phrases = data.phrases || [];
   const shots = Object.fromEntries((p.stock || []).map(s => [s.id, s]));
   const st = { i: 0, pick: phrases.map(x => x.choix), recap: false };
+  cpPicks = Object.fromEntries(phrases.map((x, j) => [x.n, st.pick[j]]));
   const dir = cpRtl(p);
   const clip = sid => `/api/adaptations/${p.project_id}/stock/${encodeURIComponent(sid)}/apercu`;
 
@@ -182,9 +184,13 @@ async function renderAdChoix(body, p){
     document.getElementById('cpNoneX').onclick = () => document.getElementById('cpNone').classList.remove('on');
     document.getElementById('cpAddGo').onclick = () => add();
     document.getElementById('cpFile').onchange = ev => { if (ev.target.files[0]) add(ev.target.files[0]); };
-    document.getElementById('cpStock').onclick = () => { cpShowStock = true; renderAdChoix(body, p); };
+    document.getElementById('cpStock').onclick = async () => {
+      try { const np = await api(`/api/adaptations/${p.project_id}/choix-plans/enregistrer`, { method:'POST', body: JSON.stringify({ choix: choix() }) });
+            adProject = np; p = np; } catch (err){ /* the stock opens anyway */ }
+      cpShowStock = true; renderAdChoix(body, p);
+    };
   };
-  const pick = sid => { cpTimerStart(); st.pick[st.i] = sid; draw(); };
+  const pick = sid => { cpTimerStart(); st.pick[st.i] = sid; cpPicks[phrases[st.i].n] = sid; draw(); };
   const next = () => { cpTimerStart(); if (st.i < phrases.length - 1) { st.i++; draw(); } else { st.recap = true; draw(); } };
   const openNone = () => { cpTimerStart(); document.getElementById('cpNone').classList.add('on'); document.getElementById('cpLink').focus(); };
   const choix = () => Object.fromEntries(phrases.map((x, j) => [x.n, st.pick[j]]).filter(([, v]) => v));

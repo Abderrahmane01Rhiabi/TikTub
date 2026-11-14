@@ -239,3 +239,17 @@ def test_the_ai_pre_ticks_from_the_descriptions(project):
         def _generate_content(self, parts, **kw):
             raise RuntimeError("503")
     assert mp.ai_picks(p, gemini=Down()) == {}
+
+
+def test_a_shot_of_the_stock_is_put_on_a_sentence_by_hand(project):
+    shots = stock() + [{"id": "P", "source": 7, "start": 0, "end": 2, "garde": False, "ecarte": "pré-tri", "colle": [0, 0, 0]}]
+    make("stock_review", stock=shots)
+    p = mp.assign("ad_cp", 2, "P", {"1": "A", "2": "B", "3": "P"})
+    assert p["choix_plans"] == {"1": "A", "2": "P"}                      # one sentence a shot: taken off the 3rd
+    shot = next(s for s in p["stock"] if s["id"] == "P")
+    assert shot["garde"] is True and shot["ecarte"] is None              # a shot never described, kept anyway
+    ph = mp.choices(p)["phrases"]
+    assert ph[1]["candidats"][0] == "P" and ph[1]["choix"] == "P"        # shown first and ticked
+    with pytest.raises(ap.PipelineError):
+        mp.assign("ad_cp", 9, "P")
+    assert mp.keep_choices("ad_cp", {"1": "C", "x": "A", "3": "nope"})["choix_plans"] == {"1": "C"}

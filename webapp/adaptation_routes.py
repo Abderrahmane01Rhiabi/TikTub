@@ -269,6 +269,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             base["phrases"] = [((pl.get("textes") or {}).get(t0.get("language")) or {}).get("texte") or ""
                                for pl in (p.get("storyboard") or {}).get("plans") or []]
         base["ajout_note"] = p.get("ajout_note")
+        base["choix_plans"] = p.get("choix_plans") or {}
         if full and p.get("stock"):
             used = {e["plan"] for t in p["targets"] for e in (t.get("preview") or {}).get("montage") or []}
             base["images_v2"] = p.get("images_v2")         # what Images v2 did (adaptation/vision)
@@ -1252,6 +1253,27 @@ def _keep_choices(pid: str, choix: Dict[str, str]):
         ok = {s["id"] for s in p.get("stock") or [] if s.get("garde")}
         p["choix_plans"] = {str(int(k)): str(v) for k, v in choix.items() if str(v) in ok and str(k).isdigit()}
         ap.save(p)
+
+
+@router.post("/api/adaptations/{pid}/choix-plans/enregistrer")
+def keep_adaptation_shot_choices(pid: str, req: ShotChoices):
+    """The choices made so far, kept without starting anything."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(montage_pro.keep_choices, pid, req.choix))
+
+
+class ShotAssign(BaseModel):
+    plan: str
+    choix: Dict[str, str] = {}
+
+
+@router.post("/api/adaptations/{pid}/choix-plans/{phrase}/plan")
+def assign_adaptation_shot(pid: str, phrase: int, req: ShotAssign):
+    """From the stock: this shot is the main one of this sentence."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(montage_pro.assign, pid, phrase, req.plan, req.choix or None))
 
 
 @router.post("/api/adaptations/{pid}/choix-plans/{phrase}/ajout")
