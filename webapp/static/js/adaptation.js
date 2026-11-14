@@ -1,19 +1,21 @@
 // ---------- Adaptation : project by project ----------
 
 let adCurrent = null, adPoll = null, adProject = null;
-const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering', 'cleaning'];
+const AD_BUSY = ['analysing', 'directing', 'searching', 'fetching', 'adding', 'scripting', 'voicing', 'rendering', 'cleaning'];
 const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'searching', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_REPRISE = [['Short', ['analysing', 'cleaning', 'cleaning_review']], ['Script', ['scripting', 'script_review']],
                           ['Réglages', ['settings_review']], ['Aperçu', ['voicing', 'cleaning_wait', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STEPS_PRO = [['Idée', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'fetching', 'stock_review']],
+const AD_STEPS_PRO = [['Idée', ['analysing']], ['Script', ['plan_review']], ['Plan', ['directing', 'realisation_review']],
+                      ['Images', ['searching', 'fetching', 'stock_review', 'adding']],
                       ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_DISCOURS = [['Discours', ['analysing']], ['Passage', ['passage_review']], ['Plans', ['searching', 'plans_review']],
                            ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STATUS = { passage_review: 'passage à choisir', plans_review: 'plans à vérifier', cleaning: 'nettoyage (carte graphique)…', cleaning_review: 'nettoyage à vérifier', analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
-  script_review: 'scripts à relire', stock_review: 'stock de plans à vérifier', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
+  directing: 'le réalisateur prépare son plan…', realisation_review: 'plan du réalisateur à relire', adding: 'ajout de vidéos pour une phrase…',
+  script_review: 'scripts à relire', stock_review: 'plans à choisir', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
 async function openAdaptation(){
@@ -210,13 +212,15 @@ async function loadAdProject(){
       catch (e){ log(e.message, 'error'); }
     };
     const body = document.getElementById('adBody');
+    if (typeof cpKeys !== 'undefined') cpKeys = null;      // « Je choisis mes plans »: its keyboard only on its screen
     if (AD_BUSY.includes(p.status)) body.innerHTML = adBusyHtml(p);
     else if (p.status === 'error') renderAdError(body, p);
     else if (p.mode === 'reprise' && renderReprise(body, p)) { /* reprise.js */ }
     else if (p.mode === 'discours' && renderDiscours(body, p)) { /* discours.js */ }
     else if (p.status === 'sources_search') renderAdSearch(body, p);
     else if (p.status === 'plan_review') renderAdPlan(body, p);
-    else if (p.status === 'stock_review') renderAdStock(body, p);
+    else if (p.status === 'realisation_review') renderAdRealisation(body, p);
+    else if (p.status === 'stock_review') (p.pro ? renderAdChoix : renderAdStock)(body, p);
     else if (p.status === 'images_review') renderAdImages(body, p);
     else if (p.status === 'sources_review') renderAdSources(body, p);
     else if (p.status === 'script_review') renderAdScripts(body, p);
@@ -1278,7 +1282,9 @@ function adGraphicState(p, e){
   return g.mode === 'incrustation' ? 'chiffre animé par-dessus l\'image de l\'accroche' : 'graphique animé fait — dans ton stock, carte « Graphiques animés »';
 }
 
-function renderAdStock(body, p){
+// fromChoix: opened from « Je choisis mes plans » (choix_plans.js) — only to look or set shots aside: no « Monter la
+// vidéo » here (it started the montage at once and without the person's choices, 2026-11-14), a way back instead
+function renderAdStock(body, p, fromChoix){
   const stock = p.stock || [];
   const kept = stock.filter(s => s.garde).length;
   const bySource = {};
@@ -1294,21 +1300,49 @@ function renderAdStock(body, p){
       return `<article class="chcard"><div class="chcard-head"><div class="who"><div class="name" style="font-size:13px">
           ${esc((first.titre_source || '').slice(0, 90))}</div><div class="meta" style="margin-left:0">${esc(first.credit || '')} ·
           ${shots.filter(s => s.garde).length}/${shots.length} gardés${first.url ? ` · <a href="${esc(first.url)}" target="_blank" rel="noopener">voir la source ↗</a>` : ''}</div></div></div>
-        <div class="chcard-body"><div class="pro-stock">${shots.map(s => `
+        <div class="chcard-body"><div class="pro-stock">${shots.map(s => `${fromChoix ? '<div class="pro-cell">' : ''}
           <button class="pro-shot ${s.garde ? 'on' : 'off'}" data-sid="${s.id}" title="${esc(s.desc || '')}">
             <img src="${s.thumb_url}" alt="" loading="lazy">
             <span class="pro-badges"><b>${s.force ?? '?'}</b>${s.probleme ? '<i>⚠</i>' : ''}${s.ecarte ? `<i>${esc(s.ecarte)}</i>` : ''}${
               s.repeche ? `<i class="pro-ok">repêché · phrase ${s.repeche}</i>` : ''}${s.secours_pour ? `<i class="pro-ok">secours · phrase ${s.secours_pour}</i>` : ''}</span>
             <span class="pro-desc">${esc(s.desc || '')}</span>
-          </button>`).join('')}</div></div></article>`;
+          </button>${fromChoix ? `<select class="f pro-assign" data-sid="${s.id}" title="En faire l'image principale d'une phrase">
+            <option value="">→ mettre sur la phrase…</option>${(p.phrases || []).map((x, k) => `<option value="${k + 1}" ${(cpPicks || {})[k + 1] === s.id ? 'selected' : ''}>→ ${k + 1} · ${esc(x.length > 42 ? x.slice(0, 42) + '…' : x)}</option>`).join('')}</select></div>` : ''}`).join('')}</div></div></article>`;
     }).join('') +
-    `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
-      <button class="btn primary" id="adMontage" ${kept >= 6 ? '' : 'disabled'} data-icon="film" title="Voix, montage et rendu : quelques minutes">Monter la vidéo →</button></div>`;
+    (fromChoix
+      ? `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
+          <button class="btn primary" id="adBackChoix2">← Revenir à « Je choisis mes plans »</button></div>`
+      : `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
+      <button class="btn primary" id="adMontage" ${kept >= 6 ? '' : 'disabled'} data-icon="film" title="Voix, montage et rendu : quelques minutes">Monter la vidéo →</button></div>`);
+  if (fromChoix){
+    body.querySelectorAll('.pro-assign').forEach(sel => sel.onchange = async () => {
+      if (!sel.value) return;
+      try {
+        const np = await api(`/api/adaptations/${p.project_id}/choix-plans/${sel.value}/plan`, { method:'POST',
+          body: JSON.stringify({ plan: sel.dataset.sid, choix: cpPicks || {} }) });
+        cpPicks = Object.fromEntries(Object.entries(np.choix_plans || {}).map(([k, v]) => [+k, v]));
+        adProject = np; renderAdStock(body, np, true);
+        toast(`Image principale de la phrase ${sel.value}.`);
+      } catch (e){ log(e.message, 'error'); }
+    });
+    const top = document.createElement('div');
+    const byId = Object.fromEntries(stock.map(s => [s.id, s]));
+    const rtl = ((p.targets || [])[0] || {}).rtl ? 'rtl' : 'auto';
+    top.innerHTML = `<div class="cp-bar"><button class="btn ghost" id="adBackChoix1">← Revenir à « Je choisis mes plans »</button>
+        <span class="tiny">Ici tu regardes, tu retires des plans, ou tu en mets un sur une phrase avec son menu « → mettre sur la phrase… ».
+        Le montage se lance depuis le récapitulatif de « Je choisis mes plans ».</span></div>
+      <article class="chcard"><div class="chcard-body"><div class="tiny" style="margin-bottom:4px"><b>Les phrases</b> et leur image principale en ce moment :</div>
+        ${(p.phrases || []).map((x, k) => { const s = byId[(cpPicks || {})[k + 1]];
+          return `<div class="cp-row" style="margin-bottom:5px">${s ? `<img src="${esc(s.thumb_url)}" alt="" style="width:40px">` : '<span style="width:40px"></span>'}
+            <b style="min-width:18px">${k + 1}</b><div class="t" dir="${rtl}">${esc(x)}</div></div>`; }).join('')}</div></article>`;
+    body.prepend(top);
+    ['adBackChoix1', 'adBackChoix2'].forEach(id => { document.getElementById(id).onclick = () => { cpShowStock = false; renderAdChoix(body, p); }; });
+  }
   hydrateIcons(body);
   body.querySelectorAll('.pro-shot').forEach(b => b.onclick = async () => {
     const s = stock.find(x => x.id === b.dataset.sid);
     try { const np = await api(`/api/adaptations/${p.project_id}/stock/${s.id}`, { method:'POST', body: JSON.stringify({ garder: !s.garde }) });
-          adProject = np; renderAdStock(body, np); }
+          adProject = np; renderAdStock(body, np, fromChoix); }
     catch (e){ log(e.message, 'error'); }
   });
   const go = document.getElementById('adMontage');

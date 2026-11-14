@@ -450,7 +450,13 @@ def run_stock(pid: str, report: Optional[Report] = None) -> None:
         secours.mark(p, "images", v2.get("secours"))
         secours.mark(p, "graphiques", made.get("secours"))
         p.update(stock=shots, stock_sources=metas, images_v2=v2.get("bilan"), graphiques=made.get("liste") or [], pretri=pretri,
-                 incrustation=made.get("incrustation"), status="stock_review", error=None, failed_step=None)
+                 incrustation=made.get("incrustation"), choix_plans={})
+        report("l'IA pré-choisit l'image de chaque phrase", 0.98)
+        try:                                # a nicety: never a stock lost for it
+            picks = ai_picks(p)
+        except Exception:
+            picks = {}
+        p.update(choix_ia=picks, status="stock_review", error=None, failed_step=None)
         ap.save(p)
     except Exception as e:
         ap.fail(pid, "fetching", e)
@@ -593,7 +599,8 @@ def shorter_hook(p: Dict, t: Dict, seconds: float, gemini=None) -> Optional[str]
 
 # ---------------------------------------------------------------- 3. the edit
 
-def _edit_prompt(v: Dict, shots: List[Dict], realisation: Optional[List[Dict]] = None) -> str:
+def _edit_prompt(v: Dict, shots: List[Dict], realisation: Optional[List[Dict]] = None,
+                 main: Optional[Dict[int, str]] = None) -> str:
     words = v["words"]
     lines = []
     for i, ps in enumerate(v["passages"], 1):
@@ -603,7 +610,13 @@ def _edit_prompt(v: Dict, shots: List[Dict], realisation: Optional[List[Dict]] =
                        + (f" (RESERVE a la phrase {s['reserve']})" if s.get("reserve") else "") + " | "
                        f"{s['end'] - s['start']:.1f}s | {s.get('force')} | {_fits(s)} | "
                        f"{s.get('desc')} | {s.get('probleme') or '-'}" for s in shots)
-    return EDIT.format(phrases="\n".join(lines), plans=rushes, realisation=_directed(realisation, len(v["passages"])))
+    chosen = ""
+    if main:                    # « Je choisis mes plans »: the person's main shot of each sentence
+        chosen = ("\nIMAGE PRINCIPALE CHOISIE PAR LE MONTEUR HUMAIN (obligatoire) : elle OUVRE sa phrase (coupe au mot 0) "
+                  "et reste au moins la moitie de la phrase ; apres elle, au plus 1 ou 2 coupes courtes de plans qui vont "
+                  "avec ; jamais ailleurs :\n" + "\n".join(f"Phrase {k} : {sid}" for k, sid in sorted(main.items())) + "\n")
+    return EDIT.format(phrases="\n".join(lines), plans=rushes,
+                       realisation=_directed(realisation, len(v["passages"])) + chosen)
 
 
 def _directed(realisation: Optional[List[Dict]], n: int) -> str:
@@ -677,12 +690,16 @@ def quick_words(realisation: Optional[List[Dict]], v: Dict) -> Dict[int, set]:
     return out
 
 
-def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, set]] = None) -> List[Dict]:
+def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, set]] = None,
+               main: Optional[Dict[int, str]] = None) -> List[Dict]:
     """Gemini's edit made safe: only kept shots, never one twice, cuts on the words' starts, at least
     MIN_CUT_S each (RAFALE_S on a word where the director starts a visual: quick), the whole voice covered (each
-    sentence until the next one starts, the last + 0.6 s). [{phrase, plan, debut, fin}] in video time."""
+    sentence until the next one starts, the last + 0.6 s). [{phrase, plan, debut, fin}] in video time.
+    main: {sentence: shot} the person chose (« Je choisis mes plans »): it opens its sentence and stays at least half
+    of it, the editor's cuts after it; never used elsewhere."""
     from adaptation.vision import FITS, MAX_PER_SOURCE
     by_id = {s["id"]: s for s in shots}
+    main = {int(k): sid for k, sid in (main or {}).items() if sid in by_id}
     used, edl = set(), []
     per_source: Dict = {}
     words, ps_all = v["words"], v["passages"]
@@ -694,7 +711,8 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, 
         return sc[i - 1] if i - 1 < len(sc) else 0.0
 
     def free(prefer: Optional[str] = None, i: int = 1) -> Optional[str]:
-        mine = lambda s: s.get("reserve") in (None, i)              # an official channel's video: its sentence only
+        mine = lambda s: s.get("reserve") in (None, i) and \
+            not any(sid == s["id"] and k != i for k, sid in main.items())   # the person's main shot: its sentence only
         roomy = lambda s: per_source.get(s["source"], 0) < MAX_PER_SOURCE      # variety: 2 shots a video at most
         if prefer in by_id and prefer not in used and roomy(by_id[prefer]) and mine(by_id[prefer]):
             if not BURNT_TEXT.search(by_id[prefer].get("probleme") or ""):
@@ -714,11 +732,18 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, 
         start = 0.0 if i == 1 else ps["start"]
         cuts = sorted((c for c in asked.get(i, []) if isinstance(c, dict)), key=lambda c: _num(c.get("mot"), 0))
         times, plans = [], []
+        hold = 0.0
+        if main.get(i) and main[i] not in used:                 # the person's main shot opens the sentence
+            sid = main[i]
+            used.add(sid)
+            per_source[by_id[sid]["source"]] = per_source.get(by_id[sid]["source"], 0) + 1
+            times, plans = [start], [sid]
+            hold = start + max(MIN_CUT_S, 0.5 * (end - start))   # and stays at least half of it
         for c in cuts or [{"mot": 0}]:
             k = min(max(0, _num(c.get("mot"), 0)), len(ps["words"]) - 1) if ps["words"] else 0
             at = start if not times else words[ps["words"][k]]["start"]
             shortest = RAFALE_S if k in (quick or {}).get(i, ()) else MIN_CUT_S
-            if times and at - times[-1] < shortest:             # too short: this cut is dropped
+            if times and (at - times[-1] < shortest or at < hold):      # too short: this cut is dropped
                 continue
             sid = free(str(c.get("plan") or ""), i)
             if sid is None:
@@ -734,7 +759,7 @@ def build_edit(raw: Dict, v: Dict, shots: List[Dict], quick: Optional[Dict[int, 
             used.add(sid)
             per_source[by_id[sid]["source"]] = per_source.get(by_id[sid]["source"], 0) + 1
             times, plans = [start], [sid]
-        if end - times[-1] < MIN_CUT_S and len(plans) > 1:     # the last piece too short: merged into the one before
+        if end - times[-1] < MIN_CUT_S and len(plans) > 1 and plans[-1] != main.get(i):  # the last piece too short: merged
             gone = plans.pop()
             used.discard(gone)
             per_source[by_id[gone]["source"]] -= 1
@@ -1214,15 +1239,19 @@ def make_target(p: Dict, t: Dict, report: Report, share: float, offset: float, g
     if not keep:
         report(f"montage {t['channel']}", offset + share * 0.25)
         footage = [s for s in shots if not s.get("graphique")]     # a graphic is placed on its sentence, not chosen
-        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], editable(footage, len(t["voice"]["passages"])),
-                                                                              p.get("realisation"))}],
+        main = chosen_main(p, footage)
+        if main:            # a sentence whose main shot the person chose among the footage: its graphic (« plan ») gives way
+            shots = [s for s in shots if not (s.get("graphique") and s.get("pour") in main)]
+        seen = editable(footage, len(t["voice"]["passages"]))
+        seen += [s for s in footage if s["id"] in main.values() and s not in seen]
+        raw = (gemini or _gemini())._generate_content([{"text": _edit_prompt(t["voice"], seen, p.get("realisation"), main)}],
                                                       max_tokens=16000, timeout=240, temperature=0.4,
                                                       thinking=ECO_THINKING if economique(p) else None)
         lost = secours.failed(raw) or not (raw or {}).get("montage")
         secours.mark(t, "montage", f"fait sans l'IA ({secours.why(raw)}) : les meilleures images dans l'ordre, sans "
                                    "suivre les mots. Revérifie-le, ou reviens au stock pour le refaire." if lost else None)
         edl = graphiques.with_graphics(build_edit({} if lost else raw, t["voice"], footage,
-                                                  quick_words(p.get("realisation"), t["voice"])), shots)
+                                                  quick_words(p.get("realisation"), t["voice"]), main), shots)
     choose_music(p, t)
     if keep and t.get("montage"):       # only the music changed: the person's montage kept, its song replaced
         doc = copy.deepcopy(t["montage"])
@@ -1657,3 +1686,291 @@ def recipe(p: Dict, t: Dict, edl: List[Dict], shots: Dict[str, Dict], made: Dict
                  "bandeau_cadre": doc.get("bandeau_cadre"), "sous_titres_regles": doc.get("sous_titres"),
                  # the journal: what the person changed from the AI's montage, element by element
                  "changements": person_changes(t)})
+
+
+# ---------------------------------------------------------------- « Je choisis mes plans » (the person's main shots)
+# The user, 2026-11-14 (blind test of the pre-sort: « on est loin d'un montage cohérent et pro ») — the AI finds, cuts
+# and proposes; the person picks the MAIN shot of each sentence (the AI's best pre-ticked, only what's wrong changed,
+# 1:53 on the mockup), the editor makes the small cuts around it.
+
+PROPOSALS = 8
+
+PICK_PROMPT = """Tu es monteur video. Pour chaque PHRASE d'un YouTube Short, choisis l'IMAGE PRINCIPALE parmi les plans
+decrits (celle qui ouvrira la phrase et restera le plus longtemps) : le plan qui montre le mieux CE que dit la phrase
+et ce que voulait le realisateur — le bon lieu, le bon objet (un train n'est pas un tunnel, une pelleteuse n'est pas
+un viaduc), net, sans texte incruste ni presentateur si possible. Un plan pour une seule phrase.
+PHRASES :
+{phrases}
+PLANS (id | ce qu'on voit | phrases auxquelles il colle selon un modele d'image, la plus haute d'abord | probleme) :
+{plans}
+JSON uniquement : {{"choix": [{{"phrase": 1, "plan": "id"}}]}}"""
+
+
+def ai_picks(p: Dict, gemini=None) -> Dict[str, str]:
+    """{sentence: shot} — the AI's main shot of each sentence, chosen once from the shots' descriptions (the free model's
+    score alone pre-ticked a train for the tunnel, a digger for the viaduct: 2026-11-14). {} when the call fails."""
+    footage = [s for s in p.get("stock") or [] if s.get("garde") and not s.get("graphique") and s.get("desc")]
+    if not p.get("targets"):
+        return {}
+    t = p["targets"][0]
+    plans = (p.get("storyboard") or {}).get("plans") or []
+    texts = [((pl.get("textes") or {}).get(t["language"]) or {}).get("texte") or "" for pl in plans]
+    if not footage or not texts:
+        return {}
+    real = {e.get("phrase"): e for e in p.get("realisation") or []}
+    lines = "\n".join(f"{k}. {x}" + (f" — le realisateur voulait : {' / '.join(v['image'] for v in real[k]['visuels'])}"
+                                      if real.get(k) else "") for k, x in enumerate(texts, 1))
+    shown = editable(footage, len(texts))
+    rows = "\n".join(f"{s['id']} | {s.get('desc')} | {_fits(s)} | {s.get('probleme') or '-'}" for s in shown)
+    try:
+        r = (gemini or _gemini())._generate_content([{"text": PICK_PROMPT.format(phrases=lines, plans=rows)}],
+                                                    max_tokens=3000, timeout=120, temperature=0.2, thinking=ECO_THINKING)
+    except Exception:
+        return {}
+    ok, out = {s["id"] for s in shown}, {}
+    for x in (r or {}).get("choix") or [] if isinstance(r, dict) else []:
+        try:
+            k = int(x.get("phrase"))
+        except (TypeError, ValueError, AttributeError):
+            continue
+        if 1 <= k <= len(texts) and str(x.get("plan")) in ok and str(x.get("plan")) not in out.values():
+            out[str(k)] = str(x["plan"])
+    return out
+
+
+def _fit(s: Dict, k: int) -> float:
+    sc = s.get("colle") or []
+    return (sc[k] if k < len(sc) else 0.0) + 0.004 * (s.get("pertinence") or 0)
+
+
+def choices(p: Dict) -> Dict:
+    """{"phrases": [{n, texte, voulu, candidats: [shot ids], ia, choix}]} — each sentence's PROPOSALS best kept shots
+    (its graphic first, the videos added for it next), the AI's pick (the best not already picked for an earlier
+    sentence) and the person's choice when made."""
+    stock = [s for s in p.get("stock") or [] if s.get("garde")]
+    t = p["targets"][0]
+    plans = (p.get("storyboard") or {}).get("plans") or []
+    code = t["language"]
+    texts = [((pl.get("textes") or {}).get(code) or {}).get("texte") or "" for pl in plans] or \
+        [x["texte"] for x in (t.get("script") or {}).get("passages") or []]
+    real = {e.get("phrase"): e for e in p.get("realisation") or []}
+    mine = p.get("choix_plans") or {}
+    taken, out = set(), []
+    for k, text in enumerate(texts):
+        n = k + 1
+        graphic = [s for s in stock if s.get("graphique") and s.get("pour") == n]
+        added = sorted((s for s in stock if s.get("ajout_pour") == n), key=lambda s: -_fit(s, k))
+        ia = (p.get("choix_ia") or {}).get(str(n))      # the AI's pick from the descriptions (ai_picks)
+        picked = [s for s in stock if s["id"] == ia and not graphic and s not in added]
+        footage = sorted((s for s in stock if not s.get("graphique") and s.get("reserve") in (None, n)
+                          and s.get("ajout_pour") in (None, n)), key=lambda s: -_fit(s, k))
+        ids = []
+        for s in graphic + added + picked + footage:
+            if s["id"] not in ids:
+                ids.append(s["id"])
+            if len(ids) >= PROPOSALS + len(graphic) + len(added):
+                break
+        ai = (graphic[0]["id"] if graphic else ia if picked and ia not in taken else
+              next((x for x in ids if x not in taken), ids[0] if ids else None))
+        if ai:
+            taken.add(ai)
+        own = mine.get(str(n))
+        if own and any(s["id"] == own for s in stock):                  # the person's choice: always first
+            ids = [own] + [x for x in ids if x != own]
+        pick = own if own in ids else None
+        e = real.get(n) or {}
+        out.append({"n": n, "texte": text, "voulu": " / ".join(v["image"] for v in e.get("visuels") or []),
+                    "type": e.get("type"), "candidats": ids[:max(PROPOSALS, len(graphic) + len(added) + 1)],
+                    "ia": ai, "choix": pick or ai})
+    return {"phrases": out}
+
+
+def assign(pid: str, phrase: int, sid: str, picks: Optional[Dict] = None) -> Dict:
+    """From the stock: this shot becomes the person's main shot of this sentence (kept, even one the free pre-sort set
+    aside and Gemini never described); the other choices made so far are kept too."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "stock_review")
+    shot = next((s for s in p.get("stock") or [] if s["id"] == sid), None)
+    n = len(((p.get("storyboard") or {}).get("plans")) or [])
+    if not shot or not 1 <= int(phrase) <= max(1, n):
+        raise ap.PipelineError("Plan ou phrase inconnu.")
+    shot.update(garde=True, ecarte=None)
+    ok = {s["id"] for s in p["stock"] if s.get("garde")}
+    mine = {str(int(k)): str(v) for k, v in (picks or p.get("choix_plans") or {}).items() if str(v) in ok}
+    mine = {k: v for k, v in mine.items() if v != sid}          # one sentence a shot
+    mine[str(int(phrase))] = sid
+    p["choix_plans"] = mine
+    return ap.save(p)
+
+
+def keep_choices(pid: str, picks: Dict) -> Dict:
+    """The choices made so far, kept (going to the stock and back loses nothing)."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "stock_review")
+    ok = {s["id"] for s in p.get("stock") or [] if s.get("garde")}
+    p["choix_plans"] = {str(int(k)): str(v) for k, v in (picks or {}).items() if str(v) in ok and str(k).isdigit()}
+    return ap.save(p)
+
+
+def chosen_main(p: Dict, footage: List[Dict]) -> Dict[int, str]:
+    """The person's main shot of each sentence among the footage (a chosen graphic is placed as before)."""
+    ids = {s["id"] for s in footage}
+    return {int(k): sid for k, sid in (p.get("choix_plans") or {}).items() if sid in ids}
+
+
+def approve_choices(pid: str, picks: Dict) -> Dict:
+    """« Monter la vidéo »: the main shot of each sentence kept, then the montage (voice, edit, render)."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "stock_review")
+    ok = {s["id"] for s in p.get("stock") or [] if s.get("garde")}
+    p["choix_plans"] = {str(int(k)): str(v) for k, v in (picks or {}).items() if str(v) in ok}
+    p.pop("ajout_note", None)
+    ap.save(p)
+    return approve_stock(pid)
+
+
+def preview(pid: str, sid: str) -> str:
+    """A shot as a 3-second vertical clip (its subject kept in frame), made once — for « Je choisis mes plans »."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    s = next((x for x in p.get("stock") or [] if x["id"] == sid), None)
+    if not s or not os.path.exists(s.get("file") or ""):
+        raise ap.PipelineError("Plan introuvable.")
+    out = os.path.join(pro_dir(pid), "apercus", f"{sid}.mp4")
+    if os.path.exists(out):
+        return out
+    os.makedirs(os.path.dirname(out), exist_ok=True)
+    d = max(0.8, min(3.0, float(s["end"]) - float(s["start"])))
+    x = min(1.0, max(0.0, float(s.get("x") or 0.5)))
+    vf = ("scale=216:384:force_original_aspect_ratio=decrease,pad=216:384:(ow-iw)/2:(oh-ih)/2" if s.get("graphique") else
+          f"crop='min(iw,ih*9/16)':ih:'(iw-min(iw,ih*9/16))*{x:.3f}':0,scale=216:384")
+    _run(["ffmpeg", "-v", "error", "-y", "-ss", f"{float(s['start']):.2f}", "-t", f"{d:.2f}", "-i", s["file"], "-an",
+          "-vf", vf, "-c:v", "libx264", "-crf", "30", "-preset", "veryfast", "-pix_fmt", "yuv420p",
+          "-movflags", "+faststart", out])
+    return out
+
+
+def start_add(pid: str, phrase: int, url: str = "", description: str = "", fichier: str = "") -> Dict:
+    """« Aucun ne va » for one sentence: a link, a video of the person's PC or a description -> « adding »."""
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    ap._expect(p, "stock_review")
+    n = len(((p.get("storyboard") or {}).get("plans")) or [])
+    if not 1 <= int(phrase) <= max(1, n):
+        raise ap.PipelineError("Phrase inconnue.")
+    url, description = (url or "").strip(), " ".join((description or "").split())[:400]
+    if not (url or description or fichier):
+        raise ap.PipelineError("Colle un lien, envoie une vidéo ou décris ce que tu veux.")
+    if url and not url.startswith("http"):
+        raise ap.PipelineError("Colle un lien (https://…).")
+    p["ajout"] = {"phrase": int(phrase), "url": url, "description": description, "fichier": fichier}
+    p["status"] = "adding"
+    return ap.save(p)
+
+
+def _found_for(p: Dict, phrase: int, wanted: str, sentence: str, report: Report) -> Tuple[List[Dict], Dict]:
+    """Searched like the director's visual written from the person's words: the 4 best results watched by Gemini,
+    the 2 that show it best -> ([{url, titre, duree, moments}], the sentence's new plan)."""
+    from concurrent.futures import ThreadPoolExecutor as Pool
+    from adaptation import realisateur
+    entry = realisateur.from_user(p, phrase, wanted)
+    queries = [q for v in entry["visuels"] for q in (v.get("anglais") or []) + (v.get("locales") or [])][:6]
+    seen, cands = set(), []
+    for q in queries:
+        report(f"recherche : {q}", 0.1)
+        for c in finder.search_youtube(q):
+            if c["url"] not in seen and (c.get("duration") or 0) <= finder.MAX_DURATION:
+                seen.add(c["url"])
+                cands.append(c)
+    cands = sorted(cands, key=lambda c: -(c.get("score") or 0))[:4]
+    scene = [{"scene": entry["visuels"][0]["image"], "phrase": sentence, "indices": "", "plans": []}]
+
+    def watch(c):
+        try:
+            return c, finder.check(c["url"], scene, [])
+        except Exception:
+            return c, None
+    rows = []
+    with Pool(3) as pool:
+        for k, (c, v) in enumerate(pool.map(watch, cands)):
+            report(f"l'IA regarde les vidéos trouvées ({k + 1}/{len(cands)})", 0.2 + 0.3 * (k + 1) / max(1, len(cands)))
+            e = ((v or {}).get("par_scene") or {}).get("0") or {}
+            if e.get("niveau") in finder.RANK:
+                rows.append({"url": c["url"], "titre": c.get("title") or c["url"], "duree": c.get("duration"),
+                             "moments": e.get("moments") or [], "rang": finder.RANK[e["niveau"]]})
+    return sorted(rows, key=lambda r: r["rang"])[:2], entry
+
+
+def run_add(pid: str, report: Optional[Report] = None) -> None:
+    """Downloads what the person gave for one sentence (or finds it from their description), cuts it into shots,
+    describes and scores them; the best becomes the sentence's choice -> stock_review."""
+    from adaptation import pipeline as ap
+    report = report or (lambda phase, f: None)
+    p = ap.load(pid)
+    a = p.get("ajout") or {}
+    k = int(a.get("phrase") or 1)
+    entry = None                        # a description: the sentence's plan rewritten from it (the editor follows it)
+    try:
+        base = pro_dir(pid)
+        sentence = (choices(p)["phrases"][k - 1]["texte"] if p.get("stock") else "")
+        if a.get("fichier"):
+            rows = [{"url": sources.LOCAL + os.path.basename(a["fichier"]), "titre": os.path.basename(a["fichier"]),
+                     "path": a["fichier"]}]
+        elif a.get("url"):
+            report("l'IA regarde ta vidéo", 0.2)
+            scene = [{"scene": next((e["visuels"][0]["image"] for e in p.get("realisation") or []
+                                     if e.get("phrase") == k), sentence), "phrase": sentence, "indices": "", "plans": []}]
+            try:
+                v = finder.check(a["url"], scene, [])
+            except Exception:
+                v = {}
+            e = ((v or {}).get("par_scene") or {}).get("0") or {}
+            rows = [{"url": a["url"], "titre": (v or {}).get("title") or a["url"], "duree": (v or {}).get("duration"),
+                     "moments": e.get("moments") or []}]
+        else:
+            rows, entry = _found_for(p, k, a["description"], sentence, report)
+            if not rows:
+                raise MontageProError("Rien trouvé qui montre ça : décris-le autrement, ou colle un lien.")
+        next_src = 1 + max([s["source"] for s in p.get("stock") or [] if isinstance(s.get("source"), int)] or [-1])
+        new = []
+        for j, row in enumerate(rows):
+            report(f"téléchargement ({j + 1}/{len(rows)})", 0.55 + 0.15 * j / len(rows))
+            path = row.get("path") or sources.download(row["url"], os.path.join(base, "src"), f"ajout{next_src + j}",
+                                                       spans_of(row) if row.get("moments") else
+                                                       ([[0.0, 120.0]] if (row.get("duree") or 999) > 180 else None))
+            meta = sources.source_meta(path)
+            for s in shots_of(path, next_src + j, os.path.join(base, "thumbs")):
+                s.update(credit=meta.get("handle") or meta.get("uploader") or "", url=row["url"],
+                         titre_source=meta.get("title") or row["titre"], ajout_pour=k)
+                new.append(s)
+        if not new:
+            raise MontageProError("La vidéo n'a donné aucun plan utilisable.")
+        report(f"description des {len(new)} nouveaux plans", 0.75)
+        describe(new, (p.get("reference") or {}).get("sujet") or p.get("idee") or "")
+        if _vision_ok():
+            try:
+                from adaptation import vision
+                vision.match(new, vision.ideas_of(p), os.path.join(base, "vision"))
+            except Exception:
+                pass
+        for s in new:
+            why = set_aside(s)
+            s.update(garde=why is None or why == "hors sujet", ecarte=None if why == "hors sujet" else why)
+        p = ap.load(pid)
+        p["stock"] = (p.get("stock") or []) + new
+        if entry:
+            p["realisation"] = [entry if e.get("phrase") == k else e for e in p.get("realisation") or []]
+        best = max((s for s in new if s.get("garde")), key=lambda s: _fit(s, k - 1), default=None)
+        if best:
+            p.setdefault("choix_plans", {})[str(k)] = best["id"]
+        p.update(status="stock_review", error=None, failed_step=None, ajout=None,
+                 ajout_note=f"Phrase {k} : {len(new)} plans ajoutés" + ("" if best else " (aucun utilisable)"))
+        ap.save(p)
+    except Exception as e:
+        p = ap.load(pid)
+        p.update(status="stock_review", ajout=None, ajout_note=f"Phrase {k} : ajout impossible — {str(e)[:200]}")
+        ap.save(p)
+    report("terminé", 1.0)

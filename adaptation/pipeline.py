@@ -10,12 +10,18 @@ An adaptation project, step by step.
     plan_review      "Script d'abord" mode: the storyboard (one image per plan,
                      shared by every language) and its texts, written before any
                      footage, reviewed and approved per language (mandatory)
+    directing        montage pro: the AI director's plan of every sentence     (background)
+    realisation_review  montage pro (« Le plan du réalisateur »): the person keeps each
+                     sentence's idea or types their own; made once for the sentences
     searching        the footage for each plan: the four searches on the plan's
                      image, Gemini's checks, the best moment picked   (background)
     images_review    the person sees, plan by plan, the video and moment picked; may
                      give a link for a plan, adapt a plan to an image found, set it aside
     fetching         only the picked moments are downloaded, one clip per plan
                      (background), then the usual script_review with clips
+                     — montage pro: the stock of shots -> stock_review (« Je choisis
+                     mes plans »: each sentence's main shot), « adding » a video for
+                     one sentence there (a link, a file, a description) (background)
     scripting        one script per target channel, re-read by gemini-pro (background)
     script_review    the person reads/edits/approves EVERY script (mandatory)
     voicing          narration + a quick preview + automatic checks  (background)
@@ -40,7 +46,7 @@ import db
 from gemini_ai_generator import in_context, usage_context   # which project each AI call is for
 from adaptation import annotate, checks, effects, finder, langs, reference, render, script, settings, sources, storyboard, tone, voices
 
-BUSY = {"analysing", "searching", "fetching", "scripting", "voicing", "rendering", "cleaning"}
+BUSY = {"analysing", "directing", "searching", "fetching", "adding", "scripting", "voicing", "rendering", "cleaning"}
 Report = Callable[[str, float], None]
 
 
@@ -663,13 +669,88 @@ def _judged_plans(p: Dict) -> Optional[List[Dict]]:
 
 
 def start_images(pid: str) -> Dict:
+    """The search of every plan's footage. Montage pro: first the director's plan, shown to the person (« Le plan du
+    réalisateur ») — unless it was made for these sentences already. -> the status to run."""
     p = load(pid)
     _expect(p, "plan_review", "images_review")
     missing = [t["channel"] for t in p["targets"] if not t.get("approved")]
     if missing:
         raise PipelineError("Scripts pas encore validés : " + ", ".join(missing))
-    p["status"] = "searching"
+    from adaptation import realisateur
+    p["status"] = "directing" if p.get("pro") and not realisateur.is_current(p) else \
+        "realisation_review" if p.get("pro") and p.get("status") == "plan_review" else "searching"
     return save(p)
+
+
+def direct(p: Dict, report: Optional[Callable[[str], None]] = None) -> Optional[List[Dict]]:
+    """The director's plan for these sentences, with each named entity's official channel; kept on the project with
+    the sentences it was made for (realisateur.key: never made again for the same sentences)."""
+    from adaptation import realisateur
+    realisation = realisateur.plan(p)
+    if realisation:
+        realisateur.channels(realisation, report=report)
+        p["realisation"] = realisation
+        p["realisation_cle"] = realisateur.key(p)
+        save(p)
+    return realisation
+
+
+def run_directing(pid: str, report: Optional[Report] = None):
+    """Montage pro, before the search: the director's plan -> realisation_review (the person keeps or rewrites each
+    sentence's idea). No plan (the call failed): the search goes on as before, one picture a sentence."""
+    report = report or (lambda phase, f: None)
+    p = load(pid)
+    try:
+        report("le réalisateur choisit comment montrer chaque phrase", 0.1)
+        got = direct(p, lambda ph: report(ph, 0.6))
+        p = load(pid)
+        p.update(status="realisation_review" if got else "searching", error=None, failed_step=None)
+        save(p)
+        if not got:
+            run_images(pid, report)
+            return
+    except Exception as e:
+        fail(pid, "directing", e)
+    report("terminé", 1.0)
+
+
+def back_from_realisation(pid: str) -> Dict:
+    """« Le plan du réalisateur » -> back to the script (the plan is kept while the sentences don't change)."""
+    p = load(pid)
+    _expect(p, "realisation_review")
+    p["status"] = "plan_review"
+    return save(p)
+
+
+def approve_realisation(pid: str, versions: Dict[int, Dict]) -> Dict:
+    """« Le plan du réalisateur » validated: each sentence the person rewrote ({phrase: {texte, type}}) becomes the
+    director's own plan for it (realisateur.from_user), the others stay; -> searching."""
+    from concurrent.futures import ThreadPoolExecutor
+    from adaptation import realisateur
+    p = load(pid)
+    _expect(p, "realisation_review")
+    todo = {int(k): v for k, v in (versions or {}).items() if str((v or {}).get("texte") or "").strip()}
+    if todo:
+        with ThreadPoolExecutor(4) as pool:
+            done = dict(zip(todo, pool.map(lambda kv: _user_entry(p, *kv), todo.items())))
+        bad = [k for k, e in done.items() if isinstance(e, str)]
+        if bad:
+            raise PipelineError(f"Phrase {bad[0]} : {done[bad[0]]}")
+        p = load(pid)
+        for k, e in done.items():
+            p["realisation"] = [e if x.get("phrase") == k else x for x in p["realisation"]]
+        realisateur.channels([e for e in done.values()])
+        p["realisation_cle"] = realisateur.key(p)
+    p.update(status="searching", error=None, failed_step=None)
+    return save(p)
+
+
+def _user_entry(p: Dict, phrase: int, v: Dict):
+    from adaptation import realisateur
+    try:
+        return realisateur.from_user(p, phrase, v.get("texte"), v.get("type"))
+    except Exception as e:
+        return str(e)[:200]
 
 
 class SharedSearch:
@@ -884,12 +965,11 @@ def run_images(pid: str, report: Optional[Report] = None):
         if p.get("pro"):                    # the AI director: how to show each sentence, 1 or 2 visuals, local searches
             from adaptation import realisateur, vision
             vision.warm()                   # the meaning search's model loads meanwhile, out of the server
-            report("le réalisateur choisit comment montrer chaque phrase", 0.02)
-            realisation = realisateur.plan(p)
-            if realisation:
-                realisateur.channels(realisation, report=lambda ph: report(ph, 0.03))
-                p["realisation"] = realisation
-                save(p)
+            if realisateur.is_current(p):   # its plan for these sentences (maybe changed by the person): kept as it is
+                realisation = p["realisation"]
+            else:
+                report("le réalisateur choisit comment montrer chaque phrase", 0.02)
+                realisation = direct(p, lambda ph: report(ph, 0.03))
         if realisation:
             from adaptation import realisateur
             wanted = realisateur.wanted(realisation, plans)
@@ -2532,7 +2612,7 @@ def run_final(pid: str, report: Optional[Report] = None):
     report("terminé", 1.0)
 
 
-RUNNERS = {"analysing": run_analysis, "searching": run_images, "fetching": run_fetch, "scripting": run_scripts,
+RUNNERS = {"analysing": run_analysis, "directing": run_directing, "searching": run_images, "fetching": run_fetch, "scripting": run_scripts,
            "voicing": run_voices, "rendering": run_final}
 
 
@@ -2550,9 +2630,9 @@ def _reprise(p: Dict):
 def runner_for(pid: str, step: str) -> Callable:
     p = load(pid)
     rp = _reprise(p)
-    if p.get("pro") and step in ("fetching", "voicing"):     # montage pro: the stock, then voice + edit + render
+    if p.get("pro") and step in ("fetching", "voicing", "adding"):     # montage pro: the stock, then voice + edit + render
         from adaptation import montage_pro
-        return {"fetching": montage_pro.run_stock, "voicing": montage_pro.run_montage}[step]
+        return {"fetching": montage_pro.run_stock, "voicing": montage_pro.run_montage, "adding": montage_pro.run_add}[step]
     return (rp.RUNNERS if rp else RUNNERS)[step]
 
 

@@ -38,6 +38,35 @@ Dans **Adaptation → Idée d'abord**, à l'étape **Aperçu**, la vidéo est mo
 | chaque effet sonore | — |
 | le texte ou la manière d'une phrase | — |
 
+## Montage pro : tes deux écrans de choix (depuis le 14 novembre)
+
+L'IA cherche, télécharge et découpe ; **toi, tu décides** ce qu'on voit. Deux écrans, environ 3 minutes en tout.
+
+### Écran 1 — Le plan du réalisateur (avant la recherche)
+
+Après le script, le réalisateur IA propose **comment montrer chaque phrase** : le type (vraies images, carte animée, chiffre animé, rendu 3D…), les images à trouver (avec le mot où chacune commence), le graphique s'il y en a un, et pourquoi.
+
+| Touche | Ce qu'elle fait |
+|---|---|
+| **Entrée** | c'est bien, phrase suivante |
+| **E** (ou un clic dans la case) | écrire **ta version** avec tes mots (« une carte avec la route Tanger → Marrakech et 2h40 qui s'affiche »). Tu peux cliquer un type (Vraies images, Carte, Chiffre, Schéma, Image d'idée). **Entrée** valide, **Échap** efface |
+| **←** | phrase précédente |
+
+À la fin, le récapitulatif, puis **Lancer la recherche** : l'IA traduit tes versions (quelques secondes) et cherche. **Le plan n'est plus refait ensuite** : relancer une recherche garde ton plan ; il n'est refait que si tu changes les phrases du script. « ← Revenir au script » garde aussi le plan.
+
+### Écran 2 — Je choisis mes plans (après le stock)
+
+Pour chaque phrase : son texte en haut, ce que voulait le plan, et **8 propositions** en petites vidéos verticales (elles bougent quand tu passes la souris). **L'IA a déjà coché son meilleur plan** (badge « choix IA ») : tu ne changes que ce qui ne va pas. Tu choisis seulement **l'image principale** de la phrase : le monteur IA l'ouvre sur elle, la garde au moins la moitié de la phrase et fait les petites coupes autour.
+
+| Touche | Ce qu'elle fait |
+|---|---|
+| **1** à **8** | choisir ce plan |
+| **Entrée** | phrase suivante (à la fin : récapitulatif, puis **Monter la vidéo**) |
+| **←** | phrase précédente |
+| **0** | **Aucun ne va** : colle un **lien** (l'IA trouve le bon moment), **décris** ce que tu veux (l'app cherche pour cette phrase seulement) ou **envoie une vidéo de ton PC**. 1 à 4 minutes ; tes autres choix sont gardés, et le meilleur plan ajouté est coché (badge « ajouté ») |
+
+Un plan déjà choisi pour une autre phrase porte « déjà phrase N ». Le bouton **Voir tout le stock** ouvre l'ancien écran (retirer des plans) ; **Monter la vidéo** de cet écran garde tes choix.
+
 ## 3. Comment l'app choisit les images (Images v2)
 
 Un monteur humain ne cherche pas la scène exacte : il prend une image qui **fait passer l'idée** de la phrase, et qui ne la contredit jamais. L'app fait pareil :

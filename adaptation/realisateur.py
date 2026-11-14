@@ -293,3 +293,73 @@ def ideas(realisation: Optional[List[Dict]]) -> Optional[List[str]]:
 def summary(realisation: Optional[List[Dict]]) -> str:
     return json.dumps([{"phrase": e["phrase"], "type": e["type"], "visuels": [v["image"] for v in e["visuels"]],
                         "graphique": e.get("graphique")} for e in realisation or []], ensure_ascii=False)
+
+
+# ---------------------------------------------------------------- the person's say (« Le plan du réalisateur »)
+
+def key(p: Dict) -> str:
+    """What the plan was made for: the sentences. The plan is made again only when they change (2026-11-14: every
+    search made a new plan — 2 graphics one time, none the next — and the person's own versions would be lost)."""
+    return json.dumps(_phrases(p), ensure_ascii=False)
+
+
+def is_current(p: Dict) -> bool:
+    return bool(p.get("realisation")) and p.get("realisation_cle") == key(p)
+
+
+USER_PROMPT = """Tu es le realisateur d'un YouTube Short (voix off sur des images trouvees en video). Sujet : {sujet}
+Faits verifies : {faits}
+La phrase {n} dite par la voix : {phrase}
+Ce que tu avais prevu pour elle : {avant}
+Le MONTEUR HUMAIN veut autre chose, avec ses mots : « {souhait} »{genre}
+Reecris le plan de CETTE phrase pour faire EXACTEMENT ce qu'il demande (ses mots priment ; garde ce qu'il ne change pas).
+Types : "reel" (vraies images d'un lieu, d'un evenement), "idee" (une image qui fait passer le sens), "comparaison",
+"projet" (rendu 3D, maquette), "chiffre" (compteur anime), "carte" (lieu ou trajet a situer), "schema" (mecanisme).
+Pour "chiffre", "carte" ou "schema", ecris aussi le "graphique" (les mots a l'ecran en {langue}) :
+  chiffre : {{"contenu": "", "valeur": "le nombre en chiffres", "unite": "", "titre": ""}}
+  carte : {{"contenu": "", "lieu": "le lieu EN ANGLAIS", "nom": "son nom a l'ecran", "pays": "en anglais", "pays_nom": "",
+    "reperes": [{{"lieu": "une ville EN ANGLAIS", "nom": "son nom a l'ecran"}}] (1 ou 2 : pour un trajet, ses deux bouts),
+    "chiffre": {{"valeur": "", "unite": ""}} ou null}}
+  schema : {{"contenu": "ce que le schema montre, etape par etape"}}
+et quand meme 1 visuel video qui fait passer l'idee.
+Chaque visuel : "mot" (le mot de la phrase ou il commence, ecrit comme dans la phrase), "image" (en francais, ce qu'on
+voit, concret et filmable), "idee" (en ANGLAIS, 5 a 12 mots, le sens general), "anglais" (2 recherches YouTube courtes en
+anglais), "pays" et "locales" (le pays et 2 recherches dans sa langue, en arabe pour le Maroc ; vide si generique),
+"entite" (null, ou {{"nom": "", "genre": "club|entreprise|institution", "chaine": "", "requete": ""}}). 1 a 4 visuels.
+JSON uniquement : {{"plans": [{{"phrase": {n}, "type": "reel", "pourquoi": "court", "visuels": [{{"mot": "", "image": "",
+"idee": "", "anglais": ["", ""], "pays": "", "locales": ["", ""], "entite": null}}], "graphique": null}}]}}"""
+
+GENRES = {"reel": "vraies images", "carte": "une carte animee", "chiffre": "un chiffre anime", "schema": "un schema anime",
+          "idee": "une image d'idee", "projet": "un rendu 3D ou une maquette", "comparaison": "une comparaison"}
+
+
+def from_user(p: Dict, phrase: int, souhait: str, genre: Optional[str] = None, gemini=None) -> Dict:
+    """One sentence's plan rewritten from what the person typed (and the kind they ticked): the director's own
+    format, so the search, the graphics and the editor take it as theirs. Raises ValueError when it can't."""
+    from adaptation import recits  # noqa: F401  (same imports as plan())
+    from adaptation.langs import lang as lang_of
+    from adaptation.script import _gemini
+    phrases = _phrases(p)
+    if not 1 <= phrase <= len(phrases):
+        raise ValueError("Phrase inconnue.")
+    souhait = " ".join(str(souhait or "").split())[:400]
+    if not souhait:
+        raise ValueError("Écris ce que tu veux pour cette phrase.")
+    ref = p.get("reference") or {}
+    before = next((e for e in p.get("realisation") or [] if e.get("phrase") == phrase), {})
+    r = (gemini or _gemini())._generate_content([{"text": USER_PROMPT.format(
+        sujet=ref.get("sujet") or p.get("idee") or "", faits="; ".join(ref.get("faits") or [])[:1500], n=phrase,
+        phrase=phrases[phrase - 1], avant=summary([before]) if before else "rien", souhait=souhait,
+        genre=f"\nIl a coche : {GENRES[genre]}." if genre in GENRES else "",
+        langue=lang_of(p["targets"][0]["language"])["label"] if p.get("targets") else "francais")}],
+        max_tokens=4000, timeout=90, temperature=0.3)
+    if isinstance(r, dict) and isinstance(r.get("plans"), list):
+        r["plans"] = [dict(x, phrase=phrase) for x in r["plans"][:1] if isinstance(x, dict)]
+    got = clean(r, len(phrases), (p.get("storyboard") or {}).get("plans") or [])
+    entry = got[phrase - 1] if got else None
+    if not entry or not (r or {}).get("plans"):
+        raise ValueError("L'IA n'a pas compris ta version : reformule-la un peu.")
+    if genre in KINDS and entry["type"] != genre and (genre not in GRAPHICS or entry.get("graphique")):
+        entry["type"] = genre               # the kind they ticked (a graphic only with its drawing written)
+    entry["ta_version"] = souhait + (f" [{GENRES[genre]}]" if genre in GENRES else "")
+    return entry
