@@ -1307,7 +1307,7 @@ function renderAdStock(body, p, fromChoix){
               s.repeche ? `<i class="pro-ok">repêché · phrase ${s.repeche}</i>` : ''}${s.secours_pour ? `<i class="pro-ok">secours · phrase ${s.secours_pour}</i>` : ''}</span>
             <span class="pro-desc">${esc(s.desc || '')}</span>
           </button>${fromChoix ? `<select class="f pro-assign" data-sid="${s.id}" title="En faire l'image principale d'une phrase">
-            <option value="">→ phrase…</option>${(p.phrases || []).map((x, k) => `<option value="${k + 1}" ${(cpPicks || {})[k + 1] === s.id ? 'selected' : ''}>→ phrase ${k + 1}</option>`).join('')}</select></div>` : ''}`).join('')}</div></div></article>`;
+            <option value="">→ mettre sur la phrase…</option>${(p.phrases || []).map((x, k) => `<option value="${k + 1}" ${(cpPicks || {})[k + 1] === s.id ? 'selected' : ''}>→ ${k + 1} · ${esc(x.length > 42 ? x.slice(0, 42) + '…' : x)}</option>`).join('')}</select></div>` : ''}`).join('')}</div></div></article>`;
     }).join('') +
     (fromChoix
       ? `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
@@ -1326,8 +1326,15 @@ function renderAdStock(body, p, fromChoix){
       } catch (e){ log(e.message, 'error'); }
     });
     const top = document.createElement('div');
-    top.className = 'cp-bar';
-    top.innerHTML = '<button class="btn ghost" id="adBackChoix1">← Revenir à « Je choisis mes plans »</button><span class="tiny">Ici tu regardes et tu retires des plans ; le montage se lance depuis le récapitulatif de « Je choisis mes plans ».</span>';
+    const byId = Object.fromEntries(stock.map(s => [s.id, s]));
+    const rtl = ((p.targets || [])[0] || {}).rtl ? 'rtl' : 'auto';
+    top.innerHTML = `<div class="cp-bar"><button class="btn ghost" id="adBackChoix1">← Revenir à « Je choisis mes plans »</button>
+        <span class="tiny">Ici tu regardes, tu retires des plans, ou tu en mets un sur une phrase avec son menu « → mettre sur la phrase… ».
+        Le montage se lance depuis le récapitulatif de « Je choisis mes plans ».</span></div>
+      <article class="chcard"><div class="chcard-body"><div class="tiny" style="margin-bottom:4px"><b>Les phrases</b> et leur image principale en ce moment :</div>
+        ${(p.phrases || []).map((x, k) => { const s = byId[(cpPicks || {})[k + 1]];
+          return `<div class="cp-row" style="margin-bottom:5px">${s ? `<img src="${esc(s.thumb_url)}" alt="" style="width:40px">` : '<span style="width:40px"></span>'}
+            <b style="min-width:18px">${k + 1}</b><div class="t" dir="${rtl}">${esc(x)}</div></div>`; }).join('')}</div></article>`;
     body.prepend(top);
     ['adBackChoix1', 'adBackChoix2'].forEach(id => { document.getElementById(id).onclick = () => { cpShowStock = false; renderAdChoix(body, p); }; });
   }
