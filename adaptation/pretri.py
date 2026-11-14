@@ -39,10 +39,11 @@ Report = Callable[[str, float], None]
 NOMS_PROMPT = """Pour un YouTube Short, on cherche des videos qui montrent chacune de ces images :
 {images}
 
-Pour CHAQUE image : les NOMS PROPRES qu'on entendrait DIRE dans une video qui la montre (un lieu, un batiment, un
-projet, une organisation, une personne, un evenement precis), chacun avec ses ecritures (anglais, francais, arabe,
-et les variantes courantes : « boraq », « buraq », « البراق »), en minuscules. Pas de mots communs (« stade »,
-« train ») ; [] pour une image generique sans nom propre.
+Pour CHAQUE image : les NOMS PROPRES qui designent CE QU'ON VOIT dans cette image (le lieu precis, le batiment, le
+projet, la personne, l'evenement), ceux qu'on entendrait dire au moment ou la video le montre, avec leurs ecritures
+(anglais, francais, arabe, variantes courantes : « boraq », « buraq », « البراق »), en minuscules, 8 au plus.
+JAMAIS le pays, une grande ville ou un organisme cite partout dans le sujet (« maroc », « casablanca », « oncf ») s'ils
+ne sont pas EUX-MEMES ce que montre l'image ; pas de mots communs (« stade », « train ») ; [] pour une image generique.
 JSON uniquement : {{"images": [{{"n": 1, "noms": ["", ""]}}]}}"""
 
 
@@ -162,12 +163,18 @@ def clip_scores(urls: List[str], ideas: List[str], folder: str, report: Report) 
         cache = os.path.join(folder, _vid(u), "clip.json")
         try:
             emb = json.load(open(cache)) if os.path.exists(cache) else None
-        except ValueError:
+        except (OSError, ValueError):
             emb = None
-        if emb is None or len(emb) != len(fr):
-            emb = [list(map(float, x)) for x in vision.embed_images([p for _, p in fr])]
-            json.dump(emb, open(cache, "w"))
-        out[u] = {"ts": [t for t, _ in fr], "s": (np.array(emb) @ np.array(T).T).tolist()}
+        try:
+            if emb is None or len(emb) != len(fr):
+                emb = [list(map(float, x)) for x in vision.embed_images([p for _, p in fr])]
+                try:
+                    json.dump(emb, open(cache, "w"))
+                except OSError:
+                    pass
+            out[u] = {"ts": [t for t, _ in fr], "s": (np.array(emb) @ np.array(T).T).tolist()}
+        except OSError:              # a picture the Windows disk would not read (Errno 5, 13/11): this video left out
+            continue
         report("pré-tri : le modèle gratuit regarde les images", 0.4 + 0.1 * (k + 1) / max(1, len(got)))
     return out
 
@@ -179,7 +186,7 @@ def noms(visuals: List[str], gemini=None) -> Dict[int, List[str]]:
     from adaptation.script import _gemini
     try:
         r = (gemini or _gemini())._generate_content([{"text": NOMS_PROMPT.format(
-            images="\n".join(f"{k}. {x}" for k, x in enumerate(visuals, 1)))}], max_tokens=3000, timeout=90,
+            images="\n".join(f"{k}. {x}" for k, x in enumerate(visuals, 1)))}], max_tokens=8000, timeout=90,
             temperature=0.1)
     except Exception:
         return {}
@@ -191,7 +198,7 @@ def noms(visuals: List[str], gemini=None) -> Dict[int, List[str]]:
             continue
         names = [str(n).strip().lower() for n in x.get("noms") or [] if len(str(n).strip()) >= 3]
         if 0 <= k < len(visuals) and names:
-            out[k] = names[:12]
+            out[k] = names[:8]
     return out
 
 

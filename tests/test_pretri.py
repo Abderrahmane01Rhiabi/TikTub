@@ -152,3 +152,19 @@ def test_a_description_answered_as_a_bare_list_is_read(tmp_path):
     shots = [{"id": "S0_00", "thumb": str(thumb)}]
     montage_pro.describe(shots, "TGV", gemini=G())
     assert shots[0]["desc"] == "un viaduc"
+
+
+def test_a_video_whose_pictures_cannot_be_read_is_only_left_out(monkeypatch, tmp_path):
+    """2026-11-13: one « Input/output error » of the Windows disk stopped the whole pre-sort."""
+    from adaptation import vision
+    monkeypatch.setattr(pretri, "storyboard", lambda u, folder: [[0.0, f"{u}.jpg"]])
+    monkeypatch.setattr(pretri, "_vid", lambda u: u)
+    monkeypatch.setattr(vision, "embed_texts", lambda texts: [[1.0, 0.0]])
+
+    def emb(paths):
+        if paths[0].startswith("bad"):
+            raise OSError(5, "Input/output error")
+        return [[0.5, 0.5]]
+    monkeypatch.setattr(vision, "embed_images", emb)
+    out = pretri.clip_scores(["good", "bad"], ["idea"], str(tmp_path), lambda *a: None)
+    assert list(out) == ["good"] and out["good"]["s"] == [[0.5]]
