@@ -1282,7 +1282,9 @@ function adGraphicState(p, e){
   return g.mode === 'incrustation' ? 'chiffre animé par-dessus l\'image de l\'accroche' : 'graphique animé fait — dans ton stock, carte « Graphiques animés »';
 }
 
-function renderAdStock(body, p){
+// fromChoix: opened from « Je choisis mes plans » (choix_plans.js) — only to look or set shots aside: no « Monter la
+// vidéo » here (it started the montage at once and without the person's choices, 2026-11-14), a way back instead
+function renderAdStock(body, p, fromChoix){
   const stock = p.stock || [];
   const kept = stock.filter(s => s.garde).length;
   const bySource = {};
@@ -1306,13 +1308,23 @@ function renderAdStock(body, p){
             <span class="pro-desc">${esc(s.desc || '')}</span>
           </button>`).join('')}</div></div></article>`;
     }).join('') +
-    `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
-      <button class="btn primary" id="adMontage" ${kept >= 6 ? '' : 'disabled'} data-icon="film" title="Voix, montage et rendu : quelques minutes">Monter la vidéo →</button></div>`;
+    (fromChoix
+      ? `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
+          <button class="btn primary" id="adBackChoix2">← Revenir à « Je choisis mes plans »</button></div>`
+      : `<div class="navbar"><span class="progress-text">${kept}/${stock.length} plans gardés</span><span></span>
+      <button class="btn primary" id="adMontage" ${kept >= 6 ? '' : 'disabled'} data-icon="film" title="Voix, montage et rendu : quelques minutes">Monter la vidéo →</button></div>`);
+  if (fromChoix){
+    const top = document.createElement('div');
+    top.className = 'cp-bar';
+    top.innerHTML = '<button class="btn ghost" id="adBackChoix1">← Revenir à « Je choisis mes plans »</button><span class="tiny">Ici tu regardes et tu retires des plans ; le montage se lance depuis le récapitulatif de « Je choisis mes plans ».</span>';
+    body.prepend(top);
+    ['adBackChoix1', 'adBackChoix2'].forEach(id => { document.getElementById(id).onclick = () => { cpShowStock = false; renderAdChoix(body, p); }; });
+  }
   hydrateIcons(body);
   body.querySelectorAll('.pro-shot').forEach(b => b.onclick = async () => {
     const s = stock.find(x => x.id === b.dataset.sid);
     try { const np = await api(`/api/adaptations/${p.project_id}/stock/${s.id}`, { method:'POST', body: JSON.stringify({ garder: !s.garde }) });
-          adProject = np; renderAdStock(body, np); }
+          adProject = np; renderAdStock(body, np, fromChoix); }
     catch (e){ log(e.message, 'error'); }
   });
   const go = document.getElementById('adMontage');

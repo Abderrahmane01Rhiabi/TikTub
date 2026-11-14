@@ -158,7 +158,7 @@ async function renderAdChoix(body, p){
       }).join('')}</div>
       <div class="cp-none" id="cpNone"><b>Aucun ne va pour cette phrase</b>
         <input class="f" id="cpLink" placeholder="Colle un lien YouTube / TikTok (l'IA trouve le bon moment)">
-        <input class="f" id="cpDesc" placeholder="… ou décris ce que tu veux (ex. « le Boraq en gare de Marrakech, vu de face ») : l'app cherche pour cette phrase">
+        <input class="f" id="cpDesc" placeholder="… ou décris ce que tu veux (ex. « le Boraq en gare de Marrakech »)">
         <div class="cp-bar" style="margin-top:4px"><button class="btn primary small" id="cpAddGo">Chercher pour cette phrase</button>
           <label class="btn ghost small" style="cursor:pointer">Envoyer une vidéo de mon PC<input type="file" id="cpFile" accept="video/*" hidden></label>
           <button class="btn ghost small" id="cpNoneX">Annuler</button><span class="tiny">1 à 4 min ; tes autres choix sont gardés</span></div></div>
@@ -243,10 +243,5 @@ async function renderAdChoix(body, p){
 
 function renderAdStockWithBack(body, p){
   cpKeys = null;
-  renderAdStock(body, p);
-  const bar = document.createElement('div');
-  bar.className = 'cp-bar';
-  bar.innerHTML = '<button class="btn ghost" id="cpBackChoix">← Revenir à « Je choisis mes plans »</button>';
-  body.prepend(bar);
-  document.getElementById('cpBackChoix').onclick = () => { cpShowStock = false; renderAdChoix(body, p); };
+  renderAdStock(body, p, true);         // no « Monter la vidéo » there: the montage starts from the recap, with the choices
 }
