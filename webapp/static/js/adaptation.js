@@ -1,19 +1,21 @@
 // ---------- Adaptation : project by project ----------
 
 let adCurrent = null, adPoll = null, adProject = null;
-const AD_BUSY = ['analysing', 'searching', 'fetching', 'scripting', 'voicing', 'rendering', 'cleaning'];
+const AD_BUSY = ['analysing', 'directing', 'searching', 'fetching', 'adding', 'scripting', 'voicing', 'rendering', 'cleaning'];
 const AD_STEPS = [['Modèle', ['analysing']], ['Sources', ['sources_search', 'searching', 'sources_review']], ['Script', ['scripting', 'script_review']],
                   ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_SCRIPT = [['Modèle', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'images_review', 'fetching']],
                          ['Aperçu', ['script_review', 'scripting', 'voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_REPRISE = [['Short', ['analysing', 'cleaning', 'cleaning_review']], ['Script', ['scripting', 'script_review']],
                           ['Réglages', ['settings_review']], ['Aperçu', ['voicing', 'cleaning_wait', 'preview_review']], ['Rendu', ['rendering', 'done']]];
-const AD_STEPS_PRO = [['Idée', ['analysing']], ['Script', ['plan_review']], ['Images', ['searching', 'fetching', 'stock_review']],
+const AD_STEPS_PRO = [['Idée', ['analysing']], ['Script', ['plan_review']], ['Plan', ['directing', 'realisation_review']],
+                      ['Images', ['searching', 'fetching', 'stock_review', 'adding']],
                       ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STEPS_DISCOURS = [['Discours', ['analysing']], ['Passage', ['passage_review']], ['Plans', ['searching', 'plans_review']],
                            ['Aperçu', ['voicing', 'preview_review']], ['Rendu', ['rendering', 'done']]];
 const AD_STATUS = { passage_review: 'passage à choisir', plans_review: 'plans à vérifier', cleaning: 'nettoyage (carte graphique)…', cleaning_review: 'nettoyage à vérifier', analysing: 'analyse…', plan_review: 'storyboard à relire', searching: 'recherche des images…', images_review: 'images à vérifier', fetching: 'téléchargement des moments…', sources_search: 'sources à choisir', sources_review: 'sources à vérifier', scripting: 'écriture…',
-  script_review: 'scripts à relire', stock_review: 'stock de plans à vérifier', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
+  directing: 'le réalisateur prépare son plan…', realisation_review: 'plan du réalisateur à relire', adding: 'ajout de vidéos pour une phrase…',
+  script_review: 'scripts à relire', stock_review: 'plans à choisir', settings_review: 'réglages à choisir', cleaning_wait: 'vidéos en attente du nettoyage', voicing: 'voix et aperçus…', preview_review: 'aperçus à valider',
   rendering: 'rendu…', done: 'terminé', error: 'erreur' };
 
 async function openAdaptation(){
@@ -210,13 +212,15 @@ async function loadAdProject(){
       catch (e){ log(e.message, 'error'); }
     };
     const body = document.getElementById('adBody');
+    if (typeof cpKeys !== 'undefined') cpKeys = null;      // « Je choisis mes plans »: its keyboard only on its screen
     if (AD_BUSY.includes(p.status)) body.innerHTML = adBusyHtml(p);
     else if (p.status === 'error') renderAdError(body, p);
     else if (p.mode === 'reprise' && renderReprise(body, p)) { /* reprise.js */ }
     else if (p.mode === 'discours' && renderDiscours(body, p)) { /* discours.js */ }
     else if (p.status === 'sources_search') renderAdSearch(body, p);
     else if (p.status === 'plan_review') renderAdPlan(body, p);
-    else if (p.status === 'stock_review') renderAdStock(body, p);
+    else if (p.status === 'realisation_review') renderAdRealisation(body, p);
+    else if (p.status === 'stock_review') (p.pro ? renderAdChoix : renderAdStock)(body, p);
     else if (p.status === 'images_review') renderAdImages(body, p);
     else if (p.status === 'sources_review') renderAdSources(body, p);
     else if (p.status === 'script_review') renderAdScripts(body, p);

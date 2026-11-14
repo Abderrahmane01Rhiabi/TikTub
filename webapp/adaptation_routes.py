@@ -15,8 +15,9 @@ import shutil
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated, Dict, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -262,6 +263,12 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             if full and p.get("status") == "preview_review":       # the preview's music menu
                 x["musiques"] = [{k: s.get(k) for k in ("fichier", "titre", "categories", "paroles", "permise")}
                                  for s in montage_pro.music_choices(t)]
+        if full and p.get("realisation"):             # « Le plan du réalisateur »: the plan and the sentences it shows
+            base["realisation"] = p.get("realisation")
+            t0 = (p.get("targets") or [{}])[0]
+            base["phrases"] = [((pl.get("textes") or {}).get(t0.get("language")) or {}).get("texte") or ""
+                               for pl in (p.get("storyboard") or {}).get("plans") or []]
+        base["ajout_note"] = p.get("ajout_note")
         if full and p.get("stock"):
             used = {e["plan"] for t in p["targets"] for e in (t.get("preview") or {}).get("montage") or []}
             base["images_v2"] = p.get("images_v2")         # what Images v2 did (adaptation/vision)
@@ -269,7 +276,7 @@ def _serialize_adaptation(p: dict, full: bool = True) -> dict:
             base["graphiques"] = [{k: g.get(k) for k in ("phrase", "type", "mode", "contenu", "erreur")}
                                   for g in p.get("graphiques") or []]      # what the app drew (adaptation/graphiques)
             base["stock"] = [{k: s.get(k) for k in ("id", "source", "desc", "montre", "force", "pertinence", "repeche",
-                                                    "ailleurs", "secours_pour", "graphique", "pour",
+                                                    "ailleurs", "secours_pour", "graphique", "pour", "ajout_pour",
                                                     "probleme", "garde", "ecarte", "credit", "titre_source", "url")}
                              | {"duree": round(s["end"] - s["start"], 1), "utilise": s["id"] in used,
                                 "thumb_url": f"/api/adaptations/{p['project_id']}/stock/{s['id']}/thumb"}
@@ -726,7 +733,8 @@ def start_adaptation_images(pid: str):
     from adaptation import pipeline as ap
     _adaptation_or_404(pid)
     p = _adaptation_call(ap.start_images, pid)
-    _start_adaptation_step(pid, "searching")
+    if p["status"] in ap.BUSY:          # montage pro: the director's plan first (or straight to « Le plan du réalisateur »)
+        _start_adaptation_step(pid, p["status"])
     return _serialize_adaptation(p)
 
 
@@ -1175,6 +1183,105 @@ def undo_adaptation_montage(pid: str, channel: TargetChannel):
     _adaptation_or_404(pid)
     p = _adaptation_call(montage_pro.undo_montage, pid, channel)
     _start_adaptation_step(pid, "voicing", only=channel)
+    return _serialize_adaptation(p)
+
+
+class RealisationVersions(BaseModel):
+    versions: Dict[str, Dict[str, Optional[str]]] = {}
+
+
+@router.post("/api/adaptations/{pid}/realisation")
+async def approve_adaptation_realisation(pid: str, req: RealisationVersions):
+    """« Le plan du réalisateur » validated (each sentence the person rewrote is translated by the AI), then the search."""
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    versions = {int(k): v for k, v in req.versions.items() if str(k).isdigit()}
+    p = await asyncio.to_thread(_adaptation_call, ap.approve_realisation, pid, versions)
+    _start_adaptation_step(pid, "searching")
+    return _serialize_adaptation(p)
+
+
+@router.post("/api/adaptations/{pid}/realisation/retour")
+def adaptation_realisation_back(pid: str):
+    from adaptation import pipeline as ap
+    _adaptation_or_404(pid)
+    return _serialize_adaptation(_adaptation_call(ap.back_from_realisation, pid))
+
+
+@router.get("/api/adaptations/{pid}/choix-plans")
+def adaptation_shot_choices(pid: str):
+    """« Je choisis mes plans »: each sentence's proposals, the AI's pick and the person's choice."""
+    from adaptation import montage_pro
+    p = _adaptation_or_404(pid)
+    return montage_pro.choices(p)
+
+
+class ShotChoices(BaseModel):
+    choix: Dict[str, str] = {}
+
+
+@router.post("/api/adaptations/{pid}/choix-plans")
+def approve_adaptation_shot_choices(pid: str, req: ShotChoices):
+    """The main shot of each sentence chosen: voice, edit around them, render (a few minutes)."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    p = _adaptation_call(montage_pro.approve_choices, pid, req.choix)
+    _start_adaptation_step(pid, "voicing")
+    return _serialize_adaptation(p)
+
+
+@router.get("/api/adaptations/{pid}/stock/{sid}/apercu")
+async def adaptation_shot_preview(pid: str, sid: str):
+    """A shot as a short vertical clip (made once)."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    path = await asyncio.to_thread(_adaptation_call, montage_pro.preview, pid, Path(sid).name)
+    return FileResponse(path, media_type="video/mp4")
+
+
+class ShotAdd(BaseModel):
+    url: str = ""
+    description: str = ""
+    choix: Dict[str, str] = {}
+
+
+def _keep_choices(pid: str, choix: Dict[str, str]):
+    from adaptation import pipeline as ap
+    p = ap.load(pid)
+    if choix and p.get("status") == "stock_review":
+        ok = {s["id"] for s in p.get("stock") or [] if s.get("garde")}
+        p["choix_plans"] = {str(int(k)): str(v) for k, v in choix.items() if str(v) in ok and str(k).isdigit()}
+        ap.save(p)
+
+
+@router.post("/api/adaptations/{pid}/choix-plans/{phrase}/ajout")
+def add_for_adaptation_sentence(pid: str, phrase: int, req: ShotAdd):
+    """« Aucun ne va »: a link or a description for this sentence (1 to 4 min)."""
+    from adaptation import montage_pro
+    _adaptation_or_404(pid)
+    _keep_choices(pid, req.choix)
+    p = _adaptation_call(montage_pro.start_add, pid, phrase, req.url, req.description)
+    _start_adaptation_step(pid, "adding")
+    return _serialize_adaptation(p)
+
+
+@router.post("/api/adaptations/{pid}/choix-plans/{phrase}/fichier")
+async def file_for_adaptation_sentence(pid: str, phrase: int, file: UploadFile = File(...), choix: str = Form("{}")):
+    """« Aucun ne va »: a video of the person's PC for this sentence."""
+    from adaptation import montage_pro, pipeline as ap
+    _adaptation_or_404(pid)
+    folder = os.path.join(montage_pro.pro_dir(pid), "ajouts")
+    os.makedirs(folder, exist_ok=True)
+    with tempfile.TemporaryDirectory() as tmp:
+        src = await _dropped(file, tmp)
+        dest = os.path.join(folder, f"phrase{phrase}_{int(time.time())}{Path(src).suffix}")
+        shutil.move(src, dest)
+    try:
+        _keep_choices(pid, json.loads(choix or "{}"))
+    except ValueError:
+        pass
+    p = _adaptation_call(montage_pro.start_add, pid, phrase, "", "", dest)
+    _start_adaptation_step(pid, "adding")
     return _serialize_adaptation(p)
 
 
