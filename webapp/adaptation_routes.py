@@ -1187,6 +1187,34 @@ def undo_adaptation_montage(pid: str, channel: TargetChannel):
     return _serialize_adaptation(p)
 
 
+@router.get("/api/tendances/{channel}")
+def trends_last(channel: str):
+    """The last « Tendances » search of this channel (or null)."""
+    from adaptation import tendances
+    r = tendances.last(channel)
+    return {"resultat": {**r, "deja": True} if r else None}
+
+
+class TrendsSearch(BaseModel):
+    force: bool = False
+
+
+@router.post("/api/tendances/{channel}")
+async def trends_search(channel: str, req: TrendsSearch):
+    """5 subjects that work right now for this channel, from what people watch and search (≈ 1 min, ≈ 1 cent,
+    ≈ 400 YouTube quota units); the same channel once in 6 hours (the last search is given back)."""
+    from adaptation import tendances
+    from gemini_ai_generator import usage_context
+
+    def run():
+        with usage_context(projet=f"tendances:{channel}"):
+            return tendances.search(channel, force=req.force)
+    try:
+        return await asyncio.to_thread(run)
+    except tendances.TendancesError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 class RealisationVersions(BaseModel):
     versions: Dict[str, Dict[str, Optional[str]]] = {}
 

@@ -66,7 +66,9 @@ async function renderNewAdaptation(){
         <input class="f" id="adRef" placeholder="https://www.youtube.com/shorts/…"></div>
         <div id="adIdeaBox" style="display:none"><label class="f">1. Ton idée, en une phrase</label>
         <textarea class="f" id="adIdea" rows="2" placeholder="Ex. : pourquoi les chats ronronnent, le secret des pyramides, comment le Maroc a battu l'Espagne…"></textarea>
-        <div class="tiny">L'app regarde ce que les gens cherchent sur YouTube, trouve les faits sur le web <b>avec leurs sources</b> (rien n'est inventé), puis écrit le script et cherche les images comme en « Script d'abord ».</div></div>
+        <div class="tiny">L'app regarde ce que les gens cherchent sur YouTube, trouve les faits sur le web <b>avec leurs sources</b> (rien n'est inventé), puis écrit le script et cherche les images comme en « Script d'abord ».</div>
+        <div class="ad-row" style="margin-top:6px"><button class="btn ghost small" id="tdOpen" type="button">💡 Pas d'idée ? Trouver des sujets qui marchent en ce moment (tendances)</button></div>
+        <div id="tdBox" style="display:none"></div></div>
         <label class="f" style="margin-top:6px">2. Comment construire la vidéo ?</label>
         <div class="ad-row">
           <label class="switch" style="color:var(--text)"><input type="radio" name="adMode" value="idee"> <b>Idée d'abord</b> <span class="pill wait">nouveau</span>
@@ -103,6 +105,7 @@ async function renderNewAdaptation(){
     </article>`;
   hydrateIcons(stage);
   dsBindCreation(document.getElementById('adDsBox'));
+  tdBind(stage);
   document.getElementById('adToVoices').onclick = () => openChannelSettings();
   const syncVersions = () => {
     const reprise = ['reprise', 'discours'].includes((stage.querySelector('input[name="adMode"]:checked') || {}).value);   // one script, every language
@@ -1387,4 +1390,56 @@ function adCastingHtml(t){
         `<option value="${v.voice_id}" ${v.voice_id === t.voice_id ? 'selected' : ''}>${esc(lbl(v))}</option>`).join('')}</select></div>
     <div class="tiny">${c.voix_par === 'toi' ? 'Ton choix.' : c.voix_par === 'ia' ? 'Choisie par l\'IA : ' + esc(c.voix_pourquoi || '') : esc(c.voix_pourquoi || 'La voix principale de la chaîne.')}
       ${c.mode === 'principale' ? ' (la chaîne garde toujours sa voix principale)' : ''} La manière de dire chaque phrase est sous son texte.</div></div>`;
+}
+
+// ---------- Tendances (adaptation/tendances.py): subjects that work right now, handed to « Idée d'abord » ----------
+
+function tdBind(stage){
+  const open = document.getElementById('tdOpen'), box = document.getElementById('tdBox');
+  if (!open) return;
+  open.onclick = () => {
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+    if (box.dataset.ready) return;
+    box.dataset.ready = '1';
+    box.innerHTML = `<div class="okbox"><div class="ad-row"><label class="tiny">Pour la chaîne</label>
+        <select class="f" id="tdChannel" style="width:auto">${channels.map(ch => `<option value="${ch.name}">${esc(ch.display_name)}</option>`).join('')}</select>
+        <button class="btn primary small" id="tdGo" type="button">Chercher les tendances</button></div>
+      <div class="tiny">L'app lit la ligne de la chaîne, regarde les Shorts les plus vus de la semaine, les actualités, Google Trends et ce que
+        les gens tapent sur YouTube, puis propose 5 sujets <b>seulement à partir de ces signaux</b>. Environ 1 minute et 1 centime.
+        Une même chaîne : une recherche toutes les 6 heures.</div><div id="tdOut" class="stack" style="margin-top:6px"></div></div>`;
+    const show = r => {
+      const out = document.getElementById('tdOut');
+      if (!r){ out.innerHTML = ''; return; }
+      out.innerHTML = `<div class="tiny">${r.deja ? 'Recherche' : 'Nouvelle recherche'} du ${esc(r.quand)} · ${r.nb_signaux} signaux${(r.erreurs || []).length ? ` · ${r.erreurs.length} source(s) en panne` : ''}
+          ${r.deja ? ' — une nouvelle recherche sera possible 6 h après celle-ci.' : ''}</div>` +
+        r.sujets.map((s, i) => `<article class="chcard"><div class="chcard-body">
+          <div style="display:flex;gap:8px;align-items:center"><span class="pill ${s.force >= 8 ? 'ok' : 'wait'}">${s.force}/10</span>
+            <b dir="auto">${esc(s.titre)}</b></div>
+          <div class="tiny" style="margin-top:4px">${esc(s.idee)}</div>
+          <div class="tiny" style="margin-top:2px"><i>Pourquoi maintenant :</i> ${esc(s.pourquoi)}</div>
+          <details class="tiny"><summary>Les signaux (${s.signaux.length})</summary>${s.signaux.map(x =>
+            `<div dir="auto">· [${esc(x.source)}] ${x.lien ? `<a href="${esc(x.lien)}" target="_blank" rel="noopener">${esc(x.titre)}</a>` : esc(x.titre)}${x.vues ? ` — ${Number(x.vues).toLocaleString('fr-FR')} vues` : ''}${x.trafic ? ` — ${esc(x.trafic)} recherches` : ''}</div>`).join('')}</details>
+          <div class="ad-row" style="margin-top:4px"><button class="btn primary small td-use" data-i="${i}" type="button">Utiliser cette idée</button></div>
+        </div></article>`).join('');
+      out.querySelectorAll('.td-use').forEach(b => b.onclick = () => {
+        const s = r.sujets[+b.dataset.i];
+        document.getElementById('adIdea').value = s.idee;
+        stage.querySelectorAll('.ad-target').forEach(x => { if (x.value === r.chaine && !x.disabled) x.checked = true; x.dispatchEvent(new Event('change')); });
+        toast('Idée reprise : vérifie les chaînes cochées, puis « Chercher les faits ».');
+        document.getElementById('adIdea').scrollIntoView({ block: 'center' });
+      });
+    };
+    const load = async () => {
+      try { show((await api(`/api/tendances/${document.getElementById('tdChannel').value}`)).resultat); } catch (e){ /* nothing yet */ }
+    };
+    document.getElementById('tdChannel').onchange = load;
+    document.getElementById('tdGo').onclick = async ev => {
+      const b = ev.currentTarget, ch = document.getElementById('tdChannel').value;
+      b.disabled = true; b.textContent = 'Recherche… (≈ 1 min)';
+      try { show(await api(`/api/tendances/${ch}`, { method:'POST', body: JSON.stringify({ force: false }) })); }
+      catch (e){ log(e.message, 'error'); }
+      b.disabled = false; b.textContent = 'Chercher les tendances';
+    };
+    load();
+  };
 }
