@@ -46,6 +46,8 @@ STEPS: Dict[str, tuple] = {
     "finder.action_queries": (FLASH, "écrire les recherches « par action »"),
     "finder._sort_one":      (FLASH, "trier les résultats de recherche"),
     "pretri.noms":           (FLASH, "écrire les noms propres à entendre dans les vidéos (pré-tri parole)"),
+    "tendances.veille":      (FLASH, "lire la ligne d'une chaîne pour sa veille (Tendances)"),
+    "tendances.subjects":    (FLASH, "proposer 5 sujets à partir des signaux (Tendances)"),
     "montage_pro.hook_title": (FLASH, "écrire le titre d'accroche du bandeau (style Brut)"),
     "montage_pro.ai_picks":  (FLASH, "pré-choisir l'image principale de chaque phrase (« Je choisis mes plans »)"),
     "finder._watch":         (FLASH, "regarder une vidéo candidate (YouTube)"),
@@ -84,7 +86,7 @@ TEXT_ONLY = {"idee.plan", "graphiques.schema_html", "storyboard.angles", "storyb
              "storyboard.adapt_to", "finder.plan_queries", "finder.local_queries", "finder.action_queries",
              "finder._sort_one", "script.write", "script.critique", "script.revise", "tone.guess",
              "pipeline._choose_music", "script_generator.generate_script", "planner.pick_keywords",
-             "discours.passages", "discours.moments", "montage_pro.ai_picks", "montage_pro.hook_title", "pretri.noms", "discours.translate", "discours.ambiance_for",
+             "discours.passages", "discours.moments", "montage_pro.ai_picks", "montage_pro.hook_title", "tendances.veille", "tendances.subjects", "pretri.noms", "discours.translate", "discours.ambiance_for",
              "ai_scheduler._ask_ai_for_slots"}
 GROUNDED = {"idee.research"}            # Google Search: Gemini Flash only
 
